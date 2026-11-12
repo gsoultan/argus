@@ -76,8 +76,10 @@ func (a *API) SyncCloudAccount(ctx context.Context, c CloudAccount) bool {
 		a.cloud.mu.Unlock()
 	}()
 
-	p, ok := a.cloudProvider(c.Provider)
-	if !ok {
+	p, err := a.cloudProviderFor(ctx, c)
+	if err != nil {
+		// Never read with another identity: the account says so on its row.
+		a.log.Warn("cloud sync skipped", "account", c.AccountID, "identity", c.Identity, "error", err)
 		return true
 	}
 	ext, err := a.cloudExternalID(ctx, c.Provider, c.AccountID)

@@ -1,7 +1,7 @@
 import {
   Alert, Badge, Box, Button, Card, Group, Radio, SegmentedControl, SimpleGrid, Stack, Text, TextInput, ThemeIcon,
 } from '@mantine/core'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
   IconCheck, IconCircleCheck, IconEye, IconPencil, IconShieldLock,
@@ -10,10 +10,11 @@ import { useState } from 'react'
 import { ButtonLink } from '~/components/links'
 import { PageBody, PageHeader } from '~/components/page'
 import {
-  ENV_LABEL, prepareCloudAccount, useConnectCloudAccount,
+  ENV_LABEL, cloudAccountsQuery, prepareCloudAccount, useConnectCloudAccount,
   type CloudAccount, type CloudEnvironment, type CloudPrepared,
 } from '~/lib/cloud'
 import { MakeItForMe, WatchForRoles } from '~/components/cloud/ConnectRoles'
+import { IdentityPicker } from '~/components/cloud/IdentityPicker'
 import { RoleSetup } from '~/components/cloud/RoleSetup'
 import { guard } from '~/lib/guard'
 import { FS, INK, SP } from '~/theme'
@@ -41,7 +42,11 @@ function Connect() {
   const [env, setEnv] = useState<CloudEnvironment>('production')
   const [manage, setManage] = useState(false)
   const [done, setDone] = useState<CloudAccount | null>(null)
-  const prepare = useMutation({ mutationFn: (id: string) => prepareCloudAccount(id, manage) })
+  const bases = useQuery(cloudAccountsQuery()).data?.bases
+  const [picked, setPicked] = useState('')
+  // The default when this organization may use it, else the only one.
+  const identity = picked || (bases?.find((b) => b.default) ?? (bases?.length === 1 ? bases[0] : undefined))?.identity || ''
+  const prepare = useMutation({ mutationFn: (id: string) => prepareCloudAccount(id, manage, identity) })
   const connect = useConnectCloudAccount()
   const prepared: CloudPrepared | undefined = prepare.data
 
@@ -51,10 +56,11 @@ function Connect() {
 
   const next = () => prepare.mutate(digits, { onSuccess: () => { connect.reset(); setStep(1) } })
   const submit = () => connect.mutate(
-    { provider: 'aws', name: name.trim(), accountId: digits, environment: env, manage },
+    { provider: 'aws', name: name.trim(), accountId: digits, environment: env, manage, identity: prepared?.identity ?? identity },
     { onSuccess: (a) => { setDone(a); setStep(2) } },
   )
-  const reset = () => { setStep(0); setName(''); setAccountId(''); setManage(false); setDone(null); prepare.reset(); connect.reset() }
+  const reset = () => { setStep(0); setName(''); setAccountId(''); setManage(false); setPicked(''); setDone(null); prepare.reset(); connect.reset() }
+  const choose = (bases?.length ?? 0) > 1
 
   return (
     <Box>
@@ -90,10 +96,11 @@ function Connect() {
                     </SimpleGrid>
                   </Radio.Group>
                 </Box>
+                {choose && bases && <IdentityPicker bases={bases} value={identity} onChange={setPicked} />}
                 {prepare.error && <Alert color="amber" variant="light" title="Argus cannot make the role yet">{(prepare.error as Error).message}</Alert>}
                 <Group justify="space-between" mt="xs">
                   <ButtonLink to="/cloud" variant="default">Cancel</ButtonLink>
-                  <Button disabled={!idOk || !nameOk} loading={prepare.isPending} onClick={next}>Next: create the role</Button>
+                  <Button disabled={!idOk || !nameOk || (choose && !identity)} loading={prepare.isPending} onClick={next}>Next: create the role</Button>
                 </Group>
               </Stack>
             </Card>
@@ -181,6 +188,10 @@ function RoleSummary({ prepared, digits }: { prepared: CloudPrepared; digits: st
   )
 }
 
+/**
+ * Which of argus-control's identities the roles will trust, when this
+ * organization may use more than one. Only those it may use are listed.
+ */
 const MONO = { input: { fontFamily: 'var(--mantine-font-family-monospace)' } }
 
 function Choice({ value, icon: Icon, title, text }: { value: string; icon: typeof IconEye; title: string; text: string }) {

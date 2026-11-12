@@ -1,6 +1,7 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MakeItForMe, WatchForRoles } from '~/components/cloud/ConnectRoles'
+import { IdentityPicker } from '~/components/cloud/IdentityPicker'
 import { RoleSetup } from '~/components/cloud/RoleSetup'
 import type { CloudPrepared } from '~/lib/cloud'
 import { renderWithProviders } from '~/test/render'
@@ -25,6 +26,7 @@ const prepared: CloudPrepared = {
   provider: 'aws', accountId: '412788931204', externalId: 'argus-0123', principal: 'arn:aws:iam::412788931204:user/argus',
   source: 'the access key', roleName: 'ArgusRead', readRoleArn: 'arn:aws:iam::412788931204:role/ArgusRead',
   template: 'Resources: {}', command: 'aws cloudformation deploy --stack-name argus-access', canDeploy: true,
+  identity: 'main', identityName: 'Main',
 }
 
 afterEach(() => vi.clearAllMocks())
@@ -39,7 +41,7 @@ describe('Connect an AWS account', () => {
     expect(await screen.findByText(/Waiting for the role in 412788931204/)).toBeInTheDocument()
     expect(onReady).not.toHaveBeenCalled()
     await waitFor(() => expect(onReady).toHaveBeenCalledTimes(1), { timeout: 8_000 })
-    expect(api.checkCloudAccount).toHaveBeenCalledWith('412788931204', false)
+    expect(api.checkCloudAccount).toHaveBeenCalledWith('412788931204', false, 'main')
   }, 10_000)
 
   it('says why a stack failed instead of waiting forever', async () => {
@@ -56,7 +58,7 @@ describe('Connect an AWS account', () => {
     renderWithProviders(<MakeItForMe prepared={prepared} name="payments-prod" manage />)
     fireEvent.click(screen.getByRole('button', { name: /Make the roles for me/ }))
     expect(await screen.findByText(/may not make the roles/)).toBeInTheDocument()
-    expect(api.deployCloudAccess).toHaveBeenCalledWith('412788931204', true, 'payments-prod')
+    expect(api.deployCloudAccess).toHaveBeenCalledWith('412788931204', true, 'payments-prod', 'main')
   })
 
   it('asks for no ARN: the steps end without anything to copy back', () => {
@@ -65,5 +67,23 @@ describe('Connect an AWS account', () => {
     expect(screen.queryByText(/ReadRoleArn/)).toBeNull()
     fireEvent.click(screen.getByText('Upload a file'))
     expect(screen.getByText(/nothing to copy back/)).toBeInTheDocument()
+  })
+})
+
+describe('Which identity a new account connects as', () => {
+  const bases = [
+    { provider: 'aws' as const, identity: 'main', name: 'Main', default: true, principal: 'arn:aws:iam::1:user/a', source: 'a key' },
+    { provider: 'aws' as const, identity: 'gov', name: 'GovCloud', default: false, error: 'no EC2 IMDS role found' },
+    { provider: 'aws' as const, identity: 'pay', name: 'Payments', default: false, principal: 'arn:aws:iam::1:user/p', source: 'a key' },
+  ]
+  it('offers every identity, marks the default, and refuses one that does not answer', () => {
+    const onChange = vi.fn()
+    renderWithProviders(<IdentityPicker bases={bases} value="main" onChange={onChange} />)
+    expect(screen.getByText('Default')).toBeInTheDocument()
+    expect(screen.getByText('no EC2 IMDS role found')).toBeInTheDocument()
+    const cards = screen.getAllByRole('radio')
+    expect(cards[1]).toBeDisabled()
+    fireEvent.click(screen.getByText('Payments'))
+    expect(onChange).toHaveBeenCalledWith('pay')
   })
 })

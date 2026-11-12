@@ -22,11 +22,11 @@ func TestCloudIdentityIsPlatformOnly(t *testing.T) {
 
 // Outside the default organization there is no Cloud identities setting, so
 // a missing identity must not send an admin looking for one.
-func TestNoIdentityNextStepNamesWhoSetsIt(t *testing.T) {
-	if got := noIdentityNextStep(context.Background()); !strings.Contains(got, "access key under Settings") {
+func TestCloudIdentityNextStepNamesWhoSetsIt(t *testing.T) {
+	if got := cloudIdentityNextStep(context.Background()); !strings.Contains(got, "Settings › Cloud identities") {
 		t.Errorf("default organization: %q", got)
 	}
-	other := noIdentityNextStep(WithTenant(context.Background(), &Tenant{ID: "a1b2c3d4e5f6"}))
+	other := cloudIdentityNextStep(WithTenant(context.Background(), &Tenant{ID: "a1b2c3d4e5f6"}))
 	if !strings.Contains(other, "platform's owner") || !strings.Contains(other, "default organization") {
 		t.Errorf("another organization: %q", other)
 	}

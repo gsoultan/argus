@@ -15,7 +15,7 @@ const CHECK_FOR = 30 * 60_000
  * it may not, the reason is shown and the steps below still work.
  */
 export function MakeItForMe({ prepared, name, manage }: { prepared: CloudPrepared; name: string; manage: boolean }) {
-  const deploy = useMutation({ mutationFn: () => deployCloudAccess(prepared.accountId, manage, name) })
+  const deploy = useMutation({ mutationFn: () => deployCloudAccess(prepared.accountId, manage, name, prepared.identity) })
   return (
     <Card withBorder padding="md" radius="md">
       <Stack gap="sm">
@@ -59,7 +59,7 @@ export function WatchForRoles({ prepared, manage, connecting, failed, onReady }:
   const [stale, setStale] = useState(false)
   const check = useQuery({
     queryKey: ['cloud', 'connect-check', prepared.accountId, manage, since],
-    queryFn: () => checkCloudAccount(prepared.accountId, manage),
+    queryFn: () => checkCloudAccount(prepared.accountId, manage, prepared.identity),
     enabled: !stale && !connecting && !failed,
     refetchInterval: (q) => (q.state.data?.ready || q.state.data?.stack?.failed ? false : CHECK_EVERY),
     refetchIntervalInBackground: true,

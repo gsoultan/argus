@@ -102,11 +102,7 @@ var cloudKindWord = map[cloud.Kind]string{
 // storageMissing refuses an action the manage role lacks the permissions
 // for, saying how to add them.
 func (a *API) storageMissing(m cloudManaged, act cloud.Action) error {
-	p, ok := a.cloudProvider(m.acct.Provider)
-	if !ok {
-		return nil
-	}
-	pc, ok := p.(cloud.PolicyChecker)
+	pc, ok := m.provider.(cloud.PolicyChecker)
 	if !ok || m.acct.ManageCheckedAt == nil {
 		return nil
 	}

@@ -168,7 +168,7 @@ func (a *API) postCloudAccess(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, code, err.Error())
 		return
 	}
-	p, _ := a.cloudProvider(m.acct.Provider)
+	p := m.provider
 	if err := consoleMissing(m.acct, p, in.Level); err != nil {
 		writeErr(w, http.StatusConflict, err.Error())
 		return
@@ -348,7 +348,7 @@ func (a *API) postCloudAccessSession(keys bool) http.HandlerFunc {
 			writeErr(w, code, err.Error())
 			return
 		}
-		p, _ := a.cloudProvider(m.acct.Provider)
+		p := m.provider
 		if err := consoleMissing(m.acct, p, g.Level); err != nil {
 			writeErr(w, http.StatusConflict, err.Error())
 			return

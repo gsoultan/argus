@@ -1824,6 +1824,9 @@ type CloudAccount struct {
 	// ManageCheckedAt when its policy was last read (migration 070).
 	ManageMissing   []string
 	ManageCheckedAt *time.Time
+	// Identity is which of argus-control's cloud identities the account is
+	// reached as (migration 078).
+	Identity string
 }
 
 func (m *CloudAccount) Schema(t *storm.Table) {
@@ -1836,6 +1839,7 @@ func (m *CloudAccount) Schema(t *storm.Table) {
 	t.Col(&m.ConnectedAt).Default("now()")
 	t.Col(&m.SyncErrors).Default("'{}'::jsonb")
 	t.Col(&m.ManageMissing).Default("'{}'::text[]")
+	t.Col(&m.Identity).Default("'main'::text")
 	t.CheckNamed("cloud_accounts_access_check", "access = ANY (ARRAY['read'::text, 'manage'::text])")
 	t.CheckNamed("cloud_accounts_environment_check", "environment = ANY (ARRAY['production'::text, 'staging'::text, 'development'::text])")
 	t.CheckNamed("cloud_accounts_provider_check", "provider = 'aws'::text")

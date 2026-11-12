@@ -1,6 +1,7 @@
 package control
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -49,6 +50,12 @@ type CloudAccount struct {
 	// policy; ManageCheckedAt is when, nil when it could not be read.
 	ManageMissing   []string   `json:"manageMissing"`
 	ManageCheckedAt *time.Time `json:"manageCheckedAt"`
+	// Identity is the id of the identity argus-control connects as.
+	Identity string `json:"identity"`
+	// IdentityMissing is an identity this organization can no longer use,
+	// so Argus does not reach the account until it is moved. Worked out
+	// when listing, never stored.
+	IdentityMissing bool `json:"identityMissing"`
 }
 
 // ErrCloudAccountExists is an account that is already connected.
@@ -62,14 +69,14 @@ const cloudAccountCols = `a.id::text, a.provider, a.name, a.account_id, a.role_a
 	COALESCE((SELECT jsonb_object_agg(kind, n) FROM (
 		SELECT kind, count(*) AS n FROM cloud_resources r
 		WHERE r.account_id = a.id AND r.gone_at IS NULL GROUP BY kind) c), '{}'::jsonb),
-	a.manage_missing, a.manage_checked_at`
+	a.manage_missing, a.manage_checked_at, a.identity`
 
 func scanCloudAccount(row pgx.Row) (CloudAccount, error) {
 	var c CloudAccount
 	var errs, counts []byte
 	if err := row.Scan(&c.ID, &c.Provider, &c.Name, &c.AccountID, &c.RoleARN, &c.ManageRoleARN, &c.Access, &c.Environment,
 		&c.IdentityARN, &c.Regions, &c.ConnectedBy, &c.ConnectedAt, &c.SyncedAt, &errs, &counts,
-		&c.ManageMissing, &c.ManageCheckedAt); err != nil {
+		&c.ManageMissing, &c.ManageCheckedAt, &c.Identity); err != nil {
 		return CloudAccount{}, err
 	}
 	c.SyncErrors, c.Counts = map[string]string{}, map[string]int{}
@@ -113,16 +120,62 @@ func (s *Store) CloudAccount(ctx context.Context, id string) (CloudAccount, erro
 	return c, err
 }
 
+// CloudAccountByAccountID reads the connected account with a provider's
+// account id, if there is one.
+func (s *Store) CloudAccountByAccountID(ctx context.Context, provider, accountID string) (CloudAccount, error) {
+	c, err := scanCloudAccount(s.db(ctx).QueryRow(ctx, `SELECT `+cloudAccountCols+` FROM cloud_accounts a
+		WHERE a.provider = $1 AND a.account_id = $2 AND a.archived_at IS NULL`, provider, accountID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CloudAccount{}, ErrCloudAccountNotFound
+	}
+	return c, err
+}
+
+// CloudAccountsByIdentity counts the connected accounts of a provider on
+// each identity.
+func (s *Store) CloudAccountsByIdentity(ctx context.Context, provider string) (map[string]int, error) {
+	rows, err := s.db(ctx).Query(ctx, `SELECT identity, count(*) FROM cloud_accounts
+		WHERE provider = $1 AND archived_at IS NULL GROUP BY identity`, provider)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var id string
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
+}
+
+// SetCloudAccountIdentity moves an account to another identity, which
+// Argus has already got in with, and records who it is there now.
+func (s *Store) SetCloudAccountIdentity(ctx context.Context, id, identity, identityARN string) (CloudAccount, error) {
+	tag, err := s.db(ctx).Exec(ctx, `UPDATE cloud_accounts SET identity = $2, identity_arn = $3
+		WHERE id::text = $1 AND archived_at IS NULL`, id, identity, identityARN)
+	if err != nil {
+		return CloudAccount{}, err
+	}
+	if tag.RowsAffected() == 0 {
+		return CloudAccount{}, ErrCloudAccountNotFound
+	}
+	return s.CloudAccount(ctx, id)
+}
+
 // CreateCloudAccount stores an account Verify has already let in.
 func (s *Store) CreateCloudAccount(ctx context.Context, c CloudAccount) (CloudAccount, error) {
 	var id string
 	err := s.db(ctx).QueryRow(ctx, `
 		INSERT INTO cloud_accounts (provider, name, account_id, role_arn, manage_role_arn, access, environment,
-			identity_arn, regions, connected_by)
-		VALUES ($1, $2, $3, $4, NULLIF($5, ''), CASE WHEN $5 = '' THEN 'read' ELSE 'manage' END, $6, $7, $8, $9)
+			identity_arn, regions, connected_by, identity)
+		VALUES ($1, $2, $3, $4, NULLIF($5, ''), CASE WHEN $5 = '' THEN 'read' ELSE 'manage' END, $6, $7, $8, $9, $10)
 		RETURNING id::text`,
 		c.Provider, c.Name, c.AccountID, c.RoleARN, c.ManageRoleARN, c.Environment, c.IdentityARN, c.Regions,
-		c.ConnectedBy).Scan(&id)
+		c.ConnectedBy, cmp.Or(c.Identity, DefaultCloudIdentity)).Scan(&id)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return CloudAccount{}, ErrCloudAccountExists

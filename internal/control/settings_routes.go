@@ -77,13 +77,26 @@ type Settings struct {
 	Cloud *CloudSettings `json:"cloud,omitempty"`
 }
 
-// CloudSettings is the control plane's own identity for each cloud: who it
-// is before it assumes a role in any connected account. One per cloud for
-// the whole control plane; every organization's accounts trust it only
-// together with an external id derived for that organization and account.
+// CloudSettings is the control plane's own identities for each cloud: who
+// it is before it assumes a role in a connected account. Every
+// organization's accounts trust an identity only together with an external
+// id derived for that organization and account.
 type CloudSettings struct {
-	AWS AWSIdentitySettings `json:"aws"`
+	AWS AWSCloudSettings `json:"aws"`
 }
+
+// AWSCloudSettings is AWS's identities. Identities nil (a console older
+// than several identities) keeps what is configured.
+type AWSCloudSettings struct {
+	// Default is the identity a new connection starts with: its id, or
+	// the name of one being added in the same save.
+	Default    string                `json:"default"`
+	Identities []AWSIdentitySettings `json:"identities"`
+}
+
+// MaxCloudIdentities bounds the identities per cloud, and with them the
+// providers and session caches the control plane keeps.
+const MaxCloudIdentities = 20
 
 // Where an identity comes from.
 const (
@@ -96,16 +109,21 @@ const (
 	IdentityFile = "file"
 )
 
-// AWSIdentitySettings is AWS's base identity. The secret access key is
+// AWSIdentitySettings is one AWS identity. The secret access key is
 // write-only.
 type AWSIdentitySettings struct {
-	Source             string  `json:"source"`
-	AccessKeyID        string  `json:"accessKeyId"`
-	SecretAccessKeySet bool    `json:"secretAccessKeySet"`
-	SecretAccessKey    *string `json:"secretAccessKey,omitempty"`
-	Profile            string  `json:"profile"`
-	CredentialsFile    string  `json:"credentialsFile"`
-	HomeRegion         string  `json:"homeRegion"`
+	// ID is empty for one being added; the control plane gives it one.
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Organizations may use it, by id; empty is every organization.
+	Organizations      []string `json:"organizations"`
+	Source             string   `json:"source"`
+	AccessKeyID        string   `json:"accessKeyId"`
+	SecretAccessKeySet bool     `json:"secretAccessKeySet"`
+	SecretAccessKey    *string  `json:"secretAccessKey,omitempty"`
+	Profile            string   `json:"profile"`
+	CredentialsFile    string   `json:"credentialsFile"`
+	HomeRegion         string   `json:"homeRegion"`
 }
 
 // CloudIdentityCheck is who a cloud says an identity is.
@@ -271,7 +289,7 @@ type SettingsBackend interface {
 	TestEmail(ctx context.Context, e EmailSettings) error
 	// TestCloud asks the provider who in would be, without saving it. A
 	// secret in leaves out is the one configured.
-	TestCloud(ctx context.Context, provider string, in CloudSettings) (CloudIdentityCheck, error)
+	TestCloud(ctx context.Context, provider string, in AWSIdentitySettings) (CloudIdentityCheck, error)
 }
 
 func (a *API) admin(w http.ResponseWriter, r *http.Request, what string) (string, bool) {
@@ -301,8 +319,9 @@ func (a *API) getSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !platformScope(r.Context()) {
-		// Every organization's accounts trust this identity; only the
-		// platform sees or changes it.
+		// Every organization's accounts trust these identities; only the
+		// platform sees or changes them. Others see the ones they may use
+		// under Cloud, without anything about where they come from.
 		s.Cloud = nil
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -322,6 +341,19 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 	if !platformScope(r.Context()) {
 		in.Cloud = nil // kept as configured
 	}
+	var before *CloudSettings
+	if in.Cloud != nil && in.Cloud.AWS.Identities != nil {
+		if cur, err := a.Settings.Settings(); err == nil {
+			before = cur.Cloud
+		}
+		if msg, err := a.cloudIdentitiesInUse(r.Context(), before, in.Cloud); err != nil {
+			a.fail(w, "cloud identity use", err)
+			return
+		} else if msg != "" {
+			writeErr(w, http.StatusConflict, msg)
+			return
+		}
+	}
 	changed, err := a.Settings.SaveSettings(r.Context(), in, actor)
 	if err != nil {
 		var bad *InputError
@@ -331,6 +363,9 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		a.fail(w, "save settings", err)
 		return
+	}
+	if len(changed) > 0 && before != nil {
+		a.auditCloudIdentities(r, actor, before, in.Cloud)
 	}
 	if len(changed) > 0 {
 		a.log.Info("settings changed from the console", "by", actor, "changed", changed)
@@ -400,18 +435,18 @@ func (a *API) postTestCloud(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "only AWS has an identity to test so far")
 		return
 	}
-	var in CloudSettings
+	var in AWSIdentitySettings
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	check, err := a.Settings.TestCloud(r.Context(), provider, in)
 	if err != nil {
-		a.log.Info("cloud identity test failed", "by", actor, "provider", provider, "error", err)
+		a.log.Info("cloud identity test failed", "by", actor, "provider", provider, "identity", in.ID, "error", err)
 		writeErr(w, http.StatusBadRequest, "AWS did not accept that identity: "+err.Error())
 		return
 	}
-	a.log.Info("cloud identity tested", "by", actor, "provider", provider, "arn", check.ARN)
+	a.log.Info("cloud identity tested", "by", actor, "provider", provider, "identity", in.ID, "arn", check.ARN)
 	writeJSON(w, http.StatusOK, check)
 }
 

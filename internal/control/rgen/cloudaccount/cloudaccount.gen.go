@@ -38,6 +38,7 @@ type Row struct {
 	ManageRoleArn   runtime.Null[string]
 	ManageMissing   []string
 	ManageCheckedAt runtime.Null[time.Time]
+	Identity        string
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -76,7 +77,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 18
+const nCols = 19
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -294,6 +295,13 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.tims[q.ntm] = r.ManageCheckedAt.V
 		q.ntm++
+	case 18:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.Identity
+		q.ns++
 	}
 }
 
@@ -471,6 +479,7 @@ var (
 	ManageRoleArn   = NullTextCol{15}
 	ManageMissing   = TextArrayCol{16}
 	ManageCheckedAt = NullTimeCol{17}
+	Identity        = TextCol{18}
 )
 
 // UUIDCol addresses a uuid column.
@@ -879,6 +888,13 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 18:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1000,6 +1016,13 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.tims[q.ntm] = p.tim
 		q.ntm++
+	case 18:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1165,8 +1188,19 @@ func (q Query) ManageCheckedAtLt(v time.Time) Query     { return q.Where(ManageC
 func (q Query) ManageCheckedAtLte(v time.Time) Query    { return q.Where(ManageCheckedAt.Lte(v)) }
 func (q Query) ManageCheckedAtIsNull() Query            { return q.Where(ManageCheckedAt.IsNull()) }
 func (q Query) ManageCheckedAtIsNotNull() Query         { return q.Where(ManageCheckedAt.IsNotNull()) }
+func (q Query) IdentityEq(v string) Query               { return q.Where(Identity.Eq(v)) }
+func (q Query) IdentityNotEq(v string) Query            { return q.Where(Identity.NotEq(v)) }
+func (q Query) IdentityGt(v string) Query               { return q.Where(Identity.Gt(v)) }
+func (q Query) IdentityGte(v string) Query              { return q.Where(Identity.Gte(v)) }
+func (q Query) IdentityLt(v string) Query               { return q.Where(Identity.Lt(v)) }
+func (q Query) IdentityLte(v string) Query              { return q.Where(Identity.Lte(v)) }
+func (q Query) IdentityEqLower(v string) Query          { return q.Where(Identity.EqLower(v)) }
+func (q Query) IdentityLike(v string) Query             { return q.Where(Identity.Like(v)) }
+func (q Query) IdentityILike(v string) Query            { return q.Where(Identity.ILike(v)) }
+func (q Query) IdentityIn(v ...string) Query            { return q.Where(Identity.In(v...)) }
+func (q Query) IdentityNotIn(v ...string) Query         { return q.Where(Identity.NotIn(v...)) }
 
-const selectPrefix = `SELECT "id", "provider", "name", "account_id", "role_arn", "access", "environment", "identity_arn", "regions", "connected_by", "connected_at", "synced_at", "sync_errors", "archived_at", "archived_by", "manage_role_arn", "manage_missing", "manage_checked_at" FROM "cloud_accounts"`
+const selectPrefix = `SELECT "id", "provider", "name", "account_id", "role_arn", "access", "environment", "identity_arn", "regions", "connected_by", "connected_at", "synced_at", "sync_errors", "archived_at", "archived_by", "manage_role_arn", "manage_missing", "manage_checked_at", "identity" FROM "cloud_accounts"`
 const countPrefix = `SELECT count(*) FROM "cloud_accounts"`
 const existsPrefix = `SELECT 1 FROM "cloud_accounts"`
 const existsSuffix = ` LIMIT 1`
@@ -1311,6 +1345,12 @@ var orderTable = [nCols][4]string{
 		"\"manage_checked_at\" ASC NULLS FIRST",
 		"\"manage_checked_at\" DESC NULLS LAST",
 	},
+	{ // identity
+		"\"identity\"",
+		"\"identity\" DESC",
+		"\"identity\" ASC NULLS FIRST",
+		"\"identity\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1334,6 +1374,7 @@ var identTable = [nCols]string{
 	"\"manage_role_arn\"",
 	"\"manage_missing\"",
 	"\"manage_checked_at\"",
+	"\"identity\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1366,7 +1407,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [18][28]runtime.Frag{
+var fragTable = [19][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -1907,6 +1948,36 @@ var fragTable = [18][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // identity
+		{}, // opNone
+		{A: "\"identity\" = $", B: ""},
+		{A: "\"identity\" <> $", B: ""},
+		{A: "\"identity\" > $", B: ""},
+		{A: "\"identity\" >= $", B: ""},
+		{A: "\"identity\" < $", B: ""},
+		{A: "\"identity\" <= $", B: ""},
+		{A: "lower(\"identity\") = lower($", B: ")"},
+		{A: "\"identity\" LIKE $", B: ""},
+		{A: "\"identity\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"identity\" = ANY($", B: ")"},
+		{A: "\"identity\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -2088,6 +2159,7 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 		return decErr
 	}
 	r.ManageCheckedAt = runtime.Nullable(rv[17], runtime.Timestamptz)
+	r.Identity = sl.Str(rv[18])
 	return decErr
 }
 
@@ -2209,6 +2281,10 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 18:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -2277,6 +2353,10 @@ func (q Query) bindPreds(b *binder) []any {
 			b.tims[ntm] = q.tims[ntm]
 			v = append(v, &b.tims[ntm])
 			ntm++
+		case 18:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
 		}
 	}
 	b.vals = v
@@ -2414,7 +2494,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "cloud_accounts" ("id", "provider", "name", "account_id", "role_arn", "access", "environment", "identity_arn", "regions", "connected_by", "connected_at", "synced_at", "sync_errors", "archived_at", "archived_by", "manage_role_arn", "manage_missing", "manage_checked_at") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING "id", "provider", "name", "account_id", "role_arn", "access", "environment", "identity_arn", "regions", "connected_by", "connected_at", "synced_at", "sync_errors", "archived_at", "archived_by", "manage_role_arn", "manage_missing", "manage_checked_at"`
+const insertSQL = `INSERT INTO "cloud_accounts" ("id", "provider", "name", "account_id", "role_arn", "access", "environment", "identity_arn", "regions", "connected_by", "connected_at", "synced_at", "sync_errors", "archived_at", "archived_by", "manage_role_arn", "manage_missing", "manage_checked_at", "identity") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING "id", "provider", "name", "account_id", "role_arn", "access", "environment", "identity_arn", "regions", "connected_by", "connected_at", "synced_at", "sync_errors", "archived_at", "archived_by", "manage_role_arn", "manage_missing", "manage_checked_at", "identity"`
 
 const updatePrefix = `UPDATE "cloud_accounts" SET `
 const deletePrefix = `DELETE FROM "cloud_accounts"`
@@ -2439,9 +2519,10 @@ const (
 	dManageRoleArn   uint64 = 1 << 14
 	dManageMissing   uint64 = 1 << 15
 	dManageCheckedAt uint64 = 1 << 16
+	dIdentity        uint64 = 1 << 17
 )
 
-const nUpdatable = 17
+const nUpdatable = 18
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -2462,6 +2543,7 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"manage_role_arn\" = $", B: ""},   // manage_role_arn
 	{A: "\"manage_missing\" = $", B: ""},    // manage_missing
 	{A: "\"manage_checked_at\" = $", B: ""}, // manage_checked_at
+	{A: "\"identity\" = $", B: ""},          // identity
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -2485,6 +2567,7 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{},                                     // manage_role_arn has no server-side form
 	{},                                     // manage_missing has no server-side form
 	{A: "\"manage_checked_at\" = now()", B: ""}, // manage_checked_at = the database's clock
+	{}, // identity has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -2514,9 +2597,10 @@ const (
 	iManageRoleArn   uint64 = 1 << 15
 	iManageMissing   uint64 = 1 << 16
 	iManageCheckedAt uint64 = 1 << 17
+	iIdentity        uint64 = 1 << 18
 )
 
-const nInsertable = 18
+const nInsertable = 19
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -2538,6 +2622,7 @@ var insCols = [nInsertable]string{
 	"\"manage_role_arn\"",
 	"\"manage_missing\"",
 	"\"manage_checked_at\"",
+	"\"identity\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -2546,7 +2631,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"cloud_accounts\""
-const insReturning = " RETURNING \"id\", \"provider\", \"name\", \"account_id\", \"role_arn\", \"access\", \"environment\", \"identity_arn\", \"regions\", \"connected_by\", \"connected_at\", \"synced_at\", \"sync_errors\", \"archived_at\", \"archived_by\", \"manage_role_arn\", \"manage_missing\", \"manage_checked_at\""
+const insReturning = " RETURNING \"id\", \"provider\", \"name\", \"account_id\", \"role_arn\", \"access\", \"environment\", \"identity_arn\", \"regions\", \"connected_by\", \"connected_at\", \"synced_at\", \"sync_errors\", \"archived_at\", \"archived_by\", \"manage_role_arn\", \"manage_missing\", \"manage_checked_at\", \"identity\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -2565,7 +2650,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"provider\", \"name\", \"account_id\", \"role_arn\", \"access\", \"environment\", \"identity_arn\", \"regions\", \"connected_by\", \"connected_at\", \"synced_at\", \"sync_errors\", \"archived_at\", \"archived_by\", \"manage_role_arn\", \"manage_missing\", \"manage_checked_at\""
+const updReturning = " RETURNING \"id\", \"provider\", \"name\", \"account_id\", \"role_arn\", \"access\", \"environment\", \"identity_arn\", \"regions\", \"connected_by\", \"connected_at\", \"synced_at\", \"sync_errors\", \"archived_at\", \"archived_by\", \"manage_role_arn\", \"manage_missing\", \"manage_checked_at\", \"identity\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -2799,6 +2884,12 @@ func (m *Mut) SetManageCheckedAtNull() {
 	m.expr &^= dManageCheckedAt
 }
 
+func (m *Mut) SetIdentity(v string) {
+	m.row.Identity = v
+	m.dirty |= dIdentity
+	m.expr &^= dIdentity
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -2949,6 +3040,11 @@ func (n *Ins) SetManageCheckedAtNull() {
 	n.set |= iManageCheckedAt
 }
 
+func (n *Ins) SetIdentity(v string) {
+	n.row.Identity = v
+	n.set |= iIdentity
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -2995,7 +3091,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 17)
+	set := make([]string, 0, 18)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -3049,6 +3145,9 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<17) != 0 {
 			set = append(set, "manage_checked_at")
 		}
+		if mask&(1<<18) != 0 {
+			set = append(set, "identity")
+		}
 	case 1:
 		if mask&(1<<2) != 0 {
 			set = append(set, "name")
@@ -3094,6 +3193,9 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<17) != 0 {
 			set = append(set, "manage_checked_at")
+		}
+		if mask&(1<<18) != 0 {
+			set = append(set, "identity")
 		}
 	}
 	return set
@@ -3170,6 +3272,7 @@ var assignFor = map[string]string{
 	"manage_role_arn":   "\"manage_role_arn\" = EXCLUDED.\"manage_role_arn\"",
 	"manage_missing":    "\"manage_missing\" = EXCLUDED.\"manage_missing\"",
 	"manage_checked_at": "\"manage_checked_at\" = EXCLUDED.\"manage_checked_at\"",
+	"identity":          "\"identity\" = EXCLUDED.\"identity\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -3249,6 +3352,8 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.ManageMissing)
 		case 17:
 			args = append(args, n.row.ManageCheckedAt.Arg())
+		case 18:
+			args = append(args, n.row.Identity)
 		}
 	}
 	var out Row
@@ -3286,7 +3391,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 18)
+	args := make([]any, 0, 19)
 	args = append(args, r.ID)
 	args = append(args, r.Provider)
 	args = append(args, r.Name)
@@ -3305,6 +3410,7 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.ManageRoleArn.Arg())
 	args = append(args, r.ManageMissing)
 	args = append(args, r.ManageCheckedAt.Arg())
+	args = append(args, r.Identity)
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -3349,13 +3455,14 @@ var copyCols = []string{
 	"manage_role_arn",
 	"manage_missing",
 	"manage_checked_at",
+	"identity",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [18]any
+	buf  [19]any
 }
 
 func (s *rowSource) Next() bool {
@@ -3391,6 +3498,7 @@ func (s *rowSource) Values() []any {
 	s.buf[15] = r.ManageRoleArn.Ptr()
 	s.buf[16] = &r.ManageMissing
 	s.buf[17] = r.ManageCheckedAt.Ptr()
+	s.buf[18] = &r.Identity
 	return s.buf[:]
 }
 
@@ -3439,8 +3547,9 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 15
 	mask |= 1 << 16
 	mask |= 1 << 17
+	mask |= 1 << 18
 	st := stmtForInsertNoReturn(mask, 0)
-	args := make([]any, 0, 18)
+	args := make([]any, 0, 19)
 	args = append(args, r.ID)
 	args = append(args, r.Provider)
 	args = append(args, r.Name)
@@ -3459,6 +3568,7 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.ManageRoleArn.Arg())
 	args = append(args, r.ManageMissing)
 	args = append(args, r.ManageCheckedAt.Arg())
+	args = append(args, r.Identity)
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -3528,6 +3638,8 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.ManageMissing)
 		case 17:
 			args = append(args, n.row.ManageCheckedAt.Arg())
+		case 18:
+			args = append(args, n.row.Identity)
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -3608,6 +3720,8 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.ManageMissing)
 		case 16:
 			args = append(args, m.row.ManageCheckedAt.Arg())
+		case 17:
+			args = append(args, m.row.Identity)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -3724,6 +3838,8 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.ManageMissing)
 		case 16:
 			args = append(args, m.row.ManageCheckedAt.Arg())
+		case 17:
+			args = append(args, m.row.Identity)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -3906,6 +4022,8 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.ManageMissing)
 		case 16:
 			args = append(args, m.row.ManageCheckedAt.Arg())
+		case 17:
+			args = append(args, m.row.Identity)
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

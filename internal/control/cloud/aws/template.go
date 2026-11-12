@@ -64,6 +64,15 @@ const (
 // the read one adds the manage role; deploying the read one over the
 // manage one removes it.
 func Template(principal, externalID string, manage bool) string {
+	return TemplateTrusting([]string{principal}, externalID, manage)
+}
+
+// TemplateTrusting is Template with roles that trust every one of
+// principals: while an account moves from one of argus-control's
+// identities to another, its roles trust both, so nothing stops working
+// between the stack update and Argus switching over.
+func TemplateTrusting(principals []string, externalID string, manage bool) string {
+	principal := principalYAML(principals)
 	desc := "Lets Argus read this account's inventory, as the person who asked."
 	if manage {
 		desc = "Lets Argus read this account's inventory and change its instances, disks, images, addresses, firewalls and load balancer targets, as the person who asked, and open time-limited console sessions for people someone approved."
@@ -72,7 +81,7 @@ func Template(principal, externalID string, manage bool) string {
 	fmt.Fprintf(&b, `AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
   %s
-  Trusts one identity and requires its external id and a source identity.
+  Trusts Argus's identity and requires its external id and a source identity.
 Resources:
 `, desc)
 	b.WriteString(roleYAML("ArgusRead", ReadRoleName, "argus-read", principal, externalID, ReadPolicy))
@@ -128,16 +137,34 @@ func roleYAML(logical, name, policy, principal, externalID string, actions []str
               - Effect: Allow
                 Resource: "*"
                 Action:
-%s`, logical, name, yamlQuote(principal), yamlQuote(externalID), policy, acts.String())
+%s`, logical, name, principal, yamlQuote(externalID), policy, acts.String())
 }
 
 // DeployCommand is a command that makes the role from AWS CloudShell or any
 // shell with the AWS CLI, without that shell having to reach Argus: the
 // template travels inside the command.
 func DeployCommand(principal, externalID string, manage bool) string {
-	return "cat > argus-access.yaml <<'ARGUS'\n" + Template(principal, externalID, manage) + "ARGUS\n" +
+	return DeployCommandTrusting([]string{principal}, externalID, manage)
+}
+
+// DeployCommandTrusting is DeployCommand for TemplateTrusting.
+func DeployCommandTrusting(principals []string, externalID string, manage bool) string {
+	return "cat > argus-access.yaml <<'ARGUS'\n" + TemplateTrusting(principals, externalID, manage) + "ARGUS\n" +
 		"aws cloudformation deploy --stack-name argus-access --template-file argus-access.yaml --capabilities CAPABILITY_NAMED_IAM && \\\n" +
 		"aws cloudformation describe-stacks --stack-name argus-access --query \"Stacks[0].Outputs[].[OutputKey,OutputValue]\" --output text\n"
+}
+
+// principalYAML is the trust policy's AWS principal: one quoted ARN, or a
+// flow list of them.
+func principalYAML(principals []string) string {
+	if len(principals) == 1 {
+		return yamlQuote(principals[0])
+	}
+	q := make([]string, len(principals))
+	for n, p := range principals {
+		q[n] = yamlQuote(p)
+	}
+	return "[" + strings.Join(q, ", ") + "]"
 }
 
 // yamlQuote double-quotes s for YAML. Both values are ARNs and hex the
@@ -173,5 +200,5 @@ func consoleRoleYAML(logical, name, principal, externalID, policyARN string) str
                 sts:SourceIdentity: "false"
       ManagedPolicyArns:
         - %s
-`, logical, name, yamlQuote(principal), yamlQuote(externalID), policyARN)
+`, logical, name, principal, yamlQuote(externalID), policyARN)
 }

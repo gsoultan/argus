@@ -14,6 +14,7 @@ import {
 import { run } from '~/lib/notify'
 import { FS, INK, SP } from '~/theme'
 import { EnvBadge } from './common'
+import { ChangeIdentity } from './ChangeIdentity'
 import { RoleSetup } from './RoleSetup'
 import type { CloudTab } from './tabs'
 
@@ -29,7 +30,7 @@ export function CloudOverview({ accounts, bases, instances, firewalls, volumes, 
   platform?: boolean
   onTab: (t: CloudTab) => void
 }) {
-  const base = bases.find((b) => b.provider === 'aws')
+  const base = bases.find((b) => b.default) ?? bases[0]
   if (accounts.length === 0) return <FirstAccount admin={admin} platform={platform} base={base} />
 
   const running = instances?.filter((i) => i.resource.state === 'running').length
@@ -57,7 +58,7 @@ export function CloudOverview({ accounts, bases, instances, firewalls, volumes, 
         <SectionCard title="Accounts" icon={IconBrandAws} flush
           action={admin ? <ButtonLink to="/cloud/connect" size="xs" variant="light">Connect another</ButtonLink> : undefined}>
           <Stack gap={0}>
-            {accounts.map((a) => <AccountRow key={a.id} a={a} admin={admin} />)}
+            {accounts.map((a) => <AccountRow key={a.id} a={a} admin={admin} bases={bases} />)}
           </Stack>
         </SectionCard>
 
@@ -126,9 +127,11 @@ function Finding({ color, icon: Icon, title, text, action }: {
   )
 }
 
-function AccountRow({ a, admin }: { a: CloudAccount; admin: boolean }) {
+function AccountRow({ a, admin, bases }: { a: CloudAccount; admin: boolean; bases: CloudBase[] }) {
   const sync = useSyncCloudAccount()
   const [confirm, setConfirm] = useState(false)
+  const [moving, setMoving] = useState(false)
+  const identity = bases.find((b) => b.identity === a.identity)
   const [access, setAccess] = useState(false)
   const [update, setUpdate] = useState(false)
   const stale = staleness(a)
@@ -150,8 +153,18 @@ function AccountRow({ a, admin }: { a: CloudAccount; admin: boolean }) {
                 <Badge variant="light" color="amber" radius="sm" tt="none" fw={500}>Role needs an update</Badge>
               </Tooltip>
             )}
+            {a.identityMissing && (
+              <Tooltip label={`Its identity (${a.identity}) is no longer available here, so Argus is not reading it. Change identity to reach it again.`} multiline w={300}>
+                <Badge variant="light" color="rose" radius="sm" tt="none" fw={500}>Identity missing</Badge>
+              </Tooltip>
+            )}
           </Group>
           <Text size={FS.micro} c="dimmed" ff="monospace" mt={2}>{a.accountId.replace(/(\d{4})(\d{4})(\d{4})/, '$1 $2 $3')} · {a.regions.length} region{a.regions.length === 1 ? '' : 's'}</Text>
+          {!a.identityMissing && bases.length > 1 && (
+            <Tooltip label={identity?.principal ?? a.identityArn} multiline w={320}>
+              <Text size={FS.micro} c="dimmed" mt={2} w="fit-content">Connects as {identity?.name ?? a.identity}</Text>
+            </Tooltip>
+          )}
           <Text size={FS.meta} c="dimmed" mt={SP.tight}>
             {counts.map(([n, w]) => `${n} ${w}${n === 1 ? '' : 's'}`).join(' · ')}
           </Text>
@@ -160,7 +173,7 @@ function AccountRow({ a, admin }: { a: CloudAccount; admin: boolean }) {
           </Text>
         </Box>
         {admin && (
-          <Group gap={4} wrap="nowrap">
+          <Group gap={4} wrap="wrap" justify="flex-end">
             <Button size="xs" variant="subtle" leftSection={<IconRefresh size={13} />} loading={sync.isPending}
               onClick={() => void run(() => sync.mutateAsync(a.id), { failure: 'Could not read the account again',
                 success: ['Reading again', `${a.name} is being read; this page updates when it is done.`] })}>
@@ -172,10 +185,17 @@ function AccountRow({ a, admin }: { a: CloudAccount; admin: boolean }) {
             {a.access === 'manage'
               ? <Button size="xs" variant="subtle" color="gray" onClick={() => setAccess(true)}>Make read only</Button>
               : <Button size="xs" variant="subtle" leftSection={<IconPencil size={13} />} onClick={() => setAccess(true)}>Allow changes</Button>}
+            {(a.identityMissing || bases.length > 1) && (
+              <Button size="xs" variant={a.identityMissing ? 'light' : 'subtle'} color={a.identityMissing ? 'rose' : undefined}
+                onClick={() => setMoving(true)}>
+                Change identity
+              </Button>
+            )}
             <Button size="xs" variant="subtle" color="rose" onClick={() => setConfirm(true)}>Disconnect</Button>
           </Group>
         )}
       </Flex>
+      {moving && <ChangeIdentity a={a} bases={bases} onClose={() => setMoving(false)} />}
       <Disconnect a={a} opened={confirm} onClose={() => setConfirm(false)} />
       {access && (a.access === 'manage'
         ? <ReadOnly a={a} onClose={() => setAccess(false)} />
@@ -315,7 +335,7 @@ function FirstAccount({ admin, platform, base }: { admin: boolean; platform: boo
           ))}
         </SimpleGrid>
         {base?.error && (
-          <Alert color="amber" variant="light" w="100%" title="argus-control has no AWS identity yet">
+          <Alert color="amber" variant="light" w="100%" title={`argus-control's AWS identity ${base.name} does not answer`}>
             <Text size={FS.meta}>
               It needs one to assume roles in your accounts. {platform
                 ? "On EC2 it uses the instance profile; anywhere else, give it an IAM user's access key under Settings › Cloud identities."
