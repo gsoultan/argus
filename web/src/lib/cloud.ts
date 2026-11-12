@@ -90,16 +90,38 @@ export interface CloudPrepared {
   roleName: string
   /** Set when the template makes the manage role too. */
   manageRoleName?: string
+  /** Where the roles will be: their names are fixed, so nobody copies them back. */
+  readRoleArn: string
+  manageRoleArn?: string
   template: string
   command: string
+  /** argus-control's own identity is in this account, so Argus can try to make the stack itself. */
+  canDeploy: boolean
+}
+
+/** Where the argus-access stack stands, when Argus can see it. */
+export interface CloudStackState {
+  status?: string
+  reason?: string
+  done: boolean
+  failed: boolean
+}
+
+export interface CloudCheck {
+  ready: boolean
+  detail?: string
+  stack?: CloudStackState
 }
 
 export interface CloudAccountInput {
   provider: 'aws'
   name: string
   accountId: string
-  roleArn: string
+  /** Empty for the role the template makes. */
+  roleArn?: string
   manageRoleArn?: string
+  /** Read and change, through the template's manage role unless one is named. */
+  manage?: boolean
   environment: CloudEnvironment
 }
 
@@ -124,6 +146,16 @@ export const cloudItemsQuery = (kind: CloudKind) =>
 
 export function prepareCloudAccount(accountId: string, manage = false): Promise<CloudPrepared> {
   return send('POST', '/api/v1/cloud/accounts/prepare', { provider: 'aws', accountId, manage })
+}
+
+/** Whether the template's roles are there and let Argus in yet. Nothing is kept or recorded. */
+export function checkCloudAccount(accountId: string, manage: boolean): Promise<CloudCheck> {
+  return send('POST', '/api/v1/cloud/accounts/check', { provider: 'aws', accountId, manage })
+}
+
+/** Asks Argus to make the stack with its own identity, in the account that identity is in. */
+export function deployCloudAccess(accountId: string, manage: boolean, name: string): Promise<CloudStackState> {
+  return send('POST', '/api/v1/cloud/accounts/deploy', { provider: 'aws', accountId, manage, name })
 }
 
 export function templateURL(accountId: string): string {

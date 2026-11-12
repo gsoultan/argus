@@ -49,6 +49,8 @@ type Fake struct {
 	CostRows     []CostRow
 	CostForecast *float64
 	CostErr      error
+	// Stack is the argus-access stack DeployAccess makes.
+	Stack FakeStack
 
 	reqs, launched, made int
 }
@@ -367,3 +369,44 @@ var (
 	_ Manager   = (*Fake)(nil)
 	_ BulkPower = (*Fake)(nil)
 )
+
+// FakeStack is the fake's argus-access stack: what DeployAccess was given
+// and where it stands.
+type FakeStack struct {
+	State    StackState
+	Template string
+	Actor    Actor
+	// DeployErr fails the next DeployAccess.
+	DeployErr error
+}
+
+// DeployAccess makes the stack in the fake's home account, the account of
+// its base identity, and nowhere else. The test admits the roles itself.
+func (f *Fake) DeployAccess(_ context.Context, accountID, template string, actor Actor) (StackState, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if HomeAccount(f.BaseIdentity.Principal) != accountID {
+		return StackState{}, ErrNotHomeAccount
+	}
+	if f.Stack.DeployErr != nil {
+		err := f.Stack.DeployErr
+		f.Stack.DeployErr = nil
+		return StackState{}, err
+	}
+	f.Calls = append(f.Calls, "deploy "+string(actor))
+	f.Stack.Template, f.Stack.Actor = template, actor
+	f.Stack.State = StackState{Status: "CREATE_IN_PROGRESS"}
+	return f.Stack.State, nil
+}
+
+// AccessStack reports the fake's stack.
+func (f *Fake) AccessStack(_ context.Context, accountID string) (StackState, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if HomeAccount(f.BaseIdentity.Principal) != accountID {
+		return StackState{}, ErrNotHomeAccount
+	}
+	return f.Stack.State, nil
+}
+
+var _ Deployer = (*Fake)(nil)

@@ -1,26 +1,55 @@
 import { Anchor, Box, Button, Code, CopyButton, Group, List, SegmentedControl, Stack, Text } from '@mantine/core'
-import { IconCheck, IconCopy, IconDownload, IconExternalLink } from '@tabler/icons-react'
+import { IconCheck, IconCopy, IconDownload, IconExternalLink, IconTerminal2 } from '@tabler/icons-react'
 import { useState } from 'react'
 import type { CloudPrepared } from '~/lib/cloud'
 import { downloadText } from '~/lib/download'
 import { FS } from '~/theme'
 
+const CLOUDSHELL = 'https://console.aws.amazon.com/cloudshell/home'
+
 /**
- * How to make Argus's roles in an account: upload the template in the
- * CloudFormation console, or paste one command into CloudShell. Both make
- * or update the same `argus-access` stack, so allowing changes later is
- * the same steps with the other template.
+ * How to make Argus's roles in an account yourself: paste one command into
+ * CloudShell, or upload the template in the CloudFormation console. Both
+ * make or update the same `argus-access` stack, so allowing changes later is
+ * the same steps with the other template. The roles have fixed names, so
+ * nothing has to be copied back: Argus finds them by itself.
  */
 export function RoleSetup({ prepared, update = false }: { prepared: CloudPrepared; update?: boolean }) {
-  const [way, setWay] = useState<'console' | 'cli'>('console')
+  const [way, setWay] = useState<'cli' | 'console'>('cli')
   const id = prepared.accountId
   const file = `argus-access-${id}.yaml`
-  const outputs = prepared.manageRoleName ? <><Code>ReadRoleArn</Code> and <Code>ManageRoleArn</Code></> : <Code>ReadRoleArn</Code>
+  const done = update ? 'UPDATE_COMPLETE' : 'CREATE_COMPLETE'
   return (
-    <Stack gap="md">
-      <SegmentedControl value={way} onChange={(v) => setWay(v as 'console' | 'cli')} w="fit-content"
-        data={[{ value: 'console', label: 'In the AWS console' }, { value: 'cli', label: 'With CloudShell or the AWS CLI' }]} />
-      {way === 'console' ? (
+    <Stack gap="md" style={{ minWidth: 0 }}>
+      <SegmentedControl value={way} onChange={(v) => setWay(v as 'cli' | 'console')} w="fit-content"
+        data={[{ value: 'cli', label: 'One command' }, { value: 'console', label: 'Upload a file' }]} />
+      {way === 'cli' ? (
+        <List type="ordered" spacing="sm" size="sm">
+          <List.Item>
+            <Group gap="xs">
+              Copy the command.
+              <CopyButton value={prepared.command}>
+                {({ copied, copy }) => (
+                  <Button size="xs" variant={copied ? 'light' : 'filled'} color={copied ? 'teal' : undefined}
+                    leftSection={copied ? <IconCheck size={13} /> : <IconCopy size={13} />} onClick={copy}>
+                    {copied ? 'Copied' : 'Copy the command'}
+                  </Button>
+                )}
+              </CopyButton>
+            </Group>
+          </List.Item>
+          <List.Item>
+            <Group gap="xs">
+              <span>Open CloudShell signed in to account {id}, paste it, and press Enter.</span>
+              <Button size="xs" variant="default" component="a" href={CLOUDSHELL} target="_blank" rel="noreferrer"
+                leftSection={<IconTerminal2 size={14} />} rightSection={<IconExternalLink size={12} />}>
+                Open CloudShell
+              </Button>
+            </Group>
+          </List.Item>
+          <List.Item>That is all. It takes about a minute{update ? '' : ', and Argus connects as soon as the roles work'}.</List.Item>
+        </List>
+      ) : (
         <List type="ordered" spacing="sm" size="sm">
           <List.Item>
             <Group gap="xs">
@@ -55,26 +84,16 @@ export function RoleSetup({ prepared, update = false }: { prepared: CloudPrepare
             </>
           )}
           <List.Item>Tick <b>I acknowledge that AWS CloudFormation might create IAM resources with custom names</b>, then <b>Submit</b>.</List.Item>
-          <List.Item>When it says <b>{update ? 'UPDATE_COMPLETE' : 'CREATE_COMPLETE'}</b>, copy {outputs} from its <b>Outputs</b> tab.</List.Item>
+          <List.Item>Wait for <b>{done}</b>. There is nothing to copy back{update ? '' : ': Argus connects by itself'}.</List.Item>
         </List>
-      ) : (
-        <Stack gap="xs">
-          <Text size="sm">
-            Paste this into <Anchor href="https://console.aws.amazon.com/cloudshell/home" target="_blank" rel="noreferrer">AWS CloudShell</Anchor> while
-            signed in to account {id}, or any shell with the AWS CLI. It carries the template with it and prints {outputs} at the end.
+      )}
+      {way === 'cli' && (
+        <Box style={{ minWidth: 0, maxWidth: '100%' }}>
+          <Text size={FS.micro} c="dimmed" mb={4}>
+            The command carries the template with it, so CloudShell does not need to reach Argus. It also works in any shell with the AWS CLI.
           </Text>
-          <Box pos="relative">
-            <Code block fz={FS.micro} mah={220} style={{ overflow: 'auto' }}>{prepared.command}</Code>
-            <CopyButton value={prepared.command}>
-              {({ copied, copy }) => (
-                <Button size="xs" variant={copied ? 'light' : 'default'} color={copied ? 'teal' : undefined} pos="absolute" top={8} right={8}
-                  leftSection={copied ? <IconCheck size={13} /> : <IconCopy size={13} />} onClick={copy}>
-                  {copied ? 'Copied' : 'Copy'}
-                </Button>
-              )}
-            </CopyButton>
-          </Box>
-        </Stack>
+          <Code block fz={FS.micro} mah={160} style={{ overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{prepared.command}</Code>
+        </Box>
       )}
     </Stack>
   )
