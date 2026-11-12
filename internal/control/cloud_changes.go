@@ -243,18 +243,6 @@ const madeByArgusSQL = `EXISTS (SELECT 1 FROM cloud_changes c JOIN cloud_account
 	WHERE ca.provider = a.provider AND ca.account_id = a.account_id AND c.resource_id = r.provider_id
 	AND c.action IN ('launch', 'firewall-create') AND c.state = 'applied')`
 
-// CloudMadeByArgus reports whether Argus itself made resource id in the
-// account; see madeByArgusSQL.
-func (s *Store) CloudMadeByArgus(ctx context.Context, accountID, id string) (bool, error) {
-	var ok bool
-	err := s.db(ctx).QueryRow(ctx, `SELECT `+madeByArgusSQL+`
-		FROM cloud_accounts a, (SELECT $2::text AS provider_id) r WHERE a.id::text = $1`, accountID, id).Scan(&ok)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	}
-	return ok, err
-}
-
 // SetCloudManageRole records the role changes are made with, or clears
 // it, which makes the account read only.
 func (s *Store) SetCloudManageRole(ctx context.Context, id, arn string) (CloudAccount, error) {

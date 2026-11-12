@@ -141,7 +141,6 @@ func TestCloudStopRunsAtOnceAsThePerson(t *testing.T) {
 // else, and it runs as the person who asked once approved.
 func TestCloudRemoveOnProductionNeedsSomeoneElse(t *testing.T) {
 	e := changeAPI(t)
-	e.launchedByArgus(t)
 	e.ask(t, "admin-token", e.body("remove", `,"confirm":"pay-api"`), http.StatusBadRequest)
 	c := e.ask(t, "admin-token", e.body("remove", `,"confirm":"pay-api-01","spec":{"finalSnapshots":true}`), http.StatusAccepted)
 	if c.State != "awaiting_approval" || c.PlanHash == "" || !strings.Contains(c.Summary, "1 disk") {
@@ -180,7 +179,6 @@ func TestCloudRemoveOnProductionNeedsSomeoneElse(t *testing.T) {
 
 func TestCloudRemoveRespectsTerminationProtection(t *testing.T) {
 	e := changeAPI(t)
-	e.launchedByArgus(t)
 	e.fake.Protected = map[string]bool{e.instance(): true}
 	w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes", "admin-token", e.body("remove", `,"confirm":"pay-api-01"`))
 	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "termination protection") {
@@ -197,7 +195,6 @@ func TestCloudRemoveRespectsTerminationProtection(t *testing.T) {
 // between, the change goes back for a decision on the new plan.
 func TestCloudRemoveReplansWhenTheInstanceChanged(t *testing.T) {
 	e := changeAPI(t)
-	e.launchedByArgus(t)
 	c := e.ask(t, "admin-token", e.body("remove", `,"confirm":"pay-api-01"`), http.StatusAccepted)
 	r := &e.fake.Resources["ap-southeast-3"][0]
 	r.Links = append(r.Links, cloud.Ref{Kind: cloud.KindVolume, ID: e.account + "-vol-2", Name: "/dev/xvdb"})

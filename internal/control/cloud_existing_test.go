@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -10,14 +11,11 @@ import (
 )
 
 /*
-Instances that were already in the account: Argus reads and operates them
-like any other, but never terminates one it did not launch, and
-disconnecting the account changes nothing in it.
+Resources that were already in the account: the first read after
+connecting takes in every one of them, Argus manages and removes them like
+the ones it made (by typed name, with approval where the environment needs
+it), and disconnecting the account changes nothing in it.
 */
-
-// launchedByArgus records that Argus launched the fixture's instance, as an
-// applied launch would.
-func (e changeEnv) launchedByArgus(t *testing.T) { e.madeByArgus(t, "launch", e.instance()) }
 
 // madeByArgus records an applied change of action that made resource id.
 func (e changeEnv) madeByArgus(t *testing.T, action, id string) {
@@ -42,49 +40,85 @@ func (e changeEnv) noCall(t *testing.T, prefixes ...string) {
 	}
 }
 
-// An instance that was in the account before Argus is in its inventory and
-// can be operated, but a remove is refused before anything is asked of AWS.
-func TestCloudExistingInstanceIsManagedButNeverRemoved(t *testing.T) {
+// The first read after connecting takes in everything already in the
+// account: every kind, in every region, made by Argus or not.
+func TestCloudFirstSyncInventoriesEverythingAlreadyThere(t *testing.T) {
+	e := cloudAPI(t)
+	p := e.prepare(t)
+	e.fake.Roles[e.roleARN()] = p.ExternalID
+	want := map[string]bool{}
+	for i, region := range []string{"ap-southeast-3", "ap-southeast-1"} {
+		var rs []cloud.Resource
+		for _, k := range cloud.Kinds {
+			id := e.account + "-" + string(k) + "-" + strconv.Itoa(i)
+			rs = append(rs, cloud.Resource{Kind: k, ID: id, Name: "existing-" + id, Region: region})
+			want[id] = true
+		}
+		e.fake.Resources[region] = rs
+	}
+	c := e.connect(t, http.StatusCreated)
+	waitCloudSync(t, e, c)
+	for _, k := range cloud.Kinds {
+		for _, it := range e.items(t, string(k)) {
+			if it.MadeByArgus {
+				t.Errorf("%s was already in the account but is marked as made by Argus", it.Resource.ID)
+			}
+			delete(want, it.Resource.ID)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("the first sync left out resources already in the account: %v", want)
+	}
+}
+
+// An instance that was in the account before Argus is in its inventory, is
+// operated, and is removed like any other: by its typed name, waiting for
+// someone else on Production, and only then terminated.
+func TestCloudExistingInstanceIsManagedAndRemovable(t *testing.T) {
 	e := changeAPI(t)
 	found := false
 	for _, it := range e.items(t, "instance") {
 		if it.Resource.ID == e.instance() {
-			found = true
+			found = !it.MadeByArgus
 		}
 	}
 	if !found {
-		t.Fatal("an instance Argus did not launch must still be in its inventory")
+		t.Fatal("an instance Argus did not launch must be in its inventory, marked as already there")
 	}
 	if c := e.ask(t, "admin-token", e.body("stop", ""), http.StatusOK); c.State != "applied" {
-		t.Fatalf("an existing instance must still be operable: %+v", c)
-	}
-
-	w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes", "admin-token", e.body("remove", `,"confirm":"pay-api-01"`))
-	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "Argus did not launch it") {
-		t.Fatalf("removing an instance Argus did not launch must be refused: %d %s", w.Code, w.Body)
+		t.Fatalf("an existing instance must be operable: %+v", c)
 	}
 	pw := do(t, e.h, http.MethodGet, "/api/v1/cloud/remove-plan?accountId="+e.acct.ID+"&region=ap-southeast-3&resourceId="+e.instance(), "admin-token", "")
-	if pw.Code != http.StatusOK || !strings.Contains(pw.Body.String(), "Argus did not launch it") {
-		t.Fatalf("the remove dialog must say why: %s", pw.Body)
+	if pw.Code != http.StatusOK || strings.Contains(pw.Body.String(), `"refusal":"`) {
+		t.Fatalf("an existing instance must be removable: %d %s", pw.Code, pw.Body)
+	}
+	e.ask(t, "admin-token", e.body("remove", `,"confirm":"pay-api"`), http.StatusBadRequest)
+	e.noCall(t, "remove ")
+	c := e.ask(t, "admin-token", e.body("remove", `,"confirm":"pay-api-01"`), http.StatusAccepted)
+	if c.State != "awaiting_approval" {
+		t.Fatalf("removing on Production must wait for someone else: %+v", c)
 	}
 	e.noCall(t, "remove ")
+	if done := e.approveChange(t, c); done.State != "applied" {
+		t.Fatalf("remove: %+v", done)
+	}
+	e.called(t, "remove "+e.instance()+" snapshots=false "+e.admin)
 }
 
-// A tag that claims Argus launched it is not Argus's record.
-func TestCloudLaunchedTagIsNotEnoughToRemove(t *testing.T) {
+// Termination protection still stops a remove, whoever made the instance.
+func TestCloudExistingInstanceKeepsTerminationProtection(t *testing.T) {
 	e := changeAPI(t)
-	e.fake.Resources["ap-southeast-3"][0].Tags["argus:launched-by"] = e.admin
+	e.fake.Protected = map[string]bool{e.instance(): true}
 	w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes", "admin-token", e.body("remove", `,"confirm":"pay-api-01"`))
 	if w.Code != http.StatusConflict {
-		t.Fatalf("a tag anyone can write let a remove through: %d %s", w.Code, w.Body)
+		t.Fatalf("a protected instance must be refused: %d %s", w.Code, w.Body)
 	}
 	e.noCall(t, "remove ")
 }
 
-// Even one Argus launched is refused while an Auto Scaling group owns it.
+// An instance is refused while an Auto Scaling group owns it.
 func TestCloudRemoveRefusesAutoScalingInstances(t *testing.T) {
 	e := changeAPI(t)
-	e.launchedByArgus(t)
 	e.fake.Resources["ap-southeast-3"][0].Tags["aws:autoscaling:groupName"] = "web-asg"
 	w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes", "admin-token", e.body("remove", `,"confirm":"pay-api-01"`))
 	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "Auto Scaling group web-asg") {
@@ -115,7 +149,6 @@ func TestCloudManagedByNamesTheOwner(t *testing.T) {
 // approved.
 func TestCloudDisconnectLeavesTheAccountAlone(t *testing.T) {
 	e := changeAPI(t)
-	e.launchedByArgus(t)
 	c := e.ask(t, "admin-token", e.body("remove", `,"confirm":"pay-api-01"`), http.StatusAccepted)
 	before := len(e.fake.CallLog())
 	if w := do(t, e.h, http.MethodDelete, "/api/v1/cloud/accounts/"+e.acct.ID, "admin-token", ""); w.Code != http.StatusNoContent {
@@ -137,15 +170,15 @@ func TestCloudDisconnectLeavesTheAccountAlone(t *testing.T) {
 	e.noCall(t, "remove ")
 }
 
-// A security group that was in the account is never deleted from Argus,
+// A security group that was in the account is deleted like one Argus made,
 // and the inventory says which groups and instances Argus made.
-func TestCloudExistingFirewallIsNeverDeleted(t *testing.T) {
+func TestCloudExistingFirewallIsDeletable(t *testing.T) {
 	e := networkAPI(t)
-	w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes", "admin-token", e.storage("firewall-delete", "sg-0000000000000bbb2", `,"confirm":"db"`))
-	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "Argus did not make it") {
-		t.Fatalf("deleting a group Argus did not make must be refused: %d %s", w.Code, w.Body)
+	d := e.ask(t, "admin-token", e.storage("firewall-delete", "sg-0000000000000bbb2", `,"confirm":"db"`), http.StatusAccepted)
+	if done := e.approveChange(t, d); done.State != "applied" {
+		t.Fatalf("an existing group must be deletable: %+v", done)
 	}
-	e.noCall(t, "firewall-delete ")
+	e.called(t, "firewall-delete sg-0000000000000bbb2 "+e.admin)
 	sg := e.account + "-sg-1"
 	made := map[string]bool{}
 	for _, it := range e.items(t, "firewall") {

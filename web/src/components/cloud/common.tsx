@@ -39,7 +39,7 @@ export function OriginBadge({ it, size = 'sm' }: { it: CloudItem; size?: 'xs' | 
   return it.madeByArgus
     ? <Tooltip label="Argus launched or created it, by its own record"><Badge size={size} variant="light" color="blue" radius="sm" tt="none">Made by Argus</Badge></Tooltip>
     : (
-      <Tooltip label="It was in the account before Argus, or Argus has no record of making it. Argus manages it but never removes or deletes it." multiline w={260}>
+      <Tooltip label="It was in the account before Argus, or Argus has no record of making it. Argus read it on connecting and manages it like anything else." multiline w={260}>
         <Badge size={size} variant="light" color="violet" radius="sm" tt="none">Already in the account</Badge>
       </Tooltip>
     )

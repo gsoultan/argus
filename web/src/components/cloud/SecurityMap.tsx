@@ -219,7 +219,7 @@ function Side({ map, sel, items, onOpen }: { map: SecurityMap; sel: string | nul
       <Stack gap={6}>
         <Group gap={8}><Box w={22} style={{ borderTop: `2px solid ${ink.line}` }} /><Text size={FS.micro} c="dimmed">allowed in</Text></Group>
         <Group gap={8}><Box w={22} style={{ borderTop: `2px solid ${ink.risky}` }} /><Text size={FS.micro} c="dimmed">risky from the internet</Text></Group>
-        <Group gap={8}><Text size={FS.micro} fw={600} c="violet">existing</Text><Text size={FS.micro} c="dimmed">was in the account; never deleted from Argus</Text></Group>
+        <Group gap={8}><Text size={FS.micro} fw={600} c="violet">existing</Text><Text size={FS.micro} c="dimmed">was in the account before Argus</Text></Group>
         <Group gap={8}><Text size={FS.micro} fw={600} c="blue">Argus</Text><Text size={FS.micro} c="dimmed">made by Argus</Text></Group>
       </Stack>
     </Stack>
