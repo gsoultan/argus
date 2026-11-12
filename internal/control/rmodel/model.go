@@ -251,6 +251,9 @@ type Asset struct {
 	ConnectAsk *string
 	// ControlHost marks the server argus-control runs on (migration 076).
 	ControlHost bool
+	// Alias is the name the console shows in place of the hostname, empty
+	// for none (migration 077). A label only.
+	Alias string
 }
 
 func (m *Asset) Schema(t *storm.Table) {
@@ -290,6 +293,7 @@ func (m *Asset) Schema(t *storm.Table) {
 		"control_mode = ANY (ARRAY['attended'::text, 'unattended'::text])")
 	t.Col(&m.ControlNeedsApproval).Default("false")
 	t.Col(&m.ControlHost).Default("false")
+	t.Col(&m.Alias).Default("''::text")
 	t.CheckNamed("assets_connect_ask_check",
 		"(connect_ask IS NULL) OR (connect_ask = ANY (ARRAY['never'::text, 'ask'::text, 'tell'::text]))")
 }

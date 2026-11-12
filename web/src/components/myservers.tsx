@@ -22,7 +22,7 @@ import { seesWholeFleet } from '~/lib/roles'
 import { useSessions } from '~/lib/sessions'
 import type { Asset, MyServer } from '~/types/domain'
 import { isUp, kindOf, reachOf, shortName, type Reach } from '~/lib/reach'
-import { ASSET_TYPES, ASSET_TYPE_LABEL, assetTypeOf, type AssetType } from '~/lib/assetType'
+import { ASSET_TYPES, ASSET_TYPE_LABEL, assetHostnameAside, assetShortName, assetTypeOf, type AssetType } from '~/lib/assetType'
 import { needsUpdates, updatesWaitingQuery, type UpdatesWaitingRow } from '~/lib/updatesWaiting'
 import { resourcesLowQuery, warningBadge, warningText, warningTone, type ResourcesLowRow } from '~/lib/resourcesLow'
 import { isConfigured } from '~/lib/live'
@@ -114,7 +114,8 @@ export function ServerCard({ asset: a, admin = false, mine, waiting, low }: {
   // The type first: a laptop reads as a laptop whatever it runs.
   const KindIcon = kind === 'android' ? IconDeviceMobile : type === 'workstation' ? IconDeviceLaptop
     : kind === 'windows' ? IconBrandWindows : IconServer2
-  const name = shortName(a.hostname)
+  const name = assetShortName(a)
+  const aside = assetHostnameAside(a)
   const noAccount = a.principals.length === 0
   const disabled = reach === 'blocked' || noAccount
   // How this person may reach it from their own terminal, when they may.
@@ -135,9 +136,12 @@ export function ServerCard({ asset: a, admin = false, mine, waiting, low }: {
               <KindIcon size={20} stroke={1.6} />
             </ThemeIcon>
             <Box style={{ minWidth: 0 }}>
-              <Text component="h3" fw={600} size="md" truncate style={{ margin: 0 }}>
+              <Text component="h3" fw={600} size="md" truncate style={{ margin: 0 }} title={aside}>
                 {name}
               </Text>
+              {aside && (
+                <Text size={FS.meta} c="dimmed" ff="monospace" truncate data-testid="asset-hostname">{aside}</Text>
+              )}
               <Text size={FS.meta} c="dimmed" truncate>
                 {type === 'workstation' ? 'Workstation · ' : ''}{a.os} · {kind === 'android' ? 'Android device' : rdp ? 'Remote Desktop' : 'Terminal (SSH)'}
               </Text>
@@ -455,7 +459,7 @@ export function ServerCards() {
       (assets ?? [])
         .filter((a) => {
           if (needle) {
-            const hay = `${a.hostname} ${a.address} ${(a.addresses ?? []).map((x) => x.address).join(' ')} ${a.os} ${a.tags.join(' ')} ${a.principals.join(' ')}`
+            const hay = `${a.alias ?? ''} ${a.hostname} ${a.address} ${(a.addresses ?? []).map((x) => x.address).join(' ')} ${a.os} ${a.tags.join(' ')} ${a.principals.join(' ')}`
             if (!hay.toLowerCase().includes(needle)) return false
           }
           const up = isUp(reachOf(a))
@@ -467,7 +471,7 @@ export function ServerCards() {
           if (lowOnly && !lowBy.has(a.id)) return false
           return true
         })
-        .sort((x, y) => shortName(x.hostname).localeCompare(shortName(y.hostname))),
+        .sort((x, y) => assetShortName(x).localeCompare(assetShortName(y))),
     [assets, needle, show, kind, type, needs, waitingBy, lowOnly, lowBy],
   )
 

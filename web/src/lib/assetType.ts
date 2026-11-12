@@ -31,6 +31,26 @@ export const ASSET_TYPE_BLURB: Record<AssetType, string> = {
   device: 'A phone or tablet with the Argus app on it.',
 }
 
+/**
+ * The name to show for an asset: its alias when it has one, else its
+ * hostname. Where the alias is shown, show assetHostnameAside() beside it, so
+ * the name a terminal, a certificate and the audit log use is never hidden.
+ */
+export function assetName(a: { hostname: string; alias?: string } | undefined): string {
+  if (!a) return ''
+  return a.alias?.trim() || a.hostname
+}
+
+/** Its alias, or the first label of its hostname, for tight places. */
+export function assetShortName(a: { hostname: string; alias?: string }): string {
+  return a.alias?.trim() || (a.hostname.split('.')[0] ?? a.hostname)
+}
+
+/** The hostname, when the asset is shown by its alias; else undefined. */
+export function assetHostnameAside(a: { hostname: string; alias?: string } | undefined): string | undefined {
+  return a?.alias?.trim() ? a.hostname : undefined
+}
+
 /** The noun for one asset, lower case: "server", "workstation", "device". */
 export function assetNoun(a: Asset | undefined): string {
   return ASSET_TYPE_LABEL[assetTypeOf(a)].lower

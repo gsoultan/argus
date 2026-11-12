@@ -27,11 +27,16 @@ export function SettingsTab({ asset, canEdit, onEdit }: {
     <SettingsSections>
       <SettingsSection
         title="Details"
-        description={device ? 'Name, how it is controlled, and tags.' : 'Name, address, protocol and tags.'}
+        description={device ? 'Alias, name, how it is controlled, and tags.' : 'Alias, hostname, address, protocol and tags.'}
       >
         <Card padding="md">
           <Stack gap="sm">
-            <Detail label="Name"><Text size={FS.meta} style={{ overflowWrap: 'anywhere' }}>{asset.hostname}</Text></Detail>
+            <Detail label="Alias">
+              {asset.alias
+                ? <Text size={FS.meta} style={{ overflowWrap: 'anywhere' }}>{asset.alias}</Text>
+                : <Text size={FS.meta} c="dimmed">None. The console shows its hostname.</Text>}
+            </Detail>
+            <Detail label="Hostname"><Text size={FS.meta} ff="monospace" style={{ overflowWrap: 'anywhere' }}>{asset.hostname}</Text></Detail>
             <Detail label="Address"><Mono>{asset.address}{asset.port ? `:${asset.port}` : ''}</Mono></Detail>
             {asset.agentHostname && (
               <Detail label="Agent name">

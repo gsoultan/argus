@@ -618,8 +618,12 @@ func (s *Store) Session(ctx context.Context, id string) (*Session, error) {
 type Asset struct {
 	ID       string `json:"id"`
 	Hostname string `json:"hostname"`
-	Address  string `json:"address"`
-	Port     int    `json:"port"`
+	// Alias is the name an administrator gave it for people to read, shown
+	// in place of the hostname; empty shows the hostname. A label only:
+	// sessions, grants and the audit chain go by the hostname.
+	Alias   string `json:"alias"`
+	Address string `json:"address"`
+	Port    int    `json:"port"`
 	// Protocol is "ssh" or "rdp". The column has existed since 005; the console
 	// read surface never returned it, so every host arrived at the browser
 	// looking like SSH — including the Windows ones, on the page whose only job

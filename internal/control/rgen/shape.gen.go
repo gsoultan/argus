@@ -169,6 +169,7 @@ func _assertAssetShape(m m0.Asset) {
 		m.ControlNeedsApproval,
 		m.ConnectAsk,
 		m.ControlHost,
+		m.Alias,
 	}
 }
 

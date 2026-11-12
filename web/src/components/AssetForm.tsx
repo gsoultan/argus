@@ -5,7 +5,7 @@ import {
 import { useCreateAsset, useUpdateAsset } from '~/lib/queries'
 import { run } from '~/lib/notify'
 import { SP } from '~/theme'
-import { ASSET_TYPE_BLURB } from '~/lib/assetType'
+import { ASSET_TYPE_BLURB, assetName } from '~/lib/assetType'
 import { DEVICE_PRINCIPALS, type Asset, type AssetInput, type AssetKind, type AssetProtocol, type ControlMode, type DesktopMode } from '~/types/domain'
 
 /**
@@ -22,6 +22,7 @@ import { DEVICE_PRINCIPALS, type Asset, type AssetInput, type AssetKind, type As
 
 const empty: AssetInput = {
   hostname: '',
+  alias: '',
   address: '',
   port: 22,
   protocol: 'ssh',
@@ -58,9 +59,36 @@ export function hostnameNote(asset: Asset | undefined, hostname: string): string
     : `Renaming it keeps its agent, who can connect, approvals and databases. The agent still goes by ${agent}; ${asset.hostname} stays on its past sessions.`
 }
 
+/** What the server accepts as a hostname: a DNS name (assets.go, reHostname). */
+const HOSTNAME = /^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/
+
+/** Why the hostname would be refused, said before Save rather than after. */
+export function hostnameError(hostname: string): string | undefined {
+  const h = hostname.trim()
+  if (!h || HOSTNAME.test(h)) return undefined
+  return /\s/.test(h)
+    ? 'A hostname has no spaces. To call it something people recognise, set the alias above.'
+    : 'A hostname is a DNS name: letters, digits, dots and hyphens. For any other name, set the alias above.'
+}
+
+/** The alias field, the same on every form. */
+function AliasInput({ value, onChange, hostname }: { value: string; onChange: (v: string) => void; hostname: string }) {
+  return (
+    <TextInput
+      label="Alias"
+      description={`The name the console shows for it, in any words. Leave it empty to show ${hostname.trim() || 'the hostname'}. Terminals, certificates and the audit log keep the hostname.`}
+      placeholder="Payroll database"
+      maxLength={64}
+      value={value}
+      onChange={(e) => onChange(e.currentTarget.value)}
+    />
+  )
+}
+
 function fromAsset(a: Asset): AssetInput {
   return {
     hostname: a.hostname,
+    alias: a.alias ?? '',
     address: a.address,
     port: a.port,
     protocol: a.protocol ?? 'ssh',
@@ -135,7 +163,7 @@ export function AssetForm({
       {
         failure: asset ? 'Not saved' : 'Not added',
         success: asset
-          ? ['Saved', `${form.hostname} is updated.`]
+          ? ['Saved', `${form.alias?.trim() || form.hostname} is updated.`]
           : [
               'Server added',
               `${form.hostname} is added. Pick who can connect on its page.`,
@@ -149,16 +177,18 @@ export function AssetForm({
     <Modal
       opened={opened}
       onClose={onClose}
-      title={asset ? `Edit ${asset.hostname}` : 'Add a server by hand'}
+      title={asset ? `Edit ${assetName(asset)}` : 'Add a server by hand'}
       size="lg"
     >
       {device ? (
         <Stack gap="sm">
+          <AliasInput value={form.alias ?? ''} onChange={(v) => set('alias', v)} hostname={form.hostname} />
           <TextInput
             required
             label="Name"
-            description="The name Argus knows this device by."
+            description="The name Argus knows this device by: letters, digits, dots and hyphens."
             value={form.hostname}
+            error={hostnameError(form.hostname)}
             onChange={(e) => set('hostname', e.currentTarget.value)}
           />
           <Box>
@@ -197,7 +227,7 @@ export function AssetForm({
             <Button
               onClick={() => void submit()}
               loading={pending}
-              disabled={!form.hostname.trim()}
+              disabled={!form.hostname.trim() || !!hostnameError(form.hostname)}
             >
               Save
             </Button>
@@ -205,6 +235,7 @@ export function AssetForm({
         </Stack>
       ) : (
       <Stack gap="sm">
+        <AliasInput value={form.alias ?? ''} onChange={(v) => set('alias', v)} hostname={form.hostname} />
         <Box>
           <Text size="sm" fw={500}>Type</Text>
           <Text size="xs" c="dimmed" mb={6}>
@@ -263,6 +294,7 @@ export function AssetForm({
             description={hostnameNote(asset, form.hostname)}
             placeholder="pay-01.payments.example"
             value={form.hostname}
+            error={hostnameError(form.hostname)}
             onChange={(e) => set('hostname', e.currentTarget.value)}
           />
           <TextInput
@@ -348,7 +380,11 @@ export function AssetForm({
           <Button
             onClick={() => void submit()}
             loading={pending}
-            disabled={!form.hostname.trim() || form.principals.length === 0}
+            // A new server needs an account to be any use. An existing one may
+            // have none (personal accounts only, or not set up yet), and that
+            // must not stop its name or alias from being edited: the Save
+            // button used to stay grey on such a server, with nothing saying why.
+            disabled={!form.hostname.trim() || !!hostnameError(form.hostname) || (!asset && form.principals.length === 0)}
           >
             {asset ? 'Save' : 'Add server'}
           </Button>

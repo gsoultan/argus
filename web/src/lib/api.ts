@@ -153,6 +153,7 @@ function fixtureAsset(input: AssetInput): Asset {
   return {
     id: crypto.randomUUID(),
     hostname: input.hostname,
+    alias: input.alias?.trim() ?? '',
     address: input.address || input.hostname,
     port: input.port ?? (input.protocol === 'rdp' ? 3389 : 22),
     protocol: input.protocol ?? 'ssh',
@@ -457,7 +458,7 @@ export const api = {
     const needle = q.search?.trim().toLowerCase()
     return source.filter((a) => {
       if (needle) {
-        const hay = `${a.hostname} ${a.address} ${a.os} ${a.tags.join(' ')}`.toLowerCase()
+        const hay = `${a.alias ?? ''} ${a.hostname} ${a.address} ${a.os} ${a.tags.join(' ')}`.toLowerCase()
         if (!hay.includes(needle)) return false
       }
       if (q.groupId && a.groupId !== q.groupId) return false

@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -37,7 +39,7 @@ const assetSelect = `
 	       a.unmanaged_key_count, a.agent_console_only,
 	       a.direct_ssh, a.agent_direct_ssh, a.agent_personal_accounts, a.direct_ssh_accounts,
 	       a.desktop_mode, a.kind, a.control_mode, a.control_needs_approval, a.connect_ask,
-	       COALESCE(a.agent_hostname, ''), a.control_host,
+	       COALESCE(a.agent_hostname, ''), a.control_host, a.alias,
 	       EXISTS (SELECT 1 FROM agent_credentials c
 	                WHERE lower(c.hostname) IN (lower(a.hostname), lower(a.agent_hostname))
 	                  AND c.revoked_at IS NULL
@@ -54,7 +56,7 @@ func scanAsset(rows pgx.Rows) (Asset, error) {
 		&a.AgentState, &a.AgentLastSeenAt, &a.BypassPosture, &a.UnmanagedKeyCount,
 		&a.AgentConsoleOnly, &a.DirectSSH, &a.AgentDirectSSH, &a.AgentPersonalAccounts, &a.DirectSSHAccounts,
 		&a.DesktopMode, &a.Kind, &a.ControlMode, &a.ControlNeedsApproval, &a.ConnectAsk, &a.AgentHostname,
-		&a.ControlHost, &a.TunnelConnected)
+		&a.ControlHost, &a.Alias, &a.TunnelConnected)
 	return a, err
 }
 
@@ -75,7 +77,11 @@ func (e ErrInvalidAsset) Error() string { return e.Reason }
 // and letting the console write those fields would let an administrator declare
 // a host verified rather than have it verified.
 type AssetInput struct {
-	Hostname   string   `json:"hostname"`
+	Hostname string `json:"hostname"`
+	// Alias is the name the console shows in place of the hostname: free
+	// text, any language, or empty to show the hostname. A label only; see
+	// 077_asset_alias.sql.
+	Alias      string   `json:"alias"`
 	Address    string   `json:"address"`
 	Port       int      `json:"port"`
 	Protocol   string   `json:"protocol"`
@@ -135,6 +141,7 @@ var (
 const (
 	maxPrincipals = 64
 	maxTags       = 16
+	maxAlias      = 64
 )
 
 // normalise trims, defaults and validates, returning the input as it will be
@@ -156,6 +163,19 @@ func (in AssetInput) normalise() (AssetInput, error) {
 	in.GroupName = strings.TrimSpace(in.GroupName)
 	in.Kind = strings.ToLower(strings.TrimSpace(in.Kind))
 	in.ControlMode = strings.ToLower(strings.TrimSpace(in.ControlMode))
+	in.Alias = strings.Join(strings.Fields(in.Alias), " ")
+	if utf8.RuneCountInString(in.Alias) > maxAlias {
+		return bad("the alias must be at most %d characters", maxAlias)
+	}
+	for _, r := range in.Alias {
+		if !unicode.IsPrint(r) {
+			return bad("the alias must be plain text, without control characters")
+		}
+	}
+	if strings.EqualFold(in.Alias, strings.TrimSpace(in.Hostname)) {
+		// The same name twice says nothing; the hostname is shown anyway.
+		in.Alias = ""
+	}
 
 	if in.ConnectAsk != nil {
 		v := strings.ToLower(strings.TrimSpace(*in.ConnectAsk))
@@ -365,12 +385,13 @@ func (s *Store) CreateAsset(ctx context.Context, in AssetInput) (Asset, error) {
 		INSERT INTO assets (hostname, address, port, protocol, os, tags, group_name,
 			principals, credential_mode, credential_ref, domain,
 			rotation_interval_days, desktop_mode, kind, control_mode, control_needs_approval, connect_ask,
-			source, health, host_key_state)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'console','reachable','unpinned')
+			alias, source, health, host_key_state)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,'console','reachable','unpinned')
 		RETURNING id::text`,
 		v.Hostname, v.Address, v.Port, v.Protocol, v.OS, v.Tags, v.GroupName,
 		v.Principals, v.CredentialMode, v.CredentialRef, v.Domain,
-		v.RotationIntervalDays, v.DesktopMode, v.Kind, v.ControlMode, v.ControlNeedsApproval, v.ConnectAsk).Scan(&id)
+		v.RotationIntervalDays, v.DesktopMode, v.Kind, v.ControlMode, v.ControlNeedsApproval, v.ConnectAsk,
+		v.Alias).Scan(&id)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return Asset{}, ErrInvalidAsset{
@@ -469,12 +490,13 @@ func (s *Store) updateAsset(ctx context.Context, id string, in AssetInput) (Asse
 			credential_ref = $11, domain = $12, rotation_interval_days = $13,
 			desktop_mode = $14, kind = $15, control_mode = $16, control_needs_approval = $17,
 			connect_ask = $18, source = 'console', updated_at = now(),
-			agent_hostname = CASE WHEN $19 THEN NULLIF($20, '') ELSE agent_hostname END
+			agent_hostname = CASE WHEN $19 THEN NULLIF($20, '') ELSE agent_hostname END,
+			alias = $21
 		WHERE id = $1::uuid AND archived_at IS NULL`,
 		id, v.Hostname, v.Address, v.Port, v.Protocol, v.OS, v.Tags, v.GroupName,
 		v.Principals, v.CredentialMode, v.CredentialRef, v.Domain,
 		v.RotationIntervalDays, v.DesktopMode, v.Kind, v.ControlMode, v.ControlNeedsApproval, v.ConnectAsk,
-		renamed, rename.Agent)
+		renamed, rename.Agent, v.Alias)
 	if err != nil {
 		if isUniqueViolation(err) {
 			if strings.Contains(err.Error(), "assets_agent_hostname_idx") {

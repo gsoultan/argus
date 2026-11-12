@@ -150,3 +150,13 @@ and refused every terminal, desktop, file and database session.
   name they were made under.
 - A removed server keeps its name (`hostname` is unique across archived
   rows); renaming to it says so (`hostnameTaken`).
+
+## Alias (2026-11)
+
+`assets.alias` (migration 077) is free text an administrator gives an asset,
+shown by the console in place of the hostname (`assetName` /
+`assetShortName` in `web/src/lib/assetType.ts`), with the hostname beside it.
+A label only: nothing that decides whether a session opens reads it, and
+sessions, grants and the audit chain keep naming the hostname. The hostname
+stays a DNS name; the form says so and points at the alias. An existing
+asset with no login accounts can still be edited (Save used to stay grey).
