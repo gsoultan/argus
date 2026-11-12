@@ -150,9 +150,21 @@ func DeployCommand(principal, externalID string, manage bool) string {
 // DeployCommandTrusting is DeployCommand for TemplateTrusting.
 func DeployCommandTrusting(principals []string, externalID string, manage bool) string {
 	return "cat > argus-access.yaml <<'ARGUS'\n" + TemplateTrusting(principals, externalID, manage) + "ARGUS\n" +
+		clearStuck +
 		"aws cloudformation deploy --stack-name argus-access --template-file argus-access.yaml --capabilities CAPABILITY_NAMED_IAM && \\\n" +
 		"aws cloudformation describe-stacks --stack-name argus-access --query \"Stacks[0].Outputs[].[OutputKey,OutputValue]\" --output text\n"
 }
+
+// clearStuck deletes an argus-access stack that never finished being made
+// (it holds only Argus's roles, if anything), since CloudFormation will not
+// deploy over one. A stack that is in use is left alone.
+const clearStuck = `case "$(aws cloudformation describe-stacks --stack-name argus-access --query 'Stacks[0].StackStatus' --output text 2>/dev/null)" in
+  ROLLBACK_COMPLETE|ROLLBACK_FAILED|CREATE_FAILED|DELETE_FAILED)
+    echo "Deleting the argus-access stack that did not finish..."
+    aws cloudformation delete-stack --stack-name argus-access &&
+    aws cloudformation wait stack-delete-complete --stack-name argus-access ;;
+esac
+`
 
 // principalYAML is the trust policy's AWS principal: one quoted ARN, or a
 // flow list of them.

@@ -1,6 +1,6 @@
-import { Alert, Box, Button, Card, Group, Loader, Stack, Text, ThemeIcon } from '@mantine/core'
+import { Alert, Box, Button, Card, Code, CopyButton, Group, Loader, Stack, Text, ThemeIcon } from '@mantine/core'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { IconCheck, IconWand } from '@tabler/icons-react'
+import { IconCheck, IconCopy, IconWand } from '@tabler/icons-react'
 import { useEffect, useRef, useState } from 'react'
 import { checkCloudAccount, deployCloudAccess, type CloudPrepared } from '~/lib/cloud'
 import { FS, INK } from '~/theme'
@@ -16,6 +16,8 @@ const CHECK_FOR = 30 * 60_000
  */
 export function MakeItForMe({ prepared, name, manage }: { prepared: CloudPrepared; name: string; manage: boolean }) {
   const deploy = useMutation({ mutationFn: () => deployCloudAccess(prepared.accountId, manage, name, prepared.identity) })
+  const [show, setShow] = useState(false)
+  const open = show || !!deploy.error
   return (
     <Card withBorder padding="md" radius="md">
       <Stack gap="sm">
@@ -25,13 +27,26 @@ export function MakeItForMe({ prepared, name, manage }: { prepared: CloudPrepare
             <Text fw={600} size={FS.body}>Argus can make it for you</Text>
             <Text size={FS.meta} c="dimmed" lh={1.55}>
               argus-control signs in to AWS as <Text span ff="monospace" size={FS.meta}>{prepared.principal}</Text>, which is in this account.
-              If that identity is allowed to create IAM roles, Argus creates the stack itself. The audit log and the stack's tags say you asked.
+              If that identity is allowed to create IAM roles, Argus checks it has every right first, then creates the stack itself. The audit log and the stack's tags say you asked.
+              {prepared.deployRights && !deploy.error && (
+                <>{' '}<Text span size={FS.meta} c="azure" style={{ cursor: 'pointer' }} onClick={() => setShow((v) => !v)}>
+                  {show ? 'Hide the policy' : 'See the policy it needs'}
+                </Text></>
+              )}
             </Text>
           </Box>
         </Group>
         {deploy.error && (
-          <Alert color="amber" variant="light" title="Argus could not make it">{(deploy.error as Error).message}</Alert>
+          <Alert color="amber" variant="light" title="Argus made nothing">
+            <Stack gap="xs">
+              <Text size={FS.meta}>{(deploy.error as Error).message}</Text>
+              <Text size={FS.meta}>
+                Use the CloudShell command below while signed in as an administrator, or attach the policy below and try again.
+              </Text>
+            </Stack>
+          </Alert>
         )}
+        {open && prepared.deployRights && <Policy json={prepared.deployRights} principal={prepared.principal} />}
         {deploy.isSuccess ? (
           <Text size={FS.meta} c={INK.verified}>CloudFormation is making the roles. Argus connects as soon as they work.</Text>
         ) : (
@@ -43,6 +58,36 @@ export function MakeItForMe({ prepared, name, manage }: { prepared: CloudPrepare
         )}
       </Stack>
     </Card>
+  )
+}
+
+/**
+ * The policy the identity needs to make the stack, readable and copyable,
+ * with why it should not stay attached.
+ */
+function Policy({ json, principal }: { json: string; principal: string }) {
+  let pretty = json
+  try { pretty = JSON.stringify(JSON.parse(json), null, 2) } catch { /* shown as sent */ }
+  return (
+    <Stack gap={6}>
+      <Text size={FS.meta} c="dimmed" lh={1.55}>
+        Attach this to <Text span ff="monospace" size={FS.meta}>{principal}</Text> in IAM, press the button, and remove it once the
+        roles are made. It is limited to <Text span ff="monospace" size={FS.meta}>Argus*</Text> roles and the{' '}
+        <Text span ff="monospace" size={FS.meta}>argus-access</Text> stack, but an identity that may make roles can give itself any
+        permission, so it should not stay. Only this button needs it: the CloudShell command below needs nothing attached.
+      </Text>
+      <Box pos="relative">
+        <Code block fz={FS.micro} mah={260} style={{ overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{pretty}</Code>
+        <CopyButton value={pretty}>
+          {({ copied, copy }) => (
+            <Button size="xs" variant={copied ? 'light' : 'default'} color={copied ? 'teal' : undefined} pos="absolute" top={8} right={8}
+              leftSection={copied ? <IconCheck size={13} /> : <IconCopy size={13} />} onClick={copy}>
+              {copied ? 'Copied' : 'Copy the policy'}
+            </Button>
+          )}
+        </CopyButton>
+      </Box>
+    </Stack>
   )
 }
 
@@ -61,7 +106,9 @@ export function WatchForRoles({ prepared, manage, connecting, failed, onReady }:
     queryKey: ['cloud', 'connect-check', prepared.accountId, manage, since],
     queryFn: () => checkCloudAccount(prepared.accountId, manage, prepared.identity),
     enabled: !stale && !connecting && !failed,
-    refetchInterval: (q) => (q.state.data?.ready || q.state.data?.stack?.failed ? false : CHECK_EVERY),
+    // A failed stack keeps being watched: the fix is to run the command
+    // below, and the page should notice when that works.
+    refetchInterval: (q) => (q.state.data?.ready ? false : CHECK_EVERY),
     refetchIntervalInBackground: true,
     retry: false,
     gcTime: 0,
@@ -94,7 +141,10 @@ export function WatchForRoles({ prepared, manage, connecting, failed, onReady }:
       <Alert color="rose" variant="light" title={`The argus-access stack stopped at ${stack.status}`}>
         <Stack gap="xs">
           <Text size={FS.meta}>{stack.reason || 'CloudFormation did not say why. Its Events tab does.'}</Text>
-          <Group><Button size="xs" variant="default" onClick={again}>Check again</Button></Group>
+          <Text size={FS.meta} fw={500}>
+            To fix it, run the CloudShell command below while signed in as an administrator. It deletes this stack first and
+            makes the roles again; Argus keeps watching and connects when they work.
+          </Text>
         </Stack>
       </Alert>
     )

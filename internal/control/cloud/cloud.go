@@ -195,10 +195,22 @@ type StackState struct {
 type Deployer interface {
 	// DeployAccess creates the access stack from template, or updates it
 	// when it is already there, tagged with the person who asked.
-	DeployAccess(ctx context.Context, accountID, template string, actor Actor) (StackState, error)
+	DeployAccess(ctx context.Context, accountID, template string, manage bool, actor Actor) (StackState, error)
 	// AccessStack reports the access stack.
 	AccessStack(ctx context.Context, accountID string) (StackState, error)
 }
+
+// DeployRefusal is a deploy Argus did not start, and why: rights the
+// identity lacks, or a stack someone has to clear first.
+type DeployRefusal struct {
+	Reason string
+	// Missing are the actions the identity may not take.
+	Missing []string
+	// Rights is a policy that would let it, for an administrator to attach.
+	Rights string
+}
+
+func (e *DeployRefusal) Error() string { return e.Reason }
 
 // ErrNotHomeAccount is a deploy asked for in an account the control
 // plane's own identity is not in.

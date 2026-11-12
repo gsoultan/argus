@@ -184,6 +184,9 @@ type CloudPrepared struct {
 	// CanDeploy is an account argus-control's own identity is in, where
 	// Argus can try to make the stack itself.
 	CanDeploy bool `json:"canDeploy"`
+	// DeployRights is the policy that identity needs for that, for an
+	// administrator to attach to it.
+	DeployRights string `json:"deployRights,omitempty"`
 }
 
 // cloudRoleARN is where a role the template makes is in an account.
@@ -247,6 +250,7 @@ func (a *API) cloudPrepare(ctx context.Context, in cloudPrepareIn) (CloudPrepare
 	}
 	if _, ok := ident.Provider.(cloud.Deployer); ok && cloud.HomeAccount(base.Principal) == accountID {
 		out.CanDeploy = true
+		out.DeployRights = aws.DeployRights(accountID)
 	}
 	return out, http.StatusOK, nil
 }

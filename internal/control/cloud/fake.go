@@ -380,7 +380,7 @@ type FakeStack struct {
 
 // DeployAccess makes the stack in the fake's home account, the account of
 // its base identity, and nowhere else. The test admits the roles itself.
-func (f *Fake) DeployAccess(_ context.Context, accountID, template string, actor Actor) (StackState, error) {
+func (f *Fake) DeployAccess(_ context.Context, accountID, template string, _ bool, actor Actor) (StackState, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if HomeAccount(f.BaseIdentity.Principal) != accountID {

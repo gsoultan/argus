@@ -87,3 +87,20 @@ describe('Which identity a new account connects as', () => {
     expect(onChange).toHaveBeenCalledWith('pay')
   })
 })
+
+describe('Connect an AWS account when a stack is stuck', () => {
+  it('says how to fix a stuck stack and keeps watching', async () => {
+    api.checkCloudAccount.mockResolvedValue({ ready: false, stack: { status: 'ROLLBACK_FAILED', reason: 'not authorized to perform: iam:GetRole', done: false, failed: true } })
+    renderWithProviders(<WatchForRoles prepared={prepared} manage={false} connecting={false} failed={null} onReady={vi.fn()} />)
+    expect(await screen.findByText(/stopped at ROLLBACK_FAILED/)).toBeInTheDocument()
+    expect(screen.getByText(/deletes this stack first/)).toBeInTheDocument()
+  })
+
+  it('offers the narrow policy when Argus may not make the roles', async () => {
+    api.deployCloudAccess.mockRejectedValue(new Error('arn:aws:iam::412788931204:user/argus may not iam:GetRole, so Argus made nothing.'))
+    renderWithProviders(<MakeItForMe prepared={{ ...prepared, deployRights: '{"Version":"2012-10-17"}' }} name="payments-prod" manage />)
+    fireEvent.click(screen.getByRole('button', { name: /Make the roles for me/ }))
+    expect(await screen.findByText('Argus made nothing')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Copy the policy/ })).toBeInTheDocument()
+  })
+})
