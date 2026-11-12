@@ -138,6 +138,7 @@ func TestCloudFirewallCreateAndDelete(t *testing.T) {
 	e.ask(t, "admin-token", e.storage("firewall-delete", e.account+"-sg-1", `,"confirm":"sg-web"`), http.StatusConflict)
 	e.ask(t, "admin-token", e.storage("firewall-delete", "sg-0000000000000aaa1", `,"confirm":"app"`), http.StatusConflict)
 	e.ask(t, "admin-token", e.storage("firewall-delete", "sg-0000000000000bbb2", `,"confirm":"nope"`), http.StatusBadRequest)
+	e.madeByArgus(t, "firewall-create", "sg-0000000000000bbb2")
 	d := e.ask(t, "admin-token", e.storage("firewall-delete", "sg-0000000000000bbb2", `,"confirm":"db"`), http.StatusAccepted)
 	if d.Level != cloud.LevelRemove {
 		t.Fatalf("delete level: %+v", d)

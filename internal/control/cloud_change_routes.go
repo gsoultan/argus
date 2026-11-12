@@ -294,7 +294,7 @@ func (a *API) removePlan(ctx context.Context, m cloudManaged, actor, region stri
 	if name, ok := a.store.CloudLaunchedServer(ctx, m.acct.ID, inst.ID); ok {
 		v.Server = name
 	}
-	launched, err := a.store.CloudLaunchedByArgus(ctx, m.acct.ID, inst.ID)
+	launched, err := a.store.CloudMadeByArgus(ctx, m.acct.ID, inst.ID)
 	if err != nil {
 		return cloudRemovePlanView{}, err
 	}

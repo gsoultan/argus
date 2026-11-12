@@ -137,6 +137,11 @@ func exposeWords(e []string) string {
 	return "; opens " + strings.Join(e, ", ") + " to the whole internet"
 }
 
+// cloudNotMadeFirewall is why Argus will not delete a security group it did
+// not make.
+const cloudNotMadeFirewall = "Argus did not make it. Argus only deletes security groups it made itself, " +
+	"so a group that was already in the account is never deleted from here; delete it in AWS if you mean to"
+
 // planNetwork checks a network request and works out what it will do.
 func (a *API) planNetwork(r *http.Request, m cloudManaged, in *cloudChangeIn, ch CloudChange) (CloudChange, int, error) {
 	nw, ok := m.manager.(cloud.Network)
@@ -232,6 +237,15 @@ func (a *API) planNetwork(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 		}
 		if res.Name == "default" {
 			return ch, http.StatusConflict, errors.New("every network keeps its default security group; AWS does not delete it")
+		}
+		made, err := a.store.CloudMadeByArgus(ctx, m.acct.ID, res.ID)
+		if err != nil {
+			return ch, http.StatusInternalServerError, err
+		}
+		if !made {
+			// Fails closed, like an instance: a group that was in the
+			// account before Argus is managed here, never deleted.
+			return ch, http.StatusConflict, errors.New("Argus will not delete " + res.Name + ": " + cloudNotMadeFirewall)
 		}
 		if stack != "" {
 			return ch, http.StatusConflict, errors.New(res.Name + " belongs to CloudFormation stack " + stack + "; delete it there, or the stack breaks")

@@ -235,17 +235,23 @@ func (s *Store) CloudLaunchedServer(ctx context.Context, accountID, id string) (
 	return name, err == nil && name != ""
 }
 
-// CloudLaunchedByArgus reports whether Argus itself launched instance id,
-// by its own record of an applied launch in this provider account, under
-// this connection or an earlier one of the same account. A tag would not
-// do: anyone with access to the account can write one.
-func (s *Store) CloudLaunchedByArgus(ctx context.Context, accountID, id string) (bool, error) {
+// madeByArgusSQL is true for the resource in r (provider_id) of account a
+// when Argus itself made it: an applied launch or security group create in
+// the same provider account, under this connection or an earlier one. A
+// tag would not do: anyone with access to the account can write one.
+const madeByArgusSQL = `EXISTS (SELECT 1 FROM cloud_changes c JOIN cloud_accounts ca ON ca.id = c.account_id
+	WHERE ca.provider = a.provider AND ca.account_id = a.account_id AND c.resource_id = r.provider_id
+	AND c.action IN ('launch', 'firewall-create') AND c.state = 'applied')`
+
+// CloudMadeByArgus reports whether Argus itself made resource id in the
+// account; see madeByArgusSQL.
+func (s *Store) CloudMadeByArgus(ctx context.Context, accountID, id string) (bool, error) {
 	var ok bool
-	err := s.db(ctx).QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM cloud_changes c
-		JOIN cloud_accounts a ON a.id = c.account_id
-		JOIN cloud_accounts me ON me.provider = a.provider AND me.account_id = a.account_id
-		WHERE me.id::text = $1 AND c.resource_id = $2 AND c.action = 'launch' AND c.state = 'applied')`,
-		accountID, id).Scan(&ok)
+	err := s.db(ctx).QueryRow(ctx, `SELECT `+madeByArgusSQL+`
+		FROM cloud_accounts a, (SELECT $2::text AS provider_id) r WHERE a.id::text = $1`, accountID, id).Scan(&ok)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
 	return ok, err
 }
 

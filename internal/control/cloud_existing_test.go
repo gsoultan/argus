@@ -17,12 +17,15 @@ disconnecting the account changes nothing in it.
 
 // launchedByArgus records that Argus launched the fixture's instance, as an
 // applied launch would.
-func (e changeEnv) launchedByArgus(t *testing.T) {
+func (e changeEnv) launchedByArgus(t *testing.T) { e.madeByArgus(t, "launch", e.instance()) }
+
+// madeByArgus records an applied change of action that made resource id.
+func (e changeEnv) madeByArgus(t *testing.T, action, id string) {
 	t.Helper()
 	_, err := e.s.pool.Exec(context.Background(), `INSERT INTO cloud_changes (account_id, region, action, level,
 		environment, resource_id, resource_name, spec, plan, plan_hash, summary, reason, state, requested_by)
-		VALUES ($1::uuid, 'ap-southeast-3', 'launch', 'change', 'production', $2, 'pay-api-01', '{"name":"pay-api-01"}',
-		'{}', '', 'Launch pay-api-01', '', 'applied', $3)`, e.acct.ID, e.instance(), e.admin)
+		VALUES ($1::uuid, 'ap-southeast-3', $2, 'change', 'production', $3, $3, '{}',
+		'{}', '', 'Made ' || $3, '', 'applied', $4)`, e.acct.ID, action, id, e.admin)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,4 +135,35 @@ func TestCloudDisconnectLeavesTheAccountAlone(t *testing.T) {
 		t.Fatalf("a change on a disconnected account was approved: %s", w.Body)
 	}
 	e.noCall(t, "remove ")
+}
+
+// A security group that was in the account is never deleted from Argus,
+// and the inventory says which groups and instances Argus made.
+func TestCloudExistingFirewallIsNeverDeleted(t *testing.T) {
+	e := networkAPI(t)
+	w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes", "admin-token", e.storage("firewall-delete", "sg-0000000000000bbb2", `,"confirm":"db"`))
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "Argus did not make it") {
+		t.Fatalf("deleting a group Argus did not make must be refused: %d %s", w.Code, w.Body)
+	}
+	e.noCall(t, "firewall-delete ")
+	sg := e.account + "-sg-1"
+	made := map[string]bool{}
+	for _, it := range e.items(t, "firewall") {
+		made[it.Resource.ID] = it.MadeByArgus
+	}
+	if made[sg] {
+		t.Fatalf("a group Argus did not make is marked as made by Argus: %v", made)
+	}
+	e.madeByArgus(t, "firewall-create", sg)
+	for _, it := range e.items(t, "firewall") {
+		made[it.Resource.ID] = it.MadeByArgus
+	}
+	if !made[sg] {
+		t.Fatalf("the inventory must say which groups Argus made: %v", made)
+	}
+	for _, it := range e.items(t, "instance") {
+		if it.MadeByArgus {
+			t.Fatalf("an instance Argus did not launch is marked as made by Argus: %s", it.Resource.ID)
+		}
+	}
 }
