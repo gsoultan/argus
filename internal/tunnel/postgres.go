@@ -514,6 +514,12 @@ type GrantDB struct {
 	// not fit one frame as an error instead, since a control plane that
 	// predates parts would drop them.
 	AnswerParts bool `json:"answerParts,omitempty"`
+	// RedisRules are the ACL rules an admin set for this entry and level,
+	// key patterns included; nil is Argus's own (RedisLevelRules).
+	RedisRules []string `json:"redisRules,omitempty"`
+	// ChangesNeedApproval says a Redis bulk, configuration or ACL change
+	// runs only with an approval the control plane checked.
+	ChangesNeedApproval bool `json:"changesNeedApproval,omitempty"`
 }
 
 // EngineOf is the grant's engine, with the old empty value read as postgres.

@@ -1,10 +1,10 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ActionIcon, Badge, Box, Button, Drawer, Group, Loader, ScrollArea, Select, Stack, Table, Text, TextInput,
-  UnstyledButton,
+  ActionIcon, Anchor, Badge, Box, Button, Checkbox, Drawer, Group, Loader, ScrollArea, SegmentedControl, Select, Stack, Table,
+  Tabs, Text, TextInput, Tooltip, UnstyledButton,
 } from '@mantine/core'
 import { useDisclosure, useMediaQuery } from '@mantine/hooks'
-import { IconBolt, IconMenu2, IconPlayerStop, IconPlus, IconRefresh, IconSearch } from '@tabler/icons-react'
+import { IconBolt, IconFolder, IconList, IconMenu2, IconPlayerStop, IconPlus, IconRefresh, IconSearch, IconSitemap, IconStack2 } from '@tabler/icons-react'
 import { redisArg } from '~/lib/redisArg'
 import { FS, SP } from '~/theme'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
@@ -12,6 +12,10 @@ import { useCompletion } from '~/components/Autocomplete'
 import { completeRedis } from '~/lib/redisComplete'
 import { ConfirmByName, FatalBanner, StoreHeader } from '~/components/StoreChrome'
 import { formatRedis, plain, useStoreSession, type RedisKey, type RedisValue, type StoreAnswer } from '~/components/useStoreSession'
+import { useRedisChange } from '~/components/redis/useRedisChange'
+import { RedisKeyEditor } from '~/components/redis/RedisKeyEditor'
+import { treeLevel, ttlText } from '~/lib/redisManage'
+import { notifyOk, notifyWarn } from '~/lib/notify'
 
 /*
 Redis in the browser: a key browser on the left (SCAN, never KEYS), the
@@ -24,6 +28,12 @@ only run confirmed.
 */
 
 const NewKey = lazy(() => import('~/components/redis/RedisNewKey').then((m) => ({ default: m.NewKey })))
+const RedisOverview = lazy(() => import('~/components/redis/RedisOverview').then((m) => ({ default: m.RedisOverview })))
+const RedisConfig = lazy(() => import('~/components/redis/RedisConfig').then((m) => ({ default: m.RedisConfig })))
+const RedisUsers = lazy(() => import('~/components/redis/RedisUsers').then((m) => ({ default: m.RedisUsers })))
+const RedisBulk = lazy(() => import('~/components/redis/RedisBulk').then((m) => ({ default: m.RedisBulk })))
+
+type Tab = 'overview' | 'keys' | 'config' | 'users'
 
 export interface RedisWorkspaceProps {
   database: Database
@@ -44,6 +54,20 @@ export function RedisWorkspace({ database, access, getTicket, endpoint, onAskFor
   const [keysOpen, keysDrawer] = useDisclosure(false)
   const s = useStoreSession(database, getTicket, endpoint)
   const level = s.ready?.level ?? access.level
+  const ops = s.ready?.ops ?? []
+  const can = (op: string) => ops.includes(op)
+  const { change, dialog: approvalDialog } = useRedisChange(s, database)
+  const [tab, setTab] = useState<Tab>('keys')
+  const tabs: { id: Tab; label: string }[] = [
+    ...(can('info') ? [{ id: 'overview' as const, label: 'Overview' }] : []),
+    { id: 'keys', label: 'Keys' },
+    ...(can('config_get') ? [{ id: 'config' as const, label: 'Configuration' }] : []),
+    ...(can('acl_list') ? [{ id: 'users' as const, label: 'Users & ACL' }] : []),
+  ]
+  const [view, setView] = useState<'list' | 'tree'>('list')
+  const [prefix, setPrefix] = useState('')
+  const [picked, setPicked] = useState<Set<string>>(new Set())
+  const [bulk, setBulk] = useState<string | null>(null)
 
   // Key browser.
   const [pattern, setPattern] = useState('*')
@@ -93,6 +117,30 @@ export function RedisWorkspace({ database, access, getTicket, endpoint, onAskFor
     if (narrow) keysDrawer.close()
     setValue(await s.ask({ op: 'value', key: k.name, keyQ: k.q ?? false, count: 200 }))
   }, [s, narrow, keysDrawer])
+
+  const afterEdit = useCallback((name: string | null) => {
+    void scan('0', false)
+    if (name === null) { setSelected(null); setValue(null) }
+    else void open({ ...(selected ?? { type: '', ttl: -1 }), name })
+  }, [scan, open, selected])
+
+  const [dropping, setDropping] = useState(false)
+  const dropPicked = async () => {
+    setDropping(true)
+    let ok = 0
+    let failed = ''
+    for (const name of picked) {
+      const a = await change({ op: 'edit', key: name, edits: [['UNLINK', name]], undo: true })
+      if (a.type === 'result') ok++
+      else { failed = `${name}: ${a.error ?? 'failed'}`; break }
+    }
+    setDropping(false)
+    setPicked(new Set())
+    if (failed) notifyWarn(`${ok} deleted, then one failed`, failed)
+    else notifyOk(`${ok} key${ok === 1 ? '' : 's'} deleted`, 'A copy of each is kept for a day; Change many → Undo copies puts them back.')
+    if (selected && picked.has(selected.name)) { setSelected(null); setValue(null) }
+    void scan('0', false)
+  }
 
   // The command line.
   const [cmd, setCmd] = useState('')
@@ -159,6 +207,25 @@ export function RedisWorkspace({ database, access, getTicket, endpoint, onAskFor
     }
   }
 
+  const canEdit = can('edit')
+  const keyRow = (k: RedisKey, label?: string) => (
+    <Group key={(k.q ? 'q:' : '') + k.name} gap={4} wrap="nowrap" px={2}
+      style={{ borderRadius: 6, background: selected?.name === k.name ? 'var(--color-brand-soft, var(--mantine-color-azure-light))' : undefined }}>
+      {canEdit && !k.q && (
+        <Checkbox size="xs" aria-label={`Pick ${k.name}`} checked={picked.has(k.name)}
+          onChange={(e) => { const on = e.currentTarget.checked; setPicked((p) => { const n = new Set(p); if (on) n.add(k.name); else n.delete(k.name); return n }) }} />
+      )}
+      <UnstyledButton onClick={() => void open(k)} px={4} py={4} style={{ flex: 1, minWidth: 0 }}>
+        <Group gap={6} wrap="nowrap">
+          <Badge size="xs" {...typeBadge} w={52}>{k.type}</Badge>
+          <Text size={FS.meta} ff="monospace" truncate style={{ flex: 1 }} title={k.name}>{label ?? k.name}</Text>
+          {k.ttl >= 0 && <Text size={FS.micro} c="dimmed">{ttlText(k.ttl)}</Text>}
+        </Group>
+      </UnstyledButton>
+    </Group>
+  )
+  const crumbs = prefix ? prefix.split(':').filter(Boolean) : []
+
   const browser = (
     <Stack gap={SP.cozy} p="xs" h="100%">
       <Group gap={6} wrap="nowrap">
@@ -172,6 +239,8 @@ export function RedisWorkspace({ database, access, getTicket, endpoint, onAskFor
       <Group gap={6} wrap="nowrap">
         <Select size="xs" placeholder="Every type" clearable value={type} onChange={setType} aria-label="Key type" style={{ flex: 1 }}
           data={['string', 'hash', 'list', 'set', 'zset', 'stream']} />
+        <SegmentedControl size="xs" value={view} onChange={(v) => { setView(v as 'list' | 'tree'); setPrefix('') }} aria-label="Key view"
+          data={[{ value: 'list', label: <IconList size={12} aria-label="List" /> }, { value: 'tree', label: <IconSitemap size={12} aria-label="Tree" /> }]} />
         {s.status === 'ready' && level !== 'read' && (
           <Button size="xs" variant="default" leftSection={<IconPlus size={12} />} onClick={() => setMaking(true)}>Key</Button>
         )}
@@ -179,19 +248,45 @@ export function RedisWorkspace({ database, access, getTicket, endpoint, onAskFor
       <Text size={FS.micro} c="dimmed">
         {total !== undefined ? `${total.toLocaleString()} keys in db ${database.dbname}` : 'Keys'} · found with SCAN, so Redis never stops for it
       </Text>
+      {(picked.size > 0 || can('bulk')) && (
+        <Group gap={6} wrap="nowrap">
+          {picked.size > 0 && (
+            <>
+              <Text size={FS.micro}>{picked.size} picked</Text>
+              <Button size="compact-xs" color="rose" variant="light" loading={dropping} onClick={() => void dropPicked()}>Delete</Button>
+              <Button size="compact-xs" variant="subtle" onClick={() => setPicked(new Set())}>Clear</Button>
+            </>
+          )}
+          {can('bulk') && (
+            <Tooltip label="Count the keys a pattern matches, then delete or expire them">
+              <Button size="compact-xs" variant="default" ml="auto" leftSection={<IconStack2 size={12} />}
+                onClick={() => setBulk(view === 'tree' && prefix ? `${prefix}*` : pattern)}>Change many</Button>
+            </Tooltip>
+          )}
+        </Group>
+      )}
       {scanErr && <Text size={FS.micro} c="rose">{scanErr}</Text>}
+      {view === 'tree' && (
+        <Group gap={4} wrap="wrap">
+          <Anchor size={FS.micro} onClick={() => setPrefix('')}>all</Anchor>
+          {crumbs.map((c, i) => (
+            <Text key={i} size={FS.micro} span>
+              {' / '}<Anchor size={FS.micro} onClick={() => setPrefix(crumbs.slice(0, i + 1).join(':') + ':')}>{c}</Anchor>
+            </Text>
+          ))}
+        </Group>
+      )}
       <ScrollArea style={{ flex: 1 }} type="auto">
         <Stack gap={0}>
-          {keys.map((k) => (
-            <UnstyledButton key={(k.q ? 'q:' : '') + k.name} onClick={() => void open(k)} px={6} py={4}
-              style={{ borderRadius: 6, background: selected?.name === k.name ? 'var(--color-brand-soft, var(--mantine-color-azure-light))' : undefined }}>
+          {view === 'list' ? keys.map((k) => keyRow(k)) : treeLevel(keys, prefix).map((n) => n.kind === 'folder' ? (
+            <UnstyledButton key={'f:' + n.path} onClick={() => setPrefix(n.path)} px={6} py={4} style={{ borderRadius: 6 }}>
               <Group gap={6} wrap="nowrap">
-                <Badge size="xs" {...typeBadge} w={52}>{k.type}</Badge>
-                <Text size={FS.meta} ff="monospace" truncate style={{ flex: 1 }} title={k.name}>{k.name}</Text>
-                {k.ttl >= 0 && <Text size={FS.micro} c="dimmed">{ttlText(k.ttl)}</Text>}
+                <IconFolder size={14} color="var(--mantine-color-dimmed)" />
+                <Text size={FS.meta} ff="monospace" truncate style={{ flex: 1 }}>{n.label}:</Text>
+                <Text size={FS.micro} c="dimmed">{n.count.toLocaleString()}</Text>
               </Group>
             </UnstyledButton>
-          ))}
+          ) : keyRow(n.key!, n.label))}
           {keys.length === 0 && !scanning && <Text size={FS.meta} c="dimmed" p={6}>No keys match.</Text>}
         </Stack>
         {cursor !== '0' && (
@@ -199,27 +294,25 @@ export function RedisWorkspace({ database, access, getTicket, endpoint, onAskFor
             More
           </Button>
         )}
+        {view === 'tree' && cursor !== '0' && <Text size={FS.micro} c="dimmed">Folders count the keys listed so far.</Text>}
       </ScrollArea>
     </Stack>
   )
 
-  return (
-    <Box style={{ display: 'flex', height: narrow ? 'auto' : 'calc(100dvh - 120px)', minHeight: 480 }}>
+  const keysPane = (
+    <Box style={{ display: 'flex', flex: 1, minHeight: 0 }}>
       {narrow ? (
         <Drawer opened={keysOpen} onClose={keysDrawer.close} size="85%" padding="xs" title="Keys">{browser}</Drawer>
       ) : (
         <Box w={300} style={{ flexShrink: 0, borderRight: '1px solid var(--color-line)', overflow: 'hidden' }}>{browser}</Box>
       )}
       <Box style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        <StoreHeader database={database} access={access} level={level} status={s.status} narrow={narrow}
-          onAskForAccess={onAskForAccess} icon={<IconBolt size={16} color="var(--color-brand)" />}
-          title={`Redis · db ${database.dbname}`}
-          detail={`${database.hostname}${s.ready?.version ? ` · ${s.ready.server === 'valkey' ? 'Valkey' : 'Redis'} ${s.ready.version}` : ''}${s.ready?.user ? ` · as ${s.ready.user}` : ''}`}
-          left={narrow ? <ActionIcon variant="subtle" onClick={keysDrawer.open} aria-label="Open the key browser"><IconMenu2 size={18} /></ActionIcon> : undefined} />
-        <FatalBanner fatal={s.fatal} />
-
         <Box style={{ flex: '1 1 50%', minHeight: narrow ? 200 : 0, overflow: 'auto', borderBottom: '1px solid var(--color-line)' }} p="md">
-          <ValueView selected={selected} value={value} onReload={selected ? () => void open(selected) : undefined} />
+          {selected && canEdit ? (
+            <RedisKeyEditor selected={selected} value={value} change={change} onChanged={afterEdit} onReload={() => void open(selected)} />
+          ) : (
+            <ValueView selected={selected} value={value} onReload={selected ? () => void open(selected) : undefined} />
+          )}
         </Box>
 
         <Box style={{ flex: '1 1 50%', minHeight: narrow ? 260 : 0, display: 'flex', flexDirection: 'column', background: 'var(--color-surface-sunken, #0f1115)' }}>
@@ -251,6 +344,33 @@ export function RedisWorkspace({ database, access, getTicket, endpoint, onAskFor
           </Group>
         </Box>
       </Box>
+    </Box>
+  )
+
+  return (
+    <Box style={{ display: 'flex', flexDirection: 'column', height: narrow ? 'auto' : 'calc(100dvh - 120px)', minHeight: 480 }}>
+      <StoreHeader database={database} access={access} level={level} status={s.status} narrow={narrow}
+        onAskForAccess={onAskForAccess} icon={<IconBolt size={16} color="var(--color-brand)" />}
+        title={`Redis · db ${database.dbname}`}
+        detail={`${database.hostname}${s.ready?.version ? ` · ${s.ready.server === 'valkey' ? 'Valkey' : 'Redis'} ${s.ready.version}` : ''}${s.ready?.user ? ` · as ${s.ready.user}` : ''}`}
+        left={narrow && tab === 'keys' ? <ActionIcon variant="subtle" onClick={keysDrawer.open} aria-label="Open the key browser"><IconMenu2 size={18} /></ActionIcon> : undefined} />
+      <FatalBanner fatal={s.fatal} />
+      {tabs.length > 1 && (
+        <Tabs value={tab} onChange={(t) => t && setTab(t as Tab)} px="md">
+          <Tabs.List>
+            {tabs.map((t) => <Tabs.Tab key={t.id} value={t.id}>{t.label}</Tabs.Tab>)}
+          </Tabs.List>
+        </Tabs>
+      )}
+      {tab === 'keys' ? keysPane : (
+        <Box style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+          <Suspense fallback={<Loader size="sm" m="md" />}>
+            {tab === 'overview' && <RedisOverview s={s} canSave={can('save')} change={change} go={setTab} />}
+            {tab === 'config' && <RedisConfig s={s} canSet={can('config_set')} change={change} />}
+            {tab === 'users' && <RedisUsers s={s} database={database} canManage={can('acl_setuser')} canCheck={can('acl_dryrun')} change={change} />}
+          </Suspense>
+        </Box>
+      )}
       {making && (
         <Suspense fallback={null}>
           <NewKey opened onClose={() => { setMaking(false); void scan('0', false) }} exists={keyExists} onRun={(l) => runCmd(l)} />
@@ -263,15 +383,14 @@ export function RedisWorkspace({ database, access, getTicket, endpoint, onAskFor
           setConfirming(null)
         }}
         onConfirm={(typed) => { const c = confirming; setConfirming(null); if (c) void runCmd(c.cmd, typed) }} />
+      {bulk !== null && (
+        <Suspense fallback={null}>
+          <RedisBulk opened onClose={() => setBulk(null)} s={s} change={change} initialPattern={bulk} onDone={() => void scan('0', false)} />
+        </Suspense>
+      )}
+      {approvalDialog}
     </Box>
   )
-}
-
-function ttlText(s: number): string {
-  if (s < 60) return `${s}s`
-  if (s < 3600) return `${Math.round(s / 60)}m`
-  if (s < 86400) return `${Math.round(s / 3600)}h`
-  return `${Math.round(s / 86400)}d`
 }
 
 function ValueView({ selected, value, onReload }: { selected: RedisKey | null; value: StoreAnswer | null; onReload?: () => void }) {

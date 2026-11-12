@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -78,13 +79,19 @@ func Redis(cfg StoreConfig) TunnelService {
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
-	f := &redisFactory{cfg: cfg, uses: &userUse{}}
+	undo := cfg.UndoDir
+	if undo == "" && cfg.RecordDir != "" {
+		undo = filepath.Join(filepath.Dir(filepath.Clean(cfg.RecordDir)), "redis-undo")
+	}
+	f := &redisFactory{cfg: cfg, uses: &userUse{}, undoDir: undo}
 	return storeService(cfg, tunnel.RedisService, tunnel.EngineRedis, f.open)
 }
 
 type redisFactory struct {
 	cfg  StoreConfig
 	uses *userUse
+	// undoDir holds undo copies of changed keys; see redis_manage.go.
+	undoDir string
 	// mu serializes giving and taking users, so two sessions of one person
 	// opening together cannot interleave a reset with an added password.
 	mu sync.Mutex
@@ -116,6 +123,11 @@ func (f *redisFactory) open(ctx context.Context, g tunnel.Grant, _ string) (stor
 	}
 	if !tunnel.ValidRedisDB(db.Name) {
 		return nil, errors.New("the grant names no Redis db number")
+	}
+	if db.RedisRules != nil {
+		if why := tunnel.ValidRedisRules(db.RedisRules, db.Level); why != "" {
+			return nil, errors.New("the rules set for " + db.Level + " on this entry are not ones Argus writes: " + why)
+		}
 	}
 	idx, _ := strconv.Atoi(db.Name)
 	s := &redisSession{f: f, g: g, db: db, host: db.Host, port: db.Port, conf: db.ConfigPath, index: idx,
@@ -238,8 +250,8 @@ func (s *redisSession) giveUser(ctx context.Context, admin *respConn) error {
 	s.pw = pw
 	args := []string{"ACL", "SETUSER", s.user}
 	if s.f.uses.add(s.key, 1) == 1 {
-		args = append(args, "reset", "on", ">"+pw, "~*")
-		args = append(args, tunnel.RedisACLRules(s.db.Level)...)
+		args = append(args, "reset", "on", ">"+pw)
+		args = append(args, tunnel.RedisLevelRules(s.db.Level, s.db.RedisRules)...)
 	} else {
 		args = append(args, "on", ">"+pw)
 	}
@@ -308,8 +320,16 @@ func (s *redisSession) connect(ctx context.Context) error {
 }
 
 func (s *redisSession) ready() tunnel.StoreAnswer {
+	ops := []string{"run", "scan", "value"}
+	for _, op := range []string{tunnel.RedisOpInfo, tunnel.RedisOpUndoList, tunnel.RedisOpEdit, tunnel.RedisOpCount,
+		tunnel.RedisOpBulk, tunnel.RedisOpUndo, tunnel.RedisOpConfigGet, tunnel.RedisOpACLList, tunnel.RedisOpACLDryRun,
+		tunnel.RedisOpConfigSet, tunnel.RedisOpSave, tunnel.RedisOpACLSet, tunnel.RedisOpACLDel} {
+		if tunnel.LevelRank(s.db.Level) >= tunnel.LevelRank(tunnel.RedisOpLevel(op)) {
+			ops = append(ops, op)
+		}
+	}
 	return tunnel.StoreAnswer{Engine: tunnel.EngineRedis, User: s.user, Version: s.version, Server: s.server,
-		Ops: []string{"run", "scan", "value"}}
+		Ops: ops, ChangesNeedApproval: s.db.ChangesNeedApproval}
 }
 
 func (s *redisSession) close(ctx context.Context) {
@@ -327,6 +347,10 @@ func (s *redisSession) do(ctx context.Context, req tunnel.StoreRequest, rec *stm
 	switch req.Op {
 	case "run":
 		return s.run(ctx, req, rec)
+	case tunnel.RedisOpInfo, tunnel.RedisOpEdit, tunnel.RedisOpCount, tunnel.RedisOpBulk, tunnel.RedisOpUndoList,
+		tunnel.RedisOpUndo, tunnel.RedisOpConfigGet, tunnel.RedisOpConfigSet, tunnel.RedisOpSave,
+		tunnel.RedisOpACLList, tunnel.RedisOpACLSet, tunnel.RedisOpACLDel, tunnel.RedisOpACLDryRun:
+		return s.manage(ctx, req, rec)
 	case "scan":
 		return s.scan(ctx, req)
 	case "value":

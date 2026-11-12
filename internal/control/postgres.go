@@ -252,6 +252,10 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 		// A Postgres grant names no engine, so an older agent reads it as it
 		// always has; the others say which they are.
 		g.DB.Engine, g.DB.ConfigPath, g.DB.KeysLimit = db.Engine, db.ConfigPath, db.Policy.KeysLimit
+		if db.Engine == tunnel.EngineRedis {
+			g.DB.RedisRules = db.Policy.RedisLevels[level]
+			g.DB.ChangesNeedApproval = db.WritesNeedApproval()
+		}
 		g.DB.PoolHost, g.DB.PoolPort, g.DB.IdleTxTimeoutMS = "", 0, 0
 	}
 	grant, err := tunnel.SignGrant(a.Tunnels.grantKeyFor(ctx), g)
@@ -450,6 +454,13 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 					ans, _ := json.Marshal(tunnel.StoreAnswer{ID: req.ID, Type: "error", Error: tunnel.ErrRecordTooLong.Error()})
 					_ = sendJSON(pgBrowserMessage{Type: "ans", Ans: ans})
 					continue
+				}
+				if db.Engine == tunnel.EngineRedis {
+					if no := a.redisGate(ctx, email, db, level, &req); no != nil {
+						ans, _ := json.Marshal(no)
+						_ = sendJSON(pgBrowserMessage{Type: "ans", Ans: ans})
+						continue
+					}
 				}
 				b, _ = json.Marshal(req)
 			}

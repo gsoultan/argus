@@ -34,6 +34,9 @@ type StoreConfig struct {
 	Log      *slog.Logger
 	// RecordDir is where recordings are written.
 	RecordDir string
+	// UndoDir is where Redis keeps undo copies of changed keys; empty is
+	// beside RecordDir.
+	UndoDir string
 	// MaxRequestsPerMinute bounds one session. Zero is 120.
 	MaxRequestsPerMinute int
 }
