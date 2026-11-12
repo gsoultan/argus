@@ -50,6 +50,8 @@ interface SessionsValue {
   /** Starts the session again in its tab, on a new ticket. */
   reopen: (id: string, password?: string) => Promise<{ error?: string }>
   close: (id: string) => void
+  /** The asset the most recently ended session was on, so ending the last one can lead back to it. */
+  lastEnded: string | null
   focus: (id: string) => void
   /** The held ticket, once; then a fresh one each call. */
   ticketFor: (id: string) => Promise<string | null>
@@ -83,6 +85,7 @@ export function SessionsProvider({ children }: { children: React.ReactNode }) {
   const [sessions, setSessions] = useState<OpenSession[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [drawerFor, setDrawerFor] = useState<string | null>(null)
+  const [lastEnded, setLastEnded] = useState<string | null>(null)
   // Refs, not state: a ticket and a password are each read exactly once and
   // must not linger in anything React keeps or re-renders.
   const tickets = useRef(new Map<string, string>())
@@ -121,6 +124,8 @@ export function SessionsProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const close = useCallback((id: string) => {
+    const s = byId.current.get(id)
+    if (s) setLastEnded(s.target)
     tickets.current.delete(id)
     passwords.current.delete(id)
     byId.current.delete(id)
@@ -151,9 +156,9 @@ export function SessionsProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const value = useMemo<SessionsValue>(() => ({
-    sessions, activeId, open, reopen, close, focus: setActiveId, ticketFor, takePassword,
+    sessions, activeId, open, reopen, close, lastEnded, focus: setActiveId, ticketFor, takePassword,
     drawerFor, ask: (h?: string) => setDrawerFor(h ?? ''), closeDrawer: () => setDrawerFor(null),
-  }), [sessions, activeId, open, reopen, close, ticketFor, takePassword, drawerFor])
+  }), [sessions, activeId, open, reopen, close, lastEnded, ticketFor, takePassword, drawerFor])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }
@@ -163,7 +168,7 @@ export function SessionsProvider({ children }: { children: React.ReactNode }) {
  * sessions and nothing to open: the stub says so rather than throwing.
  */
 const NONE: SessionsValue = {
-  sessions: [], activeId: null, drawerFor: null,
+  sessions: [], activeId: null, drawerFor: null, lastEnded: null,
   open: async () => ({ error: 'Sessions open from the console.' }),
   reopen: async () => ({ error: 'Sessions open from the console.' }),
   close: () => undefined, focus: () => undefined, ticketFor: async () => null,

@@ -108,6 +108,24 @@ describe('the session workspace', () => {
     fireEvent.click(end)
     await waitFor(() => expect(screen.queryByTestId('session-workspace')).not.toBeInTheDocument())
   }, 15_000)
+
+  it('leads back to the asset once its last session ends, not to an empty Connect page', async () => {
+    fleet()
+    tickets()
+    const { router } = await renderRoute(`/connect?host=${encodeURIComponent(ssh!.hostname)}`)
+    fireEvent.click(await screen.findByRole('button', { name: /^open terminal$/i }))
+    await screen.findByTestId('terminal')
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    fireEvent.click(await screen.findByRole('button', { name: /end session on/i }))
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/assets/${ssh!.id}`))
+    expect(screen.queryByText('Type a server or device name')).not.toBeInTheDocument()
+  }, 15_000)
+
+  it('sends a bare /connect with nothing open to Assets', async () => {
+    fleet()
+    const { router } = await renderRoute('/connect')
+    await waitFor(() => expect(router.state.location.pathname).toBe('/assets'))
+  }, 15_000)
 })
 
 describe('remembering how you connect', () => {

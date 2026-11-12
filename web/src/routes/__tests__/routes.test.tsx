@@ -25,7 +25,6 @@ const ROUTES: Array<[path: string, heading: string | RegExp]> = [
   ['/sessions', 'Activity'],
   ['/audit', 'Activity'],
   ['/settings', 'Settings'],
-  ['/connect', 'Connect'],
   ['/cloud', 'Cloud'],
   ['/cloud/connect', 'Connect an AWS account'],
   ['/cloud/launch', 'Launch an instance'],
@@ -35,6 +34,8 @@ const ROUTES: Array<[path: string, heading: string | RegExp]> = [
   ['/coverage', 'Assets'],
   ['/requests', 'Approvals'],
   ['/users', 'Teams'],
+  // A bare /connect with no session open leads back to Assets.
+  ['/connect', 'Assets'],
 ]
 
 describe('every route mounts', () => {
