@@ -192,7 +192,9 @@ function AccountRow({ a, admin }: { a: CloudAccount; admin: boolean }) {
 function AllowChanges({ a, update, onClose }: { a: CloudAccount; update?: boolean; onClose: () => void }) {
   const prepared = useQuery({ queryKey: ['cloud', 'prepare-manage', a.accountId], queryFn: () => prepareCloudAccount(a.accountId, true), gcTime: 0 })
   const allow = useAllowCloudChanges()
-  const [arn, setArn] = useState(update ? a.manageRoleArn ?? '' : '')
+  // The template's role has a fixed name, so the control plane finds it;
+  // a role kept from before is checked again as it is.
+  const arn = update ? a.manageRoleArn ?? '' : ''
   return (
     <Modal opened onClose={onClose} size="xl" centered title={<Text fw={700}>{update ? `Update the manage role in ${a.name}` : `Allow changes in ${a.name}`}</Text>}>
       <Stack gap="md">
@@ -211,13 +213,11 @@ function AllowChanges({ a, update, onClose }: { a: CloudAccount; update?: boolea
         )}
         {prepared.error && <Alert color="rose" variant="light">{(prepared.error as Error).message}</Alert>}
         {prepared.data ? <RoleSetup prepared={prepared.data} update /> : !prepared.error && <Text size={FS.meta} c="dimmed">Making the template…</Text>}
-        <TextInput label="Manage role ARN" description="The stack's ManageRoleArn output, once the update is done."
-          placeholder={`arn:aws:iam::${a.accountId}:role/ArgusManage`} value={arn} onChange={(e) => setArn(e.currentTarget.value)}
-          styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }} />
+        <Text size={FS.meta} c="dimmed">Once the stack says UPDATE_COMPLETE, press the button. Argus finds the role by its name; there is nothing to paste.</Text>
         <Group justify="flex-end">
           <Button variant="default" onClick={onClose}>Cancel</Button>
-          <Button disabled={!arn.trim().startsWith('arn:')} loading={allow.isPending}
-            onClick={() => void run(() => allow.mutateAsync({ id: a.id, roleArn: arn.trim() }), { failure: 'Argus could not use that role',
+          <Button loading={allow.isPending}
+            onClick={() => void run(() => allow.mutateAsync({ id: a.id, roleArn: arn }), { failure: 'Argus could not use that role',
               success: update ? ['Checking the role', `Argus is reading what the role in ${a.name} may do now.`]
                 : ['Changes allowed', `Admins can now launch and change instances, disks and addresses in ${a.name}.`] }).then((ok) => ok && onClose())}>
             {update ? 'Check again' : 'Check and allow'}

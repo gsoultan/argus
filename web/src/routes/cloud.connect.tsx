@@ -4,7 +4,7 @@ import {
 import { useMutation } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
-  IconBrandAws, IconCheck, IconCircleCheck, IconEye, IconPencil, IconShieldLock,
+  IconCheck, IconCircleCheck, IconEye, IconPencil, IconShieldLock,
 } from '@tabler/icons-react'
 import { useState } from 'react'
 import { ButtonLink } from '~/components/links'
@@ -13,15 +13,18 @@ import {
   ENV_LABEL, prepareCloudAccount, useConnectCloudAccount,
   type CloudAccount, type CloudEnvironment, type CloudPrepared,
 } from '~/lib/cloud'
+import { MakeItForMe, WatchForRoles } from '~/components/cloud/ConnectRoles'
 import { RoleSetup } from '~/components/cloud/RoleSetup'
 import { guard } from '~/lib/guard'
 import { FS, INK, SP } from '~/theme'
 
 /**
- * Connect an AWS account in three steps: say which account and whether Argus
- * may change it, create the role (or roles) in it, paste them back. Argus never asks for access
- * keys; the role trusts only this control plane and requires an external id
- * only it can compute.
+ * Connect an AWS account in two steps: say which account and whether Argus
+ * may change it, then make the roles in it. The roles have fixed names, so
+ * Argus watches for them and connects by itself; nothing is copied back.
+ * Where argus-control's own identity is in that account, Argus can make
+ * them itself. Argus never asks for access keys; the roles trust only this
+ * control plane and require an external id only it can compute.
  */
 export const Route = createFileRoute('/cloud/connect')({
   beforeLoad: ({ context }) => guard(context.queryClient, 'admin'),
@@ -37,8 +40,6 @@ function Connect() {
   const [accountId, setAccountId] = useState('')
   const [env, setEnv] = useState<CloudEnvironment>('production')
   const [manage, setManage] = useState(false)
-  const [manageArn, setManageArn] = useState('')
-  const [roleArn, setRoleArn] = useState('')
   const [done, setDone] = useState<CloudAccount | null>(null)
   const prepare = useMutation({ mutationFn: (id: string) => prepareCloudAccount(id, manage) })
   const connect = useConnectCloudAccount()
@@ -47,19 +48,18 @@ function Connect() {
   const digits = accountId.replace(/[\s-]/g, '')
   const idOk = /^\d{12}$/.test(digits)
   const nameOk = name.trim().length > 0 && name.trim().length <= 64
-  const arnHint = `arn:aws:iam::${digits || '123456789012'}:role/ArgusRead`
 
-  const next = () => prepare.mutate(digits, { onSuccess: () => { setRoleArn(''); setManageArn(''); setStep(1) } })
+  const next = () => prepare.mutate(digits, { onSuccess: () => { connect.reset(); setStep(1) } })
   const submit = () => connect.mutate(
-    { provider: 'aws', name: name.trim(), accountId: digits, roleArn: roleArn.trim(), environment: env,
-      manageRoleArn: manage ? manageArn.trim() : undefined },
-    { onSuccess: (a) => { setDone(a); setStep(3) } },
+    { provider: 'aws', name: name.trim(), accountId: digits, environment: env, manage },
+    { onSuccess: (a) => { setDone(a); setStep(2) } },
   )
+  const reset = () => { setStep(0); setName(''); setAccountId(''); setManage(false); setDone(null); prepare.reset(); connect.reset() }
 
   return (
     <Box>
       <PageHeader crumbs={[{ label: 'Cloud', to: '/cloud' }, { label: 'Connect an account' }]} title="Connect an AWS account"
-        description="Argus reads the account through a role you create in it. No access keys are asked for or stored." />
+        description="Argus reads the account through a role in it. No access keys are asked for or stored." />
       <PageBody>
         <Box maw={820} mx="auto">
           <Steps step={step} />
@@ -101,64 +101,23 @@ function Connect() {
 
           {step === 1 && prepared && (
             <Card padding="lg">
-              <Stack gap="md">
-                <Group gap="sm" wrap="nowrap" align="flex-start">
-                  <ThemeIcon variant="light" color="azure" size={34} radius="md"><IconShieldLock size={18} /></ThemeIcon>
-                  <Box>
-                    <Text fw={600}>
-                      {prepared.manageRoleName
-                        ? <>Two roles, <Text span ff="monospace">{prepared.roleName}</Text> and <Text span ff="monospace">{prepared.manageRoleName}</Text>,</>
-                        : <>A read-only role named <Text span ff="monospace">{prepared.roleName}</Text></>}
-                      {' '}in {digits.replace(/(\d{4})(\d{4})(\d{4})/, '$1 $2 $3')}
-                    </Text>
-                    <Text size={FS.meta} c="dimmed" lh={1.55}>
-                      {prepared.manageRoleName
-                        ? 'The first can describe and list, never read data. The second can launch, start, stop, resize, tag and remove instances, and nothing in IAM. '
-                        : 'It can describe and list, never read data or change anything. '}
-                      {prepared.manageRoleName ? 'Both trust' : 'It trusts'} only this Argus
-                      (<Text span ff="monospace" size={FS.meta}>{prepared.principal}</Text>), requires the external id
-                      {' '}<Text span ff="monospace" size={FS.meta}>{prepared.externalId}</Text>, and requires the name of the person
-                      using it, so CloudTrail shows who in Argus did what. CloudFormation does not charge for it.
-                    </Text>
-                  </Box>
-                </Group>
-                <RoleSetup prepared={prepared} />
-                <Group justify="space-between" mt="xs">
-                  <Button variant="default" onClick={() => setStep(0)}>Back</Button>
-                  <Button onClick={() => setStep(2)}>Next: paste the role</Button>
-                </Group>
-              </Stack>
-            </Card>
-          )}
-
-          {step === 2 && (
-            <Card padding="lg">
-              <Stack gap="md">
-                <TextInput label={manage ? 'Read role ARN' : 'Role ARN'} description="The stack's ReadRoleArn output." placeholder={arnHint}
-                  value={roleArn} onChange={(e) => setRoleArn(e.currentTarget.value)} styles={MONO} data-autofocus />
-                {manage && (
-                  <TextInput label="Manage role ARN" description="The stack's ManageRoleArn output." placeholder={arnHint.replace('ArgusRead', 'ArgusManage')}
-                    value={manageArn} onChange={(e) => setManageArn(e.currentTarget.value)} styles={MONO} />
-                )}
-                {connect.error && (
-                  <Alert color="rose" variant="light" title="Argus could not use that role">{(connect.error as Error).message}</Alert>
-                )}
-                <Text size={FS.meta} c="dimmed">
-                  Argus now assumes {manage ? 'both roles' : 'the role'} as you, checks {manage ? 'they are' : 'it is'} in account {digits}, and lists the regions it can read.
-                  The connection is recorded in the audit log.
-                </Text>
+              <Stack gap="lg">
+                <RoleSummary prepared={prepared} digits={digits} />
+                {prepared.canDeploy && <MakeItForMe prepared={prepared} name={name.trim()} manage={manage} />}
+                <Box style={{ minWidth: 0 }}>
+                  {prepared.canDeploy && <Text fw={600} size={FS.body} mb="xs">Or make it yourself</Text>}
+                  <RoleSetup prepared={prepared} />
+                </Box>
+                <WatchForRoles prepared={prepared} manage={manage} connecting={connect.isPending} failed={connect.error as Error | null}
+                  onReady={submit} />
                 <Group justify="space-between">
-                  <Button variant="default" onClick={() => setStep(1)}>Back</Button>
-                  <Button loading={connect.isPending} disabled={!roleArn.trim().startsWith('arn:') || (manage && !manageArn.trim().startsWith('arn:'))} onClick={submit}
-                    leftSection={<IconBrandAws size={16} />}>
-                    Check and connect
-                  </Button>
+                  <Button variant="default" onClick={() => setStep(0)}>Back</Button>
                 </Group>
               </Stack>
             </Card>
           )}
 
-          {step === 3 && done && (
+          {step === 2 && done && (
             <Card padding="xl">
               <Stack align="center" gap="sm" py="md">
                 <ThemeIcon size={52} radius="xl" variant="light" color="teal"><IconCircleCheck size={30} /></ThemeIcon>
@@ -175,9 +134,7 @@ function Connect() {
                   <Text size={FS.micro} c={INK.brand} ff="monospace">{done.identityArn}</Text>
                 </Group>
                 <Group mt="md">
-                  <Button variant="default" onClick={() => { setStep(0); setName(''); setAccountId(''); setManage(false); setDone(null); prepare.reset(); connect.reset() }}>
-                    Connect another
-                  </Button>
+                  <Button variant="default" onClick={reset}>Connect another</Button>
                   <Button onClick={() => void navigate({ to: '/cloud' })}>Go to Cloud</Button>
                 </Group>
               </Stack>
@@ -186,6 +143,41 @@ function Connect() {
         </Box>
       </PageBody>
     </Box>
+  )
+}
+
+/** What the role is and what it may do, with the details one click away. */
+function RoleSummary({ prepared, digits }: { prepared: CloudPrepared; digits: string }) {
+  const [more, setMore] = useState(false)
+  const two = !!prepared.manageRoleName
+  return (
+    <Group gap="sm" wrap="nowrap" align="flex-start">
+      <ThemeIcon variant="light" color="azure" size={34} radius="md"><IconShieldLock size={18} /></ThemeIcon>
+      <Box>
+        <Text fw={600}>
+          Argus needs {two ? 'two roles' : 'a read-only role'} in {digits.replace(/(\d{4})(\d{4})(\d{4})/, '$1 $2 $3')}
+        </Text>
+        <Text size={FS.meta} c="dimmed" lh={1.55}>
+          {two
+            ? 'One to describe and list, never read data; one to launch, start, stop, resize, tag and remove instances, and nothing in IAM. '
+            : 'It can describe and list, never read data or change anything. '}
+          They trust only this Argus and cost nothing.{' '}
+          <Text span size={FS.meta} c="azure" style={{ cursor: 'pointer' }} onClick={() => setMore((m) => !m)}>
+            {more ? 'Less' : 'How it is locked down'}
+          </Text>
+        </Text>
+        {more && (
+          <Text size={FS.meta} c="dimmed" lh={1.55} mt={4}>
+            {two ? 'Both roles' : 'The role'} (<Text span ff="monospace" size={FS.meta}>{prepared.roleName}</Text>
+            {two && <>, <Text span ff="monospace" size={FS.meta}>{prepared.manageRoleName}</Text></>}) trust only{' '}
+            <Text span ff="monospace" size={FS.meta}>{prepared.principal}</Text>, require the external id{' '}
+            <Text span ff="monospace" size={FS.meta}>{prepared.externalId}</Text>, and require the name of the person using
+            them, so CloudTrail shows who in Argus did what. They are made by one CloudFormation stack, <Text span ff="monospace" size={FS.meta}>argus-access</Text>,
+            which CloudFormation does not charge for.
+          </Text>
+        )}
+      </Box>
+    </Group>
   )
 }
 
@@ -207,14 +199,13 @@ function Choice({ value, icon: Icon, title, text }: { value: string; icon: typeo
 
 const STEPS = [
   ['The account', 'Name and id'],
-  ['Create the role', 'One stack, free'],
-  ['Paste the role', 'Argus checks it'],
+  ['Create the role', 'Argus connects by itself'],
 ] as const
 
-/** Where the person is in the three steps: done in teal, current in azure. */
+/** Where the person is in the two steps: done in teal, current in azure. */
 function Steps({ step }: { step: number }) {
   return (
-    <SimpleGrid cols={3} spacing="sm" mb="xl" aria-label="Steps">
+    <SimpleGrid cols={2} spacing="sm" mb="xl" aria-label="Steps">
       {STEPS.map(([t, d], i) => {
         const state = i < step ? 'done' : i === step ? 'current' : 'next'
         const color = state === 'done' ? 'var(--mantine-color-teal-6)' : state === 'current' ? 'var(--mantine-color-azure-6)' : 'var(--color-line)'

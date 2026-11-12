@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -170,4 +171,44 @@ func Name(tags map[string]string, id string) string {
 		return n
 	}
 	return id
+}
+
+// StackState is where the stack that makes Argus's roles in an account
+// stands, as the provider reports it.
+type StackState struct {
+	// Status is the provider's word, for example CREATE_IN_PROGRESS; empty
+	// when there is no stack.
+	Status string `json:"status,omitempty"`
+	// Reason is why it failed, when it did.
+	Reason string `json:"reason,omitempty"`
+	// Done is a stack whose roles are made; Failed one that will not make
+	// them without someone looking.
+	Done   bool `json:"done"`
+	Failed bool `json:"failed"`
+}
+
+// Deployer makes the roles in an account with the control plane's own
+// identity, so nobody has to open the provider's console. It is possible
+// only in the account that identity belongs to, and only when someone gave
+// that identity the rights to make roles; elsewhere the person makes them.
+// It is an optional interface: a provider that cannot does not implement it.
+type Deployer interface {
+	// DeployAccess creates the access stack from template, or updates it
+	// when it is already there, tagged with the person who asked.
+	DeployAccess(ctx context.Context, accountID, template string, actor Actor) (StackState, error)
+	// AccessStack reports the access stack.
+	AccessStack(ctx context.Context, accountID string) (StackState, error)
+}
+
+// ErrNotHomeAccount is a deploy asked for in an account the control
+// plane's own identity is not in.
+var ErrNotHomeAccount = errors.New("argus-control's own identity is in another account")
+
+// HomeAccount is the account an identity ARN belongs to, or "".
+func HomeAccount(arn string) string {
+	parts := strings.SplitN(arn, ":", 6)
+	if len(parts) != 6 || parts[0] != "arn" {
+		return ""
+	}
+	return parts[4]
 }

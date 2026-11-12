@@ -83,12 +83,12 @@ Resources:
 	}
 	b.WriteString(`Outputs:
   ReadRoleArn:
-    Description: Paste this into Argus.
+    Description: Argus finds this role by its name; nothing to copy.
     Value: !GetAtt ArgusRead.Arn
 `)
 	if manage {
 		b.WriteString(`  ManageRoleArn:
-    Description: Paste this into Argus too.
+    Description: Argus finds this role by its name too.
     Value: !GetAtt ArgusManage.Arn
 `)
 	}

@@ -71,6 +71,8 @@ func (a *API) registerCloudRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/cloud/accounts", a.getCloudAccounts)
 	mux.HandleFunc("POST /api/v1/cloud/accounts/prepare", a.postCloudPrepare)
 	mux.HandleFunc("GET /api/v1/cloud/accounts/template", a.getCloudTemplate)
+	mux.HandleFunc("POST /api/v1/cloud/accounts/deploy", a.postCloudDeploy)
+	mux.HandleFunc("POST /api/v1/cloud/accounts/check", a.postCloudCheck)
 	mux.HandleFunc("POST /api/v1/cloud/accounts", a.postCloudAccount)
 	mux.HandleFunc("DELETE /api/v1/cloud/accounts/{id}", a.deleteCloudAccount)
 	mux.HandleFunc("POST /api/v1/cloud/accounts/{id}/sync", a.postCloudSync)
@@ -194,8 +196,20 @@ type CloudPrepared struct {
 	RoleName   string `json:"roleName"`
 	// ManageRoleName is set when the template makes the manage role too.
 	ManageRoleName string `json:"manageRoleName,omitempty"`
-	Template       string `json:"template"`
-	Command        string `json:"command"`
+	// ReadRoleARN and ManageRoleARN are where the roles will be: their
+	// names are fixed, so nobody copies them out of the stack.
+	ReadRoleARN   string `json:"readRoleArn"`
+	ManageRoleARN string `json:"manageRoleArn,omitempty"`
+	Template      string `json:"template"`
+	Command       string `json:"command"`
+	// CanDeploy is an account argus-control's own identity is in, where
+	// Argus can try to make the stack itself.
+	CanDeploy bool `json:"canDeploy"`
+}
+
+// cloudRoleARN is where a role the template makes is in an account.
+func cloudRoleARN(accountID, name string) string {
+	return "arn:aws:iam::" + accountID + ":role/" + name
 }
 
 // noIdentityNextStep says who can give argus-control its identity. It is set
@@ -231,11 +245,15 @@ func (a *API) cloudPrepare(ctx context.Context, provider, accountID string, mana
 	}
 	out := CloudPrepared{
 		Provider: provider, AccountID: accountID, ExternalID: ext, Principal: base.Principal, Source: base.Source,
-		RoleName: aws.ReadRoleName, Template: aws.Template(base.Principal, ext, manage),
-		Command: aws.DeployCommand(base.Principal, ext, manage),
+		RoleName: aws.ReadRoleName, ReadRoleARN: cloudRoleARN(accountID, aws.ReadRoleName),
+		Template: aws.Template(base.Principal, ext, manage), Command: aws.DeployCommand(base.Principal, ext, manage),
 	}
 	if manage {
 		out.ManageRoleName = aws.ManageRoleName
+		out.ManageRoleARN = cloudRoleARN(accountID, aws.ManageRoleName)
+	}
+	if _, ok := p.(cloud.Deployer); ok && cloud.HomeAccount(base.Principal) == accountID {
+		out.CanDeploy = true
 	}
 	return out, http.StatusOK, nil
 }
@@ -284,11 +302,24 @@ type cloudAccountIn struct {
 	RoleARN   string `json:"roleArn"`
 	// ManageRoleARN, when set, lets Argus make changes in the account.
 	ManageRoleARN string `json:"manageRoleArn"`
-	Environment   string `json:"environment"`
+	// Manage without ManageRoleARN asks for the role the template makes.
+	Manage      bool   `json:"manage"`
+	Environment string `json:"environment"`
 }
 
 func (in *cloudAccountIn) validate() error {
 	in.Name, in.AccountID, in.RoleARN = strings.TrimSpace(in.Name), strings.TrimSpace(in.AccountID), strings.TrimSpace(in.RoleARN)
+	in.ManageRoleARN = strings.TrimSpace(in.ManageRoleARN)
+	// The template's roles have fixed names, so an empty ARN is the one it
+	// made; a role made some other way can still be named.
+	if reAWSAccount.MatchString(in.AccountID) {
+		if in.RoleARN == "" {
+			in.RoleARN = cloudRoleARN(in.AccountID, aws.ReadRoleName)
+		}
+		if in.Manage && in.ManageRoleARN == "" {
+			in.ManageRoleARN = cloudRoleARN(in.AccountID, aws.ManageRoleName)
+		}
+	}
 	if in.Provider != "aws" {
 		return errors.New("only AWS can be connected so far")
 	}
@@ -304,7 +335,6 @@ func (in *cloudAccountIn) validate() error {
 	if strings.Split(in.RoleARN, ":")[4] != in.AccountID {
 		return errors.New("that role is in another account than " + in.AccountID)
 	}
-	in.ManageRoleARN = strings.TrimSpace(in.ManageRoleARN)
 	if err := checkManageRole(in.ManageRoleARN, in.AccountID, in.RoleARN); err != nil {
 		return err
 	}
@@ -354,7 +384,7 @@ func (a *API) postCloudAccount(w http.ResponseWriter, r *http.Request) {
 			Target: cloudTarget(in.Provider, in.AccountID, in.Name),
 			Detail: "Could not connect " + in.RoleARN + ": " + err.Error()})
 		writeErr(w, http.StatusUnprocessableEntity, "Argus could not use that role: "+err.Error()+
-			". Check the stack finished, the ARN is its ReadRoleArn output, and the template came from this Argus.")
+			". Check the stack finished and the template came from this Argus.")
 		return
 	}
 	access := "read only"
@@ -369,7 +399,7 @@ func (a *API) postCloudAccount(w http.ResponseWriter, r *http.Request) {
 				Target: cloudTarget(in.Provider, in.AccountID, in.Name),
 				Detail: "Could not use the manage role " + in.ManageRoleARN + ": " + err.Error()})
 			writeErr(w, http.StatusUnprocessableEntity, "Argus could read the account but not use the manage role: "+err.Error()+
-				". Check the ARN is the stack's ManageRoleArn output, or leave it empty to connect read only.")
+				". Check the stack was made from the read-and-change template, or connect read only.")
 			return
 		}
 		access = "read and change through " + in.ManageRoleARN
@@ -533,8 +563,7 @@ func (a *API) putCloudManage(w http.ResponseWriter, r *http.Request) {
 	}
 	in.RoleARN = strings.TrimSpace(in.RoleARN)
 	if in.RoleARN == "" {
-		writeErr(w, http.StatusBadRequest, "paste the stack's ManageRoleArn output")
-		return
+		in.RoleARN = cloudRoleARN(c.AccountID, aws.ManageRoleName)
 	}
 	if err := checkManageRole(in.RoleARN, c.AccountID, c.RoleARN); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -558,7 +587,7 @@ func (a *API) putCloudManage(w http.ResponseWriter, r *http.Request) {
 			Target: cloudTarget(c.Provider, c.AccountID, c.Name),
 			Detail: "Could not use the manage role " + in.RoleARN + ": " + err.Error()})
 		writeErr(w, http.StatusUnprocessableEntity, "Argus could not use that role: "+err.Error()+
-			". Check the stack update finished and the ARN is its ManageRoleArn output.")
+			". Check the stack update finished.")
 		return
 	}
 	c, err = a.store.SetCloudManageRole(r.Context(), c.ID, in.RoleARN)
