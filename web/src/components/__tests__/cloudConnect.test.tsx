@@ -53,6 +53,14 @@ describe('Connect an AWS account', () => {
     expect(onReady).not.toHaveBeenCalled()
   })
 
+  it("says what AWS answers once the stack is made but the role still does not work", async () => {
+    api.checkCloudAccount.mockResolvedValue({ ready: false, detail: 'The read role does not let Argus in yet: AccessDenied: not authorized to perform sts:AssumeRole',
+      stack: { status: 'CREATE_COMPLETE', done: true, failed: false } })
+    renderWithProviders(<WatchForRoles prepared={prepared} manage={false} connecting={false} failed={null} onReady={vi.fn()} />)
+    expect(await screen.findByText(/CREATE_COMPLETE, but AWS does not let Argus use the role yet/)).toBeInTheDocument()
+    expect(screen.getByText(/not authorized to perform sts:AssumeRole/)).toBeInTheDocument()
+  })
+
   it('shows why Argus could not make the roles itself', async () => {
     api.deployCloudAccess.mockRejectedValue(new Error("argus-control's own identity may not make the roles (AccessDenied)"))
     renderWithProviders(<MakeItForMe prepared={prepared} name="payments-prod" manage />)

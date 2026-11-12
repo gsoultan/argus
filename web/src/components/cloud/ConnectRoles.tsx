@@ -125,6 +125,9 @@ export function WatchForRoles({ prepared, manage, connecting, failed, onReady }:
   }, [check.data?.ready, onReady])
   const again = () => { fired.current = false; setStale(false); setSince(Date.now()) }
   const stack = check.data?.stack
+  // The stack is finished, so a role that still does not work is not
+  // waiting on CloudFormation, and AWS's answer is the reason to show.
+  const made = !!stack?.status && /_COMPLETE$/.test(stack.status) && !stack.status.includes('ROLLBACK')
 
   if (failed) {
     return (
@@ -164,6 +167,7 @@ export function WatchForRoles({ prepared, manage, connecting, failed, onReady }:
           <Text size={FS.meta} c="dimmed">
             {check.error ? (check.error as Error).message
               : stale ? 'It checked for half an hour. Look again once the stack is made.'
+                : made && check.data?.detail ? `CloudFormation: ${stack?.status}, but AWS does not let Argus use the ${manage ? 'roles' : 'role'} yet. ${check.data.detail}`
                 : stack?.status ? `CloudFormation: ${stack.status}. Argus connects as soon as it is done.`
                   : 'Argus checks every few seconds and connects by itself as soon as the stack is made. Leave this page open.'}
           </Text>
