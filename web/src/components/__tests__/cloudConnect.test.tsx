@@ -101,6 +101,6 @@ describe('Connect an AWS account when a stack is stuck', () => {
     renderWithProviders(<MakeItForMe prepared={{ ...prepared, deployRights: '{"Version":"2012-10-17"}' }} name="payments-prod" manage />)
     fireEvent.click(screen.getByRole('button', { name: /Make the roles for me/ }))
     expect(await screen.findByText('Argus made nothing')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Copy the policy it needs/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Copy the policy/ })).toBeInTheDocument()
   })
 })

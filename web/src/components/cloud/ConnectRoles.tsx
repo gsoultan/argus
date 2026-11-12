@@ -1,4 +1,4 @@
-import { Alert, Box, Button, Card, CopyButton, Group, Loader, Stack, Text, ThemeIcon } from '@mantine/core'
+import { Alert, Box, Button, Card, Code, CopyButton, Group, Loader, Stack, Text, ThemeIcon } from '@mantine/core'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { IconCheck, IconCopy, IconWand } from '@tabler/icons-react'
 import { useEffect, useRef, useState } from 'react'
@@ -16,6 +16,8 @@ const CHECK_FOR = 30 * 60_000
  */
 export function MakeItForMe({ prepared, name, manage }: { prepared: CloudPrepared; name: string; manage: boolean }) {
   const deploy = useMutation({ mutationFn: () => deployCloudAccess(prepared.accountId, manage, name, prepared.identity) })
+  const [show, setShow] = useState(false)
+  const open = show || !!deploy.error
   return (
     <Card withBorder padding="md" radius="md">
       <Stack gap="sm">
@@ -26,6 +28,11 @@ export function MakeItForMe({ prepared, name, manage }: { prepared: CloudPrepare
             <Text size={FS.meta} c="dimmed" lh={1.55}>
               argus-control signs in to AWS as <Text span ff="monospace" size={FS.meta}>{prepared.principal}</Text>, which is in this account.
               If that identity is allowed to create IAM roles, Argus checks it has every right first, then creates the stack itself. The audit log and the stack's tags say you asked.
+              {prepared.deployRights && !deploy.error && (
+                <>{' '}<Text span size={FS.meta} c="azure" style={{ cursor: 'pointer' }} onClick={() => setShow((v) => !v)}>
+                  {show ? 'Hide the policy' : 'See the policy it needs'}
+                </Text></>
+              )}
             </Text>
           </Box>
         </Group>
@@ -34,24 +41,12 @@ export function MakeItForMe({ prepared, name, manage }: { prepared: CloudPrepare
             <Stack gap="xs">
               <Text size={FS.meta}>{(deploy.error as Error).message}</Text>
               <Text size={FS.meta}>
-                Use the CloudShell command below while signed in as an administrator. Or attach this policy to
-                {' '}<Text span ff="monospace" size={FS.meta}>{prepared.principal}</Text> and try again, then remove it once the
-                roles are made: an identity that may make roles can give itself any permission.
+                Use the CloudShell command below while signed in as an administrator, or attach the policy below and try again.
               </Text>
-              {prepared.deployRights && (
-                <Group>
-                  <CopyButton value={prepared.deployRights}>
-                    {({ copied, copy }) => (
-                      <Button size="xs" variant="default" leftSection={copied ? <IconCheck size={13} /> : <IconCopy size={13} />} onClick={copy}>
-                        {copied ? 'Copied' : 'Copy the policy it needs'}
-                      </Button>
-                    )}
-                  </CopyButton>
-                </Group>
-              )}
             </Stack>
           </Alert>
         )}
+        {open && prepared.deployRights && <Policy json={prepared.deployRights} principal={prepared.principal} />}
         {deploy.isSuccess ? (
           <Text size={FS.meta} c={INK.verified}>CloudFormation is making the roles. Argus connects as soon as they work.</Text>
         ) : (
@@ -63,6 +58,36 @@ export function MakeItForMe({ prepared, name, manage }: { prepared: CloudPrepare
         )}
       </Stack>
     </Card>
+  )
+}
+
+/**
+ * The policy the identity needs to make the stack, readable and copyable,
+ * with why it should not stay attached.
+ */
+function Policy({ json, principal }: { json: string; principal: string }) {
+  let pretty = json
+  try { pretty = JSON.stringify(JSON.parse(json), null, 2) } catch { /* shown as sent */ }
+  return (
+    <Stack gap={6}>
+      <Text size={FS.meta} c="dimmed" lh={1.55}>
+        Attach this to <Text span ff="monospace" size={FS.meta}>{principal}</Text> in IAM, press the button, and remove it once the
+        roles are made. It is limited to <Text span ff="monospace" size={FS.meta}>Argus*</Text> roles and the{' '}
+        <Text span ff="monospace" size={FS.meta}>argus-access</Text> stack, but an identity that may make roles can give itself any
+        permission, so it should not stay. Only this button needs it: the CloudShell command below needs nothing attached.
+      </Text>
+      <Box pos="relative">
+        <Code block fz={FS.micro} mah={260} style={{ overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{pretty}</Code>
+        <CopyButton value={pretty}>
+          {({ copied, copy }) => (
+            <Button size="xs" variant={copied ? 'light' : 'default'} color={copied ? 'teal' : undefined} pos="absolute" top={8} right={8}
+              leftSection={copied ? <IconCheck size={13} /> : <IconCopy size={13} />} onClick={copy}>
+              {copied ? 'Copied' : 'Copy the policy'}
+            </Button>
+          )}
+        </CopyButton>
+      </Box>
+    </Stack>
   )
 }
 
