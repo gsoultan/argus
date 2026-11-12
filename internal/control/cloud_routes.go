@@ -212,6 +212,16 @@ func cloudRoleARN(accountID, name string) string {
 	return "arn:aws:iam::" + accountID + ":role/" + name
 }
 
+// noIdentityNextStep says who can give argus-control its identity. It is set
+// in the default organization only, so anywhere else the step is to ask the
+// platform's owner rather than look for a setting that is not there.
+func noIdentityNextStep(ctx context.Context) string {
+	if platformScope(ctx) {
+		return "Run it on EC2 with an instance profile, or give it an IAM user's access key under Settings › Cloud identities"
+	}
+	return "It is shared by every organization, so ask the platform's owner to set it under Settings › Cloud identities in the default organization"
+}
+
 // prepare works out the role an account needs, or says why it cannot.
 func (a *API) cloudPrepare(ctx context.Context, provider, accountID string, manage bool) (CloudPrepared, int, error) {
 	if provider != "aws" {
@@ -227,7 +237,7 @@ func (a *API) cloudPrepare(ctx context.Context, provider, accountID string, mana
 	base := a.cloudBase(ctx, p)
 	if base.Error != "" {
 		return CloudPrepared{}, http.StatusConflict, errors.New("argus-control has no AWS identity of its own yet: " + base.Error +
-			". Run it on EC2 with an instance profile, or give it an IAM user's access key under Settings › Cloud identities")
+			". " + noIdentityNextStep(ctx))
 	}
 	ext, err := a.cloudExternalID(ctx, provider, accountID)
 	if err != nil {
@@ -430,7 +440,9 @@ func (a *API) deleteCloudAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	a.auditAsset(r, AuditEvent{Action: "cloud.account.disconnected", Severity: "notice", ActorEmail: actor,
 		Target: cloudTarget(c.Provider, c.AccountID, c.Name),
-		Detail: "Disconnected. Argus no longer reads it; the role in the account is still there until someone deletes its stack."})
+		Detail: "Disconnected. Argus no longer reads or changes it, and nothing in the account was changed by disconnecting: " +
+			"its instances, disks and tags are as they were. Changes still waiting for a decision were cancelled. " +
+			"The roles in the account are still there until someone deletes their stack."})
 	w.WriteHeader(http.StatusNoContent)
 }
 

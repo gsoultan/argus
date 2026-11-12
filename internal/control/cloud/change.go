@@ -127,6 +127,29 @@ type RemovePlan struct {
 	ElasticIP string `json:"elasticIp,omitempty"`
 }
 
+// managers are the tags AWS puts on an instance something else owns, and
+// what to call that owner. Terminating such an instance fights its owner:
+// a stack or group puts it back, or breaks.
+var managers = []struct{ tag, what string }{
+	{"aws:cloudformation:stack-name", "CloudFormation stack "},
+	{"aws:autoscaling:groupName", "Auto Scaling group "},
+	{"eks:nodegroup-name", "EKS node group "},
+	{"karpenter.sh/nodepool", "Karpenter node pool "},
+	{"aws:ec2spot:fleet-request-id", "Spot Fleet request "},
+	{"aws:ec2:fleet-id", "EC2 Fleet "},
+	{"elasticbeanstalk:environment-name", "Elastic Beanstalk environment "},
+}
+
+// ManagedBy names what owns an instance with these tags, or "".
+func ManagedBy(tags map[string]string) string {
+	for _, m := range managers {
+		if v := tags[m.tag]; v != "" {
+			return m.what + v
+		}
+	}
+	return ""
+}
+
 // Hash is a digest of the plan's facts, so an approval runs only what the
 // approver saw.
 func (p RemovePlan) Hash() string { return Digest(p) }

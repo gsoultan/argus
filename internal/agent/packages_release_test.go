@@ -815,7 +815,12 @@ func TestApplyReleaseFollowsTheUpgradersLogs(t *testing.T) {
 			f.Close()
 			deadline := time.Now().Add(5 * time.Second)
 			for time.Now().Before(deadline) {
-				during = readRunFile(t, a.Plan.StateDir)
+				// The follower replaces the file while this polls; on
+				// Windows a read can meet the rename and fail, so a failed
+				// read is just another poll.
+				if b, err := os.ReadFile(filepath.Join(a.Plan.StateDir, packagesRunFile)); err == nil {
+					_ = json.Unmarshal(b, &during)
+				}
 				if strings.Contains(during.Message, "Unpacking libc6") {
 					break
 				}

@@ -294,6 +294,10 @@ func (a *API) removePlan(ctx context.Context, m cloudManaged, actor, region stri
 	if name, ok := a.store.CloudLaunchedServer(ctx, m.acct.ID, inst.ID); ok {
 		v.Server = name
 	}
+	// An instance that was in the account before Argus is removed the
+	// same way as one Argus launched: by its typed name, with approval
+	// where the environment needs it, and never while protected or owned
+	// by a stack.
 	switch {
 	case plan.Protected:
 		v.Refusal = cloud.ErrProtected.Error()

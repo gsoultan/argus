@@ -140,7 +140,9 @@ export function FirewallActions({ it }: { it: CloudItem }) {
               <ActionIcon variant="default" size={30} aria-label="More actions" disabled={Boolean(waiting)}><IconDots size={15} /></ActionIcon>
             </Menu.Target>
             <Menu.Dropdown>
-              <Menu.Item color="rose" leftSection={<IconTrash size={14} />} onClick={() => setOpen('delete')}>Delete security group…</Menu.Item>
+              <Menu.Item color="rose" leftSection={<IconTrash size={14} />} onClick={() => setOpen('delete')}>
+                Delete security group…
+              </Menu.Item>
             </Menu.Dropdown>
           </Menu>
         </Group>

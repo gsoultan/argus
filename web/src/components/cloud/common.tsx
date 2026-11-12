@@ -30,6 +30,21 @@ function Dot() {
   return <Box component="span" w={6} h={6} style={{ borderRadius: '50%', background: 'currentColor', display: 'inline-block' }} />
 }
 
+/**
+ * Whether Argus made it or it was already in the account. Only what Argus
+ * made can be removed or deleted from Argus; the rest is managed, never
+ * deleted.
+ */
+export function OriginBadge({ it, size = 'sm' }: { it: CloudItem; size?: 'xs' | 'sm' }) {
+  return it.madeByArgus
+    ? <Tooltip label="Argus launched or created it, by its own record"><Badge size={size} variant="light" color="blue" radius="sm" tt="none">Made by Argus</Badge></Tooltip>
+    : (
+      <Tooltip label="It was in the account before Argus, or Argus has no record of making it. Argus read it on connecting and manages it like anything else." multiline w={260}>
+        <Badge size={size} variant="light" color="violet" radius="sm" tt="none">Already in the account</Badge>
+      </Tooltip>
+    )
+}
+
 /** The resource's name, with its id beneath when they differ. */
 export function NameCell({ r }: { r: CloudResource }) {
   return (
@@ -88,6 +103,7 @@ export function ResourceDrawer({ it, onClose, names }: {
           <Group gap="xs">
             {r.state && <StateBadge state={r.state} />}
             <EnvBadge env={it.environment} />
+            {(r.kind === 'instance' || r.kind === 'firewall') && <OriginBadge it={it} />}
             {openToInternet(r).length > 0 && (
               <Badge variant="light" color="rose" radius="sm">Open to the internet: {openToInternet(r).join(', ')}</Badge>
             )}

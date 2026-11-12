@@ -157,6 +157,12 @@ func (s *Store) ArchiveCloudAccount(ctx context.Context, id, by string) (CloudAc
 		WHERE account_id::text = $1 AND gone_at IS NULL`, id); err != nil {
 		return CloudAccount{}, err
 	}
+	// A change still waiting for a decision would otherwise sit there: it
+	// can no longer run, and nobody should approve it thinking it might.
+	if _, err := tx.Exec(ctx, `UPDATE cloud_changes SET state = 'cancelled', decided_by = $2, decided_at = now()
+		WHERE account_id::text = $1 AND state = 'awaiting_approval'`, id, by); err != nil {
+		return CloudAccount{}, err
+	}
 	return c, tx.Commit(ctx)
 }
 
@@ -216,6 +222,9 @@ type CloudItem struct {
 	Resource    cloud.Resource `json:"resource"`
 	// Server is the Argus server this instance appears to be.
 	Server *CloudServerMatch `json:"server,omitempty"`
+	// MadeByArgus is whether Argus launched or created it, by its own
+	// record. Only what Argus made can be removed or deleted from Argus.
+	MadeByArgus bool `json:"madeByArgus"`
 }
 
 // CloudServerMatch links an instance to a server, and says how. It is a
@@ -231,7 +240,7 @@ type CloudServerMatch struct {
 // accounts.
 func (s *Store) CloudResources(ctx context.Context, kind cloud.Kind) ([]CloudItem, error) {
 	rows, err := s.db(ctx).Query(ctx, `
-		SELECT a.id::text, a.name, a.environment, r.first_seen, r.seen_at, r.data
+		SELECT a.id::text, a.name, a.environment, r.first_seen, r.seen_at, r.data, `+madeByArgusSQL+`
 		FROM cloud_resources r JOIN cloud_accounts a ON a.id = r.account_id
 		WHERE r.kind = $1 AND r.gone_at IS NULL AND a.archived_at IS NULL
 		ORDER BY lower(a.name), r.region, r.data->>'name'`, string(kind))
@@ -243,7 +252,7 @@ func (s *Store) CloudResources(ctx context.Context, kind cloud.Kind) ([]CloudIte
 	for rows.Next() {
 		var it CloudItem
 		var data []byte
-		if err := rows.Scan(&it.AccountID, &it.AccountName, &it.Environment, &it.FirstSeen, &it.SeenAt, &data); err != nil {
+		if err := rows.Scan(&it.AccountID, &it.AccountName, &it.Environment, &it.FirstSeen, &it.SeenAt, &data, &it.MadeByArgus); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(data, &it.Resource); err != nil {

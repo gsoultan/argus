@@ -151,7 +151,7 @@ function Cloud() {
           )}
           {tab === 'overview' && (
             accounts.data ? (
-              <CloudOverview accounts={list} bases={accounts.data.bases} admin={admin} onTab={setTab}
+              <CloudOverview accounts={list} bases={accounts.data.bases} admin={admin} platform={!me?.org || me.org.default} onTab={setTab}
                 instances={q.instance.data} firewalls={q.firewall.data} volumes={q.volume.data} addresses={q.address.data} />
             ) : (
               <Group justify="center" p="xl"><Text c="dimmed" size={FS.body}>Loading…</Text></Group>
@@ -172,7 +172,7 @@ function Cloud() {
               loading={q.volume.isPending} names={names} filtered={filtered} />
           )}
           {tab === 'network' && (
-            <NetworkTables firewalls={narrow(q.firewall.data)} networks={narrow(q.network.data)} subnets={q.subnet.data}
+            <NetworkTables firewalls={narrow(q.firewall.data)} instances={q.instance.data} networks={narrow(q.network.data)} subnets={q.subnet.data}
               addresses={narrow(q.address.data)} balancers={narrow(q['load-balancer'].data)} targetGroups={narrow(q['target-group'].data)}
               loading={q.firewall.isPending} names={names} filtered={filtered} />
           )}

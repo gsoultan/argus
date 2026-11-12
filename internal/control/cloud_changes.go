@@ -235,6 +235,14 @@ func (s *Store) CloudLaunchedServer(ctx context.Context, accountID, id string) (
 	return name, err == nil && name != ""
 }
 
+// madeByArgusSQL is true for the resource in r (provider_id) of account a
+// when Argus itself made it: an applied launch or security group create in
+// the same provider account, under this connection or an earlier one. A
+// tag would not do: anyone with access to the account can write one.
+const madeByArgusSQL = `EXISTS (SELECT 1 FROM cloud_changes c JOIN cloud_accounts ca ON ca.id = c.account_id
+	WHERE ca.provider = a.provider AND ca.account_id = a.account_id AND c.resource_id = r.provider_id
+	AND c.action IN ('launch', 'firewall-create') AND c.state = 'applied')`
+
 // SetCloudManageRole records the role changes are made with, or clears
 // it, which makes the account read only.
 func (s *Store) SetCloudManageRole(ctx context.Context, id, arn string) (CloudAccount, error) {
