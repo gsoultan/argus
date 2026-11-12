@@ -1,5 +1,5 @@
 import {
-  Alert, Badge, Box, Button, Card, Collapse, Group, Radio, SegmentedControl, SimpleGrid, Stack, Text, TextInput, ThemeIcon,
+  Alert, Badge, Box, Button, Card, Group, Radio, SegmentedControl, SimpleGrid, Stack, Text, TextInput, ThemeIcon,
 } from '@mantine/core'
 import { useMutation } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
@@ -166,7 +166,7 @@ function RoleSummary({ prepared, digits }: { prepared: CloudPrepared; digits: st
             {more ? 'Less' : 'How it is locked down'}
           </Text>
         </Text>
-        <Collapse expanded={more}>
+        {more && (
           <Text size={FS.meta} c="dimmed" lh={1.55} mt={4}>
             {two ? 'Both roles' : 'The role'} (<Text span ff="monospace" size={FS.meta}>{prepared.roleName}</Text>
             {two && <>, <Text span ff="monospace" size={FS.meta}>{prepared.manageRoleName}</Text></>}) trust only{' '}
@@ -175,7 +175,7 @@ function RoleSummary({ prepared, digits }: { prepared: CloudPrepared; digits: st
             them, so CloudTrail shows who in Argus did what. They are made by one CloudFormation stack, <Text span ff="monospace" size={FS.meta}>argus-access</Text>,
             which CloudFormation does not charge for.
           </Text>
-        </Collapse>
+        )}
       </Box>
     </Group>
   )
