@@ -277,7 +277,15 @@ const json = (res, code, body, headers = {}) => {
 /** @param {IncomingMessage} req */
 async function readBody(req) {
   const chunks = []
-  for await (const c of req) chunks.push(c)
+  // A page that navigates away mid-request aborts its body. Reading it then
+  // throws ECONNRESET, and from this async handler that was an unhandled
+  // rejection that took the whole stub down, failing every later test on
+  // "connection refused". An aborted request gets nothing; the server stays.
+  try {
+    for await (const c of req) chunks.push(c)
+  } catch {
+    return {}
+  }
   try { return JSON.parse(Buffer.concat(chunks).toString() || '{}') } catch { return {} }
 }
 
