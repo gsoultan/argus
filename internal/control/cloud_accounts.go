@@ -157,6 +157,12 @@ func (s *Store) ArchiveCloudAccount(ctx context.Context, id, by string) (CloudAc
 		WHERE account_id::text = $1 AND gone_at IS NULL`, id); err != nil {
 		return CloudAccount{}, err
 	}
+	// A change still waiting for a decision would otherwise sit there: it
+	// can no longer run, and nobody should approve it thinking it might.
+	if _, err := tx.Exec(ctx, `UPDATE cloud_changes SET state = 'cancelled', decided_by = $2, decided_at = now()
+		WHERE account_id::text = $1 AND state = 'awaiting_approval'`, id, by); err != nil {
+		return CloudAccount{}, err
+	}
 	return c, tx.Commit(ctx)
 }
 

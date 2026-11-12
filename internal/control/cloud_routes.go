@@ -400,7 +400,9 @@ func (a *API) deleteCloudAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	a.auditAsset(r, AuditEvent{Action: "cloud.account.disconnected", Severity: "notice", ActorEmail: actor,
 		Target: cloudTarget(c.Provider, c.AccountID, c.Name),
-		Detail: "Disconnected. Argus no longer reads it; the role in the account is still there until someone deletes its stack."})
+		Detail: "Disconnected. Argus no longer reads or changes it, and nothing in the account was changed by disconnecting: " +
+			"its instances, disks and tags are as they were. Changes still waiting for a decision were cancelled. " +
+			"The roles in the account are still there until someone deletes their stack."})
 	w.WriteHeader(http.StatusNoContent)
 }
 

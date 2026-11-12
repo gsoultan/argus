@@ -294,7 +294,16 @@ func (a *API) removePlan(ctx context.Context, m cloudManaged, actor, region stri
 	if name, ok := a.store.CloudLaunchedServer(ctx, m.acct.ID, inst.ID); ok {
 		v.Server = name
 	}
+	launched, err := a.store.CloudLaunchedByArgus(ctx, m.acct.ID, inst.ID)
+	if err != nil {
+		return cloudRemovePlanView{}, err
+	}
 	switch {
+	case !launched:
+		// Fails closed: an instance that was in the account before Argus,
+		// or that Argus has no record of launching, is never terminated
+		// from here.
+		v.Refusal = cloudNotLaunched
 	case plan.Protected:
 		v.Refusal = cloud.ErrProtected.Error()
 	case plan.ManagedBy != "":
@@ -304,6 +313,11 @@ func (a *API) removePlan(ctx context.Context, m cloudManaged, actor, region stri
 	}
 	return v, nil
 }
+
+// cloudNotLaunched is why Argus will not remove an instance it did not
+// launch.
+const cloudNotLaunched = "Argus did not launch it. Argus only removes instances it launched itself, " +
+	"so an instance that was already in the account is never terminated from here; terminate it in AWS if you mean to"
 
 func (a *API) getCloudRemovePlan(w http.ResponseWriter, r *http.Request) {
 	actor, ok := a.cloudChanger(w, r)

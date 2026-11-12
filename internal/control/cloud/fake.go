@@ -325,9 +325,7 @@ func (f *Fake) PlanRemove(_ context.Context, a Account, actor Actor, region, id 
 	r := f.Resources[region][i]
 	p := RemovePlan{ID: r.ID, Name: r.Name, State: r.State, Size: r.Size, Protected: f.Protected[id],
 		PublicIP: r.PublicIP, Volumes: []Volume{}}
-	if s := r.Tags["aws:cloudformation:stack-name"]; s != "" {
-		p.ManagedBy = "CloudFormation stack " + s
-	}
+	p.ManagedBy = ManagedBy(r.Tags)
 	for _, l := range r.Links {
 		if l.Kind == KindVolume {
 			p.Volumes = append(p.Volumes, Volume{ID: l.ID, Device: l.Name, SizeGB: 8, Deleted: true})
