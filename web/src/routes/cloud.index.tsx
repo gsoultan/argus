@@ -151,7 +151,7 @@ function Cloud() {
           )}
           {tab === 'overview' && (
             accounts.data ? (
-              <CloudOverview accounts={list} bases={accounts.data.bases} admin={admin} onTab={setTab}
+              <CloudOverview accounts={list} bases={accounts.data.bases} admin={admin} platform={!me?.org || me.org.default} onTab={setTab}
                 instances={q.instance.data} firewalls={q.firewall.data} volumes={q.volume.data} addresses={q.address.data} />
             ) : (
               <Group justify="center" p="xl"><Text c="dimmed" size={FS.body}>Loading…</Text></Group>
