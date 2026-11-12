@@ -79,6 +79,9 @@ const theme = (narrow: boolean) => EditorView.theme({
   '&.cm-focused': { outline: 'none' },
   '.cm-scroller': { fontFamily: 'var(--font-mono)', lineHeight: '21px', overflow: 'auto' },
   '.cm-content': { caretColor: 'var(--color-ink)', padding: '8px 0' },
+  // drawSelection hides the native caret and draws its own, which the base
+  // theme paints black; follow the ink colour so it shows on a dark surface.
+  '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--color-ink)', borderLeftWidth: '2px' },
   '.cm-gutters': { background: 'var(--color-raised)', color: 'var(--color-ink-muted)', border: 0, borderRight: '1px solid var(--color-line)' },
   '.cm-activeLine': { background: 'color-mix(in srgb, var(--color-brand) 5%, transparent)' },
   '.cm-activeLineGutter': { background: 'transparent', color: 'var(--color-ink)' },
