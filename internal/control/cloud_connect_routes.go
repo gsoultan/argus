@@ -127,7 +127,7 @@ func (a *API) postCloudDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	target := cloudTarget(in.Provider, in.AccountID, in.Name)
 	dctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	st, err := d.DeployAccess(dctx, in.AccountID, prep.Template, cloud.Actor(actor))
+	st, err := d.DeployAccess(dctx, in.AccountID, prep.Template, in.Manage, cloud.Actor(actor))
 	cancel()
 	if err != nil {
 		a.auditAsset(r, AuditEvent{Action: "cloud.account.stack_refused", Severity: "notice", ActorEmail: actor, Target: target,

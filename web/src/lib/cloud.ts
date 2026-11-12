@@ -113,6 +113,8 @@ export interface CloudPrepared {
   command: string
   /** argus-control's own identity is in this account, so Argus can try to make the stack itself. */
   canDeploy: boolean
+  /** The policy that identity needs to make the stack, for an administrator to attach. */
+  deployRights?: string
 }
 
 /** Where the argus-access stack stands, when Argus can see it. */

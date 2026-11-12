@@ -1,6 +1,6 @@
-import { Alert, Box, Button, Card, Group, Loader, Stack, Text, ThemeIcon } from '@mantine/core'
+import { Alert, Box, Button, Card, CopyButton, Group, Loader, Stack, Text, ThemeIcon } from '@mantine/core'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { IconCheck, IconWand } from '@tabler/icons-react'
+import { IconCheck, IconCopy, IconWand } from '@tabler/icons-react'
 import { useEffect, useRef, useState } from 'react'
 import { checkCloudAccount, deployCloudAccess, type CloudPrepared } from '~/lib/cloud'
 import { FS, INK } from '~/theme'
@@ -25,12 +25,32 @@ export function MakeItForMe({ prepared, name, manage }: { prepared: CloudPrepare
             <Text fw={600} size={FS.body}>Argus can make it for you</Text>
             <Text size={FS.meta} c="dimmed" lh={1.55}>
               argus-control signs in to AWS as <Text span ff="monospace" size={FS.meta}>{prepared.principal}</Text>, which is in this account.
-              If that identity is allowed to create IAM roles, Argus creates the stack itself. The audit log and the stack's tags say you asked.
+              If that identity is allowed to create IAM roles, Argus checks it has every right first, then creates the stack itself. The audit log and the stack's tags say you asked.
             </Text>
           </Box>
         </Group>
         {deploy.error && (
-          <Alert color="amber" variant="light" title="Argus could not make it">{(deploy.error as Error).message}</Alert>
+          <Alert color="amber" variant="light" title="Argus made nothing">
+            <Stack gap="xs">
+              <Text size={FS.meta}>{(deploy.error as Error).message}</Text>
+              <Text size={FS.meta}>
+                Use the CloudShell command below while signed in as an administrator. Or attach this policy to
+                {' '}<Text span ff="monospace" size={FS.meta}>{prepared.principal}</Text> and try again, then remove it once the
+                roles are made: an identity that may make roles can give itself any permission.
+              </Text>
+              {prepared.deployRights && (
+                <Group>
+                  <CopyButton value={prepared.deployRights}>
+                    {({ copied, copy }) => (
+                      <Button size="xs" variant="default" leftSection={copied ? <IconCheck size={13} /> : <IconCopy size={13} />} onClick={copy}>
+                        {copied ? 'Copied' : 'Copy the policy it needs'}
+                      </Button>
+                    )}
+                  </CopyButton>
+                </Group>
+              )}
+            </Stack>
+          </Alert>
         )}
         {deploy.isSuccess ? (
           <Text size={FS.meta} c={INK.verified}>CloudFormation is making the roles. Argus connects as soon as they work.</Text>
@@ -61,7 +81,9 @@ export function WatchForRoles({ prepared, manage, connecting, failed, onReady }:
     queryKey: ['cloud', 'connect-check', prepared.accountId, manage, since],
     queryFn: () => checkCloudAccount(prepared.accountId, manage, prepared.identity),
     enabled: !stale && !connecting && !failed,
-    refetchInterval: (q) => (q.state.data?.ready || q.state.data?.stack?.failed ? false : CHECK_EVERY),
+    // A failed stack keeps being watched: the fix is to run the command
+    // below, and the page should notice when that works.
+    refetchInterval: (q) => (q.state.data?.ready ? false : CHECK_EVERY),
     refetchIntervalInBackground: true,
     retry: false,
     gcTime: 0,
@@ -94,7 +116,10 @@ export function WatchForRoles({ prepared, manage, connecting, failed, onReady }:
       <Alert color="rose" variant="light" title={`The argus-access stack stopped at ${stack.status}`}>
         <Stack gap="xs">
           <Text size={FS.meta}>{stack.reason || 'CloudFormation did not say why. Its Events tab does.'}</Text>
-          <Group><Button size="xs" variant="default" onClick={again}>Check again</Button></Group>
+          <Text size={FS.meta} fw={500}>
+            To fix it, run the CloudShell command below while signed in as an administrator. It deletes this stack first and
+            makes the roles again; Argus keeps watching and connects when they work.
+          </Text>
         </Stack>
       </Alert>
     )

@@ -9,6 +9,8 @@ import (
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	cftypes "github.com/aws/aws-sdk-go-v2/service/cloudformation/types"
+	"github.com/aws/aws-sdk-go-v2/service/iam"
+	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 
 	"github.com/gsoultan/argus/internal/control/cloud"
@@ -41,26 +43,127 @@ func (p *Provider) homeAccount(ctx context.Context) (awssdk.Config, string, erro
 }
 
 func (p *Provider) stackClient(ctx context.Context, accountID string) (*cloudformation.Client, error) {
-	base, home, err := p.homeAccount(ctx)
+	c, _, _, err := p.homeClients(ctx, accountID)
+	return c, err
+}
+
+// homeClients are the clients for the base identity's own account, with
+// the identity's ARN as a policy names it.
+func (p *Provider) homeClients(ctx context.Context, accountID string) (*cloudformation.Client, awssdk.Config, string, error) {
+	base, err := p.base(ctx)
 	if err != nil {
-		return nil, err
+		return nil, awssdk.Config{}, "", err
 	}
-	if home != accountID {
-		return nil, fmt.Errorf("%w (%s, not %s)", cloud.ErrNotHomeAccount, home, accountID)
+	who, err := sts.NewFromConfig(base).GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+	if err != nil {
+		return nil, awssdk.Config{}, "", fmt.Errorf("%w: %s", cloud.ErrNoBase, plain(err))
 	}
-	return cloudformation.NewFromConfig(base), nil
+	if home := awssdk.ToString(who.Account); home != accountID {
+		return nil, awssdk.Config{}, "", fmt.Errorf("%w (%s, not %s)", cloud.ErrNotHomeAccount, home, accountID)
+	}
+	return cloudformation.NewFromConfig(base), base, TrustPrincipal(awssdk.ToString(who.Arn)), nil
+}
+
+// deployIAMActions are what CloudFormation does with the identity's rights
+// to make, change and, on a failure, remove the roles. Every one is needed:
+// an identity that may create a role but not read it back leaves a stack
+// that can neither finish nor roll back.
+var deployIAMActions = []string{
+	"iam:CreateRole", "iam:GetRole", "iam:DeleteRole", "iam:UpdateRole", "iam:UpdateAssumeRolePolicy",
+	"iam:PutRolePolicy", "iam:GetRolePolicy", "iam:DeleteRolePolicy",
+	"iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:TagRole", "iam:UntagRole",
+}
+
+// deployStackActions are the stack's own.
+var deployStackActions = []string{
+	"cloudformation:CreateStack", "cloudformation:UpdateStack", "cloudformation:DeleteStack",
+	"cloudformation:DescribeStacks", "cloudformation:DescribeStackEvents",
+}
+
+// deployRoles are the roles the template makes.
+func deployRoles(manage bool) []string {
+	if manage {
+		return []string{ReadRoleName, ManageRoleName, ConsoleReadRoleName, ConsoleOperateRoleName}
+	}
+	return []string{ReadRoleName}
+}
+
+// DeployRights is the policy the base identity needs for DeployAccess, as
+// JSON an administrator can attach to it. Limiting it to Argus* roles does
+// not make it safe to keep: an identity that may make a role and set its
+// policy can make one with any permission. The console says to remove it
+// once the roles are made.
+func DeployRights(accountID string) string {
+	return `{"Version":"2012-10-17","Statement":[` +
+		`{"Effect":"Allow","Action":["` + strings.Join(deployIAMActions, `","`) + `"],"Resource":"arn:aws:iam::` + accountID + `:role/Argus*"},` +
+		`{"Effect":"Allow","Action":["` + strings.Join(deployStackActions, `","`) + `"],"Resource":"arn:aws:cloudformation:*:` + accountID + `:stack/` + StackName + `/*"},` +
+		`{"Effect":"Allow","Action":"iam:SimulatePrincipalPolicy","Resource":"*"}]}`
+}
+
+// missingRights asks IAM's policy simulator which of the actions the stack
+// needs the base identity may not take. Argus checks before it creates
+// anything, so a missing right means no stack rather than a stuck one.
+func missingRights(ctx context.Context, cfg awssdk.Config, principal, accountID string, manage bool) ([]string, error) {
+	c := iam.NewFromConfig(cfg)
+	var roles []string
+	for _, r := range deployRoles(manage) {
+		roles = append(roles, "arn:aws:iam::"+accountID+":role/"+r)
+	}
+	stack := fmt.Sprintf("arn:aws:cloudformation:%s:%s:stack/%s/00000000-0000-0000-0000-000000000000", cfg.Region, accountID, StackName)
+	var missing []string
+	for _, q := range []struct {
+		actions, resources []string
+	}{{deployIAMActions, roles}, {deployStackActions, []string{stack}}} {
+		pg := iam.NewSimulatePrincipalPolicyPaginator(c, &iam.SimulatePrincipalPolicyInput{
+			PolicySourceArn: awssdk.String(principal), ActionNames: q.actions, ResourceArns: q.resources,
+		})
+		for pg.HasMorePages() {
+			out, err := pg.NextPage(ctx)
+			if err != nil {
+				return nil, err
+			}
+			for _, r := range out.EvaluationResults {
+				if !allowed(r) {
+					missing = append(missing, awssdk.ToString(r.EvalActionName))
+				}
+			}
+		}
+	}
+	return missing, nil
+}
+
+// allowed is an evaluation that allows the action on every resource asked.
+func allowed(r iamtypes.EvaluationResult) bool {
+	if len(r.ResourceSpecificResults) == 0 {
+		return r.EvalDecision == iamtypes.PolicyEvaluationDecisionTypeAllowed
+	}
+	for _, rr := range r.ResourceSpecificResults {
+		if rr.EvalResourceDecision != iamtypes.PolicyEvaluationDecisionTypeAllowed {
+			return false
+		}
+	}
+	return true
 }
 
 // DeployAccess creates the argus-access stack in the base identity's own
 // account, or updates it when it is already there. It returns as soon as
 // CloudFormation has taken it; AccessStack follows it from there.
-func (p *Provider) DeployAccess(ctx context.Context, accountID, template string, actor cloud.Actor) (cloud.StackState, error) {
+func (p *Provider) DeployAccess(ctx context.Context, accountID, template string, manage bool, actor cloud.Actor) (cloud.StackState, error) {
 	if !actor.Valid() {
 		return cloud.StackState{}, fmt.Errorf("%q cannot be named on the stack", actor)
 	}
-	c, err := p.stackClient(ctx, accountID)
+	c, cfg, principal, err := p.homeClients(ctx, accountID)
 	if err != nil {
 		return cloud.StackState{}, err
+	}
+	missing, err := missingRights(ctx, cfg, principal, accountID, manage)
+	if err != nil {
+		return cloud.StackState{}, &cloud.DeployRefusal{Reason: "Argus could not check its own permissions first (" + plain(err) +
+			"), so it made nothing rather than risk a stack that cannot finish.", Rights: DeployRights(accountID)}
+	}
+	if len(missing) > 0 {
+		return cloud.StackState{}, &cloud.DeployRefusal{Reason: principal + " may not " + strings.Join(missing, ", ") +
+			", so Argus made nothing.", Missing: missing, Rights: DeployRights(accountID)}
 	}
 	tags := []cftypes.Tag{
 		{Key: awssdk.String("argus:requested-by"), Value: awssdk.String(string(actor))},
@@ -75,18 +178,19 @@ func (p *Provider) DeployAccess(ctx context.Context, accountID, template string,
 	case cur == nil:
 		_, err = c.CreateStack(ctx, &cloudformation.CreateStackInput{
 			StackName: awssdk.String(StackName), TemplateBody: awssdk.String(template),
-			Capabilities: caps, Tags: tags, OnFailure: cftypes.OnFailureRollback,
+			// The rights to remove the roles were checked above, so a failed
+			// create removes itself rather than waiting for someone.
+			Capabilities: caps, Tags: tags, OnFailure: cftypes.OnFailureDelete,
 		})
 		if err != nil {
 			return cloud.StackState{}, deployRefused(err)
 		}
 		return cloud.StackState{Status: string(cftypes.StackStatusCreateInProgress)}, nil
-	case cur.StackStatus == cftypes.StackStatusRollbackComplete || cur.StackStatus == cftypes.StackStatusRollbackFailed ||
-		cur.StackStatus == cftypes.StackStatusCreateFailed:
-		// A stack that never got made holds nothing, but deleting it is still
-		// the person's call, not Argus's.
-		return cloud.StackState{}, fmt.Errorf("the %s stack in this account failed when it was first made (%s); delete it in CloudFormation, then try again",
-			StackName, cur.StackStatus)
+	case StuckStatus(string(cur.StackStatus)):
+		// Deleting it is the person's call, not Argus's, and a stack stuck
+		// this way usually needs more rights than Argus has.
+		return cloud.StackState{}, &cloud.DeployRefusal{Reason: fmt.Sprintf("the %s stack in this account is stuck at %s. "+
+			"Delete it as an administrator, or run the CloudShell command below, which deletes a stuck stack first.", StackName, cur.StackStatus)}
 	case strings.HasSuffix(string(cur.StackStatus), "_IN_PROGRESS"):
 		return stackState(ctx, c, cur), nil
 	}
@@ -114,6 +218,17 @@ func (p *Provider) AccessStack(ctx context.Context, accountID string) (cloud.Sta
 		return cloud.StackState{}, err
 	}
 	return stackState(ctx, c, cur), nil
+}
+
+// StuckStatus is a stack that never finished being made and cannot be
+// updated: it has to be deleted before the roles can be made again.
+func StuckStatus(s string) bool {
+	switch cftypes.StackStatus(s) {
+	case cftypes.StackStatusRollbackComplete, cftypes.StackStatusRollbackFailed, cftypes.StackStatusCreateFailed,
+		cftypes.StackStatusDeleteFailed:
+		return true
+	}
+	return false
 }
 
 func describeStack(ctx context.Context, c *cloudformation.Client) (*cftypes.Stack, error) {
