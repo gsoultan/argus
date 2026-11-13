@@ -65,6 +65,11 @@ jobs:
             GOOS=$os "$(go env GOPATH)/bin/govulncheck" ./cmd/argus-agent/
           done
 
+      - name: Add a virtual X server for the screen sharing tests
+        # Screen sharing on Linux reads an X display; its tests start Xvfb,
+        # and skip without it.
+        run: command -v Xvfb || { sudo apt-get update -qq && sudo apt-get install -y -qq xvfb; }
+
       - name: Test
         env:
           ARGUS_TEST_DATABASE_URL: postgres://argus:argus@localhost:5433/argus?sslmode=disable
@@ -85,6 +90,16 @@ jobs:
         # it too; this names the failure instead of burying it in a wall of
         # package results.
         run: go test -count=1 -run 'TestAgentLinksNoControlPlaneCode|TestSharedPackagesStayNeutral|TestControlPlaneShipsNoAgentCode' -v ./cmd/argus-agent/
+
+      - name: Confirm the X11 screen sharing tests actually ran
+        # A skipped test passes: these read a real X screen through MIT-SHM
+        # and DAMAGE and play keys through XTEST, and must not quietly stop.
+        run: |
+          out=$(go test -count=1 -run 'TestX11' -v ./internal/agent/ 2>&1)
+          echo "$out"
+          if echo "$out" | grep -q -- "--- SKIP"; then
+            echo "::error::the X11 screen sharing tests skipped; Xvfb was not found"; exit 1
+          fi
 
       - name: Confirm the database tests actually ran
         env:
@@ -162,6 +177,12 @@ jobs:
       - name: Encode H.264 with Media Foundation
         if: runner.os == 'Windows'
         run: go test -count=1 -v -run TestMediaFoundationEncodesTheScreen ./internal/agent/
+      # CoreGraphics through purego, as the screen helper calls it: whether
+      # the frameworks load and take the calls, and, where the runner allows
+      # screen recording, a frame. What it was allowed is in the log.
+      - name: Screen sharing's CoreGraphics calls (macOS)
+        if: runner.os == 'macOS'
+        run: go test -count=1 -v -run 'TestMac' ./internal/agent/
       - name: Build and start each binary
         run: |
           set -euo pipefail

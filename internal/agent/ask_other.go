@@ -14,8 +14,9 @@ import (
 )
 
 /*
-On Linux the person at the machine is told, never asked: a terminal is a
-login of its own and takes nothing from them. The notice goes to the desktop
+On Linux the person at the machine is told, never asked, about a terminal:
+it is a login of its own and takes nothing from them. Their screen is
+theirs, so before it is shared they are asked, in a dialog on it. The notice goes to the desktop
 of everyone signed in on the machine's own screen, through notify-send in
 their session; a machine without one shows nothing, and the session still
 opens.
@@ -33,8 +34,10 @@ func (u unixAsker) InUse(ctx context.Context) ([]tunnel.Logon, error) {
 	return consoleLogons(res.Logons), nil
 }
 
-func (unixAsker) Ask(context.Context, tunnel.Logon, string, string, int) (bool, bool, error) {
-	return false, false, errors.New("asking at the machine is only done on Windows")
+// Ask puts the question on the person's desktop, where there is one to put
+// it on (screen_ask_linux.go).
+func (unixAsker) Ask(ctx context.Context, l tunnel.Logon, title, text string, seconds int) (bool, bool, error) {
+	return askOnDesktop(ctx, l, title, text, seconds)
 }
 
 func (unixAsker) Tell(ctx context.Context, l tunnel.Logon, title, text string) error {

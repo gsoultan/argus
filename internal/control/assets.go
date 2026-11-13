@@ -95,8 +95,10 @@ type AssetInput struct {
 	// gateway's vault. A name, never a path: see validate below for why.
 	CredentialRef string `json:"credentialRef"`
 	Domain        string `json:"domain"`
-	// DesktopMode is how a Windows server's desktop opens: "rdp" through its
-	// own Remote Desktop, or "screen", sharing the console without it.
+	// DesktopMode is how a server's desktop opens. On a Windows server,
+	// "rdp" through its own Remote Desktop, or "screen", sharing the console
+	// without it. On a Linux or Mac server (SSH), "screen" offers its screen
+	// beside the terminal and "rdp", the default, offers none.
 	DesktopMode string `json:"desktopMode"`
 	// Kind is "server", "workstation" (a laptop or PC someone sits at,
 	// stored and opened as a server is) or "android". A device is reached over the agent
@@ -307,9 +309,10 @@ func (in AssetInput) normalise() (AssetInput, error) {
 	case "", "rdp":
 		in.DesktopMode = "rdp"
 	case "screen":
-		if in.Protocol != "rdp" {
-			return bad("screen sharing applies to a Windows server; this one is reached over SSH")
-		}
+		// Any server's screen: Windows' console, a Linux machine's X11
+		// display or a Mac's, through the agent. On an SSH server it is
+		// offered beside the terminal; there is no Remote Desktop to
+		// replace.
 	default:
 		return bad("desktop mode must be rdp (Remote Desktop) or screen (screen sharing)")
 	}

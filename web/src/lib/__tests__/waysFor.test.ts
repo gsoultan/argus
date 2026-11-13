@@ -14,6 +14,10 @@ describe('waysFor', () => {
 
   it('offers a Linux server a terminal and files', () => {
     expect(waysFor(asset({ protocol: 'ssh' }))).toEqual(['terminal', 'files', 'split'])
+    // A Linux or Mac machine with its screen shared: the screen beside the
+    // terminal, first on a workstation, second on a server.
+    expect(waysFor(asset({ protocol: 'ssh', desktopMode: 'screen' }))).toEqual(['terminal', 'screen', 'files', 'split'])
+    expect(waysFor(asset({ protocol: 'ssh', desktopMode: 'screen', kind: 'workstation' }))).toEqual(['screen', 'terminal', 'files', 'split'])
   })
 
   it('opens a Windows terminal as a terminal, not a desktop', () => {

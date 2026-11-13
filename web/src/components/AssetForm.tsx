@@ -357,6 +357,26 @@ export function AssetForm({
           </Box>
         )}
 
+        {!isRDP && (
+          <Box>
+            <Text size="sm" fw={500}>Its screen</Text>
+            <Text size="xs" c="dimmed" mb={6}>
+              {form.desktopMode === 'screen'
+                ? 'Offers its screen as it is, beside the terminal: whoever is signed in there, or the sign-in screen. Anyone in front of it sees what is done. Linux with an X11 desktop, or macOS once argus-agent is allowed to record the screen and control the computer.'
+                : 'Terminal and files only.'}
+            </Text>
+            <SegmentedControl
+              fullWidth
+              value={form.desktopMode === 'screen' ? 'screen' : 'rdp'}
+              onChange={(v) => set('desktopMode', v as DesktopMode)}
+              data={[
+                { value: 'rdp', label: 'Not shared' },
+                { value: 'screen', label: 'Screen sharing' },
+              ]}
+            />
+          </Box>
+        )}
+
         {isRDP && form.desktopMode !== 'screen' && (
           <TextInput
             label="Windows domain"
