@@ -720,3 +720,18 @@ export function rowNav(onActivate: () => void) {
     className: 'cursor-pointer argus-row',
   } as const
 }
+/**
+ * A confirm dialog's title. It names the server by its alias when it has one,
+ * and then gives the hostname under it: the name the audit log uses is never
+ * hidden. The buttons below say only the verb, so a long name never pushes
+ * them onto rows of their own.
+ */
+export function AssetDialogTitle({ text, name, hostname }: { text: string; name: string; hostname: string }) {
+  return (
+    <Box>
+      <Text fw={600} fz="inherit" style={{ overflowWrap: 'anywhere' }}>{text}</Text>
+      {name !== hostname && <Text size={FS.micro} c="dimmed" ff="monospace" style={{ overflowWrap: 'anywhere' }}>{hostname}</Text>}
+    </Box>
+  )
+}
+

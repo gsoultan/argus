@@ -2,7 +2,7 @@ import { Alert, Badge, Box, Button, Card, Group, Modal, Stack, Text } from '@man
 import { useDisclosure } from '@mantine/hooks'
 import { useNavigate } from '@tanstack/react-router'
 import { IconAlertTriangle, IconPencil, IconShieldCheck, IconTrash } from '@tabler/icons-react'
-import { Digest, HostKeyBadge, Mono, absTime, relTime } from '~/components/primitives'
+import { AssetDialogTitle, Digest, HostKeyBadge, Mono, absTime, relTime } from '~/components/primitives'
 import { usePin } from '~/components/server/hostKey'
 import { SettingsSection, SettingsSections } from '~/components/server/layout'
 import { connectsBy } from '~/components/server/OverviewTab'
@@ -11,7 +11,7 @@ import { run } from '~/lib/notify'
 import { useArchiveAsset } from '~/lib/queries'
 import { FS, SP } from '~/theme'
 import type { Asset } from '~/types/domain'
-import { ASSET_TYPE_LABEL, assetNoun, assetTypeOf } from '~/lib/assetType'
+import { ASSET_TYPE_LABEL, assetName, assetNoun, assetTypeOf } from '~/lib/assetType'
 
 /**
  * The controls an asset needs rarely: its details, its host key, and taking
@@ -204,7 +204,7 @@ export function RemoveServer({ asset }: { asset: Asset }) {
           Remove
         </Button>
       </Group>
-      <Modal opened={open} onClose={modal.close} title={`Remove ${asset.hostname} from Argus?`}>
+      <Modal opened={open} onClose={modal.close} title={<AssetDialogTitle text={`Remove ${assetName(asset)} from Argus?`} name={assetName(asset)} hostname={asset.hostname} />}>
         <Stack gap="sm" mb="md">
           <Text size="sm">
             Everyone loses access to it from Argus, right away. Its recordings and activity are
