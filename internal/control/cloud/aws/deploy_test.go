@@ -22,12 +22,12 @@ func TestDeployNeedsEveryRightOnEveryRole(t *testing.T) {
 		t.Fatal("an action denied on one role must fail, whatever the summary says")
 	}
 	for _, a := range []string{"iam:PutUserPolicy", "iam:GetRole", "iam:DeleteRole", "iam:CreateRole", "cloudformation:DeleteStack"} {
-		if !strings.Contains(DeployRights("993686182533", "arn:aws:iam::993686182533:user/argus"), `"`+a+`"`) {
+		if !strings.Contains(DeployRights("111122223333", "arn:aws:iam::111122223333:user/argus"), `"`+a+`"`) {
 			t.Errorf("the policy to attach lacks %s", a)
 		}
 	}
 	var doc map[string]any
-	if err := json.Unmarshal([]byte(DeployRights("993686182533", "arn:aws:iam::993686182533:user/argus")), &doc); err != nil {
+	if err := json.Unmarshal([]byte(DeployRights("111122223333", "arn:aws:iam::111122223333:user/argus")), &doc); err != nil {
 		t.Fatalf("the policy is not JSON: %v", err)
 	}
 	if len(deployRoles(true)) != 4 || len(deployRoles(false)) != 1 {
@@ -56,25 +56,25 @@ func TestStuckStacksAreTheOnesToDelete(t *testing.T) {
 // nobody attaches a policy by hand. The roles refused it with
 // "not authorized to perform: sts:SetSourceIdentity" until this.
 func TestTheStackLetsItsOwnIdentityUseTheRoles(t *testing.T) {
-	user := "arn:aws:iam::993686182533:user/argus"
-	tpl := TemplateFor("993686182533", []string{user}, "argus-x", true)
+	user := "arn:aws:iam::111122223333:user/argus"
+	tpl := TemplateFor("111122223333", []string{user}, "argus-x", true)
 	for _, want := range []string{"Type: AWS::IAM::Policy", "PolicyName: argus-assume-roles", "Users:", `- "argus"`,
 		"- sts:AssumeRole", "- sts:SetSourceIdentity", "- sts:TagSession", `Resource: "arn:aws:iam::*:role/Argus*"`} {
 		if !strings.Contains(tpl, want) {
 			t.Errorf("the template lacks %q:\n%s", want, tpl)
 		}
 	}
-	if strings.Contains(TemplateFor("111122223333", []string{user}, "argus-x", true), "AWS::IAM::Policy") {
+	if strings.Contains(TemplateFor("444455556666", []string{user}, "argus-x", true), "AWS::IAM::Policy") {
 		t.Error("another account's stack must not touch the identity, which is not there")
 	}
-	role := TemplateFor("993686182533", []string{"arn:aws:iam::993686182533:role/ops/argus-control"}, "argus-x", false)
+	role := TemplateFor("111122223333", []string{"arn:aws:iam::111122223333:role/ops/argus-control"}, "argus-x", false)
 	if !strings.Contains(role, "Roles:") || !strings.Contains(role, `- "argus-control"`) {
 		t.Errorf("a role identity gets the policy by its name, without the path:\n%s", role)
 	}
-	if strings.Contains(TemplateFor("993686182533", []string{"arn:aws:iam::993686182533:root"}, "argus-x", false), "AWS::IAM::Policy") {
+	if strings.Contains(TemplateFor("111122223333", []string{"arn:aws:iam::111122223333:root"}, "argus-x", false), "AWS::IAM::Policy") {
 		t.Error("an account root is not a user or a role")
 	}
-	if !strings.Contains(DeployRights("993686182533", user), `"Resource":"`+user+`"`) {
+	if !strings.Contains(DeployRights("111122223333", user), `"Resource":"`+user+`"`) {
 		t.Error("making the stack itself needs the right to put that policy on the identity")
 	}
 }
@@ -97,7 +97,7 @@ func TestTrustSetsSourceIdentityWithoutTheExternalIDCondition(t *testing.T) {
 			} `yaml:"Properties"`
 		} `yaml:"Resources"`
 	}
-	tpl := TemplateFor("993686182533", []string{"arn:aws:iam::993686182533:user/argus"}, "argus-x", true)
+	tpl := TemplateFor("111122223333", []string{"arn:aws:iam::111122223333:user/argus"}, "argus-x", true)
 	if err := yaml.Unmarshal([]byte(strings.ReplaceAll(tpl, "!GetAtt", "")), &doc); err != nil {
 		t.Fatal(err)
 	}
