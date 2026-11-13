@@ -59,9 +59,13 @@ const DIST = new URL('../dist/', import.meta.url).pathname
  * 730 by 0.01 kB with it): the session store remembers where a session was
  * opened from. The security group map and origin badges add nothing stored;
  * they are in the cloud page's chunks.
+ * 731.9 kB with the console noticing a new build (730.1 before, same build):
+ * the check that asks the server for its index.html every minute and brings
+ * the new build in. It has to be in the shell, since the shell is what a tab
+ * left open across an update is running.
  */
 const MAX_ENTRIES = 10
-const MAX_KB = 731
+const MAX_KB = 732
 
 async function precached(): Promise<string[]> {
   const sw = await readFile(join(DIST, 'sw.js'), 'utf8')
