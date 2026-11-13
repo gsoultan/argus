@@ -9,6 +9,7 @@ import (
 	"image"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -63,8 +64,11 @@ func startXvfb(t *testing.T, w, h int) string {
 	}
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		if c, err := dialX(); err == nil {
-			c.Close()
+		// A bare connection to the socket, not an X client: an xgb
+		// connection here would leave a reader behind that the race
+		// detector pairs with the capturer's first extension setup.
+		if nc, err := net.Dial("unix", "@/tmp/.X11-unix/X"+display[1:]); err == nil {
+			nc.Close()
 			return display
 		}
 		time.Sleep(50 * time.Millisecond)
