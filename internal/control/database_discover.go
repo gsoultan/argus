@@ -40,6 +40,32 @@ type DiscoverAnswer struct {
 	Databases  []DiscoveredDB `json:"databases"`
 	Configured int            `json:"configured,omitempty"`
 	Truncated  bool           `json:"truncated,omitempty"`
+	// Host and Port are where the agent found Postgres when it was not
+	// where the form asked; the form adds the entry there.
+	Host string `json:"host,omitempty"`
+	Port int    `json:"port,omitempty"`
+	// Places are the other Postgres servers the agent found on this server.
+	Places []tunnel.DiscoverPlace `json:"places,omitempty"`
+	// Poolers are the PgBouncers configured on this server, each database
+	// they send on matched to the server in the inventory it goes to.
+	Poolers []DiscoveredPooler `json:"poolers,omitempty"`
+	// Tried is every way in the agent tried, when none answered.
+	Tried []string `json:"tried,omitempty"`
+}
+
+// DiscoveredPooler is one PgBouncer and where its databases go.
+type DiscoveredPooler struct {
+	Config  string            `json:"config"`
+	Port    int               `json:"port"`
+	Targets []PoolerTargetRef `json:"targets"`
+}
+
+// PoolerTargetRef is a PgBouncer [databases] line and, when its Postgres is
+// a server in the inventory, that server.
+type PoolerTargetRef struct {
+	tunnel.PoolerTarget
+	AssetID   string `json:"assetId,omitempty"`
+	AssetName string `json:"assetName,omitempty"`
 }
 
 // DiscoveredDB is one found database, and whether Argus already has it.
@@ -80,10 +106,17 @@ func (a *API) getDiscoverDatabases(w http.ResponseWriter, r *http.Request, actor
 		return
 	}
 	ans := a.discoverDatabases(r.Context(), actor, asset.Hostname, d)
+	port := d.Port
+	if ans.Port != 0 {
+		port = ans.Port
+	}
+	if len(ans.Poolers) > 0 {
+		a.matchPoolerTargets(r.Context(), asset.ID, ans.Poolers)
+	}
 	if existing, err := a.store.Databases(r.Context(), asset.ID); err == nil {
 		have := map[string]bool{}
 		for _, e := range existing {
-			if e.Engine == d.Engine && e.Port == d.Port {
+			if e.Engine == d.Engine && e.Port == port {
 				have[e.Name] = true
 			}
 		}
@@ -167,6 +200,14 @@ func (a *API) discoverDatabases(ctx context.Context, actor, hostname string, d t
 			return ans
 		}
 		ans.Version, ans.Server, ans.Configured, ans.Truncated = res.Version, res.Server, res.Configured, res.Truncated
+		ans.Host, ans.Port, ans.Places, ans.Tried = res.Host, res.Port, res.Places, res.Tried
+		for _, p := range res.Poolers {
+			dp := DiscoveredPooler{Config: p.Config, Port: p.Port, Targets: []PoolerTargetRef{}}
+			for _, t := range p.Targets {
+				dp.Targets = append(dp.Targets, PoolerTargetRef{PoolerTarget: t})
+			}
+			ans.Poolers = append(ans.Poolers, dp)
+		}
 		if !res.OK {
 			ans.State, ans.Error = "failed", res.Error
 			return ans
@@ -180,5 +221,66 @@ func (a *API) discoverDatabases(ctx context.Context, actor, hostname string, d t
 			ans.Databases = append(ans.Databases, DiscoveredDB{Discovered: f})
 		}
 		return ans
+	}
+}
+
+// matchPoolerTargets names the server in the inventory each PgBouncer target
+// on another server goes to: by its address, its hostname (or the first
+// label of it) or an address its agent reported. A target on the PgBouncer's
+// own server, or one nobody matches, is left as it is.
+func (a *API) matchPoolerTargets(ctx context.Context, self string, ps []DiscoveredPooler) {
+	assets, err := a.store.Assets(ctx)
+	if err != nil {
+		return
+	}
+	addrs, _ := a.store.AgentAddresses(ctx)
+	byKey := map[string]Asset{}
+	put := func(k string, as Asset) {
+		k = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(k), "."))
+		if k == "" {
+			return
+		}
+		if _, ok := byKey[k]; !ok {
+			byKey[k] = as
+		}
+	}
+	for _, as := range assets {
+		if as.ID == self {
+			continue
+		}
+		put(as.Address, as)
+		put(as.Hostname, as)
+		put(as.AgentHostname, as)
+		for _, ad := range addrs[as.ID] {
+			ip, _, _ := strings.Cut(ad.Address, "/")
+			put(ip, as)
+		}
+	}
+	for _, as := range assets {
+		if as.ID == self {
+			continue
+		}
+		short, _, _ := strings.Cut(as.Hostname, ".")
+		put(short, as)
+	}
+	for i := range ps {
+		for j := range ps[i].Targets {
+			t := &ps[i].Targets[j]
+			if t.Local() {
+				continue
+			}
+			h := strings.ToLower(strings.TrimSuffix(t.Host, "."))
+			as, ok := byKey[h]
+			if !ok {
+				short, _, _ := strings.Cut(h, ".")
+				as, ok = byKey[short]
+			}
+			if ok {
+				t.AssetID, t.AssetName = as.ID, as.Hostname
+				if as.Alias != "" {
+					t.AssetName = as.Alias
+				}
+			}
+		}
 	}
 }

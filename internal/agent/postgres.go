@@ -64,6 +64,9 @@ type PostgresConfig struct {
 	HelperEnv []string
 	// MaxStatementsPerMinute bounds one session. Zero is 120.
 	MaxStatementsPerMinute int
+	// PGRoot is where pgbouncer.ini is looked for, for a Postgres on another
+	// server (pgremote.go); empty is "/".
+	PGRoot string
 }
 
 // Defaults when the grant names none.
@@ -108,7 +111,7 @@ func Postgres(cfg PostgresConfig) TunnelService {
 	}
 	admin := cfg.Admin
 	if admin == nil {
-		admin = helperAdmin(cfg)
+		admin = withPooledRemote(cfg.PGRoot, helperAdmin(cfg))
 	}
 	uses := &roleUse{}
 	return func(ctx context.Context, call *Call) {
@@ -136,9 +139,10 @@ func Postgres(cfg PostgresConfig) TunnelService {
 		case tunnel.LevelRank(db.Level) == 0:
 			call.Refuse("unknown access level " + db.Level)
 			return
-		case !tunnel.LocalPGHost(db.Host):
-			// The agent reaches its own server's Postgres and nothing else.
-			call.Refuse("the database must be on this server; " + db.Host + " is not")
+		case !tunnel.LocalPGHost(db.Host) && !pgLocatorBehind(cfg.PGRoot, db.Host, db.Port):
+			// The agent reaches its own server's Postgres, and one on another
+			// server only when its own PgBouncer sends there.
+			call.Refuse("the database must be on this server or behind its PgBouncer; " + db.Host + " is not")
 			return
 		case db.Name == "" || db.Port <= 0 || db.Port > 65535:
 			call.Refuse("the grant does not say which database to open")
@@ -258,7 +262,8 @@ func openPGSession(ctx context.Context, cfg PostgresConfig, admin pgAdminRunner,
 func (s *pgSession) useKey() string { return s.db.Name + "\x00" + s.g.Principal }
 
 func socketDir(db tunnel.GrantDB) string {
-	if strings.HasPrefix(db.Host, "/") {
+	// A socket directory, or a Postgres on another server, as it is.
+	if strings.HasPrefix(db.Host, "/") || !tunnel.LocalPGHost(db.Host) {
 		return db.Host
 	}
 	return "/var/run/postgresql"
@@ -306,7 +311,7 @@ func (s *pgSession) connect(ctx context.Context, password string) (*pgconn.PgCon
 	ways = append(ways, way{s.db.Host, s.db.Port, false})
 	if strings.HasPrefix(s.db.Host, "/") {
 		ways = append(ways, way{"127.0.0.1", s.db.Port, false})
-	} else {
+	} else if tunnel.LocalPGHost(s.db.Host) {
 		ways = append(ways, way{socketDir(s.db), s.db.Port, false})
 	}
 	var lastErr error

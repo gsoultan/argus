@@ -198,6 +198,11 @@ func (c *x11Capturer) open() error {
 	}
 	c.conn, c.root = conn, scr.Root
 	c.width, c.height = int(scr.WidthInPixels), int(scr.HeightInPixels)
+	// The extensions before any event is asked for: their constructors go
+	// into xgb's shared maps, which the readers look events up in.
+	hasShm := x11InitExt(conn, "MIT-SHM") == nil
+	hasFixes := x11InitExt(conn, "XFIXES") == nil
+	hasDamage := hasFixes && x11InitExt(conn, "DAMAGE") == nil
 	c.events = make(chan xgb.Event, 64)
 	c.lost = make(chan struct{})
 	go c.readEvents(conn, c.events, c.lost)
@@ -206,19 +211,19 @@ func (c *x11Capturer) open() error {
 	_ = xproto.ChangeWindowAttributesChecked(conn, c.root, xproto.CwEventMask,
 		[]uint32{xproto.EventMaskStructureNotify}).Check()
 
-	c.useShm = shm.Init(conn) == nil
+	c.useShm = hasShm
 	if c.useShm {
 		if _, err := shm.QueryVersion(conn).Reply(); err != nil {
 			c.useShm = false
 		}
 	}
-	if xfixes.Init(conn) == nil {
+	if hasFixes {
 		if _, err := xfixes.QueryVersion(conn, 4, 0).Reply(); err == nil {
 			c.useCursor = true
 			_ = xfixes.SelectCursorInputChecked(conn, c.root,
 				xfixes.CursorNotifyMaskDisplayCursor).Check()
 			c.cursorDirty = true
-			if damage.Init(conn) == nil {
+			if hasDamage {
 				if _, err := damage.QueryVersion(conn, 1, 1).Reply(); err == nil {
 					c.useDamage = c.startDamage() == nil
 				}
@@ -713,7 +718,7 @@ func newX11Inputer() *x11Inputer {
 		p.err = err
 		return p
 	}
-	if err := xtest.Init(conn); err != nil {
+	if err := x11InitExt(conn, "XTEST"); err != nil {
 		conn.Close()
 		p.err = fmt.Errorf("the X server has no XTEST, so input cannot be played: %w", err)
 		return p

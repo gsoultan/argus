@@ -53,8 +53,10 @@ func (d *GrantDiscover) Validate() error {
 	}
 	switch d.Engine {
 	case EnginePostgres:
-		if !LocalPGHost(d.Host) {
-			return fmt.Errorf("Postgres must be on this server; %s is not", d.Host)
+		// Another server only behind this server's PgBouncer; the agent
+		// checks its pgbouncer.ini.
+		if !LocalPGHost(d.Host) && !RemotePGHost(d.Host) {
+			return fmt.Errorf("Postgres must be on this server or behind its PgBouncer; %s is not", d.Host)
 		}
 	case EngineRedis:
 		if !LocalPGHost(d.Host) {
@@ -115,4 +117,50 @@ type DiscoverResult struct {
 	// Configured is a Redis's number of logical dbs (CONFIG GET databases).
 	Configured int  `json:"configured,omitempty"`
 	Truncated  bool `json:"truncated,omitempty"`
+	// Host and Port are where a Postgres listing signed in, when that is
+	// not where it was asked: the agent read the server's own
+	// configuration and found Postgres elsewhere.
+	Host string `json:"host,omitempty"`
+	Port int    `json:"port,omitempty"`
+	// Places are the other Postgres servers found on this server, for
+	// picking another cluster.
+	Places []DiscoverPlace `json:"places,omitempty"`
+	// Poolers are the PgBouncers configured on this server and where they
+	// send each database, which names the Postgres server when it is not
+	// this one.
+	Poolers []PoolerSeen `json:"poolers,omitempty"`
+	// Tried is every way in a Postgres listing tried, each with why it
+	// failed, when none answered.
+	Tried []string `json:"tried,omitempty"`
+}
+
+// DiscoverPlace is one Postgres found on the server.
+type DiscoverPlace struct {
+	Host string `json:"host"`
+	Port int    `json:"port"`
+	// Label names it: "16/main" for a Debian cluster, "pid 812".
+	Label string `json:"label,omitempty"`
+}
+
+// PoolerSeen is one PgBouncer's configuration.
+type PoolerSeen struct {
+	Config  string         `json:"config"`
+	Port    int            `json:"port"`
+	Targets []PoolerTarget `json:"targets,omitempty"`
+}
+
+// PoolerTarget is one line of a pgbouncer.ini's [databases]: the name
+// clients ask for, and the Postgres it is sent to. An empty Host is
+// PgBouncer's own socket on this server; Name "*" is its fallback for any
+// name.
+type PoolerTarget struct {
+	Name   string `json:"name"`
+	Host   string `json:"host,omitempty"`
+	Port   int    `json:"port"`
+	DBName string `json:"dbname,omitempty"`
+}
+
+// Local says whether the target is on the server PgBouncer runs on.
+func (t PoolerTarget) Local() bool {
+	return t.Host == "" || LocalPGHost(t.Host)
 }

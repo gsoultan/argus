@@ -9,10 +9,12 @@ import (
 	"image"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -45,12 +47,13 @@ func startXvfb(t *testing.T, w, h int) string {
 		if err := os.WriteFile(auth, xauthEntry(fmt.Sprint(n), cookie), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		cmd = exec.Command(bin, display, "-auth", auth, "-nolisten", "tcp",
+		cmd = exec.Command(bin, display, "-auth", auth, "-nolisten", "tcp", "-noreset",
 			"-screen", "0", fmt.Sprintf("%dx%dx24", w, h))
 		if err := cmd.Start(); err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+		// TERM, so Xvfb removes its socket and lock and the next test can use the display.
+		t.Cleanup(func() { _ = cmd.Process.Signal(syscall.SIGTERM); _ = cmd.Wait() })
 		hex, err := x11Cookie(auth, display)
 		if err != nil {
 			t.Fatal(err)
@@ -61,8 +64,11 @@ func startXvfb(t *testing.T, w, h int) string {
 	}
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		if c, err := dialX(); err == nil {
-			c.Close()
+		// A bare connection to the socket, not an X client: an xgb
+		// connection here would leave a reader behind that the race
+		// detector pairs with the capturer's first extension setup.
+		if nc, err := net.Dial("unix", "@/tmp/.X11-unix/X"+display[1:]); err == nil {
+			nc.Close()
 			return display
 		}
 		time.Sleep(50 * time.Millisecond)

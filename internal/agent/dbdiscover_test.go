@@ -65,6 +65,7 @@ func fakeDiscover(t *testing.T) (TunnelService, ed25519.PrivateKey, *[]PGAdminRe
 	var asked []PGAdminRequest
 	svc := DiscoverDatabases(DiscoverDBConfig{
 		Verifier: &tunnel.GrantVerifier{Host: "db-01"},
+		PGRoot:   t.TempDir(),
 		Admin: func(_ context.Context, req PGAdminRequest) PGAdminResult {
 			asked = append(asked, req)
 			return PGAdminResult{OK: true, Version: "16.4", Found: []tunnel.Discovered{

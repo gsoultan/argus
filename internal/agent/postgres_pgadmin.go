@@ -29,8 +29,14 @@ func PGAdminMain(ctx context.Context, stdin io.Reader, stdout io.Writer) int {
 }
 
 func pgAdminDial(ctx context.Context, req PGAdminRequest) PGAdminResult {
-	if !strings.HasPrefix(req.Socket, "/") || strings.Contains(req.Socket, "..") {
-		return PGAdminResult{Error: "the socket directory must be an absolute path"}
+	// A socket directory, or the loopback address of a Postgres that listens
+	// on TCP only; never another server.
+	switch req.Socket {
+	case "127.0.0.1", "::1", "localhost":
+	default:
+		if !strings.HasPrefix(req.Socket, "/") || strings.Contains(req.Socket, "..") {
+			return PGAdminResult{Error: "the socket directory must be an absolute path"}
+		}
 	}
 	user := req.AdminUser
 	if user == "" {

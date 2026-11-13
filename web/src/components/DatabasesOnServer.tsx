@@ -8,7 +8,7 @@ import { IconDatabase, IconPlus, IconRefresh, IconSearch, IconTable } from '@tab
 import { lazy, Suspense, useMemo, useState } from 'react'
 import { ButtonLink } from '~/components/links'
 import { EmptyState, SectionCard } from '~/components/page'
-import { discoverDatabases, isConfigured } from '~/lib/live'
+import { discoverDatabases, isConfigured, type DiscoverAnswer } from '~/lib/live'
 import { bytes } from '~/components/primitives'
 import { notifyError, notifyOk } from '~/lib/notify'
 import { databasesOnAssetQuery, useCreateDatabase, usersQuery } from '~/lib/queries'
@@ -148,6 +148,37 @@ export function DatabasesOnServer({ asset, canEdit }: { asset: Asset; canEdit: b
  * `initialEngine`, `initialPort` and `initialPoolerPort` come from what the agent found
  * running, when it is opened from there.
  */
+function isLocalHost(h: string) {
+  return h.startsWith('/') || h === '127.0.0.1' || h === '::1' || h === 'localhost'
+}
+
+/** Where a PgBouncer on this server sends each database, with the server in Argus to add it on. */
+function PoolerTargets({ targets }: {
+  targets: (NonNullable<DiscoverAnswer['poolers']>[number]['targets'][number])[]
+}) {
+  return (
+    <Stack gap={4} mt={6}>
+      {targets.map((t) => (
+        <Group key={`${t.name}@${t.host}:${t.port}`} gap={8} wrap="nowrap">
+          <Text size={FS.meta} ff="monospace" fw={600} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {t.name === '*' ? 'any name' : t.name}{t.dbname && t.dbname !== t.name ? ` → ${t.dbname}` : ''}
+          </Text>
+          <Text size={FS.micro} c="dimmed" ff="monospace" style={{ flexShrink: 0 }}>{t.host}:{t.port}</Text>
+          <Box ml="auto" style={{ flexShrink: 0 }}>
+            {t.assetId ? (
+              <ButtonLink size="compact-xs" variant="light" to="/assets/$assetId" params={{ assetId: t.assetId }} search={{ tab: 'apps' }}>
+                Add on {t.assetName}
+              </ButtonLink>
+            ) : (
+              <Text size={FS.micro} c="dimmed">not a server in Argus</Text>
+            )}
+          </Box>
+        </Group>
+      ))}
+    </Stack>
+  )
+}
+
 export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort, initialPoolerPort, initialConfigPath, initialMode, onlyEngines }: {
   asset: Asset; opened: boolean; onClose: () => void; initialEngine?: DBEngine; initialPort?: number; initialPoolerPort?: number
   initialConfigPath?: string
@@ -219,8 +250,8 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
       for (const n of names) {
         await create.mutateAsync({
           assetId: asset.id, engine, dbname: n, label,
-          port: Number(port) || info.defaults.port,
-          ...(host.trim() ? { host: host.trim() } : {}),
+          port: Number(port) || (engine === 'postgres' && ans?.port) || info.defaults.port,
+          ...(host.trim() ? { host: host.trim() } : engine === 'postgres' && ans?.host ? { host: ans.host } : {}),
           ...(engine === 'postgres' ? { poolerPort: Number(poolerPort) || 0 } : {}),
           ...(engine === 'redis' ? { configPath: configPath.trim() || info.defaults.configPath } : {}),
           ...((engine === 'mysql' || engine === 'mongodb' || engine === 'kafka') && configPath.trim() ? { configPath: configPath.trim() } : {}),
@@ -238,7 +269,12 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
     }
   }
 
+  // A PgBouncer here that sends its databases to Postgres on another server.
+  const remote = engine === 'postgres' && ans?.state === 'failed'
+    ? (ans.poolers ?? []).flatMap((p) => p.targets.filter((t) => t.host && !isLocalHost(t.host)).map((t) => ({ ...t, pooler: p })))
+    : []
   const why = found.isError ? (found.error as Error).message
+    : remote.length > 0 && ans?.error ? `${ans.error}.`
     : ans?.state === 'offline' ? `The agent on ${asset.hostname} is offline, so it can't look. You can still add by name; it will connect once the agent is back.`
     : ans?.state === 'unsupported' ? `This server's agent is too old to list databases. Update the agent from the server's page, or type the name below.`
     : ans?.error && scoped ? `${ans.error}. Check the port and the admin file; you can still add the topics.`
@@ -278,7 +314,31 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
             {failed && !found.isFetching && (
               <Alert color={ans?.state === 'offline' ? 'rose' : 'amber'} variant="light" p="xs">
                 <Text size={FS.meta}>{why}</Text>
+                {remote.length > 0 && <PoolerTargets targets={remote} />}
               </Alert>
+            )}
+            {listing && engine === 'postgres' && ans?.port && !port && (
+              <Text size={FS.micro} c="dimmed">
+                {ans.host && !isLocalHost(ans.host) ? (<>
+                  No Postgres runs on this server, so the agent signed in to the one its PgBouncer sends to,
+                  at <Text span ff="monospace" inherit>{ans.host}:{ans.port}</Text>, with the password in PgBouncer's userlist.txt.
+                  It is added there, and sessions reach it from this server.
+                </>) : (<>
+                  Postgres is not at the default here: the agent read this server's configuration and found it
+                  at <Text span ff="monospace" inherit>{ans.host ?? 'the socket'} port {ans.port}</Text>. It is added there.
+                </>)}
+              </Text>
+            )}
+            {listing && engine === 'postgres' && (ans?.places?.length ?? 0) > 0 && (
+              <Group gap={6}>
+                <Text size={FS.micro} c="dimmed">Also on this server:</Text>
+                {ans!.places!.map((pl) => (
+                  <Button key={`${pl.host}:${pl.port}`} size="compact-xs" variant="default"
+                    onClick={() => { setHost(pl.host); setPort(pl.port); reset() }}>
+                    {pl.label ? `${pl.label} · ` : ''}{pl.port}
+                  </Button>
+                ))}
+              </Group>
             )}
             {listing && (ans?.databases.length ?? 0) > 8 && (
               <TextInput size="xs" placeholder={`Filter ${ans?.databases.length} ${engine === 'rabbitmq' ? 'vhosts' : 'databases'}`}

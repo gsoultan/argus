@@ -666,6 +666,24 @@ func LocalPGHost(host string) bool {
 	return strings.HasPrefix(host, "/") && !strings.Contains(host, "..")
 }
 
+// RemotePGHost reports whether host is a plain hostname or IP address, the
+// way a pgbouncer.ini names a Postgres on another server. A grant may name
+// one, but the agent signs in there only when a PgBouncer on its own server
+// sends to that host and port (agent/pgremote.go).
+func RemotePGHost(host string) bool {
+	if host == "" || len(host) > 253 || LocalPGHost(host) || strings.HasPrefix(host, "-") {
+		return false
+	}
+	for _, c := range host {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '.', c == '-', c == ':', c == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // PGPart is the next piece of one cut value: Row counts the statement's
 // rows from 0, Col its columns from 0.
 type PGPart struct {
