@@ -80,7 +80,7 @@ func TestMatchServersSaysHow(t *testing.T) {
 		{Resource: cloud.Resource{ID: "i-2", Name: "pay-api-01", Addresses: []string{"10.0.0.9"}}},
 		{Resource: cloud.Resource{ID: "i-3", Name: "i-3", Addresses: []string{"10.0.0.7"}}},
 	}
-	matchServers(items, []Asset{{ID: "a", Hostname: "web", Address: "10.0.0.5"}, {ID: "b", Hostname: "PAY-API-01", Address: "pay.internal"}})
+	matchServers(items, []Asset{{ID: "a", Hostname: "web", Address: "10.0.0.5"}, {ID: "b", Hostname: "PAY-API-01", Address: "pay.internal"}}, nil)
 	if items[0].Server == nil || items[0].Server.By != "address" || items[0].Server.ID != "a" {
 		t.Errorf("address match: %+v", items[0].Server)
 	}
@@ -89,6 +89,35 @@ func TestMatchServersSaysHow(t *testing.T) {
 	}
 	if items[2].Server != nil {
 		t.Errorf("an unnamed instance must not match anything: %+v", items[2].Server)
+	}
+}
+
+// A server added by its public name, or behind NAT, has an Address EC2
+// does not list; its agent reports the private one, which EC2 does.
+func TestMatchServersByWhatTheAgentReports(t *testing.T) {
+	items := []CloudItem{
+		{Resource: cloud.Resource{ID: "i-1", Name: "i-1", Addresses: []string{"172.31.5.10"}, PublicIP: "203.0.113.4"}},
+		{Resource: cloud.Resource{ID: "i-2", Name: "i-2", Addresses: []string{"10.0.0.8"}}},
+		{Resource: cloud.Resource{ID: "i-3", Name: "db-01", Addresses: []string{"10.9.9.9"}}},
+	}
+	assets := []Asset{
+		{ID: "a", Hostname: "ip-172-31-5-10", Address: "app.example.com"},
+		{ID: "b", Hostname: "one", Address: "x.example.com"}, {ID: "c", Hostname: "two", Address: "y.example.com"},
+		{ID: "d", Hostname: "db-01.prod.example.com", Address: "z.example.com"},
+	}
+	reported := map[string][]AssetAddress{
+		"a": {{Address: "172.31.5.10"}},
+		"b": {{Address: "10.0.0.8"}}, "c": {{Address: "10.0.0.8"}},
+	}
+	matchServers(items, assets, reported)
+	if items[0].Server == nil || items[0].Server.ID != "a" || items[0].Server.By != "address" {
+		t.Errorf("the agent's private address must match: %+v", items[0].Server)
+	}
+	if items[1].Server != nil {
+		t.Errorf("an address two servers report must match neither: %+v", items[1].Server)
+	}
+	if items[2].Server == nil || items[2].Server.ID != "d" || items[2].Server.By != "name" {
+		t.Errorf("a name must match the hostname's first label: %+v", items[2].Server)
 	}
 }
 

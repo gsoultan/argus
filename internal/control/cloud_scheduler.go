@@ -215,8 +215,12 @@ func (a *API) readScheduleWorld(ctx context.Context, now time.Time) (scheduleWor
 		if err != nil {
 			return w, err
 		}
+		reported, err := a.store.AgentAddresses(ctx)
+		if err != nil {
+			return w, err
+		}
 		matched := append([]CloudItem(nil), w.instances...)
-		matchServers(matched, assets)
+		matchServers(matched, assets, reported)
 		for _, it := range matched {
 			if it.Server != nil && len(live[it.Server.ID]) > 0 {
 				w.sessions[it.AccountID+"/"+it.Resource.ID] = live[it.Server.ID]

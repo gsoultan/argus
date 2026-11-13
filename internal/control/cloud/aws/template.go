@@ -126,22 +126,7 @@ func roleYAML(logical, name, policy, principal, externalID string, actions []str
     Properties:
       RoleName: %s
       MaxSessionDuration: 3600
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              AWS: %s
-            Action:
-              - sts:AssumeRole
-              - sts:SetSourceIdentity
-              - sts:TagSession
-            Condition:
-              StringEquals:
-                sts:ExternalId: %s
-              "Null":
-                sts:SourceIdentity: "false"
-      Policies:
+%s      Policies:
         - PolicyName: %s
           PolicyDocument:
             Version: "2012-10-17"
@@ -149,7 +134,7 @@ func roleYAML(logical, name, policy, principal, externalID string, actions []str
               - Effect: Allow
                 Resource: "*"
                 Action:
-%s`, logical, name, principal, yamlQuote(externalID), policy, acts.String())
+%s`, logical, name, trustYAML(principal, externalID), policy, acts.String())
 }
 
 // DeployCommand is a command that makes the role from AWS CloudShell or any
@@ -202,6 +187,36 @@ func yamlQuote(s string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
 }
 
+// trustYAML is who may use a role: Argus's identity, with its external id
+// and a source identity. Setting the source identity and tagging the session
+// are allowed in their own statement, with no external id condition: AWS
+// checks them as actions of their own, and an external id condition there
+// refused them ("not authorized to perform: sts:SetSourceIdentity") even
+// though the AssumeRole they are part of passed it. The session still needs
+// the external id, since AssumeRole does.
+func trustYAML(principal, externalID string) string {
+	return fmt.Sprintf(`      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: %[1]s
+            Action:
+              - sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: %[2]s
+              "Null":
+                sts:SourceIdentity: "false"
+          - Effect: Allow
+            Principal:
+              AWS: %[1]s
+            Action:
+              - sts:SetSourceIdentity
+              - sts:TagSession
+`, principal, yamlQuote(externalID))
+}
+
 // consoleRoleYAML is a console role: the same trust as the others, an AWS
 // managed policy, and sessions of an hour at most. Argus opens a session on
 // it only for a person whose grant is in force, and only for what the
@@ -212,24 +227,9 @@ func consoleRoleYAML(logical, name, principal, externalID, policyARN string) str
     Properties:
       RoleName: %s
       MaxSessionDuration: 3600
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              AWS: %s
-            Action:
-              - sts:AssumeRole
-              - sts:SetSourceIdentity
-              - sts:TagSession
-            Condition:
-              StringEquals:
-                sts:ExternalId: %s
-              "Null":
-                sts:SourceIdentity: "false"
-      ManagedPolicyArns:
+%s      ManagedPolicyArns:
         - %s
-`, logical, name, principal, yamlQuote(externalID), policyARN)
+`, logical, name, trustYAML(principal, externalID), policyARN)
 }
 
 // AssumeActions are what an identity's own policy must allow for it to use

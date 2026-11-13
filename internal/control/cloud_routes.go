@@ -496,7 +496,12 @@ func (a *API) getCloudResources(w http.ResponseWriter, r *http.Request) {
 			a.fail(w, "cloud resources", err)
 			return
 		}
-		matchServers(items, assets)
+		reported, err := a.store.AgentAddresses(r.Context())
+		if err != nil {
+			a.fail(w, "cloud resources", err)
+			return
+		}
+		matchServers(items, assets, reported)
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
@@ -504,20 +509,50 @@ func (a *API) getCloudResources(w http.ResponseWriter, r *http.Request) {
 
 // matchServers links instances to servers by address, then by name. The
 // console labels it as a match, not as something the agent said.
-func matchServers(items []CloudItem, assets []Asset) {
-	byAddr, byName := map[string]Asset{}, map[string]Asset{}
+//
+// An address is the server's own (the one sessions go to) or any its agent
+// reports on its interfaces: a server added by its public name, or behind
+// NAT, still reports its private address, which is what EC2 lists. The
+// server's own address wins; a reported address two servers share links
+// neither, rather than the wrong one. A
+// name is the server's hostname or its first label, so ip-10-0-0-5 and
+// web-01.example.com both match an instance named that.
+func matchServers(items []CloudItem, assets []Asset, reported map[string][]AssetAddress) {
+	byAddr, byReport, byName := map[string]Asset{}, map[string]Asset{}, map[string]Asset{}
+	shared := map[string]bool{}
 	for _, s := range assets {
 		if s.Address != "" {
 			byAddr[s.Address] = s
 		}
-		byName[strings.ToLower(s.Hostname)] = s
+		for _, a := range reported[s.ID] {
+			if o, ok := byReport[a.Address]; ok && o.ID != s.ID {
+				shared[a.Address] = true
+			}
+			byReport[a.Address] = s
+		}
+		h := strings.ToLower(s.Hostname)
+		byName[h] = s
+		if short, _, ok := strings.Cut(h, "."); ok && short != "" {
+			if _, taken := byName[short]; !taken {
+				byName[short] = s
+			}
+		}
 	}
 	for i := range items {
 		r := items[i].Resource
-		for _, ip := range append(append([]string{}, r.Addresses...), r.PublicIP) {
+		ips := append(append([]string{}, r.Addresses...), r.PublicIP)
+		for _, ip := range ips {
 			if s, ok := byAddr[ip]; ok && ip != "" {
 				items[i].Server = &CloudServerMatch{ID: s.ID, Hostname: s.Hostname, By: "address"}
 				break
+			}
+		}
+		for _, ip := range ips {
+			if items[i].Server != nil {
+				break
+			}
+			if s, ok := byReport[ip]; ok && ip != "" && !shared[ip] {
+				items[i].Server = &CloudServerMatch{ID: s.ID, Hostname: s.Hostname, By: "address"}
 			}
 		}
 		if items[i].Server == nil && r.Name != r.ID {
