@@ -52,3 +52,29 @@ func TestClientInfoPerformanceFlagsForASlowLink(t *testing.T) {
 		t.Errorf("a slow link lost font smoothing or themes: %#x", got)
 	}
 }
+
+// For a slow link the graphics pipeline is offered no further than 8.1, the
+// last version Windows answers with one H.264 stream rather than two.
+func TestGraphicsCapsStopAtAVC420OnASlowLink(t *testing.T) {
+	sets := func(pdu []byte) []uint32 {
+		body := pdu[gfxHeaderSize:]
+		n := int(binary.LittleEndian.Uint16(body))
+		var out []uint32
+		for i := range n {
+			out = append(out, binary.LittleEndian.Uint32(body[2+i*12:]))
+		}
+		return out
+	}
+	all := sets(gfxCapsAdvertise(false))
+	if all[len(all)-1] != gfxCapVersion107 {
+		t.Fatalf("a link with room is offered up to %#x, want 10.7", all[len(all)-1])
+	}
+	slow := sets(gfxCapsAdvertise(true))
+	if len(slow) != 2 || slow[1] != gfxCapVersion81 {
+		t.Fatalf("a slow link is offered %#x, want 8.0 and 8.1 only", slow)
+	}
+	pdu := gfxCapsAdvertise(true)
+	if flags := binary.LittleEndian.Uint32(pdu[len(pdu)-4:]); flags&gfxCapAVC420Enabled == 0 {
+		t.Fatalf("8.1 is offered with flags %#x, without AVC420", flags)
+	}
+}

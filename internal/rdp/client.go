@@ -67,6 +67,8 @@ type Client struct {
 	// pace holds the target to the pace of the browser drawing it; see
 	// pace.go. Nil paces nothing.
 	pace *pacer
+	// slowLink is the browser having said its link is slow.
+	slowLink bool
 
 	// The clipboard, when it was asked for.
 	onClip  func(string)
@@ -163,6 +165,7 @@ func Connect(conn net.Conn, cfg ClientConfig) (*Client, error) {
 		return nil, err
 	}
 	cfg.Logon.SlowLink = cfg.SlowLink
+	c.slowLink = cfg.SlowLink
 	if err := c.sendClientInfo(cfg.Logon); err != nil {
 		return nil, err
 	}
@@ -491,8 +494,9 @@ func (c *Client) virtual(pdu []byte) error {
 		}
 	}
 	if ev.opened {
-		c.log.Info("rdp graphics: offering capabilities", "pdu", fmt.Sprintf("%x", gfxCapsAdvertise()))
-		if err := c.writeGraphics(gfxCapsAdvertise()); err != nil {
+		caps := gfxCapsAdvertise(c.slowLink)
+		c.log.Info("rdp graphics: offering capabilities", "pdu", fmt.Sprintf("%x", caps))
+		if err := c.writeGraphics(caps); err != nil {
 			return err
 		}
 	}
