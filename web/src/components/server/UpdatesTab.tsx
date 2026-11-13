@@ -8,7 +8,7 @@ import {
   IconArrowBigUpLines, IconCheck, IconCircleDashed, IconPackage, IconPower, IconRefresh, IconX,
 } from '@tabler/icons-react'
 import { SectionCard } from '~/components/page'
-import { absTime, relTime, Stat } from '~/components/primitives'
+import { absTime, AssetDialogTitle, relTime, Stat } from '~/components/primitives'
 import {
   isConfigured,
   type PackageReboot, type PackageRule, type PackageRun, type PackageUpdate, type PackagesView, type ReleaseInfo,
@@ -21,6 +21,7 @@ import { meQuery } from '~/lib/queries'
 import { runFinished } from '~/lib/packageApi'
 import { FS, SP } from '~/theme'
 import type { Asset } from '~/types/domain'
+import { assetName } from '~/lib/assetType'
 
 /**
  * A server's operating system updates: what its package manager says can be
@@ -79,12 +80,12 @@ export function UpdatesTab({ asset, canEdit }: { asset: Asset; canEdit: boolean 
           {active && <ActiveRun run={active} canEdit={canEdit} />}
           <Summary view={v} />
           {v.report?.reboot_required && active?.mode !== 'reboot' && active?.mode !== 'release_upgrade' && (
-            <RebootNeeded view={v} assetId={asset.id} canEdit={canEdit} busy={Boolean(active)} />
+            <RebootNeeded view={v} assetId={asset.id} name={assetName(asset)} canEdit={canEdit} busy={Boolean(active)} />
           )}
           {v.report?.release && active?.mode !== 'release_upgrade' && (
-            <ReleaseUpgrade view={v} release={v.report.release} assetId={asset.id} canEdit={canEdit} busy={Boolean(active)} />
+            <ReleaseUpgrade view={v} release={v.report.release} assetId={asset.id} name={assetName(asset)} canEdit={canEdit} busy={Boolean(active)} />
           )}
-          <Packages view={v} assetId={asset.id} canEdit={canEdit} busy={Boolean(active)} />
+          <Packages view={v} assetId={asset.id} name={assetName(asset)} canEdit={canEdit} busy={Boolean(active)} />
         </>
       )}
       {v.runs.length > 0 && <RecentRuns runs={v.runs} canEdit={canEdit} />}
@@ -156,9 +157,10 @@ function Summary({ view: v }: { view: PackagesView }) {
  * The server says installed updates wait for a reboot: say so where it is
  * seen, with the button that does it.
  */
-function RebootNeeded({ view: v, assetId, canEdit, busy }: {
+function RebootNeeded({ view: v, assetId, name, canEdit, busy }: {
   view: PackagesView
   assetId: string
+  name: string
   canEdit: boolean
   busy: boolean
 }) {
@@ -180,15 +182,15 @@ function RebootNeeded({ view: v, assetId, canEdit, busy }: {
           </Button>
         )}
       </Group>
-      {asking && <ConfirmReboot assetId={assetId} view={v} onClose={() => setAsking(false)} />}
+      {asking && <ConfirmReboot assetId={assetId} name={name} view={v} onClose={() => setAsking(false)} />}
     </Alert>
   )
 }
 
-function ConfirmReboot({ assetId, view: v, onClose }: { assetId: string; view: PackagesView; onClose: () => void }) {
+function ConfirmReboot({ assetId, name, view: v, onClose }: { assetId: string; name: string; view: PackagesView; onClose: () => void }) {
   const start = useStartPackageRun(assetId)
   return (
-    <Modal opened onClose={onClose} title={`Reboot ${v.hostname}?`} size="md">
+    <Modal opened onClose={onClose} title={<AssetDialogTitle text={`Reboot ${name}?`} name={name} hostname={v.hostname} />} size="md">
       <Stack gap="sm">
         <Text size={FS.body} lh={1.5}>
           The server restarts now. Sessions to it drop, and what it serves is down until it is back, usually a minute
@@ -210,7 +212,7 @@ function ConfirmReboot({ assetId, view: v, onClose }: { assetId: string; view: P
                 : ['Reboot asked for', 'The server reboots at its next check-in, within 30 seconds.'],
             },
           ).then((ok) => ok && onClose())}>
-            Reboot {v.hostname}
+            Reboot
           </Button>
         </Group>
       </Stack>
@@ -232,10 +234,11 @@ const RELEASE_TOOL: Record<string, string> = {
  * release the agent says the server offers, and only when the server is
  * ready: the reasons it is not are the agent's own, each something to fix.
  */
-function ReleaseUpgrade({ view: v, release: rel, assetId, canEdit, busy }: {
+function ReleaseUpgrade({ view: v, release: rel, assetId, name, canEdit, busy }: {
   view: PackagesView
   release: ReleaseInfo
   assetId: string
+  name: string
   canEdit: boolean
   busy: boolean
 }) {
@@ -300,17 +303,18 @@ function ReleaseUpgrade({ view: v, release: rel, assetId, canEdit, busy }: {
         )}
         {why && <Text size={FS.meta} c="dimmed">{why}</Text>}
       </Stack>
-      {asking && <ConfirmRelease assetId={assetId} view={v} release={rel} onClose={() => setAsking(false)} />}
+      {asking && <ConfirmRelease assetId={assetId} name={name} view={v} release={rel} onClose={() => setAsking(false)} />}
       {installing && (
-        <ConfirmRun assetId={assetId} mode={anyHeld ? 'selected' : 'all'} names={waiting} view={v}
+        <ConfirmRun assetId={assetId} name={name} mode={anyHeld ? 'selected' : 'all'} names={waiting} view={v}
           onClose={() => setInstalling(false)} />
       )}
     </SectionCard>
   )
 }
 
-function ConfirmRelease({ assetId, view: v, release: rel, onClose }: {
+function ConfirmRelease({ assetId, name, view: v, release: rel, onClose }: {
   assetId: string
+  name: string
   view: PackagesView
   release: ReleaseInfo
   onClose: () => void
@@ -320,7 +324,7 @@ function ConfirmRelease({ assetId, view: v, release: rel, onClose }: {
   const short = v.hostname.split('.')[0] ?? v.hostname
   const confirmed = typed.trim() === short || typed.trim() === v.hostname
   return (
-    <Modal opened onClose={onClose} title={`Upgrade ${v.hostname} to ${rel.next_name}?`} size="lg">
+    <Modal opened onClose={onClose} title={<AssetDialogTitle text={`Upgrade ${name} to ${rel.next_name}?`} name={name} hostname={v.hostname} />} size="lg">
       <Stack gap="sm">
         <Text size={FS.body} lh={1.5}>
           {rel.current} becomes {rel.next_name}. Every package moves to the new release, then the server reboots into
@@ -377,9 +381,10 @@ export function heldBy(name: string, holds: string[]): string | undefined {
 
 type Filter = 'all' | 'security' | 'held'
 
-function Packages({ view: v, assetId, canEdit, busy }: {
+function Packages({ view: v, assetId, name, canEdit, busy }: {
   view: PackagesView
   assetId: string
+  name: string
   canEdit: boolean
   busy: boolean
 }) {
@@ -489,7 +494,7 @@ function Packages({ view: v, assetId, canEdit, busy }: {
         </>
       )}
       {confirm && (
-        <ConfirmRun assetId={assetId} mode={confirm.mode} names={confirm.names}
+        <ConfirmRun assetId={assetId} name={name} mode={confirm.mode} names={confirm.names}
           view={v} onClose={() => setConfirm(null)} />
       )}
     </SectionCard>
@@ -530,8 +535,9 @@ function PackageRow({ u, hold, canEdit, checked, onToggle }: {
   )
 }
 
-function ConfirmRun({ assetId, mode, names, view: v, onClose }: {
+function ConfirmRun({ assetId, name, mode, names, view: v, onClose }: {
   assetId: string
+  name: string
   mode: 'all' | 'security' | 'selected'
   names: string[]
   view: PackagesView
@@ -546,7 +552,7 @@ function ConfirmRun({ assetId, mode, names, view: v, onClose }: {
       : `${names.length} package${names.length === 1 ? '' : 's'}`
   const heldPicked = mode === 'selected' ? names.filter((n) => heldBy(n, v.holds)) : []
   return (
-    <Modal opened onClose={onClose} title={`Install ${what} on ${v.hostname}`} size="md">
+    <Modal opened onClose={onClose} title={<AssetDialogTitle text={`Install ${what} on ${name}?`} name={name} hostname={v.hostname} />} size="md">
       <Stack gap="sm">
         <Text size={FS.body} lh={1.5}>
           The server refreshes its package lists, installs {mode === 'selected' ? 'the packages picked' : 'what is waiting then'},

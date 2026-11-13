@@ -214,8 +214,23 @@ describe('Reboot', () => {
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByText('Reboot web-01?')).toBeTruthy()
     expect(within(dialog).getByText(/Nothing is installed/)).toBeTruthy()
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Reboot web-01' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Reboot' }))
     await waitFor(() => expect(live.startPackageRun).toHaveBeenCalledWith('a1', { mode: 'reboot', reboot: 'if_needed' }))
+  })
+
+  // A long hostname in the confirm button pushed it onto a row of its own,
+  // stretched across the dialog. The name belongs in the title; the button
+  // says only what it does.
+  it('names the server by its alias in the title, hostname under it, and keeps the button short', async () => {
+    const long = 'ip-10-0-2-8.ap-southeast-3.compute.internal'
+    live.assetPackages.mockResolvedValue(needs({ hostname: long }))
+    renderWith(<UpdatesTab asset={{ ...asset, hostname: long, alias: 'billing-api' } as Asset} canEdit />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Reboot now…' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('Reboot billing-api?')).toBeTruthy()
+    expect(within(dialog).getByText(long)).toBeTruthy()
+    expect(within(dialog).queryByRole('button', { name: new RegExp(long) })).toBeNull()
+    expect(within(dialog).getByRole('button', { name: 'Reboot' })).toBeTruthy()
   })
 
   it('does nothing when the reboot is cancelled', async () => {

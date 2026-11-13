@@ -306,7 +306,9 @@ export const theme = createTheme({
       defaultProps: { radius: 'lg', centered: true, overlayProps: { blur: 2, opacity: 0.35 } },
       styles: {
         content: { border: '1px solid var(--color-line)' },
-        title: { fontWeight: 600, fontSize: rem(14) },
+        // A title that names a server can be one long unbroken hostname: let
+        // it wrap anywhere rather than push the close button off the dialog.
+        title: { fontWeight: 600, fontSize: rem(14), minWidth: 0, overflowWrap: 'anywhere' },
       },
     },
     Alert: {

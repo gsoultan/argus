@@ -147,7 +147,7 @@ export function Organizations() {
         onRenamed={() => void qc.invalidateQueries({ queryKey: orgsKey })}
       />
 
-      <Modal opened={confirm !== null} onClose={() => setConfirm(null)} title="Disable organization" size="md">
+      <Modal opened={confirm !== null} onClose={() => setConfirm(null)} title={confirm ? `Disable ${confirm.name}?` : 'Disable organization'} size="md">
         {confirm && (
           <Stack gap="sm">
             <Text size={FS.body} lh={1.5}>
@@ -165,7 +165,7 @@ export function Organizations() {
                   toggle.mutate({ id: confirm.id, disabled: true }, { onSettled: () => setConfirm(null) })
                 }}
               >
-                Disable {confirm.name}
+                Disable
               </Button>
             </Group>
           </Stack>
