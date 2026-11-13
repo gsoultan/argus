@@ -191,12 +191,8 @@ func gfxPDU(cmd uint16, body []byte) []byte {
 	return append(out, body...)
 }
 
-// gfxCapsAdvertise offers every version this client reads. For a slow link
-// it stops at 8.1: Windows answers the later versions with AVC444, full
-// colour as two H.264 streams, and 8.1 with AVC420, one stream of about
-// half the bytes. Behind a link that carries a few frames a second of the
-// first, that is twice the frames, with colour edges a little softer.
-func gfxCapsAdvertise(slow bool) []byte {
+// gfxCapsAdvertise offers every version this client reads.
+func gfxCapsAdvertise() []byte {
 	sets := [][2]uint32{
 		{gfxCapVersion8, 0},
 		{gfxCapVersion81, gfxCapAVC420Enabled},
@@ -207,9 +203,6 @@ func gfxCapsAdvertise(slow bool) []byte {
 		{gfxCapVersion105, gfxCapAVCThinClient},
 		{gfxCapVersion106, gfxCapAVCThinClient},
 		{gfxCapVersion107, gfxCapAVCThinClient},
-	}
-	if slow {
-		sets = sets[:2]
 	}
 	b := binary.LittleEndian.AppendUint16(nil, uint16(len(sets)))
 	for _, set := range sets {
