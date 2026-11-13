@@ -260,7 +260,7 @@ func TestX11PlaysInput(t *testing.T) {
 type x11HelperHost struct{}
 
 func (x11HelperHost) ConsoleSession() (uint32, bool) { return 1, true }
-func (x11HelperHost) ConsoleAccount(uint32) string  { return "alice" }
+func (x11HelperHost) ConsoleAccount(uint32) string   { return "alice" }
 func (x11HelperHost) SecureAttention() error         { return errNoSecureAttention }
 func (x11HelperHost) StartHelper(_ uint32, mode helperMode) (io.ReadWriteCloser, error) {
 	inR, inW := io.Pipe()
