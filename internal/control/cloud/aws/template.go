@@ -72,6 +72,17 @@ func Template(principal, externalID string, manage bool) string {
 // identities to another, its roles trust both, so nothing stops working
 // between the stack update and Argus switching over.
 func TemplateTrusting(principals []string, externalID string, manage bool) string {
+	return TemplateFor("", principals, externalID, manage)
+}
+
+// TemplateFor is TemplateTrusting for account accountID. When one of the
+// principals is an IAM user or role in that same account, the stack also
+// gives it the right to switch into Argus's roles: a role trusting an
+// identity is half of it, and the identity's own policy is the other half.
+// So the one command or the one button is all it takes, and nobody attaches
+// a policy by hand. Roles in other accounts are covered too, since every
+// Argus role is named Argus*.
+func TemplateFor(accountID string, principals []string, externalID string, manage bool) string {
 	principal := principalYAML(principals)
 	desc := "Lets Argus read this account's inventory, as the person who asked."
 	if manage {
@@ -90,6 +101,7 @@ Resources:
 		b.WriteString(consoleRoleYAML("ArgusConsoleRead", ConsoleReadRoleName, principal, externalID, consolePolicy[cloud.ConsoleRead]))
 		b.WriteString(consoleRoleYAML("ArgusConsoleOperate", ConsoleOperateRoleName, principal, externalID, consolePolicy[cloud.ConsoleOperate]))
 	}
+	b.WriteString(assumeYAML(accountID, principals))
 	b.WriteString(`Outputs:
   ReadRoleArn:
     Description: Argus finds this role by its name; nothing to copy.
@@ -149,7 +161,12 @@ func DeployCommand(principal, externalID string, manage bool) string {
 
 // DeployCommandTrusting is DeployCommand for TemplateTrusting.
 func DeployCommandTrusting(principals []string, externalID string, manage bool) string {
-	return "cat > argus-access.yaml <<'ARGUS'\n" + TemplateTrusting(principals, externalID, manage) + "ARGUS\n" +
+	return DeployCommandFor("", principals, externalID, manage)
+}
+
+// DeployCommandFor is DeployCommand for TemplateFor.
+func DeployCommandFor(accountID string, principals []string, externalID string, manage bool) string {
+	return "cat > argus-access.yaml <<'ARGUS'\n" + TemplateFor(accountID, principals, externalID, manage) + "ARGUS\n" +
 		clearStuck +
 		"aws cloudformation deploy --stack-name argus-access --template-file argus-access.yaml --capabilities CAPABILITY_NAMED_IAM && \\\n" +
 		"aws cloudformation describe-stacks --stack-name argus-access --query \"Stacks[0].Outputs[].[OutputKey,OutputValue]\" --output text\n"
@@ -213,4 +230,74 @@ func consoleRoleYAML(logical, name, principal, externalID, policyARN string) str
       ManagedPolicyArns:
         - %s
 `, logical, name, principal, yamlQuote(externalID), policyARN)
+}
+
+// AssumeActions are what an identity's own policy must allow for it to use
+// Argus's roles.
+var AssumeActions = []string{"sts:AssumeRole", "sts:SetSourceIdentity", "sts:TagSession"}
+
+// AssumePolicyName is the inline policy the stack puts on Argus's own
+// identity when that identity is in the account.
+const AssumePolicyName = "argus-assume-roles"
+
+// LocalPrincipal splits an IAM user or role ARN in accountID into its kind
+// ("user" or "role") and name. Anything else, such as an account root or an
+// identity in another account, gives "".
+func LocalPrincipal(accountID, arn string) (kind, name string) {
+	parts := strings.SplitN(arn, ":", 6)
+	if accountID == "" || len(parts) != 6 || parts[2] != "iam" || parts[4] != accountID {
+		return "", ""
+	}
+	res := strings.Split(parts[5], "/")
+	if len(res) < 2 || (res[0] != "user" && res[0] != "role") || res[len(res)-1] == "" {
+		return "", ""
+	}
+	return res[0], res[len(res)-1]
+}
+
+// assumeYAML is the policy that lets the principals in accountID use the
+// Argus roles, or nothing when none of them is there.
+func assumeYAML(accountID string, principals []string) string {
+	var users, roles []string
+	for _, p := range principals {
+		switch kind, name := LocalPrincipal(accountID, p); kind {
+		case "user":
+			users = append(users, name)
+		case "role":
+			roles = append(roles, name)
+		}
+	}
+	if len(users) == 0 && len(roles) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, `  ArgusAssume:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: %s
+`, AssumePolicyName)
+	for _, l := range []struct {
+		key   string
+		names []string
+	}{{"Users", users}, {"Roles", roles}} {
+		if len(l.names) == 0 {
+			continue
+		}
+		fmt.Fprintf(&b, "      %s:\n", l.key)
+		for _, n := range l.names {
+			fmt.Fprintf(&b, "        - %s\n", yamlQuote(n))
+		}
+	}
+	b.WriteString(`      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+`)
+	for _, a := range AssumeActions {
+		fmt.Fprintf(&b, "              - %s\n", a)
+	}
+	b.WriteString(`            Resource: "arn:aws:iam::*:role/Argus*"
+`)
+	return b.String()
 }

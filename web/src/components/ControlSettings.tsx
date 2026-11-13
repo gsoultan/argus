@@ -17,7 +17,7 @@ import {
   testCloudIdentity, testDatabase, testEmail, waitForControlPlane, type AWSIdentity,
   type CloudIdentityCheck, type CloudIdentityStatus, type CloudIdentityUse, type ControlSettings as Settings,
 } from '~/lib/live'
-import { cloudAccountsQuery } from '~/lib/cloud'
+import { cloudAccountsQuery, AWS_IDENTITY_POLICY } from '~/lib/cloud'
 import { downloadText } from '~/lib/download'
 import { notifyError, notifyOk, notifyWarn } from '~/lib/notify'
 import { FS, INK } from '~/theme'
@@ -867,16 +867,6 @@ function Security({ s, edit }: CardProps) {
   )
 }
 
-/** What the IAM user behind an access key needs: to assume Argus's roles, and nothing else. */
-const AWS_BASE_POLICY = `{
-  "Version": "2012-10-17",
-  "Statement": [{
-    "Effect": "Allow",
-    "Action": ["sts:AssumeRole", "sts:SetSourceIdentity", "sts:TagSession"],
-    "Resource": "arn:aws:iam::*:role/Argus*"
-  }]
-}`
-
 const AWS_SOURCES: { value: AWSIdentity['source']; label: string; detail: string }[] = [
   { value: 'default', label: 'From where argus-control runs',
     detail: 'An EC2 instance profile, a container task role, or AWS_ environment variables set for the service.' },
@@ -1140,7 +1130,7 @@ function IdentityDrawer({ start, makeDefault, adding, others, orgs, used, runnin
               <Text size={FS.meta} c="dimmed" mb={4}>
                 The IAM user needs this policy and nothing more. Each account&apos;s argus-access stack decides what the role can do there.
               </Text>
-              <Textarea size="xs" readOnly autosize minRows={4} value={AWS_BASE_POLICY}
+              <Textarea size="xs" readOnly autosize minRows={4} value={AWS_IDENTITY_POLICY}
                 styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }} />
             </Grid.Col>
           </Grid>

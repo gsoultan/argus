@@ -93,11 +93,28 @@ func deployRoles(manage bool) []string {
 // not make it safe to keep: an identity that may make a role and set its
 // policy can make one with any permission. The console says to remove it
 // once the roles are made.
-func DeployRights(accountID string) string {
-	return `{"Version":"2012-10-17","Statement":[` +
+func DeployRights(accountID, principal string) string {
+	own := ""
+	if acts := ownPolicyActions(accountID, principal); acts != nil {
+		own = `{"Effect":"Allow","Action":["` + strings.Join(acts, `","`) + `"],"Resource":"` + principal + `"},`
+	}
+	return `{"Version":"2012-10-17","Statement":[` + own +
 		`{"Effect":"Allow","Action":["` + strings.Join(deployIAMActions, `","`) + `"],"Resource":"arn:aws:iam::` + accountID + `:role/Argus*"},` +
 		`{"Effect":"Allow","Action":["` + strings.Join(deployStackActions, `","`) + `"],"Resource":"arn:aws:cloudformation:*:` + accountID + `:stack/` + StackName + `/*"},` +
 		`{"Effect":"Allow","Action":"iam:SimulatePrincipalPolicy","Resource":"*"}]}`
+}
+
+// ownPolicyActions are what CloudFormation needs to put the stack's
+// argus-assume-roles policy on the identity itself, when the identity is in
+// the account (see TemplateFor); nil otherwise.
+func ownPolicyActions(accountID, principal string) []string {
+	switch kind, _ := LocalPrincipal(accountID, principal); kind {
+	case "user":
+		return []string{"iam:PutUserPolicy", "iam:GetUserPolicy", "iam:DeleteUserPolicy"}
+	case "role":
+		return []string{"iam:PutRolePolicy", "iam:GetRolePolicy", "iam:DeleteRolePolicy"}
+	}
+	return nil
 }
 
 // missingRights asks IAM's policy simulator which of the actions the stack
@@ -111,9 +128,13 @@ func missingRights(ctx context.Context, cfg awssdk.Config, principal, accountID 
 	}
 	stack := fmt.Sprintf("arn:aws:cloudformation:%s:%s:stack/%s/00000000-0000-0000-0000-000000000000", cfg.Region, accountID, StackName)
 	var missing []string
-	for _, q := range []struct {
+	checks := []struct {
 		actions, resources []string
-	}{{deployIAMActions, roles}, {deployStackActions, []string{stack}}} {
+	}{{deployIAMActions, roles}, {deployStackActions, []string{stack}}}
+	if own := ownPolicyActions(accountID, principal); own != nil {
+		checks = append(checks, struct{ actions, resources []string }{own, []string{principal}})
+	}
+	for _, q := range checks {
 		pg := iam.NewSimulatePrincipalPolicyPaginator(c, &iam.SimulatePrincipalPolicyInput{
 			PolicySourceArn: awssdk.String(principal), ActionNames: q.actions, ResourceArns: q.resources,
 		})
@@ -159,11 +180,11 @@ func (p *Provider) DeployAccess(ctx context.Context, accountID, template string,
 	missing, err := missingRights(ctx, cfg, principal, accountID, manage)
 	if err != nil {
 		return cloud.StackState{}, &cloud.DeployRefusal{Reason: "Argus could not check its own permissions first (" + plain(err) +
-			"), so it made nothing rather than risk a stack that cannot finish.", Rights: DeployRights(accountID)}
+			"), so it made nothing rather than risk a stack that cannot finish.", Rights: DeployRights(accountID, principal)}
 	}
 	if len(missing) > 0 {
 		return cloud.StackState{}, &cloud.DeployRefusal{Reason: principal + " may not " + strings.Join(missing, ", ") +
-			", so Argus made nothing.", Missing: missing, Rights: DeployRights(accountID)}
+			", so Argus made nothing.", Missing: missing, Rights: DeployRights(accountID, principal)}
 	}
 	tags := []cftypes.Tag{
 		{Key: awssdk.String("argus:requested-by"), Value: awssdk.String(string(actor))},

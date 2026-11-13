@@ -1,8 +1,8 @@
 import { Alert, Box, Button, Card, Code, CopyButton, Group, Loader, Stack, Text, ThemeIcon } from '@mantine/core'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { IconCheck, IconCopy, IconWand } from '@tabler/icons-react'
-import { useEffect, useRef, useState } from 'react'
-import { checkCloudAccount, deployCloudAccess, type CloudPrepared } from '~/lib/cloud'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { AWS_IDENTITY_POLICY, checkCloudAccount, deployCloudAccess, type CloudPrepared } from '~/lib/cloud'
 import { FS, INK } from '~/theme'
 
 /** How often the connect page asks whether the roles work, and for how long. */
@@ -46,7 +46,12 @@ export function MakeItForMe({ prepared, name, manage }: { prepared: CloudPrepare
             </Stack>
           </Alert>
         )}
-        {open && prepared.deployRights && <Policy json={prepared.deployRights} principal={prepared.principal} />}
+        {open && prepared.deployRights && <Policy json={prepared.deployRights}>
+        Attach this to <Text span ff="monospace" size={FS.meta}>{prepared.principal}</Text> in IAM, press the button, and remove it once the
+        roles are made. It is limited to <Text span ff="monospace" size={FS.meta}>Argus*</Text> roles and the{' '}
+        <Text span ff="monospace" size={FS.meta}>argus-access</Text> stack, but an identity that may make roles can give itself any
+        permission, so it should not stay. Only this button needs it: the CloudShell command below needs nothing attached.
+        </Policy>}
         {deploy.isSuccess ? (
           <Text size={FS.meta} c={INK.verified}>CloudFormation is making the roles. Argus connects as soon as they work.</Text>
         ) : (
@@ -65,17 +70,12 @@ export function MakeItForMe({ prepared, name, manage }: { prepared: CloudPrepare
  * The policy the identity needs to make the stack, readable and copyable,
  * with why it should not stay attached.
  */
-function Policy({ json, principal }: { json: string; principal: string }) {
+function Policy({ json, children }: { json: string; children: ReactNode }) {
   let pretty = json
   try { pretty = JSON.stringify(JSON.parse(json), null, 2) } catch { /* shown as sent */ }
   return (
     <Stack gap={6}>
-      <Text size={FS.meta} c="dimmed" lh={1.55}>
-        Attach this to <Text span ff="monospace" size={FS.meta}>{principal}</Text> in IAM, press the button, and remove it once the
-        roles are made. It is limited to <Text span ff="monospace" size={FS.meta}>Argus*</Text> roles and the{' '}
-        <Text span ff="monospace" size={FS.meta}>argus-access</Text> stack, but an identity that may make roles can give itself any
-        permission, so it should not stay. Only this button needs it: the CloudShell command below needs nothing attached.
-      </Text>
+      <Text size={FS.meta} c="dimmed" lh={1.55}>{children}</Text>
       <Box pos="relative">
         <Code block fz={FS.micro} mah={260} style={{ overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{pretty}</Code>
         <CopyButton value={pretty}>
@@ -127,6 +127,9 @@ export function WatchForRoles({ prepared, manage, connecting, failed, onReady }:
   const stack = check.data?.stack
   // The stack is finished, so a role that still does not work is not
   // waiting on CloudFormation, and AWS's answer is the reason to show.
+  // AWS refusing the identity itself, not the role: the identity's own
+  // policy has to allow switching into Argus's roles.
+  const identityRefused = /not authorized to perform: sts:(AssumeRole|SetSourceIdentity|TagSession)\b/.test(check.data?.detail ?? '')
   const made = !!stack?.status && /_COMPLETE$/.test(stack.status) && !stack.status.includes('ROLLBACK')
 
   if (failed) {
@@ -153,7 +156,7 @@ export function WatchForRoles({ prepared, manage, connecting, failed, onReady }:
     )
   }
   const waiting = !stale && !check.error
-  return (
+  const box = (
     <Box p="sm" style={{ borderRadius: 8, background: 'var(--color-raised)', border: '1px solid var(--color-line)' }} aria-live="polite">
       <Group gap="sm" wrap="nowrap" align="flex-start">
         {connecting || check.data?.ready ? <IconCheck size={18} color="var(--mantine-color-teal-6)" />
@@ -175,5 +178,31 @@ export function WatchForRoles({ prepared, manage, connecting, failed, onReady }:
         {(!waiting) && <Button size="xs" variant="default" onClick={again}>Check again</Button>}
       </Group>
     </Box>
+  )
+  if (!identityRefused || check.data?.ready) return box
+  // In the account argus-control's identity is in, the stack gives it this
+  // right itself: a stack made before it did just needs making again.
+  if (prepared.canDeploy) {
+    return (
+      <Stack gap="sm">
+        {box}
+        <Alert color="amber" variant="light" title="Run the command once more">
+          <Text size={FS.meta}>
+            This stack was made before Argus let its own identity use the roles. Run the CloudShell command below again, or press
+            Make the roles for me. It updates the stack, and Argus connects by itself.
+          </Text>
+        </Alert>
+      </Stack>
+    )
+  }
+  return (
+    <Stack gap="sm">
+      {box}
+      <Policy json={AWS_IDENTITY_POLICY}>
+        Argus's identity <Text span ff="monospace" size={FS.meta}>{prepared.principal}</Text> is in another account, so this stack
+        cannot give it the right to use the roles. Attach this policy to it there and keep it: it allows nothing but using roles
+        named <Text span ff="monospace" size={FS.meta}>Argus*</Text> that trust it. Argus connects by itself once it applies.
+      </Policy>
+    </Stack>
   )
 }

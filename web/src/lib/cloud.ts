@@ -847,3 +847,13 @@ export function firewallEnv(g: CloudItem, users: CloudItem[]): CloudEnvironment 
 export function targetsOf(tg: CloudResource): { id: string; health: string }[] {
   return (tg.links ?? []).filter((l) => l.kind === 'instance').map((l) => ({ id: l.id, health: l.name ?? 'unknown' }))
 }
+
+/** What the IAM user behind an access key needs: to assume Argus's roles, and nothing else. */
+export const AWS_IDENTITY_POLICY = `{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": ["sts:AssumeRole", "sts:SetSourceIdentity", "sts:TagSession"],
+    "Resource": "arn:aws:iam::*:role/Argus*"
+  }]
+}`

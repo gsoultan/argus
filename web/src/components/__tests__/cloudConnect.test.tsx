@@ -61,6 +61,23 @@ describe('Connect an AWS account', () => {
     expect(screen.getByText(/not authorized to perform sts:AssumeRole/)).toBeInTheDocument()
   })
 
+  it('shows the policy the identity needs when AWS refuses the identity itself', async () => {
+    api.checkCloudAccount.mockResolvedValue({ ready: false, stack: { status: 'CREATE_COMPLETE', done: true, failed: false },
+      detail: 'The read role does not let Argus in yet: AccessDenied: User: arn:aws:iam::412788931204:user/argus is not authorized to perform: sts:SetSourceIdentity on resource: arn:aws:iam::412788931204:role/ArgusRead' })
+    renderWithProviders(<WatchForRoles prepared={{ ...prepared, canDeploy: false }} manage={false} connecting={false} failed={null} onReady={vi.fn()} />)
+    expect(await screen.findByText(/is in another account/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Copy the policy/ })).toBeInTheDocument()
+    expect(screen.getByText(/"sts:SetSourceIdentity"/)).toBeInTheDocument()
+  })
+
+  it('asks to run the command again when the stack predates the identity policy', async () => {
+    api.checkCloudAccount.mockResolvedValue({ ready: false, stack: { status: 'CREATE_COMPLETE', done: true, failed: false },
+      detail: 'AccessDenied: User: arn:aws:iam::412788931204:user/argus is not authorized to perform: sts:SetSourceIdentity on resource: arn:aws:iam::412788931204:role/ArgusRead' })
+    renderWithProviders(<WatchForRoles prepared={prepared} manage={false} connecting={false} failed={null} onReady={vi.fn()} />)
+    expect(await screen.findByText('Run the command once more')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Copy the policy/ })).toBeNull()
+  })
+
   it('shows why Argus could not make the roles itself', async () => {
     api.deployCloudAccess.mockRejectedValue(new Error("argus-control's own identity may not make the roles (AccessDenied)"))
     renderWithProviders(<MakeItForMe prepared={prepared} name="payments-prod" manage />)
