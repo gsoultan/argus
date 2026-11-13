@@ -10,7 +10,8 @@
 //
 // With -measure it stays, and reports what the desktop is like to use: see
 // measure.go. With -capture it keeps what arrives for a browser to decode:
-// see capture.go. -graphics asks for the graphics pipeline, as the console
+// see capture.go. -link measures it as someone behind a slow link would have
+// it. -graphics asks for the graphics pipeline, as the console
 // does with ?graphics=h264.
 package main
 
@@ -46,6 +47,7 @@ func main() {
 	report := flag.String("report", "", "file to write the measurement to, as JSON")
 	graphics := flag.Bool("graphics", false, "ask for the graphics pipeline (H.264)")
 	video := flag.Bool("video", false, "say the browser decodes H.264, as the console does, so screen sharing sends motion as it")
+	link := flag.Int("link", 0, "when measuring, pretend to be behind a link of this many kbit/s")
 	capturePath := flag.String("capture", "", "file to keep the display messages in")
 	captureFor := flag.Duration("capture-for", 15*time.Second, "how long to capture, from the first screen")
 	flag.Parse()
@@ -71,7 +73,7 @@ func main() {
 	u.RawQuery = url.Values{"target": {*target}, "principal": {*principal},
 		"ticket": {*ticket}}.Encode()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second+4**busy+*captureFor)
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second+4**busy+*captureFor+linkWait(*link))
 	defer cancel()
 	c, resp, err := websocket.Dial(ctx, u.String(), &websocket.DialOptions{
 		HTTPClient: client, HTTPHeader: http.Header{"Origin": {origin}}})
@@ -105,7 +107,7 @@ func main() {
 		return
 	}
 	if *busy > 0 {
-		measure(ctx, c, send, *busy, *keys, *report)
+		measure(ctx, c, send, *busy, *keys, *report, *link)
 		return
 	}
 	frames, bytes := 0, 0
@@ -147,6 +149,15 @@ func main() {
 			fail("the desktop closed after %d updates", frames)
 		}
 	}
+}
+
+// linkWait is the extra time a measurement behind a pretended link may take:
+// its first paint and what is still queued when the busy window stops.
+func linkWait(kbit int) time.Duration {
+	if kbit <= 0 {
+		return 0
+	}
+	return 5 * time.Minute
 }
 
 func fail(format string, a ...any) {

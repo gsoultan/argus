@@ -678,6 +678,42 @@ jobs:
             "| Busy window: decode (native) | \(.BusyDecodeShare * 1000 | floor / 10) % of a core |"' \
             "$tmp/desktop-measure.json" >> "$GITHUB_STEP_SUMMARY"
 
+          # The same desktop as someone behind a 2 Mbit/s link has it: how
+          # far behind the picture runs while a window is busy, which is what
+          # a slow link feels as lag. Reported, not yet held to a number.
+          measure_link() { # name, title, deskdrill flags...
+            local name=$1 title=$2; shift 2
+            local tkt
+            desktop_gone
+            tkt=$($c -X POST https://localhost:8080/api/v1/terminal/ticket \
+              -d "{\"target\":\"$host\",\"principal\":\"argusdrill\"}" | jq -r .ticket)
+            if "$tmp/deskdrill.exe" -url https://localhost:8080 -ca "$tmp/ca.crt" \
+                 -ticket "$tkt" -target "$host" -principal argusdrill \
+                 -password-env DRILL_PASSWORD -measure 20s -keys 10 -link 2000 "$@" \
+                 -report "$tmp/$name.json" 2>"$tmp/$name.err"; then
+              cat "$tmp/$name.err"
+              cp "$tmp/$name.json" measure/
+              jq -r --arg title "$title" '"### \($title) behind a \(.LinkKbit / 1000) Mbit/s link, \(.Width)x\(.Height)",
+                "",
+                "| | |", "|---|---|",
+                "| First paint | \(.FirstPaintMS / 1000 | floor) s, \(.FirstPaintBytes / 1e6 * 10 | floor / 10) MB |",
+                "| Keystroke to screen (\(.KeySamples) keys, \(.KeyMissed) missed) | p50 \(.KeyP50MS) ms, p95 \(.KeyP95MS) ms, max \(.KeyMaxMS) ms |",
+                "| Busy window: frames | \(.BusyFramesPerSec * 10 | floor / 10) per s |",
+                "| Busy window: bandwidth | \(.BusyMbitPerSec * 100 | floor / 100) Mbit/s |",
+                "| Busy window: longest wait | p95 \(.BusyGapP95MS) ms, max \(.BusyGapMaxMS) ms |",
+                "| Busy window: frame sent to frame shown (marks) | p50 \(.BusyLagP50MS) ms, p95 \(.BusyLagP95MS) ms |",
+                "| Still arriving after the window stopped | \(.BusyStopMS / 100 | floor / 10) s |"' \
+                "$tmp/$name.json" >> "$GITHUB_STEP_SUMMARY"
+            else
+              cat "$tmp/$name.err"; tail -40 "$log"
+              echo "::warning::$title could not be measured behind a slow link on this runner"
+              { echo "### $title behind a slow link"; echo; echo "Not measured: see the job's log."; } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          }
+          mkdir -p measure
+          measure_link desktop-link "Remote Desktop, bitmaps," -width 1920 -height 1080
+          measure_link desktop-graphics-link "Remote Desktop, graphics pipeline," -width 1920 -height 1080 -graphics
+
           # The graphics pipeline through the agent, as the console asks for
           # it, kept for Chrome to decode in the next step.
           desktop_gone
@@ -763,6 +799,7 @@ jobs:
           measure_screen screen-measure "exact tiles"
           desktop_gone
           measure_screen screen-video-measure "motion as H.264" -video
+          measure_link screen-video-link "Screen sharing, motion as H.264," -video
           # What the agent made of it: whether H.264 was asked for, what
           # motion went as (or why not), and how many pictures it sent. -a:
           # the log is searched as text whatever bytes are in it.
