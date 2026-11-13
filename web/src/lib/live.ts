@@ -1635,6 +1635,31 @@ export interface DiscoverAnswer {
   databases: DiscoveredDB[]
   configured?: number
   truncated?: boolean
+  /** Where the agent found Postgres, when not where the form asked. */
+  host?: string
+  port?: number
+  /** Other Postgres servers the agent found on this server. */
+  places?: { host: string; port: number; label?: string }[]
+  /** PgBouncers configured here, and where each database goes. */
+  poolers?: DiscoveredPooler[]
+  /** Each way in the agent tried, when none answered. */
+  tried?: string[]
+}
+
+/** A PgBouncer the agent found, from its pgbouncer.ini. */
+export interface DiscoveredPooler {
+  config: string
+  port: number
+  targets: {
+    name: string
+    /** Empty is PgBouncer's own server. */
+    host?: string
+    port: number
+    dbname?: string
+    /** The server in Argus this Postgres is on, when one matches. */
+    assetId?: string
+    assetName?: string
+  }[]
 }
 
 export async function discoverDatabases(assetId: string, q: {

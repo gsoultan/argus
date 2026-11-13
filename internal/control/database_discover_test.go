@@ -6,6 +6,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/gsoultan/argus/internal/agent"
@@ -47,11 +49,29 @@ func TestDiscoverDatabasesThroughTheAgent(t *testing.T) {
 		t.Fatalf("no agent read as %+v", ans)
 	}
 
+	// This server runs a PgBouncer whose databases are on another server in
+	// the inventory: the answer names that server.
+	pgHost := unique("discover-pg")
+	pgAsset, err := e.store.CreateAsset(ctx, AssetInput{Hostname: pgHost + ".corp.example", Address: "10.9.8.7", Port: 22,
+		Protocol: "ssh", Principals: []string{"ubuntu"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = e.store.ArchiveAsset(context.Background(), pgAsset.ID) })
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "etc/pgbouncer"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "etc/pgbouncer/pgbouncer.ini"),
+		[]byte("[databases]\nappdb = host=10.9.8.7 port=5432\nother = host=192.0.2.1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	var asked []agent.PGAdminRequest
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	services := agent.DefaultTunnelServices()
 	services[agent.DiscoverDBService] = agent.DiscoverDatabases(agent.DiscoverDBConfig{
-		Verifier: &tunnel.GrantVerifier{Host: host}, Log: log,
+		Verifier: &tunnel.GrantVerifier{Host: host}, Log: log, PGRoot: root,
 		Admin: func(_ context.Context, req agent.PGAdminRequest) agent.PGAdminResult {
 			asked = append(asked, req)
 			return agent.PGAdminResult{OK: true, Version: "16.4", Found: []tunnel.Discovered{
@@ -82,6 +102,10 @@ func TestDiscoverDatabasesThroughTheAgent(t *testing.T) {
 	}
 	if !ans.Databases[0].Added || ans.Databases[1].Added {
 		t.Fatalf("already-added is wrong: %+v", ans.Databases)
+	}
+	if len(ans.Poolers) != 1 || len(ans.Poolers[0].Targets) != 2 ||
+		ans.Poolers[0].Targets[0].AssetID != pgAsset.ID || ans.Poolers[0].Targets[1].AssetID != "" {
+		t.Fatalf("PgBouncer's Postgres was not matched to its server: %+v", ans.Poolers)
 	}
 	if len(asked) != 1 || asked[0].Op != "discover-databases" || asked[0].Socket != "/var/run/postgresql" {
 		t.Fatalf("the helper was asked %+v", asked)
