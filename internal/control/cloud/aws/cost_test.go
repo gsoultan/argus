@@ -69,7 +69,7 @@ func TestReadCosts(t *testing.T) {
 		t.Fatalf("forecast for: %+v", f.forecast.TimePeriod)
 	}
 	// Spent before today (3 + 2) plus the forecast from today.
-	if c.MonthToDate != 6 || c.LastMonth != 4 || c.Forecast == nil || *c.Forecast != 105 {
+	if c.MonthToDate != 6 || c.LastMonth != 4 || c.Forecast == nil || *c.Forecast != 105 || c.ForecastRest == nil || *c.ForecastRest != 100 {
 		t.Fatalf("costs: %+v", c)
 	}
 }

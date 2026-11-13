@@ -8,7 +8,7 @@ import { DataTable, EmptyState, SectionCard } from '~/components/page'
 import { Stat, relTime } from '~/components/primitives'
 import type { CloudAccount, CloudItem, CloudKind } from '~/lib/cloud'
 import {
-  budgetState, change, cloudCostsQuery, cloudIdleQuery, dollars, parseThresholds, totals, useDeleteBudget, useReadCosts, useSaveBudget,
+  budgetState, change, daysLeft, cloudCostsQuery, cloudIdleQuery, dollars, parseThresholds, totals, useDeleteBudget, useReadCosts, useSaveBudget,
   type CloudBudget, type CloudCostRead, type CloudIdleItem, type DayCost,
 } from '~/lib/cloudCosts'
 import { notifyError, notifyOk } from '~/lib/notify'
@@ -52,7 +52,9 @@ export function CostsPanel({ accounts, items, names }: {
         <Stat label="Spent this month" value={q.data ? (t.read ? dollars(t.monthToDate) : '—') : undefined} icon={IconCoin}
           sub={t.read ? (vs === null ? 'Nothing last month to compare with' : `${vs > 0 ? '+' : ''}${vs}% on last month to this day`) : 'Not read yet'} />
         <Stat label="Forecast for the month" value={q.data ? (t.forecast !== null ? dollars(t.forecast) : '—') : undefined}
-          sub={t.forecast !== null ? 'AWS\'s own forecast' : 'AWS gives one after a few weeks of data'} />
+          sub={t.forecast === null ? 'AWS gives one after a few weeks of data'
+            : t.forecastRest == null || !t.month ? 'AWS\'s own forecast'
+              : `${dollars(Math.max(0, t.forecast - t.forecastRest))} to yesterday + ${dollars(t.forecastRest)} AWS predicts for ${daysLeft(t.month)} days left`} />
         <Stat label="Last month" value={q.data ? (t.read ? dollars(t.lastMonth) : '—') : undefined} />
         <Stat label="Idle, a month" value={idle.data ? dollars(idle.data.monthly) : undefined} icon={IconZzz}
           tone={idle.data && idle.data.monthly > 0 ? 'warn' : 'ok'} color="amber"
@@ -72,7 +74,7 @@ export function CostsPanel({ accounts, items, names }: {
       )}
 
       <SectionCard title="By account" flush
-        description={`Read from AWS Cost Explorer every ${q.data?.intervalHours ?? 8} hours. AWS charges $0.01 a request and a read is two, about $1.80 a month an account.`}>
+        description={`Read from AWS Cost Explorer every ${q.data?.intervalHours ?? 8} hours, as unblended cost. The forecast is what was spent before today plus AWS's own prediction for the rest of the month, the figure Cost Explorer shows when its date range runs to the month's end. AWS charges $0.01 a request and a read is two, about $1.80 a month an account.`}>
         <DataTable minWidth={760} loading={q.isPending} isEmpty={reads.length === 0}
           empty={<EmptyState icon={IconCoin} title="No accounts" description="Connect an AWS account to see what it costs." />}
           columns={['Account', 'This month', 'Last month, same day', 'Forecast', 'Last month', 'Read', '']}>

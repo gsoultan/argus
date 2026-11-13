@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { budgetState, change, dollars, parseThresholds, totals, type CloudBudget, type CloudCostRead, type Costs } from '~/lib/cloudCosts'
+import { budgetState, change, daysLeft, dollars, parseThresholds, totals, type CloudBudget, type CloudCostRead, type Costs } from '~/lib/cloudCosts'
 
 const costs = (o: Partial<Costs>): Costs => ({
   month: '2026-11', currency: 'USD', monthToDate: 0, lastMonth: 0, lastMonthToDate: 0, forecast: null, days: [], services: [], ...o,
@@ -34,6 +34,17 @@ describe('cloud costs', () => {
     expect(t.forecast).toBe(49)
     expect(t.days).toEqual([{ date: '2026-11-01', amount: 15.5 }])
     expect(t.services.map((s) => [s.service, s.thisMonth])).toEqual([['EC2', 15], ['S3', 0.5]])
+  })
+
+  it('splits the forecast into what AWS predicts', () => {
+    expect(totals([read('a', costs({ forecast: 40, forecastRest: 25 })), read('b', costs({ forecast: 9, forecastRest: 4.5 }))]).forecastRest).toBe(29.5)
+    expect(totals([read('a', costs({ forecast: 40, forecastRest: 25 })), read('b', costs({ forecast: 9 }))]).forecastRest).toBeNull()
+  })
+
+  it('counts the days left in the month, today included', () => {
+    expect(daysLeft('2026-11', new Date('2026-11-13T16:00:00Z'))).toBe(18)
+    expect(daysLeft('2026-11', new Date('2026-11-30T23:00:00Z'))).toBe(1)
+    expect(daysLeft('2026-12', new Date('2026-12-01T00:00:00Z'))).toBe(31)
   })
 
   it('has no forecast when one account has none', () => {

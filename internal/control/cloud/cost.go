@@ -35,6 +35,10 @@ type Costs struct {
 	// Forecast is what the provider expects this month to end at, nil
 	// when it would not say (too little history, or the month's last day).
 	Forecast *float64 `json:"forecast"`
+	// ForecastRest is the part of Forecast that is the provider's own
+	// prediction, from today to the month's end; the rest of Forecast is
+	// what was spent before today. Nil when the provider gave no forecast.
+	ForecastRest *float64 `json:"forecastRest,omitempty"`
 	// Days is each day's total, from the first of last month to today.
 	Days []DayCost `json:"days"`
 	// Services is each service's spend, this month's biggest first.
