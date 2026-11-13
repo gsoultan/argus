@@ -319,8 +319,14 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
             )}
             {listing && engine === 'postgres' && ans?.port && !port && (
               <Text size={FS.micro} c="dimmed">
-                Postgres is not at the default here: the agent read this server's configuration and found it
-                at <Text span ff="monospace" inherit>{ans.host ?? 'the socket'} port {ans.port}</Text>. It is added there.
+                {ans.host && !isLocalHost(ans.host) ? (<>
+                  No Postgres runs on this server, so the agent signed in to the one its PgBouncer sends to,
+                  at <Text span ff="monospace" inherit>{ans.host}:{ans.port}</Text>, with the password in PgBouncer's userlist.txt.
+                  It is added there, and sessions reach it from this server.
+                </>) : (<>
+                  Postgres is not at the default here: the agent read this server's configuration and found it
+                  at <Text span ff="monospace" inherit>{ans.host ?? 'the socket'} port {ans.port}</Text>. It is added there.
+                </>)}
               </Text>
             )}
             {listing && engine === 'postgres' && (ans?.places?.length ?? 0) > 0 && (

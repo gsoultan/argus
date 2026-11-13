@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gsoultan/argus/internal/agent"
@@ -86,9 +87,14 @@ func TestDiscoverDatabasesThroughTheAgent(t *testing.T) {
 	if w := do(t, e.h, http.MethodGet, url, "op-token", ""); w.Code != http.StatusForbidden {
 		t.Fatalf("an operator listed databases: %d %s", w.Code, w.Body)
 	}
-	// Nowhere but the server itself.
-	if w := do(t, e.h, http.MethodGet, url+"&host=10.0.0.5", "admin-token", ""); w.Code != http.StatusBadRequest {
+	// Nowhere but the server itself, or a Postgres its PgBouncer sends to:
+	// the agent refuses any other address without asking anything.
+	if w := do(t, e.h, http.MethodGet, url+"&host=10.0.0.5", "admin-token", ""); w.Code != http.StatusOK ||
+		!strings.Contains(w.Body.String(), "not one this server's PgBouncer sends to") {
 		t.Fatalf("a remote host was accepted: %d %s", w.Code, w.Body)
+	}
+	if w := do(t, e.h, http.MethodGet, url+"&host=/tmp/../etc", "admin-token", ""); w.Code != http.StatusBadRequest {
+		t.Fatalf("a bad host was accepted: %d %s", w.Code, w.Body)
 	}
 	if len(asked) != 0 {
 		t.Fatalf("the helper ran for a refused request: %+v", asked)

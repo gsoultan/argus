@@ -59,8 +59,8 @@ func DiscoverDatabases(cfg DiscoverDBConfig) TunnelService {
 		log = slog.Default()
 	}
 	if cfg.Admin == nil {
-		cfg.Admin = helperAdmin(PostgresConfig{AdminUser: cfg.AdminUser, Helper: cfg.Helper,
-			Spawn: cfg.Spawn, HelperEnv: cfg.HelperEnv})
+		cfg.Admin = withPooledRemote(cfg.PGRoot, helperAdmin(PostgresConfig{AdminUser: cfg.AdminUser, Helper: cfg.Helper,
+			Spawn: cfg.Spawn, HelperEnv: cfg.HelperEnv}))
 	}
 	if cfg.Ctl == nil {
 		cfg.Ctl = runRabbitmqctl
@@ -88,6 +88,11 @@ func DiscoverDatabases(cfg DiscoverDBConfig) TunnelService {
 		d := *g.Discover
 		if err := d.Validate(); err != nil {
 			call.Refuse(err.Error())
+			return
+		}
+		if d.Engine == tunnel.EnginePostgres && !tunnel.LocalPGHost(d.Host) && !pgLocatorBehind(cfg.PGRoot, d.Host, d.Port) {
+			call.Refuse(fmt.Sprintf("Postgres on %s is not one this server's PgBouncer sends to, "+
+				"so the agent will not sign in there", net2(d.Host, d.Port)))
 			return
 		}
 		if err := call.Accept(""); err != nil {
@@ -229,6 +234,9 @@ const maxPGWays = 6
 // server has no Postgres of its own.
 func discoverPostgres(ctx context.Context, cfg DiscoverDBConfig, d tunnel.GrantDiscover, email string) tunnel.DiscoverResult {
 	l := pgLocator{root: cfg.PGRoot}
+	if d.Host != "" && !tunnel.LocalPGHost(d.Host) {
+		return discoverBehindPooler(ctx, cfg, l, d, email)
+	}
 	loc := l.locate()
 	asked := pgPlace{Host: socketDir(tunnel.GrantDB{Host: d.Host, Port: d.Port}), Port: d.Port}
 	if !strings.HasPrefix(d.Host, "/") && d.Host != "" {
@@ -275,12 +283,20 @@ func discoverPostgres(ctx context.Context, cfg DiscoverDBConfig, d tunnel.GrantD
 			way(p)
 		}
 	}
-	// No socket anywhere: Postgres may listen on TCP only.
+	// No socket anywhere: Postgres may listen on TCP only, or be on another
+	// server behind this one's PgBouncer.
 	if strings.HasPrefix(asked.Host, "/") && running == 0 {
 		if bouncerPort[d.Port] {
 			tried = append(tried, fmt.Sprintf("127.0.0.1:%d: that is PgBouncer's port, not Postgres's", d.Port))
 		} else {
 			way(pgPlace{Host: "127.0.0.1", Port: d.Port})
+		}
+		for _, b := range loc.Bouncers {
+			for _, t := range b.Targets {
+				if !t.Local() && tunnel.RemotePGHost(t.Host) {
+					way(pgPlace{Host: t.Host, Port: t.Port, Label: "behind PgBouncer"})
+				}
+			}
 		}
 	}
 
@@ -322,6 +338,12 @@ func discoverPostgres(ctx context.Context, cfg DiscoverDBConfig, d tunnel.GrantD
 	if running == 0 {
 		if msg := elsewhere(loc.Bouncers); msg != "" {
 			res.Error = msg
+			for _, t := range tried {
+				if !strings.HasPrefix(t, "/") && !strings.HasPrefix(t, "127.0.0.1") {
+					res.Error += ". From here: " + t
+					break
+				}
+			}
 			return res
 		}
 	}
@@ -399,4 +421,20 @@ func elsewhere(bs []pgBouncerSeen) string {
 			"Add them on the server Postgres runs on, where its agent signs in to it", b.Port, b.Config, strings.Join(parts, "; "))
 	}
 	return ""
+}
+
+// discoverBehindPooler lists a Postgres on another server that this
+// server's PgBouncer sends to, signing in with its userlist.txt
+// (pgremote.go). Any other address is refused before anything is dialled.
+func discoverBehindPooler(ctx context.Context, cfg DiscoverDBConfig, l pgLocator, d tunnel.GrantDiscover, email string) tunnel.DiscoverResult {
+	if _, ok := l.behindPooler(d.Host, d.Port); !ok {
+		return tunnel.DiscoverResult{Error: fmt.Sprintf("Postgres on %s is not one this server's PgBouncer sends to, "+
+			"so the agent will not sign in there", net2(d.Host, d.Port))}
+	}
+	r := cfg.Admin(ctx, PGAdminRequest{Op: "discover-databases", Database: "postgres",
+		Socket: d.Host, Port: d.Port, AdminUser: d.AdminUser, Owner: email})
+	if !r.OK {
+		return tunnel.DiscoverResult{Error: r.Error, Version: r.Version}
+	}
+	return tunnel.DiscoverResult{OK: true, Version: r.Version, Databases: r.Found, Truncated: r.Truncated}
 }

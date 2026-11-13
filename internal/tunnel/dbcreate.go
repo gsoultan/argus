@@ -192,6 +192,11 @@ func (c *GrantCreate) Validate() error {
 	if err := d.Validate(); err != nil {
 		return err
 	}
+	if c.Engine == EnginePostgres && !LocalPGHost(c.Host) {
+		// Listing and sessions reach a Postgres behind this server's
+		// PgBouncer; creating databases there is for its own server's agent.
+		return fmt.Errorf("Postgres must be on this server to create a database here; %s is not", c.Host)
+	}
 	switch c.Op {
 	case CreateOpOptions:
 		return nil

@@ -79,6 +79,8 @@ type pgBouncerSeen struct {
 	Port   int
 	// Socket is its unix_socket_dir; empty when it listens on TCP only.
 	Socket string
+	// AuthFile is its auth_file, the userlist.txt; empty when it names none.
+	AuthFile string
 	// Targets are its [databases]: where each name is sent.
 	Targets []tunnel.PoolerTarget
 }
@@ -599,6 +601,8 @@ func (l pgLocator) pgbouncer(path string) (pgBouncerSeen, bool) {
 				b.Port = atoiOr(val, 6432)
 			case "unix_socket_dir":
 				b.Socket = val
+			case "auth_file":
+				b.AuthFile = authFile(path, val)
 			}
 		case "databases":
 			b.Targets = append(b.Targets, poolerTarget(key, val))

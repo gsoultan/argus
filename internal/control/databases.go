@@ -162,9 +162,9 @@ func (d *Database) validate() error {
 		return ErrInvalidDatabase{tunnel.TestDBPrefix + " databases are the throwaway copies test restores make; Argus does not add them"}
 	case d.Host == "":
 		d.Host = "/var/run/postgresql"
-	case !tunnel.LocalPGHost(d.Host):
-		return ErrInvalidDatabase{"the database must be on the server itself: a socket directory " +
-			"or a loopback address, not " + d.Host}
+	case !tunnel.LocalPGHost(d.Host) && !tunnel.RemotePGHost(d.Host):
+		return ErrInvalidDatabase{"the database must be on the server itself (a socket directory " +
+			"or a loopback address) or a Postgres its PgBouncer sends to, not " + d.Host}
 	}
 	if d.Port == 0 {
 		d.Port = 5432

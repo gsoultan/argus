@@ -53,8 +53,10 @@ func (d *GrantDiscover) Validate() error {
 	}
 	switch d.Engine {
 	case EnginePostgres:
-		if !LocalPGHost(d.Host) {
-			return fmt.Errorf("Postgres must be on this server; %s is not", d.Host)
+		// Another server only behind this server's PgBouncer; the agent
+		// checks its pgbouncer.ini.
+		if !LocalPGHost(d.Host) && !RemotePGHost(d.Host) {
+			return fmt.Errorf("Postgres must be on this server or behind its PgBouncer; %s is not", d.Host)
 		}
 	case EngineRedis:
 		if !LocalPGHost(d.Host) {

@@ -189,8 +189,9 @@ func TestDiscoverPgBouncerOnly(t *testing.T) {
 	if len(res.Poolers) != 1 || len(res.Poolers[0].Targets) != 2 {
 		t.Fatalf("poolers = %+v", res.Poolers)
 	}
-	// The socket asked for, then TCP on localhost.
-	if len(asked) != 2 || asked[1].Socket != "127.0.0.1" {
+	// The socket asked for, TCP on localhost, then the Postgres behind
+	// PgBouncer, once.
+	if len(asked) != 3 || asked[1].Socket != "127.0.0.1" || asked[2].Socket != "10.0.0.5" {
 		t.Fatalf("asked = %+v", asked)
 	}
 }

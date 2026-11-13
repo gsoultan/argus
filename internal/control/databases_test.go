@@ -60,12 +60,22 @@ func TestDatabaseDefaultsAreSafe(t *testing.T) {
 
 func TestDatabaseMustBeLocalToItsServer(t *testing.T) {
 	_, s, _, db, admin := dbFixture(t)
-	for _, host := range []string{"10.0.0.5", "db.internal", "/var/run/../etc"} {
+	for _, host := range []string{"db internal", "/var/run/../etc", "-oProxyCommand", "db.internal/x"} {
 		_, err := s.CreateDatabase(context.Background(), Database{AssetID: db.AssetID, Name: "x", Host: host}, admin)
 		var invalid ErrInvalidDatabase
 		if err == nil || !errorsAs(err, &invalid) {
 			t.Fatalf("host %q must be refused, got %v", host, err)
 		}
+	}
+}
+
+// A Postgres on another server is accepted as an address; the agent signs in
+// there only when its own PgBouncer sends to it (agent/pgremote.go).
+func TestDatabaseBehindPgBouncerIsAnAddress(t *testing.T) {
+	_, s, _, db, admin := dbFixture(t)
+	got, err := s.CreateDatabase(context.Background(), Database{AssetID: db.AssetID, Name: "remote_x", Host: "10.0.0.5"}, admin)
+	if err != nil || got.Host != "10.0.0.5" || got.Port != 5432 {
+		t.Fatalf("%+v %v", got, err)
 	}
 }
 
