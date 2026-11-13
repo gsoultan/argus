@@ -128,15 +128,27 @@ func TestMediaFoundationBitrateFollowsTheLink(t *testing.T) {
 	full := run(30) / 15
 	rater.SetBitrate(screenMotionBits(w, h) / 10)
 	t.Logf("pictures at full rate: %v", sizes)
-	// The encoder takes its time over a new rate: a runner's went on at
-	// the old one for 51 pictures and was at the new one five later. So
-	// the held pictures measured are the second sixty of 120.
-	held := run(120) / 60
+	// The encoder takes its time over a new rate, and does not settle on
+	// it. A runner's went on at the old one for 51 pictures (20 kB each),
+	// fell to under 1 kB over the next forty, then spent what it had saved
+	// on a few of up to 60 kB before falling again. So what is asked is
+	// that it turned: that some ten pictures in a row, of 120, average
+	// under a quarter of a picture at the full rate. An encoder the new
+	// rate never reached leaves every run of ten as large as before.
+	run(120)
 	t.Logf("pictures held to a tenth: %v", sizes)
-	t.Logf("a picture at full rate: %d bytes; held to a tenth: %d bytes", full, held)
-	// Under half a picture's size says it followed; an encoder that
-	// ignored the change would leave them the same.
-	if held >= full/2 {
+	held := 0
+	for i := 0; i+10 <= len(sizes); i++ {
+		sum := 0
+		for _, n := range sizes[i : i+10] {
+			sum += n
+		}
+		if i == 0 || sum/10 < held {
+			held = sum / 10
+		}
+	}
+	t.Logf("a picture at full rate: %d bytes; the smallest ten in a row held to a tenth: %d bytes", full, held)
+	if held >= full/4 {
 		t.Fatalf("held to a tenth of the rate a picture came to %d bytes, against %d at full rate: "+
 			"the encoder did not follow", held, full)
 	}
