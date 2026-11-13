@@ -65,6 +65,31 @@ describe('ApplicationsOnServer', () => {
     expect((screen.getByLabelText('PgBouncer port') as HTMLInputElement).value).toBe('6432')
   })
 
+  it('offers PgBouncer too, opening the form on the Postgres behind it with its own port filled in', async () => {
+    vi.spyOn(api, 'applications').mockResolvedValue(report)
+    renderCard(true)
+    fireEvent.click(await screen.findByRole('button', { name: /^Add database/ }))
+    expect((screen.getByRole('radio', { name: 'Postgres' }) as HTMLInputElement).checked).toBe(true)
+    expect(((await screen.findByLabelText('Port')) as HTMLInputElement).value).toBe('5433')
+    expect((screen.getByLabelText('PgBouncer port') as HTMLInputElement).value).toBe('6432')
+  })
+
+  it('does not offer PgBouncer when no host Postgres runs, or when it is in a container', async () => {
+    vi.spyOn(api, 'applications').mockResolvedValue({
+      ...report,
+      applications: [
+        app({ container: 'orders-pg', image: 'postgres:16', listen: [{ address: '0.0.0.0', port: 15432, localOnly: false }] }),
+        app({ kind: 'pgbouncer', name: 'PgBouncer', listen: [{ address: '127.0.0.1', port: 6432, localOnly: true }] }),
+        app({ kind: 'pgbouncer', name: 'PgBouncer', container: 'pool', image: 'pgbouncer/pgbouncer',
+          listen: [{ address: '0.0.0.0', port: 16432, localOnly: false }] }),
+      ],
+    })
+    renderCard(true)
+    expect(await screen.findByText('no Postgres here')).toBeTruthy()
+    expect(screen.getAllByText('in a container')).toHaveLength(2)
+    expect(screen.queryByRole('button', { name: /^Add database/ })).toBeNull()
+  })
+
   it('offers a Redis and a RabbitMQ too, opening the form on their engine', async () => {
     vi.spyOn(api, 'applications').mockResolvedValue({
       ...report,
@@ -90,6 +115,7 @@ describe('ApplicationsOnServer', () => {
     renderCard(false)
     await screen.findAllByText('PostgreSQL')
     expect(screen.queryByRole('button', { name: /Add as database/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Add database/ })).toBeNull()
   })
 
   it('says when the agent has not reported', async () => {

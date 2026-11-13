@@ -7,7 +7,10 @@ containers. It rides `/api/v1/report/facts` as `applications`, is stored in
 `agents.applications` (JSONB, migration 031) and is served by
 `GET /api/v1/assets/{id}/applications` (fleet roles only), read through `Store.db(ctx)` like every query, so it is per organization. The server page's
 "What runs here" card shows it; a host Postgres has "Add as database", which
-opens the add form with its port and any PgBouncer's port filled in.
+opens the add form with its port and any PgBouncer's port filled in. A host
+PgBouncer has "Add database" too: it opens the same form on the host
+Postgres behind it, with that PgBouncer port filled in (one button per port;
+"no Postgres here" when the agent found no host Postgres to open).
 
 ## Read-only, and never a secret
 
