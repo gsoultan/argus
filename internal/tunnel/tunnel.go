@@ -143,6 +143,9 @@ type DesktopOpen struct {
 	// ClipboardFromAsset, or empty (ClipboardOff) for neither. An agent that
 	// predates it opens no clipboard, which is the safe reading.
 	Clipboard string `json:"clipboard,omitempty"`
+	// SlowLink says the browser reports a slow link, so the desktop is
+	// asked for what one can carry. An agent that predates it ignores it.
+	SlowLink bool `json:"slowLink,omitempty"`
 }
 
 // Clipboard directions, as the asset type's rule sets them.

@@ -47,6 +47,9 @@ type ClientInfo struct {
 	// Graphics asks for the graphics pipeline: 32-bit colour, and the
 	// drdynvc channel it runs on. See gfx.go.
 	Graphics bool
+	// SlowLink says the person is behind a slow link, so the target's
+	// defaults are those for one.
+	SlowLink bool
 }
 
 // GCCRequest builds the Conference Create Request carrying the client blocks.
@@ -136,10 +139,20 @@ func clientCoreData(info ClientInfo) []byte {
 		early |= want32BPP | dynvcGFX
 		depths |= depth32
 	}
+	// The connection type is read only when the flag says it is there.
+	// The agent's own link to the target is a LAN and is left unsaid; a
+	// person behind a slow link is said, as low-speed broadband, because it
+	// is their link the picture has to cross.
+	connection := byte(0)
+	if info.SlowLink {
+		const validConnectionType, broadbandLow = 0x0020, 0x02
+		early |= validConnectionType
+		connection = broadbandLow
+	}
 	b = binary.LittleEndian.AppendUint16(b, depths)
 	b = binary.LittleEndian.AppendUint16(b, early)
 	b = append(b, make([]byte, 64)...) // clientDigProductId
-	b = append(b, 0x07, 0x00)          // connection type: LAN, pad
+	b = append(b, connection, 0x00)    // connection type, pad
 	b = binary.LittleEndian.AppendUint32(b, info.SelectedProtocol)
 
 	return block(blockClientCore, b)

@@ -48,7 +48,17 @@ type LogonInfo struct {
 	// ClientAddress appears in the target's own session list, so a Windows
 	// administrator looking at who is logged on sees where from.
 	ClientAddress string
+	// SlowLink asks the target to leave out what only costs bandwidth: see
+	// slowLinkPerformance.
+	SlowLink bool
 }
+
+// slowLinkPerformance is the performance flags sent for a slow link
+// (MS-RDPBCGR 2.2.1.11.1.1.1): no wallpaper, no window contents while
+// dragging, no menu animations, no cursor shadow. Each is pixels that change
+// without telling anyone anything, and on a slow link every changed pixel is
+// time. Themes and font smoothing stay: they are what the desktop looks like.
+const slowLinkPerformance uint32 = 0x00000001 | 0x00000002 | 0x00000004 | 0x00000020
 
 // ClientInfoPDU builds the auto-logon packet.
 //
@@ -105,7 +115,11 @@ func ClientInfoPDU(info LogonInfo) []byte {
 
 	b = append(b, make([]byte, 172)...)        // time zone
 	b = binary.LittleEndian.AppendUint32(b, 0) // session id
-	b = binary.LittleEndian.AppendUint32(b, 0) // performance flags
+	performance := uint32(0)
+	if info.SlowLink {
+		performance = slowLinkPerformance
+	}
+	b = binary.LittleEndian.AppendUint32(b, performance)
 	b = binary.LittleEndian.AppendUint16(b, 0) // auto-reconnect cookie length
 
 	// Security header. The session is already encrypted by TLS, so no RDP

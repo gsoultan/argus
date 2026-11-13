@@ -62,8 +62,11 @@ type Client struct {
 	gfx      graphicsChannel
 	// gfxLive is set once the graphics pipeline carries a message. Refresh
 	// reads it from another goroutine than the one reading the session.
-	gfxLive    atomic.Bool
-	gfxDecoded uint32
+	gfxLive atomic.Bool
+
+	// pace holds the target to the pace of the browser drawing it; see
+	// pace.go. Nil paces nothing.
+	pace *pacer
 
 	// The clipboard, when it was asked for.
 	onClip  func(string)
@@ -104,6 +107,10 @@ type ClientConfig struct {
 	// server's clipboard text each time something is copied there. It is
 	// called on the goroutine reading the session. See cliprdr.go.
 	Clipboard func(text string)
+	// SlowLink says whoever is watching is behind a slow link: the target
+	// is told so, and asked to leave out wallpaper, animations and the
+	// like.
+	SlowLink bool
 }
 
 // Connect runs the sequence on an established, authenticated connection.
@@ -137,6 +144,9 @@ func Connect(conn net.Conn, cfg ClientConfig) (*Client, error) {
 		graphics:    cfg.Graphics,
 		onClip:      cfg.Clipboard,
 	}
+	c.pace = newPacer(func(frameID, decoded, depth uint32) error {
+		return c.writeGraphics(gfxFrameAcknowledge(frameID, decoded, depth))
+	})
 	if c.graphics != nil {
 		c.depth = 32
 		c.gfx.zgfx = NewDecompressor()
@@ -152,6 +162,7 @@ func Connect(conn net.Conn, cfg ClientConfig) (*Client, error) {
 	if err := c.mcsAttach(); err != nil {
 		return nil, err
 	}
+	cfg.Logon.SlowLink = cfg.SlowLink
 	if err := c.sendClientInfo(cfg.Logon); err != nil {
 		return nil, err
 	}
@@ -177,7 +188,7 @@ func (c *Client) mcsConnect(cfg ClientConfig) error {
 	gcc := GCCRequest(ClientInfo{
 		Width: cfg.Width, Height: cfg.Height, Depth: c.depth,
 		SelectedProtocol: cfg.SelectedProtocol, Graphics: c.graphics != nil,
-		Clipboard: c.onClip != nil,
+		Clipboard: c.onClip != nil, SlowLink: cfg.SlowLink,
 	})
 	if _, err := c.conn.Write(x224Data(ConnectInitial(gcc))); err != nil {
 		return fmt.Errorf("send mcs connect initial: %w", err)
@@ -396,6 +407,11 @@ func (c *Client) Next() ([]Rect, error) {
 // NextBitmaps is Next without the decoding, for a caller that forwards the
 // rectangles to something that decodes them itself.
 func (c *Client) NextBitmaps() ([]Bitmap, error) {
+	if c.pace != nil && !c.gfxLive.Load() {
+		// Bitmap updates: no more are read while the browser is a window
+		// behind, so the target waits rather than the person.
+		c.pace.wait()
+	}
 	if err := c.conn.SetReadDeadline(time.Now().Add(c.readTimeout)); err != nil {
 		return nil, err
 	}
@@ -431,7 +447,32 @@ func (c *Client) NextBitmaps() ([]Bitmap, error) {
 			return nil, c.virtual(payload)
 		}
 	}
-	return ParsePDU(c.rea, frame)
+	bitmaps, err := ParsePDU(c.rea, frame)
+	if c.pace != nil && len(bitmaps) > 0 {
+		n := 0
+		for _, b := range bitmaps {
+			n += len(b.Data)
+		}
+		c.pace.bitmaps(n)
+	}
+	return bitmaps, err
+}
+
+// TakeMark returns the mark to send the browser after what NextBitmaps just
+// read, if a frame ended in it, and the last round trip to the browser.
+func (c *Client) TakeMark() (id uint32, rtt time.Duration, ok bool) {
+	if c.pace == nil {
+		return 0, 0, false
+	}
+	return c.pace.TakeMark()
+}
+
+// Ack is the browser saying it has drawn everything up to mark id, which is
+// when the target is told its frames are done with.
+func (c *Client) Ack(id uint32) {
+	if c.pace != nil {
+		c.pace.Ack(id)
+	}
 }
 
 // virtual follows drdynvc, answering what it must and handing graphics
@@ -468,8 +509,8 @@ func (c *Client) virtual(pdu []byte) error {
 		}
 		c.graphics(p)
 		if p.Cmd == GfxEndFrame {
-			c.gfxDecoded++
-			if err := c.writeGraphics(gfxFrameAcknowledge(p.FrameID, c.gfxDecoded)); err != nil {
+			// Done with once the browser has drawn it, not now: see pace.go.
+			if err := c.pace.frame(p.FrameID); err != nil {
 				return err
 			}
 		}
@@ -647,7 +688,12 @@ func (c *Client) SetReadTimeout(d time.Duration) { c.readTimeout = d }
 func (c *Client) Size() (width, height int) { return c.width, c.height }
 
 // Close ends the session.
-func (c *Client) Close() error { return c.conn.Close() }
+func (c *Client) Close() error {
+	if c.pace != nil {
+		c.pace.close()
+	}
+	return c.conn.Close()
+}
 
 // Refresh asks the target to resend the whole screen.
 //

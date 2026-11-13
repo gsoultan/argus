@@ -408,6 +408,7 @@ func connectDesktop(cfg DesktopConfig, g tunnel.Grant, open tunnel.DesktopOpen,
 		// session someone is reading.
 		KeepIdle: true,
 		Log:      log,
+		SlowLink: open.SlowLink,
 	}
 	if open.Graphics {
 		info.Graphics = &GraphicsSink{}
@@ -502,8 +503,8 @@ func desktopEvents(m desktopInput) (events []rdp.InputEvent, ok bool) {
 
 // desktopFramer is a desktop whose frames are paced by the browser: a mark
 // is written after each one, and the browser acknowledges it once drawn.
-// The shared console is one; a Remote Desktop connection is paced by the
-// target and is not.
+// The shared console is one, and so is a Remote Desktop connection, which
+// holds its target to those acknowledgements (rdp/pace.go).
 type desktopFramer interface {
 	TakeMark() (id uint32, rtt time.Duration, ok bool)
 	Ack(id uint32)
@@ -621,28 +622,28 @@ func runDesktop(st tunnel.Stream, client DesktopClient, info DesktopInfo, d *Des
 				err = write(tunnel.FrameClipboard, []byte(t))
 			}
 		}
-		// A frame that just ended is marked, after all of its rectangles.
+		if err == nil && len(bitmaps) > 0 {
+			batch := make([]byte, 0, 4096)
+			for _, b := range bitmaps {
+				f := rdp.EncodeBitmap(b)
+				if len(batch)+len(f) > desktopBatch && len(batch) > 0 {
+					if err = write(tunnel.FrameOutput, batch); err != nil {
+						break
+					}
+					batch = make([]byte, 0, 4096)
+				}
+				batch = append(batch, f...)
+			}
+			if err == nil && len(batch) > 0 {
+				err = write(tunnel.FrameOutput, batch)
+			}
+		}
+		// A frame that just ended is marked, after all of its rectangles
+		// and commands, so its acknowledgement says they are drawn.
 		if f, ok := client.(desktopFramer); ok && err == nil {
 			if id, rtt, ok := f.TakeMark(); ok {
 				err = write(tunnel.FrameOutput, rdp.EncodeMark(id, rtt))
 			}
-		}
-		if err != nil || len(bitmaps) == 0 {
-			continue
-		}
-		batch := make([]byte, 0, 4096)
-		for _, b := range bitmaps {
-			f := rdp.EncodeBitmap(b)
-			if len(batch)+len(f) > desktopBatch && len(batch) > 0 {
-				if err = write(tunnel.FrameOutput, batch); err != nil {
-					break
-				}
-				batch = make([]byte, 0, 4096)
-			}
-			batch = append(batch, f...)
-		}
-		if err == nil && len(batch) > 0 {
-			err = write(tunnel.FrameOutput, batch)
 		}
 	}
 	_ = client.Close()

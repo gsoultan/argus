@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { PICTURE_DEFAULT, loadPicture, pictureSize, savePicture } from '~/lib/picture'
+import { PICTURE_DEFAULT, loadPicture, pictureSize, savePicture, slowLink } from '~/lib/picture'
 
 /** Picture presets for remote screens. */
 
@@ -21,5 +21,16 @@ describe('picture presets', () => {
     expect(loadPicture()).toEqual(PICTURE_DEFAULT)
     window.localStorage.setItem('argus.desktop.picture', 'not json')
     expect(loadPicture()).toEqual(PICTURE_DEFAULT)
+  })
+
+  it('opens as for a slow link when the size or the browser says so', () => {
+    expect(slowLink('fit', undefined)).toBe(false)
+    expect(slowLink('hd', undefined)).toBe(true)
+    expect(slowLink('fit', { effectiveType: '4g', downlink: 10 })).toBe(false)
+    expect(slowLink('fit', { effectiveType: '3g', downlink: 10 })).toBe(true)
+    expect(slowLink('fit', { effectiveType: '4g', downlink: 1.4 })).toBe(true)
+    expect(slowLink('fit', { saveData: true })).toBe(true)
+    // A browser that cannot tell reports nothing, or zero.
+    expect(slowLink('fit', { downlink: 0 })).toBe(false)
   })
 })
