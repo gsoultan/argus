@@ -72,3 +72,39 @@ func TestRedisSettings(t *testing.T) {
 		t.Error("hash refs")
 	}
 }
+
+func TestRedisBindKeepsTheLoopback(t *testing.T) {
+	if got := RedisBind(nil); got != "127.0.0.1 -::1" {
+		t.Fatalf("closed: %q", got)
+	}
+	if got := RedisBind([]string{"192.168.1.20", "10.0.0.5"}); got != "127.0.0.1 -::1 -192.168.1.20 -10.0.0.5" {
+		t.Fatalf("open: %q", got)
+	}
+	a, waits := RedisApproval(StoreRequest{Op: RedisOpNetworkSet, Addresses: []string{"192.168.1.20"}})
+	if !waits || a.Text != "CONFIG SET bind \"127.0.0.1 -::1 -192.168.1.20\"\nCONFIG REWRITE" {
+		t.Fatalf("approval: %v %q", waits, a.Text)
+	}
+	if _, waits := RedisApproval(StoreRequest{Op: RedisOpDefaultSecure}); !waits {
+		t.Fatal("giving default a password waits for approval")
+	}
+	if _, waits := RedisApproval(StoreRequest{Op: RedisOpACLLogin}); waits {
+		t.Fatal("a sign-in check changes nothing and waits for nothing")
+	}
+}
+
+func TestRedisLANAddressesArePrivate(t *testing.T) {
+	for _, ok := range []string{"192.168.1.20", "10.1.2.3", "172.16.0.9", "fd00::1"} {
+		if why := ValidRedisLANAddress(ok); why != "" {
+			t.Errorf("%s refused: %s", ok, why)
+		}
+	}
+	for _, bad := range []string{"8.8.8.8", "0.0.0.0", "*", "127.0.0.1", "192.168.1.20 -::1", "fe80::1%eth0", ""} {
+		if ValidRedisLANAddress(bad) == "" {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+	if RedisOpLevel(RedisOpNetwork) != LevelOwner || RedisOpLevel(RedisOpNetworkSet) != LevelDBA ||
+		RedisOpLevel(RedisOpACLLogin) != LevelDBA || RedisOpLevel(RedisOpDefaultSecure) != LevelDBA {
+		t.Fatal("network levels")
+	}
+}

@@ -86,6 +86,14 @@ func (s *redisSession) manage(ctx context.Context, req tunnel.StoreRequest, rec 
 		return s.aclDel(ctx, req, rec)
 	case tunnel.RedisOpACLDryRun:
 		return s.aclDryRun(ctx, req)
+	case tunnel.RedisOpACLLogin:
+		return s.aclLogin(ctx, req, rec)
+	case tunnel.RedisOpNetwork:
+		return s.network(ctx)
+	case tunnel.RedisOpNetworkSet:
+		return s.networkSet(ctx, req, rec)
+	case tunnel.RedisOpDefaultSecure:
+		return s.defaultSecure(ctx, req, rec)
 	}
 	return tunnel.StoreAnswer{Type: "error", Error: "unknown operation " + req.Op}, nil
 }
