@@ -128,7 +128,10 @@ func TestMediaFoundationBitrateFollowsTheLink(t *testing.T) {
 	full := run(30) / 15
 	rater.SetBitrate(screenMotionBits(w, h) / 10)
 	t.Logf("pictures at full rate: %v", sizes)
-	held := run(60) / 30
+	// The encoder takes its time over a new rate: a runner's went on at
+	// the old one for 51 pictures and was at the new one five later. So
+	// the held pictures measured are the second sixty of 120.
+	held := run(120) / 60
 	t.Logf("pictures held to a tenth: %v", sizes)
 	t.Logf("a picture at full rate: %d bytes; held to a tenth: %d bytes", full, held)
 	// Under half a picture's size says it followed; an encoder that
