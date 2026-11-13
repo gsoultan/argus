@@ -74,7 +74,7 @@ export function CostsPanel({ accounts, items, names }: {
       )}
 
       <SectionCard title="By account" flush
-        description={`Read from AWS Cost Explorer every ${q.data?.intervalHours ?? 8} hours, as unblended cost. The forecast is what was spent before today plus AWS's own prediction for the rest of the month, the figure Cost Explorer shows when its date range runs to the month's end. AWS charges $0.01 a request and a read is two, about $1.80 a month an account.`}>
+        description={`Read from AWS Cost Explorer every ${q.data?.intervalHours ?? 8} hours, as unblended cost. The forecast is AWS's own forecast for the whole month, the figure the Billing and Cost Management home page shows as Total forecasted cost for current month. AWS charges $0.01 a request and a read is two, about $1.80 a month an account.`}>
         <DataTable minWidth={760} loading={q.isPending} isEmpty={reads.length === 0}
           empty={<EmptyState icon={IconCoin} title="No accounts" description="Connect an AWS account to see what it costs." />}
           columns={['Account', 'This month', 'Last month, same day', 'Forecast', 'Last month', 'Read', '']}>

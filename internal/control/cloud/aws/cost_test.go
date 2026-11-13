@@ -68,8 +68,10 @@ func TestReadCosts(t *testing.T) {
 	if awssdk.ToString(f.forecast.TimePeriod.Start) != "2026-11-09" || awssdk.ToString(f.forecast.TimePeriod.End) != "2026-12-01" {
 		t.Fatalf("forecast for: %+v", f.forecast.TimePeriod)
 	}
-	// Spent before today (3 + 2) plus the forecast from today.
-	if c.MonthToDate != 6 || c.LastMonth != 4 || c.Forecast == nil || *c.Forecast != 105 || c.ForecastRest == nil || *c.ForecastRest != 100 {
+	// AWS's monthly forecast already holds what was spent before today
+	// (3 + 2), so it is the month's end as it is, and AWS's own part is
+	// the rest.
+	if c.MonthToDate != 6 || c.LastMonth != 4 || c.Forecast == nil || *c.Forecast != 100 || c.ForecastRest == nil || *c.ForecastRest != 95 {
 		t.Fatalf("costs: %+v", c)
 	}
 }
