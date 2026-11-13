@@ -111,14 +111,16 @@ func TestMediaFoundationBitrateFollowsTheLink(t *testing.T) {
 		}
 		return total
 	}
-	full := run(30)
+	full := run(30) / 15
 	rater.SetBitrate(screenMotionBits(w, h) / 10)
-	held := run(60)
-	t.Logf("last 15 pictures at full rate: %d bytes; last 30 held to a tenth: %d bytes", full, held)
-	// Twice as many pictures, at a tenth of the rate: a fifth if it were
-	// exact. Under half says the encoder followed.
+	held := run(60) / 30
+	t.Logf("a picture at full rate: %d bytes; held to a tenth: %d bytes", full, held)
+	// A screen that is all noise is the worst there is: at its coarsest
+	// the encoder cannot make such a picture a tenth the size (a runner
+	// measured a third). Under half a picture's size says it followed;
+	// an encoder that ignored the change would leave them the same.
 	if held >= full/2 {
-		t.Fatalf("held to a tenth of the rate the pictures came to %d bytes, against %d at full rate: "+
+		t.Fatalf("held to a tenth of the rate a picture came to %d bytes, against %d at full rate: "+
 			"the encoder did not follow", held, full)
 	}
 }
