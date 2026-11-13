@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
+	"gopkg.in/yaml.v3"
 )
 
 // The stack that stopped at ROLLBACK_FAILED had an identity that could
@@ -75,5 +76,42 @@ func TestTheStackLetsItsOwnIdentityUseTheRoles(t *testing.T) {
 	}
 	if !strings.Contains(DeployRights("993686182533", user), `"Resource":"`+user+`"`) {
 		t.Error("making the stack itself needs the right to put that policy on the identity")
+	}
+}
+
+// AWS checks sts:SetSourceIdentity and sts:TagSession as actions of their
+// own. With the external id condition on them too, a finished stack still
+// refused Argus with "not authorized to perform: sts:SetSourceIdentity", so
+// they get a statement without it. AssumeRole keeps the external id and the
+// source identity requirement, and a session cannot exist without it.
+func TestTrustSetsSourceIdentityWithoutTheExternalIDCondition(t *testing.T) {
+	var doc struct {
+		Resources map[string]struct {
+			Properties struct {
+				Trust struct {
+					Statement []struct {
+						Action    []string                     `yaml:"Action"`
+						Condition map[string]map[string]string `yaml:"Condition"`
+					} `yaml:"Statement"`
+				} `yaml:"AssumeRolePolicyDocument"`
+			} `yaml:"Properties"`
+		} `yaml:"Resources"`
+	}
+	tpl := TemplateFor("993686182533", []string{"arn:aws:iam::993686182533:user/argus"}, "argus-x", true)
+	if err := yaml.Unmarshal([]byte(strings.ReplaceAll(tpl, "!GetAtt", "")), &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range []string{"ArgusRead", "ArgusManage", "ArgusConsoleRead", "ArgusConsoleOperate"} {
+		st := doc.Resources[r].Properties.Trust.Statement
+		if len(st) != 2 {
+			t.Fatalf("%s: want 2 trust statements, got %d", r, len(st))
+		}
+		if strings.Join(st[0].Action, ",") != "sts:AssumeRole" || st[0].Condition["StringEquals"]["sts:ExternalId"] != "argus-x" ||
+			st[0].Condition["Null"]["sts:SourceIdentity"] != "false" {
+			t.Errorf("%s: AssumeRole must require the external id and a source identity: %+v", r, st[0])
+		}
+		if strings.Join(st[1].Action, ",") != "sts:SetSourceIdentity,sts:TagSession" || len(st[1].Condition) != 0 {
+			t.Errorf("%s: setting the source identity must not carry the external id condition: %+v", r, st[1])
+		}
 	}
 }
