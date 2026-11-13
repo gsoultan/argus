@@ -88,16 +88,21 @@ func TestMediaFoundationBitrateFollowsTheLink(t *testing.T) {
 	fb := make([]byte, w*h*4)
 	shot := screenShot{fb: fb, stride: w * 4, width: w, height: h}
 	seed := uint32(1)
-	// run encodes n pictures of a screen that is all new each time, a
+	// A band of noise across a still screen. A whole screen of noise is no
+	// measure: at this size the encoder's coarsest picture of it is 29 kB,
+	// which is what the full rate allows too, so both come out the same.
+	// The band's coarsest is an eighth of that, well under the full rate.
+	band := fb[:96*w*4]
+	// run encodes n pictures, the band all new each time, a
 	// thirtieth of a second apart, and returns the bytes of the last half.
 	var sizes []int
 	run := func(n int) int {
 		total := 0
 		sizes = sizes[:0]
 		for i := range n {
-			for j := range fb {
+			for j := range band {
 				seed = seed*1664525 + 1013904223
-				fb[j] = byte(seed >> 24)
+				band[j] = byte(seed >> 24)
 			}
 			time.Sleep(time.Second / 30)
 			p, err := v.Encode(shot, false)
@@ -120,10 +125,8 @@ func TestMediaFoundationBitrateFollowsTheLink(t *testing.T) {
 	held := run(60) / 30
 	t.Logf("pictures held to a tenth: %v", sizes)
 	t.Logf("a picture at full rate: %d bytes; held to a tenth: %d bytes", full, held)
-	// A screen that is all noise is the worst there is: at its coarsest
-	// the encoder cannot make such a picture a tenth the size (a runner
-	// measured a third). Under half a picture's size says it followed;
-	// an encoder that ignored the change would leave them the same.
+	// Under half a picture's size says it followed; an encoder that
+	// ignored the change would leave them the same.
 	if held >= full/2 {
 		t.Fatalf("held to a tenth of the rate a picture came to %d bytes, against %d at full rate: "+
 			"the encoder did not follow", held, full)
