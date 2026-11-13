@@ -88,23 +88,18 @@ func TestMediaFoundationBitrateFollowsTheLink(t *testing.T) {
 	fb := make([]byte, w*h*4)
 	shot := screenShot{fb: fb, stride: w * 4, width: w, height: h}
 	seed := uint32(1)
-	// The screen is grey blocks, eight pixels square, each a new shade
-	// every picture. Noise is no measure: the encoder's coarsest picture
-	// of it (29 kB for this whole screen, 13 kB for a band of it) is what
-	// the full rate allows too, so held or not the pictures came out the
-	// same. Flat blocks cost what the encoder chooses to spend on them.
+	// The screen is mid grey with faint noise over it, a few shades either
+	// way and new every picture. Loud noise is no measure: the encoder's
+	// coarsest picture of it is as large as the full rate allows, so held
+	// or not the pictures came out the same size (29 kB for a screen of
+	// it, 13 kB for a band, 15 kB for blocks of flat shades). Faint noise
+	// costs all the encoder is given at a fine setting and next to
+	// nothing at a coarse one, which rounds it away.
 	paint := func() {
-		for by := 0; by < h; by += 8 {
-			for bx := 0; bx < w; bx += 8 {
-				seed = seed*1664525 + 1013904223
-				shade := byte(seed >> 24)
-				for y := by; y < by+8; y++ {
-					row := fb[(y*w+bx)*4 : (y*w+bx+8)*4]
-					for i := range row {
-						row[i] = shade
-					}
-				}
-			}
+		for j := 0; j < len(fb); j += 4 {
+			seed = seed*1664525 + 1013904223
+			shade := byte(120 + seed>>28)
+			fb[j], fb[j+1], fb[j+2], fb[j+3] = shade, shade, shade, 0xFF
 		}
 	}
 	// run encodes n pictures, the screen all new each time, a
