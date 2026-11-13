@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -45,12 +46,13 @@ func startXvfb(t *testing.T, w, h int) string {
 		if err := os.WriteFile(auth, xauthEntry(fmt.Sprint(n), cookie), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		cmd = exec.Command(bin, display, "-auth", auth, "-nolisten", "tcp",
+		cmd = exec.Command(bin, display, "-auth", auth, "-nolisten", "tcp", "-noreset",
 			"-screen", "0", fmt.Sprintf("%dx%dx24", w, h))
 		if err := cmd.Start(); err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+		// TERM, so Xvfb removes its socket and lock and the next test can use the display.
+		t.Cleanup(func() { _ = cmd.Process.Signal(syscall.SIGTERM); _ = cmd.Wait() })
 		hex, err := x11Cookie(auth, display)
 		if err != nil {
 			t.Fatal(err)
