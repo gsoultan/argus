@@ -173,8 +173,9 @@ type mfEncoder struct {
 	width  int
 	height int
 	// limit is what the link carries, in bits a second; 0 is no limit.
-	limit  int
-	start  time.Time
+	limit int
+	// clock gives each picture its time.
+	clock  pictureClock
 	out    mftOutputStreamInfo
 	header []byte // SPS and PPS, for key frames that come without them
 	com    bool   // CoInitializeEx needs undoing
@@ -183,7 +184,7 @@ type mfEncoder struct {
 
 // newMFEncoder opens the encoder for a screen of width by height.
 func newMFEncoder(width, height int) (screenVideo, error) {
-	e := &mfEncoder{width: width, height: height, start: time.Now()}
+	e := &mfEncoder{width: width, height: height}
 	if err := e.open(); err != nil {
 		e.Close()
 		return nil, err
@@ -422,7 +423,7 @@ func (e *mfEncoder) picture(s screenShot) (*comObject, error) {
 		return nil, hresult("AddBuffer", hr)
 	}
 	// In hundreds of nanoseconds, from when the encoder opened.
-	sample.call(vtSampleSetTime, uintptr(time.Since(e.start)/100))
+	sample.call(vtSampleSetTime, uintptr(e.clock.stamp(time.Now(), e.limit > 0)/100))
 	sample.call(vtSampleSetDuration, uintptr(time.Second/screenVideoRate/100))
 	return sample, nil
 }

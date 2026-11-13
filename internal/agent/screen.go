@@ -166,6 +166,9 @@ type screenPace struct {
 	// idleMax is the longest a polling capturer waits between looks at a
 	// screen that is not changing. Input resets it.
 	idleMax time.Duration
+	// linkRate is what the link is taken to carry before the agent has
+	// measured it, in bits a second; 0 is no limit.
+	linkRate int
 }
 
 var defaultScreenPace = screenPace{minGap: screenMinGap, idleMax: screenIdleMax}
@@ -350,6 +353,7 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 	var lastInput atomic.Int64
 	// linkRate is what the agent last said the link carries (scrRate).
 	var linkRate atomic.Int64
+	linkRate.Store(int64(pace.linkRate))
 	done := make(chan error, 1)
 	stop := make(chan struct{})
 	defer close(stop)
@@ -511,8 +515,8 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 		}
 		found := time.Now()
 		if repaint {
-			// Everything goes exactly; and a viewer who arrived late (what
-			// a refresh is for) needs a key frame before the next picture.
+			// A viewer who arrived late (what a refresh is for) needs a
+			// key frame before the next picture.
 			sharp.reset(diff.cols * diff.rows)
 			mo.needKey = true
 		}
@@ -523,7 +527,11 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 		// costs no more, and sharpening is spread to fit.
 		budget.rate = int(linkRate.Load())
 		mo.setRate(budget.rate)
-		if !repaint && mo.wants(len(jobs), now) {
+		// A whole screen goes exactly where the link takes it in a moment.
+		// On a slow one that is seconds of nothing, so it goes as a key
+		// picture, there at once, and is sharpened as the link allows.
+		if (!repaint || (budget.rate != 0 && mo.newVideo != nil && !mo.off)) &&
+			(repaint || mo.wants(len(jobs), now)) {
 			ok, err := mo.send(last, &diff, &sharp, jobs, now)
 			if err != nil {
 				return err
@@ -771,6 +779,9 @@ type helperMode struct {
 	gdiOnly bool
 	// video lets it send motion as H.264, for a browser that decodes it.
 	video bool
+	// slow starts it as for a slow link: the browser said its link is one,
+	// before any frame has measured it.
+	slow bool
 }
 
 // screenGraphicsChannel is the MCS channel a screen session's pictures are
@@ -850,18 +861,26 @@ type screenClient struct {
 	rtt      time.Duration
 	// link reads what the link carries from those acknowledgements.
 	link linkGauge
+	// slow is the browser having said its link is slow.
+	slow bool
 }
 
 // openScreen starts the helper in the console's session and waits for it
 // to say how large the screen is.
 func openScreen(host screenHost, video bool, log *slog.Logger) (*screenClient, error) {
+	return openScreenOn(host, video, false, log)
+}
+
+// openScreenOn is openScreen for a browser that says whether its link is
+// slow, which starts the screen as for one.
+func openScreenOn(host screenHost, video, slow bool, log *slog.Logger) (*screenClient, error) {
 	session, ok := host.ConsoleSession()
 	if !ok {
 		return nil, errors.New("this host has no console session to share; " +
 			"it may be starting or shutting down")
 	}
 	c := &screenClient{host: host, log: log, msgs: make(chan screenMsg, 8),
-		done: make(chan struct{}), checkEvery: time.Second, video: video}
+		done: make(chan struct{}), checkEvery: time.Second, video: video, slow: slow}
 	if video {
 		c.gfx, c.gtap = &GraphicsSink{}, rdp.NewGraphicsTap(screenGraphicsChannel)
 	}
@@ -885,6 +904,9 @@ func openScreen(host screenHost, video bool, log *slog.Logger) (*screenClient, e
 				c.width = int(binary.LittleEndian.Uint16(m.p[0:]))
 				c.height = int(binary.LittleEndian.Uint16(m.p[2:]))
 				c.link.size(c.width, c.height)
+				if slow {
+					c.link.slow()
+				}
 				// The first tiles follow; NextBitmaps reads them.
 				return c, nil
 			}
@@ -900,7 +922,7 @@ func (c *screenClient) start(session uint32) error {
 	c.mu.Lock()
 	failed := c.failed > 0
 	c.mu.Unlock()
-	h, err := c.host.StartHelper(session, helperMode{gdiOnly: failed, video: c.video && !failed})
+	h, err := c.host.StartHelper(session, helperMode{gdiOnly: failed, video: c.video && !failed, slow: c.slow})
 	if err != nil {
 		return err
 	}
@@ -1339,7 +1361,7 @@ func connectScreen(cfg DesktopConfig, _ tunnel.Grant, open tunnel.DesktopOpen,
 	if host == nil {
 		return nil, DesktopInfo{}, errors.New("screen sharing works on Windows hosts only")
 	}
-	c, err := openScreen(host, open.Graphics, log)
+	c, err := openScreenOn(host, open.Graphics, open.SlowLink, log)
 	if err != nil {
 		return nil, DesktopInfo{}, err
 	}

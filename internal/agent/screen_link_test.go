@@ -222,3 +222,87 @@ func TestScreenClientCountsWhatItSends(t *testing.T) {
 		t.Fatalf("the gauge was not told the screen's size: %d", full)
 	}
 }
+
+// Held to a slow link, a picture is never given more than a frame of the
+// encoder's time, however long after the last it comes: the encoder spends
+// by that time, and a picture ten frames late would be ten frames large.
+func TestPictureClockGivesAHeldPictureOneFrame(t *testing.T) {
+	now := time.Unix(1000, 0)
+	var free, held pictureClock
+	if free.stamp(now, false) != 0 || held.stamp(now, true) != 0 {
+		t.Fatal("the first picture is not at zero")
+	}
+	for i := 1; i <= 5; i++ {
+		now = now.Add(300 * time.Millisecond)
+		if got, want := free.stamp(now, false), time.Duration(i)*300*time.Millisecond; got != want {
+			t.Fatalf("with room, picture %d is at %v, want %v", i, got, want)
+		}
+		if got, want := held.stamp(now, true), time.Duration(i)*screenVideoFrame; got != want {
+			t.Fatalf("held, picture %d is at %v, want %v", i, got, want)
+		}
+	}
+	// Pictures closer than a frame keep their real spacing, and time never
+	// stands still, which an encoder refuses.
+	now = now.Add(10 * time.Millisecond)
+	at := held.stamp(now, true)
+	if got := at - 5*screenVideoFrame; got != 10*time.Millisecond {
+		t.Fatalf("a picture 10ms on moved the clock %v", got)
+	}
+	if again := held.stamp(now, true); again <= at {
+		t.Fatalf("two pictures at once are both at %v", at)
+	}
+}
+
+// A browser that says its link is slow is not sent a whole screen of exact
+// tiles to find that out: megabytes, and seconds of nothing. The first
+// frame is one key picture, there at once, and the screen sharpens after.
+func TestScreenOnASlowLinkOpensWithAPicture(t *testing.T) {
+	screen := newFakeScreen(512, 256, 0)
+	screen.noise(1)
+	v := &ratedVideo{}
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+	served := make(chan struct{})
+	pace := testPace
+	pace.linkRate = linkRateSlowStart
+	go func() {
+		_ = serveScreen(screen, func() screenInputer { return screen }, inR, outW, pace, v.open)
+		_ = outW.Close()
+		close(served)
+	}()
+	h := helperOut{t: t, r: outR, in: inW}
+	defer func() {
+		_ = inW.Close()
+		go func() { _, _ = io.Copy(io.Discard, outR) }()
+		<-served
+	}()
+	readSize(t, h)
+	first := h.next()
+	if len(first.videos) != 1 || len(first.tiles) != 0 {
+		t.Fatalf("the first frame was %d pictures and %d tiles, want one picture", len(first.videos), len(first.tiles))
+	}
+	exact := 0
+	deadline := time.Now().Add(10 * time.Second)
+	for exact < 32 && time.Now().Before(deadline) {
+		exact += len(h.next().tiles)
+	}
+	if exact != 32 {
+		t.Fatalf("%d of 32 tiles came exactly after the picture", exact)
+	}
+}
+
+// The gauge starts where the helper was started: under a slow link's rate,
+// not at the full one waiting for a queue to say otherwise.
+func TestLinkGaugeStartsSlowWhenToldSo(t *testing.T) {
+	var g linkGauge
+	g.size(1920, 1080)
+	g.slow()
+	if g.rate != linkRateSlowStart {
+		t.Fatalf("a slow link starts at %d bit/s, want %d", g.rate, linkRateSlowStart)
+	}
+	now, id := time.Unix(1000, 0), uint32(0)
+	gaugeAt(&g, &now, &id, 400, 30<<10, 100*time.Millisecond, 20*time.Millisecond)
+	if g.rate != screenMotionBits(1920, 1080) {
+		t.Fatalf("a link that turned out fast is still held to %d bit/s", g.rate)
+	}
+}

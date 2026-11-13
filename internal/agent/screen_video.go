@@ -307,3 +307,33 @@ func nv12Rows(luma, chroma, fb []byte, stride, width, p int) {
 		c[x+1] = byte((112*r-94*g-18*b+128)>>8 + 128)
 	}
 }
+
+// screenVideoFrame is a frame at the rate the encoder plans its bits for.
+const screenVideoFrame = time.Second / 30
+
+// pictureClock gives each picture the time the encoder is told it has. The
+// encoder spends by that time: a picture a third of a second after the last
+// gets ten frames' bits. On a link with room that is a sharper first picture
+// of a burst. Held to a slow link it is one picture the size of ten, which
+// arrives a third of a second late and holds back the next, so there the
+// clock never moves by more than a frame: every picture is a frame's worth,
+// and they keep coming.
+type pictureClock struct {
+	last time.Time
+	pts  time.Duration
+}
+
+// stamp returns the time of the picture going in at now.
+func (c *pictureClock) stamp(now time.Time, held bool) time.Duration {
+	if c.last.IsZero() {
+		c.last = now
+		return c.pts
+	}
+	step := now.Sub(c.last)
+	if held && step > screenVideoFrame {
+		step = screenVideoFrame
+	}
+	c.last = now
+	c.pts += max(step, time.Microsecond)
+	return c.pts
+}

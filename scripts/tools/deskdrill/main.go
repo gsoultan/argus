@@ -91,7 +91,9 @@ func main() {
 		password = os.Getenv(*passwordEnv)
 	}
 	logon, _ := json.Marshal(map[string]any{"type": "logon", "password": password,
-		"width": *width, "height": *height, "graphics": *graphics, "video": *video})
+		"width": *width, "height": *height, "graphics": *graphics, "video": *video,
+		// A browser behind such a link says so, where it can tell.
+		"slowLink": *link > 0})
 	if err := c.Write(ctx, websocket.MessageText, logon); err != nil {
 		fail("%v", err)
 	}

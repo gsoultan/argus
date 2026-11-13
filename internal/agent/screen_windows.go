@@ -304,6 +304,9 @@ func (windowsScreenHost) StartHelper(session uint32, mode helperMode) (io.ReadWr
 	if mode.video {
 		args = append(args, "--video")
 	}
+	if mode.slow {
+		args = append(args, "--slow")
+	}
 	cmdline := windows.ComposeCommandLine(args)
 	var pi windows.ProcessInformation
 	if err := windows.CreateProcessAsUser(token, nil, windows.StringToUTF16Ptr(cmdline),
@@ -342,7 +345,8 @@ const screenPipeBuffer = 1 << 20
 // RunScreenHelper is "argus-agent screen-helper": the agent runs it in the
 // console session and it serves the screen on stdin and stdout until stdin
 // closes. "--gdi" keeps it to GDI capture, which the agent asks for after a
-// helper has failed; "--video" lets it send motion as H.264.
+// helper has failed; "--video" lets it send motion as H.264; "--slow" starts
+// it as for a slow link, before the first frame has measured one.
 func RunScreenHelper(args []string, in io.Reader, out io.Writer) int {
 	// Real pixels, not the scaled ones a process that is not DPI aware sees.
 	if procSetProcessDpiAwareCtx.Find() == nil {
@@ -351,12 +355,15 @@ func RunScreenHelper(args []string, in io.Reader, out io.Writer) int {
 		procSetProcessDPIAware.Call()
 	}
 	gdiOnly, video := false, false
+	pace := defaultScreenPace
 	for _, a := range args {
 		switch a {
 		case "--gdi":
 			gdiOnly = true
 		case "--video":
 			video = true
+		case "--slow":
+			pace.linkRate = linkRateSlowStart
 		}
 	}
 	c := newConsoleCapturer(gdiOnly)
@@ -365,7 +372,7 @@ func RunScreenHelper(args []string, in io.Reader, out io.Writer) int {
 	if video {
 		newVideo = newMFEncoder
 	}
-	if err := serveScreen(c, newInput, in, out, defaultScreenPace, newVideo); err != nil {
+	if err := serveScreen(c, newInput, in, out, pace, newVideo); err != nil {
 		_ = writeScreenMsg(out, scrFail, []byte(err.Error()))
 		return 1
 	}

@@ -48,6 +48,10 @@ const (
 	// an eighth.
 	linkTell = 8
 
+	// linkRateSlowStart is what a link the browser calls slow is taken to
+	// carry until frames have measured it.
+	linkRateSlowStart = 1_500_000
+
 	// linkRefineFor is how much of the link's time one frame of sharpening
 	// may take.
 	linkRefineFor = 120 * time.Millisecond
@@ -95,6 +99,14 @@ func (g *linkGauge) size(width, height int) {
 	g.max = screenMotionBits(width, height)
 	if g.rate == 0 || g.rate > g.max {
 		g.rate = g.max
+	}
+}
+
+// slow starts the gauge as for a link the browser called slow; the helper
+// was started knowing the same.
+func (g *linkGauge) slow() {
+	if g.rate > linkRateSlowStart {
+		g.rate, g.told, g.least = linkRateSlowStart, linkRateSlowStart, linkRateSlowStart
 	}
 }
 
