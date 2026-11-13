@@ -982,6 +982,41 @@ func TestDistUpgradeFailure(t *testing.T) {
 	}
 }
 
+// From a real 24.04 to 26.04 run: PostgreSQL extensions from a source the
+// upgrader turned off had no version in the new release.
+const distUpgradeDenied = `2026-11-13 13:37:47,902 ERROR failed to import AptClone
+2026-11-13 13:38:18,766 ERROR Package libgdal39 has no priority set
+2026-11-13 13:38:19,011 ERROR Package postgresql-18-pgrouting has no priority set
+2026-11-13 13:38:19,704 DEBUG denylist expr '^postgresql-.*[0-9][0-9].*' matches 'postgresql-18-mobilitydb'
+2026-11-13 13:38:19,870 ERROR Could not calculate the upgrade An unresolvable problem occurred while calculating the upgrade.
+
+ The package postgresql-18-mobilitydb is marked for removal but it is in the removal deny list.
+
+ (None)
+2026-11-13 13:38:19,870 ERROR Dist-upgrade failed: 'The package postgresql-18-mobilitydb is marked for removal but it is in the removal deny list.'
+2026-11-13 13:38:19,876 DEBUG abort called
+2026-11-13 13:38:19,877 ERROR view.abort called
+2026-11-13 13:38:19,877 DEBUG openCache()
+`
+
+func TestDistUpgradeFailureDenyList(t *testing.T) {
+	why, restored := distUpgradeFailure([]byte(distUpgradeDenied))
+	if !restored {
+		t.Error("a failed calculation changed nothing")
+	}
+	for _, want := range []string{"no version of postgresql-18-mobilitydb", "libgdal39, postgresql-18-pgrouting",
+		"third-party source"} {
+		if !strings.Contains(why, want) {
+			t.Errorf("why %q lacks %q", why, want)
+		}
+	}
+	for _, not := range []string{"AptClone", "view.abort"} {
+		if strings.Contains(why, not) {
+			t.Errorf("why %q has %q", why, not)
+		}
+	}
+}
+
 // The upgrader gave up before touching anything: Argus says so, with its
 // reason from main.log, and does not call the server half upgraded.
 func TestApplyReleaseUbuntuRolledBack(t *testing.T) {

@@ -97,8 +97,16 @@ while the newest line still changes.
 When `do-release-upgrade` stops, the run's message quotes the upgrader's own
 ERROR lines from `/var/log/dist-upgrade/main.log`, not its download messages.
 If the upgrader put the server back the way it was ("Restoring original
-system state", with the release unchanged), the run says nothing was changed
-and leaves the server alone.
+system state", or it could not work out the upgrade at all, with the release
+unchanged), the run says nothing was changed and leaves the server alone.
+
+A common reason on database servers: packages from a third-party source, such
+as PostgreSQL extensions from apt.postgresql.org, have no version for the new
+release while the upgrader runs with that source turned off. The upgrader
+then wants to remove one of them, refuses because its deny list protects
+`postgresql-*` packages, and stops. The run names the package and the others
+no source offers. Remove the ones you do not use, or make sure the source has
+packages for the new release, then try again.
 
 If the upgrade tool fails part way, the server is **not** rebooted. The
 helper runs `dpkg --configure -a` and `apt-get -f install` to finish what can
