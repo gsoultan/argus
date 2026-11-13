@@ -47,6 +47,24 @@ func TestAnAliasIsNormalisedAndBounded(t *testing.T) {
 	}
 }
 
+// The edit form sends an asset back as it read it, and every server and
+// workstation reads back with control mode "attended". Saving an alias, or any
+// other field, must not be refused for a value the control plane stored itself.
+func TestAnEditSendingTheStoredControlModeIsAccepted(t *testing.T) {
+	for _, kind := range []string{"server", "workstation"} {
+		in := AssetInput{Hostname: "pay-01", Kind: kind, Alias: "Payroll database",
+			Principals: []string{"ops"}, ControlMode: "attended"}
+		got, err := in.normalise()
+		if err != nil {
+			t.Errorf("%s with its stored control mode refused: %v", kind, err)
+			continue
+		}
+		if got.ControlMode != "attended" || got.ControlNeedsApproval || got.Alias != "Payroll database" {
+			t.Errorf("%s normalised to %+v", kind, got)
+		}
+	}
+}
+
 func TestAnAliasIsSavedWithoutRenamingTheServer(t *testing.T) {
 	e := newTunnelEnv(t)
 	ctx := context.Background()

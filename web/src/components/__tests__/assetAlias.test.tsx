@@ -44,6 +44,40 @@ describe('an asset alias', () => {
     expect(update.mock.calls[0]![1].hostname).toBe(ssh.hostname)
   })
 
+  it('sends control mode only for a device, so a server reading back as attended still saves', async () => {
+    // A server is stored with control mode "attended"; sending that back made
+    // the control plane refuse the edit with "control mode and approval apply
+    // to a device".
+    const stored = { ...ssh, controlMode: 'attended' as const, controlNeedsApproval: false }
+    const update = vi.spyOn(api, 'updateAsset').mockResolvedValue(stored)
+    renderWithProviders(<AssetForm opened onClose={() => {}} asset={stored} />)
+
+    fireEvent.change(await screen.findByLabelText(/^alias/i), { target: { value: 'Payroll database' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(update).toHaveBeenCalled())
+    const sent = update.mock.calls[0]![1]
+    expect(sent.alias).toBe('Payroll database')
+    expect(sent.controlMode).toBeUndefined()
+    expect(sent.controlNeedsApproval).toBeUndefined()
+  })
+
+  it('keeps a device\'s control mode and sends it no before-connecting setting', async () => {
+    const device = assets.find((a) => a.kind === 'android')
+    if (!device) return
+    const stored = { ...device, controlMode: 'unattended' as const, connectAsk: 'ask' as const }
+    const update = vi.spyOn(api, 'updateAsset').mockResolvedValue(stored)
+    renderWithProviders(<AssetForm opened onClose={() => {}} asset={stored} />)
+
+    fireEvent.change(await screen.findByLabelText(/^alias/i), { target: { value: 'Front desk tablet' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(update).toHaveBeenCalled())
+    const sent = update.mock.calls[0]![1]
+    expect(sent.controlMode).toBe('unattended')
+    expect(sent.connectAsk).toBeNull()
+  })
+
   it('lets a server with no login accounts be edited', async () => {
     const bare = { ...ssh, principals: [] }
     const update = vi.spyOn(api, 'updateAsset').mockResolvedValue(bare)
