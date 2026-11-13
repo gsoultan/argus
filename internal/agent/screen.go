@@ -772,6 +772,10 @@ type screenHost interface {
 	SecureAttention() error
 }
 
+// errNoSecureAttention is a host with no secure attention sequence:
+// Ctrl+Alt+Del goes to the screen as the keys it is.
+var errNoSecureAttention = errors.New("this host has no secure attention sequence")
+
 // helperMode is how a helper is to capture and send the screen.
 type helperMode struct {
 	// gdiOnly keeps it to GDI capture and exact tiles, the paths with
@@ -1289,10 +1293,14 @@ func (c *screenClient) Send(e rdp.InputEvent) error {
 		case e.Scancode == 0x53 && e.Extended && e.Down && c.ctrl && c.alt:
 			// Delete with Ctrl and Alt held: the secure attention
 			// sequence, which Windows takes from no keyboard but its own.
-			if err := c.host.SecureAttention(); err != nil {
-				c.log.Warn("tunnel: could not send Ctrl+Alt+Del", "error", err)
+			// A host without one (Linux, macOS) gets the keys.
+			err := c.host.SecureAttention()
+			if !errors.Is(err, errNoSecureAttention) {
+				if err != nil {
+					c.log.Warn("tunnel: could not send Ctrl+Alt+Del", "error", err)
+				}
+				return nil
 			}
-			return nil
 		}
 	}
 	p, err := json.Marshal(e)
@@ -1359,7 +1367,7 @@ func connectScreen(cfg DesktopConfig, _ tunnel.Grant, open tunnel.DesktopOpen,
 		host = platformScreenHost()
 	}
 	if host == nil {
-		return nil, DesktopInfo{}, errors.New("screen sharing works on Windows hosts only")
+		return nil, DesktopInfo{}, errors.New("screen sharing works on Windows, Linux and macOS hosts only")
 	}
 	c, err := openScreenOn(host, open.Graphics, open.SlowLink, log)
 	if err != nil {

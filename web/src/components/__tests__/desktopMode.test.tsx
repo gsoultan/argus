@@ -6,7 +6,7 @@ import { assets } from '~/lib/seed'
 import { renderWithProviders } from '~/test/render'
 
 /**
- * How a Windows server's desktop opens is set on its form, and what is
+ * How a server's desktop opens is set on its form, and what is
  * picked is what is saved: a control that shows "Screen sharing" while the
  * server stays on Remote Desktop is the failure this product cannot have.
  */
@@ -31,10 +31,19 @@ describe('the desktop setting', () => {
     expect(update.mock.calls[0]![1].desktopMode).toBe('screen')
   })
 
-  it('is not offered for an SSH server', async () => {
+  it('offers a Linux or Mac server its screen beside the terminal, not Remote Desktop', async () => {
     const ssh = assets.find((a) => a.protocol !== 'rdp')!
-    renderWithProviders(<AssetForm opened onClose={() => {}} asset={ssh} />)
+    const update = vi.spyOn(api, 'updateAsset').mockResolvedValue({ ...ssh, desktopMode: 'screen' })
+    renderWithProviders(<AssetForm opened onClose={() => {}} asset={{ ...ssh, desktopMode: 'rdp' }} />)
     expect(await screen.findByText('Login accounts')).toBeInTheDocument()
     expect(screen.queryByText('Screen sharing (no RDP)')).not.toBeInTheDocument()
+    expect(screen.getByText('Terminal and files only.')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('Screen sharing'))
+    expect(screen.getByText(/offers its screen as it is, beside the terminal/i)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(update).toHaveBeenCalled())
+    expect(update.mock.calls[0]![1].desktopMode).toBe('screen')
   })
 })

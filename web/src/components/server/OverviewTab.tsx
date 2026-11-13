@@ -220,7 +220,7 @@ export function connectsBy(a: Asset): string {
       : 'The Argus app, accepted on the device'
   }
   if (a.protocol === 'rdp') return a.desktopMode === 'screen' ? 'Screen sharing (no RDP)' : 'Remote Desktop (RDP)'
-  return 'SSH'
+  return a.desktopMode === 'screen' ? 'SSH, and screen sharing' : 'SSH'
 }
 
 function reachLabel(a: Asset): string {

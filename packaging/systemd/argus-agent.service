@@ -44,6 +44,10 @@ ProtectSystem=strict
 # the access it needs and no more.
 ProtectHome=read-only
 PrivateTmp=yes
+# The X servers' sockets, for screen sharing, through the private /tmp. An X
+# server also listens where no /tmp can hide it (the abstract socket), but
+# not every one does. Optional: a server with no X has no such directory.
+BindReadOnlyPaths=-/tmp/.X11-unix
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectKernelLogs=yes
@@ -64,7 +68,12 @@ RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 # exec probe (kernel-observed commands) needs BPF and PERFMON, on kernels 5.8
 # and later; an older kernel refuses it and the agent records at PTY fidelity
 # and says so. Nothing else is retained.
-CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_BPF CAP_PERFMON
+#
+# Screen sharing runs its helper as the person signed in at the screen, not
+# as root, so a helper talking to their X server can touch nothing of the
+# agent's (the recordings above all): changing to their user is SETUID and
+# SETGID, which the helper loses, with every other capability, as it does.
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_BPF CAP_PERFMON CAP_SETUID CAP_SETGID
 AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_BPF CAP_PERFMON
 
 # bpf and perf_event_open are outside @system-service, and the probe needs both:
