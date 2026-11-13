@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -89,7 +90,7 @@ func (a *PackageApplier) applyRelease(ctx context.Context) PackageRunStatus {
 
 	switch info.Tool {
 	case releaseToolUbuntu:
-		err = a.upgradeUbuntu(ctx)
+		err = a.upgradeUbuntu(ctx, info)
 	case releaseToolDebian:
 		err = a.upgradeDebian(ctx, m, info)
 	case releaseToolLeapp:
@@ -153,7 +154,7 @@ func (a *PackageApplier) aptPartWay(ctx context.Context, tool string, code int, 
 		tool, code, next, log, tail(out, 400))
 }
 
-func (a *PackageApplier) upgradeUbuntu(ctx context.Context) error {
+func (a *PackageApplier) upgradeUbuntu(ctx context.Context, info *ReleaseInfo) error {
 	cfg := filepath.Join(ubuntuUpgradeOverrides, ubuntuOverrideName)
 	if err := os.MkdirAll(ubuntuUpgradeOverrides, 0o755); err != nil {
 		return fmt.Errorf("cannot write the upgrade's settings: %w", err)
@@ -162,6 +163,10 @@ func (a *PackageApplier) upgradeUbuntu(ctx context.Context) error {
 		return fmt.Errorf("cannot write the upgrade's settings: %w", err)
 	}
 	defer os.Remove(cfg)
+	// What the upgrader writes to its own log this run, kept whole: its
+	// output says little, and why it stopped is only there.
+	mainLog := &tailer{files: ubuntuUpgradeLogs[:1], offsets: map[string]int64{}}
+	mainLog.start()
 	var b bytes.Buffer
 	stop := a.follow(ctx, "upgrading", ubuntuUpgradeLogs)
 	code, err := a.Run(ctx, io.MultiWriter(&b, a.lw), releaseEnv, "do-release-upgrade",
@@ -170,10 +175,52 @@ func (a *PackageApplier) upgradeUbuntu(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if code != 0 {
-		return a.aptPartWay(ctx, "do-release-upgrade", code, b.Bytes(), "/var/log/dist-upgrade/main.log")
+	if code == 0 {
+		return nil
 	}
-	return nil
+	var logged bytes.Buffer
+	mainLog.read(&logged)
+	why, restored := distUpgradeFailure(logged.Bytes())
+	if why == "" {
+		why = tail(b.Bytes(), 400)
+	}
+	if restored && versionIs(osRelease()["VERSION_ID"], info.Version) {
+		return fmt.Errorf("do-release-upgrade stopped before upgrading anything and put the server back the way it "+
+			"was, so it is still on %s and nothing was changed. It said: %s. Fix that, look for updates again, and "+
+			"ask again; the whole log is %s", info.Current, why, ubuntuUpgradeLogs[0])
+	}
+	return a.aptPartWay(ctx, "do-release-upgrade", code, []byte(why), "/var/log/dist-upgrade/main.log")
+}
+
+// reDistUpgradeError is a line the upgrader logs when something is wrong:
+//
+//	2026-11-13 13:30:02,117 ERROR Dist-upgrade failed: 'E:Unable to correct problems, you have held broken packages.'
+var reDistUpgradeError = regexp.MustCompile(`^(?:\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d+ )?(?:ERROR|CRITICAL) (.+)$`)
+
+// distUpgradeFailure reads the upgrader's log for why it stopped: its last
+// few errors, and whether it put the system back as it was before
+// upgrading anything ("Restoring original system state").
+func distUpgradeFailure(log []byte) (why string, restored bool) {
+	var errs []string
+	for _, line := range strings.Split(string(log), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "Restoring original system state") {
+			restored = true
+		}
+		if m := reDistUpgradeError.FindStringSubmatch(line); m != nil {
+			e := strings.TrimSpace(m[1])
+			if len(e) > 300 {
+				e = e[:300] + "…"
+			}
+			if !hasString(errs, e) {
+				errs = append(errs, e)
+			}
+		}
+	}
+	if len(errs) > 3 {
+		errs = errs[len(errs)-3:]
+	}
+	return strings.Join(errs, "; "), restored
 }
 
 func (a *PackageApplier) upgradeDebian(ctx context.Context, m pkgManager, info *ReleaseInfo) error {

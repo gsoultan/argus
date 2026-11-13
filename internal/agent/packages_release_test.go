@@ -963,3 +963,76 @@ func TestApplyReleaseKeepsGrubsDiskWhenStillThere(t *testing.T) {
 		t.Error("the upgrade did not run")
 	}
 }
+
+const distUpgradeAborted = `2026-11-13 13:30:00,001 INFO Using config files '['./DistUpgrade.cfg']'
+2026-11-13 13:30:01,500 DEBUG checking for held packages
+2026-11-13 13:30:02,117 ERROR Dist-upgrade failed: 'E:Unable to correct problems, you have held broken packages.'
+2026-11-13 13:30:02,118 ERROR Dist-upgrade failed: 'E:Unable to correct problems, you have held broken packages.'
+2026-11-13 13:30:02,200 DEBUG abort called
+2026-11-13 13:30:02,201 DEBUG Restoring original system state
+`
+
+func TestDistUpgradeFailure(t *testing.T) {
+	why, restored := distUpgradeFailure([]byte(distUpgradeAborted))
+	if !restored || why != "Dist-upgrade failed: 'E:Unable to correct problems, you have held broken packages.'" {
+		t.Errorf("why %q restored %v", why, restored)
+	}
+	if why, restored := distUpgradeFailure([]byte("2026-11-13 13:30:00,001 INFO fine\n")); why != "" || restored {
+		t.Errorf("why %q restored %v", why, restored)
+	}
+}
+
+// The upgrader gave up before touching anything: Argus says so, with its
+// reason from main.log, and does not call the server half upgraded.
+func TestApplyReleaseUbuntuRolledBack(t *testing.T) {
+	newReleaseHost(t, jammy)
+	sr := &scriptRun{on: map[string]func(io.Writer, []string) int{
+		"do-release-upgrade -c": func(w io.Writer, _ []string) int {
+			fmt.Fprintln(w, "New release '24.04.1 LTS' available.")
+			return 0
+		},
+		"do-release-upgrade -f DistUpgradeViewNonInteractive": func(w io.Writer, _ []string) int {
+			fmt.Fprintln(w, "extracting 'noble.tar.gz'")
+			if err := os.WriteFile(ubuntuUpgradeLogs[0], []byte(distUpgradeAborted), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return 1
+		},
+	}}
+	a, rebooted := releaseApplier(t, sr, looks("apt-get", "dpkg-query", "do-release-upgrade"), "24.04")
+	st := a.Apply(context.Background())
+	if st.State != RunFailed || *rebooted || !strings.Contains(st.Message, "nothing was changed") ||
+		!strings.Contains(st.Message, "held broken packages") || strings.Contains(st.Message, "part way") ||
+		strings.Contains(st.Message, "extracting") {
+		t.Fatalf("run = %+v", st)
+	}
+	if sr.ran("dpkg --force-confdef --force-confold --configure -a") {
+		t.Error("repaired a server nothing was done to")
+	}
+}
+
+// Part way: the reason is the upgrader's error, not its download chatter.
+func TestApplyReleaseUbuntuPartWayGivesTheLogsReason(t *testing.T) {
+	h := newReleaseHost(t, jammy)
+	sr := &scriptRun{on: map[string]func(io.Writer, []string) int{
+		"do-release-upgrade -c": func(w io.Writer, _ []string) int {
+			fmt.Fprintln(w, "New release '24.04.1 LTS' available.")
+			return 0
+		},
+		"do-release-upgrade -f DistUpgradeViewNonInteractive": func(w io.Writer, _ []string) int {
+			fmt.Fprintln(w, "authenticate 'noble.tar.gz' against 'noble.tar.gz.gpg'")
+			h.setOS(t, noble)
+			if err := os.WriteFile(ubuntuUpgradeLogs[0],
+				[]byte("2026-11-13 13:40:00,000 ERROR got an error from dpkg for pkg: 'grub-pc'\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return 1
+		},
+	}}
+	a, _ := releaseApplier(t, sr, looks("apt-get", "dpkg-query", "do-release-upgrade"), "24.04")
+	st := a.Apply(context.Background())
+	if st.State != RunFailed || !strings.Contains(st.Message, "part way") ||
+		!strings.Contains(st.Message, "error from dpkg for pkg: 'grub-pc'") || strings.Contains(st.Message, "authenticate") {
+		t.Fatalf("run = %+v", st)
+	}
+}

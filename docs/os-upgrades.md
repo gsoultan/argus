@@ -94,6 +94,12 @@ follows the upgrader's own logs for this (`/var/log/dist-upgrade/main.log` and
 little themselves. Expect long stretches on one package; nothing is stuck
 while the newest line still changes.
 
+When `do-release-upgrade` stops, the run's message quotes the upgrader's own
+ERROR lines from `/var/log/dist-upgrade/main.log`, not its download messages.
+If the upgrader put the server back the way it was ("Restoring original
+system state", with the release unchanged), the run says nothing was changed
+and leaves the server alone.
+
 If the upgrade tool fails part way, the server is **not** rebooted. The
 helper runs `dpkg --configure -a` and `apt-get -f install` to finish what can
 be finished, and the run's message says what to do next. Do not reboot until
