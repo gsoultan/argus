@@ -22,7 +22,10 @@ import type { Asset, DBEngine, Database, ServerApp, ServerAppListen } from '~/ty
  * file, and it never connects to what it finds.
  *
  * A Postgres found here is one step from being a database people open in the
- * browser: the add form opens with its port, and PgBouncer's, filled in.
+ * browser: the add form opens with its port, and PgBouncer's, filled in. A
+ * PgBouncer found here is the same step from the other side: its databases are
+ * the host Postgres behind it, so the form opens on that Postgres with this
+ * PgBouncer's port filled in.
  */
 export function ApplicationsOnServer({ asset, canEdit }: { asset: Asset; canEdit: boolean }) {
   const { data } = useQuery(applicationsQuery(asset.id))
@@ -50,6 +53,7 @@ export function ApplicationsOnServer({ asset, canEdit }: { asset: Asset; canEdit
   // the agent reports ports, and a database in Argus is kept by port too.
   const addedOf = (engine: DBEngine) => new Map((dbs?.databases ?? []).filter((d) => d.engine === engine).map((d) => [d.port, d]))
   const pooler = apps.find((a) => a.kind === 'pgbouncer' && !a.container && a.listen.length > 0)
+  const hostPostgres = apps.find((a) => a.kind === 'postgres' && !a.container && a.running)
 
   return (
     <SectionCard
@@ -112,6 +116,10 @@ export function ApplicationsOnServer({ asset, canEdit }: { asset: Asset; canEdit
                               onAdd={(port) => setAdding({ engine: engineOfApp(a.kind)!, port,
                                 poolerPort: a.kind === 'postgres' ? pooler?.listen[0]?.port : undefined,
                                 configPath: a.kind === 'valkey' ? VALKEY_CONF : undefined })} />
+                          )}
+                          {canEdit && isConfigured() && a.running && a.kind === 'pgbouncer' && (
+                            <AddThroughPooler app={a} postgres={hostPostgres} dbs={dbs?.databases ?? []}
+                              onAdd={(port, poolerPort) => setAdding({ engine: 'postgres', port, poolerPort })} />
                           )}
                         </Table.Td>
                       </Table.Tr>
@@ -245,6 +253,59 @@ function engineOfApp(kind: string): DBEngine | undefined {
   return APP_ENGINES[kind]
 }
 const VALKEY_CONF = '/etc/valkey/valkey.conf'
+
+/**
+ * Adds the databases behind a PgBouncer the agent found. PgBouncer holds no
+ * databases of its own: Argus opens the host Postgres behind it as this
+ * server's postgres account, and sessions then go through PgBouncer. So the
+ * form opens on that Postgres, with its port and this PgBouncer's filled in.
+ * Like the Postgres row, a containerised PgBouncer is not offered, and with no
+ * host Postgres there is nothing for Argus to open.
+ *
+ * Which Postgres port: the host Postgres's first, or the form's default when
+ * it listens on none the agent saw. One button per port PgBouncer listens on;
+ * a database already going through that port says so by name.
+ */
+function AddThroughPooler({ app, postgres, dbs, onAdd }: {
+  app: ServerApp; postgres: ServerApp | undefined; dbs: Database[]; onAdd: (port: number | undefined, poolerPort: number) => void
+}) {
+  if (app.container) {
+    return (
+      <Tooltip multiline w={260} label="Argus sends sessions through a PgBouncer on the server itself. One inside a container is not reachable that way, so it cannot be added from here yet.">
+        <Text size={FS.micro} c="dimmed">in a container</Text>
+      </Tooltip>
+    )
+  }
+  if (!postgres) {
+    return (
+      <Tooltip multiline w={260} label="PgBouncer's databases are added through the Postgres behind it, which Argus opens as this server's postgres account. The agent found no Postgres running on this server outside a container.">
+        <Text size={FS.micro} c="dimmed">no Postgres here</Text>
+      </Tooltip>
+    )
+  }
+  const pgPort = [...new Set(postgres.listen.map((l) => l.port))].sort((a, b) => a - b)[0]
+  const ports = [...new Set(app.listen.map((l) => l.port))].sort((a, b) => a - b)
+  return (
+    <Stack gap={4} align="flex-end">
+      {ports.map((p) => {
+        const through = dbs.filter((d) => d.engine === 'postgres' && d.poolerPort === p)
+        return (
+          <Group key={p} gap={SP.tight} justify="flex-end" wrap="wrap">
+            {through.slice(0, 1).map((db) => (
+              <ButtonLink key={db.id} to="/databases/$dbId" params={{ dbId: db.id }} size="compact-xs" variant="light" color="teal">
+                In Argus as {db.dbname}{through.length > 1 ? ` +${through.length - 1}` : ''}
+              </ButtonLink>
+            ))}
+            <Button size="compact-xs" variant={through.length ? 'subtle' : 'default'}
+              leftSection={<IconDatabasePlus size={12} />} onClick={() => onAdd(pgPort, p)}>
+              {through.length ? 'Add another' : 'Add database'}{ports.length > 1 ? ` · ${p}` : ''}
+            </Button>
+          </Group>
+        )
+      })}
+    </Stack>
+  )
+}
 
 /**
  * Adds a Postgres, MySQL, MariaDB, Redis, RabbitMQ or Kafka the agent found. A containerised one is
