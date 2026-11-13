@@ -352,3 +352,44 @@ func TestEditingAnEnrolledServerNeedsNoCredential(t *testing.T) {
 		t.Fatalf("adding a login account to an approved server failed: %v", err)
 	}
 }
+
+// An enrolled host that is upgraded must show its new OS. Enrolment copies the
+// OS into the asset, and the asset header kept showing Ubuntu 24.04 after the
+// host moved to 26.04 while the System card, reading the agent, said 26.04.
+func TestRecordFactsKeepsAssetOSCurrent(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	cleanHost(t, s, "disc-os")
+	seedDiscovered(t, s, "disc-os")
+
+	id, err := s.EnrolHost(ctx, "disc-os", "admin@northwind.id", nil, nil, nil, false)
+	if err != nil {
+		t.Fatalf("EnrolHost: %v", err)
+	}
+	assetOS := func() string {
+		t.Helper()
+		var os string
+		if err := s.pool.QueryRow(ctx, `SELECT os FROM assets WHERE id = $1`, id).Scan(&os); err != nil {
+			t.Fatalf("read asset: %v", err)
+		}
+		return os
+	}
+	if got := assetOS(); got != "Debian GNU/Linux 13 (trixie)" {
+		t.Fatalf("OS after enrolment = %q", got)
+	}
+
+	if err := s.RecordFacts(ctx, "disc-os", HostFacts{OS: "Debian GNU/Linux 14 (forky)"}); err != nil {
+		t.Fatalf("RecordFacts: %v", err)
+	}
+	if got := assetOS(); got != "Debian GNU/Linux 14 (forky)" {
+		t.Errorf("OS after an upgrade = %q; the asset still shows the version it was enrolled with", got)
+	}
+
+	// A pass that could not read os-release says nothing about the OS.
+	if err := s.RecordFacts(ctx, "disc-os", HostFacts{}); err != nil {
+		t.Fatalf("RecordFacts: %v", err)
+	}
+	if got := assetOS(); got != "Debian GNU/Linux 14 (forky)" {
+		t.Errorf("OS after an empty report = %q; it must keep the last known value", got)
+	}
+}

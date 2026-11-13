@@ -118,7 +118,13 @@ func (s *Store) RecordFacts(ctx context.Context, hostname string, f HostFacts) e
 		}
 		androidApps = b
 	}
-	_, err := s.db(ctx).Exec(ctx, `
+	tx, err := s.db(ctx).Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `
 		INSERT INTO agents (hostname, fqdn, machine_id, os, addresses, ssh_ports, accounts, applications, system, android_apps, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,now())
 		ON CONFLICT (hostname) DO UPDATE SET
@@ -133,8 +139,32 @@ func (s *Store) RecordFacts(ctx context.Context, hostname string, f HostFacts) e
 			android_apps = COALESCE(EXCLUDED.android_apps, agents.android_apps),
 			updated_at = now()`,
 		hostname, f.FQDN, f.MachineID, f.OS,
-		nonNilStrings(f.Addresses), nonNilInts(f.SSHPorts), nonNilStrings(f.Accounts), apps, system, androidApps)
-	return err
+		nonNilStrings(f.Addresses), nonNilInts(f.SSHPorts), nonNilStrings(f.Accounts), apps, system, androidApps); err != nil {
+		return err
+	}
+
+	// The asset's OS follows what its agent reports. Enrolment copies the OS
+	// into the asset once, and before this nothing wrote it again, so a host
+	// upgraded from Ubuntu 24.04 to 26.04 kept showing 24.04 in its header
+	// while the System card, which reads the agent's report, showed 26.04.
+	// An agent reads os-release on every facts pass, so this catches a point
+	// update, a release upgrade and the reboot after one without re-enrolling.
+	//
+	// Matched the way Heartbeat matches an agent to its asset. Written only
+	// when the value differs, so the hourly unchanged report adds no row
+	// version, and never with an empty value: a host that could not read its
+	// os-release this time has not stopped having an operating system.
+	if f.OS != "" {
+		if _, err := tx.Exec(ctx, `
+			UPDATE assets SET os = $2, updated_at = now()
+			WHERE (hostname = $1
+			    OR agent_hostname = $1
+			    OR split_part(hostname, '.', 1) = $1)
+			  AND os IS DISTINCT FROM $2`, hostname, f.OS); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 // DiscoveredHosts lists agents with no matching asset.
