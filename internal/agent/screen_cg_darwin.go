@@ -472,10 +472,33 @@ func (c *macCapturer) copyOut(surface uintptr, rects []image.Rectangle) error {
 }
 
 func (c *macCapturer) Close() {
+	streaming := c.stream != 0
 	c.stop()
-	if c.handler != 0 {
-		c.handler.Release()
+	if c.handler == 0 {
+		return
+	}
+	// A stopped stream still has calls to the handler waiting on its
+	// queue, the last of them saying it stopped. Freeing the handler
+	// before that one crashes the process when it arrives, so wait for
+	// it, and keep the handler rather than free it under a call.
+	if streaming && !c.waitStopped(2*time.Second) {
 		c.handler = 0
+		return
+	}
+	c.handler.Release()
+	c.handler = 0
+}
+
+// waitStopped reports whether the stream said it stopped within d.
+func (c *macCapturer) waitStopped(d time.Duration) bool {
+	for end := time.Now().Add(d); ; {
+		c.mu.Lock()
+		stopped := c.stopped
+		c.mu.Unlock()
+		if stopped || time.Now().After(end) {
+			return stopped
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
