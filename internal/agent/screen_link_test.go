@@ -2,6 +2,7 @@ package agent
 
 import (
 	"io"
+	"log/slog"
 	"math/rand"
 	"sync"
 	"testing"
@@ -194,5 +195,30 @@ func TestScreenOnASlowLinkSharpensAFewTilesAFrame(t *testing.T) {
 	v.rmu.Unlock()
 	if len(rates) == 0 || rates[len(rates)-1] != linkRateMin {
 		t.Fatalf("the encoder was told %v, want %d last", rates, linkRateMin)
+	}
+}
+
+// What the client sends toward the browser is what the gauge measures the
+// link by; without it a slow link reads as carrying nothing.
+func TestScreenClientCountsWhatItSends(t *testing.T) {
+	host := &fakeScreenHost{session: 1, account: `HOST\alice`,
+		screens: map[uint32]*fakeScreen{1: newFakeScreen(130, 70, 0x40)}}
+	c, err := openScreen(host, false, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	bytes := 0
+	for _, b := range nextRects(t, c) {
+		bytes += len(b.Data)
+	}
+	c.mu.Lock()
+	sent, full := c.link.sent, c.link.max
+	c.mu.Unlock()
+	if sent < int64(bytes) || bytes == 0 {
+		t.Fatalf("the gauge counted %d bytes of the %d sent", sent, bytes)
+	}
+	if full != screenMotionBits(130, 70) {
+		t.Fatalf("the gauge was not told the screen's size: %d", full)
 	}
 }

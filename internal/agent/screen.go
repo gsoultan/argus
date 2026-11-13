@@ -1038,6 +1038,9 @@ func (c *screenClient) NextBitmaps() ([]rdp.Bitmap, error) {
 // rects reads the helper's display frames back into bitmaps, recording them
 // as the Fast-Path PDUs a Remote Desktop server would have sent.
 func (c *screenClient) rects(p []byte) ([]rdp.Bitmap, error) {
+	c.mu.Lock()
+	c.link.sent += int64(len(p))
+	c.mu.Unlock()
 	var out []rdp.Bitmap
 	for len(p) >= rdp.FrameHeaderSize {
 		if p[0] != rdp.FrameEncoded {
@@ -1083,6 +1086,7 @@ func (c *screenClient) picture(p []byte) error {
 		return errors.New("the screen helper sent video nobody asked for")
 	}
 	c.mu.Lock()
+	c.link.sent += int64(len(p))
 	c.pictures++
 	if m.key {
 		c.keys++
@@ -1317,7 +1321,8 @@ func (c *screenClient) Close() error {
 	c.closed = true
 	close(c.done)
 	c.log.Info("tunnel: screen sharing ended", "codec", c.codec,
-		"pictures", c.pictures, "key_frames", c.keys, "frames", string(c.stats))
+		"pictures", c.pictures, "key_frames", c.keys, "frames", string(c.stats),
+		"link_bits", c.link.rate, "link_least_bits", c.link.least, "link_best_ms", c.link.best.Milliseconds())
 	if c.helper != nil {
 		return c.helper.Close()
 	}

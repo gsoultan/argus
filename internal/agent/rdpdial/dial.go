@@ -42,6 +42,10 @@ func DialTarget(address, hostname string, protocol uint32, pins Pinner,
 	return conn, err
 }
 
+// targetReadBuffer is the receive buffer asked for on the connection to the
+// target.
+const targetReadBuffer = 128 << 10
+
 // DialTargetWithAuth dials a target and, when auth is supplied and the
 // negotiated protocol calls for it, authenticates on the user's behalf.
 //
@@ -55,6 +59,13 @@ func DialTargetWithAuth(address, hostname string, protocol uint32, pins Pinner,
 	raw, err := net.DialTimeout("tcp", address, timeout)
 	if err != nil {
 		return nil, nil, fmt.Errorf("dial %s: %w", address, err)
+	}
+	// A small receive buffer: when the agent stops reading because the
+	// browser is behind (rdp/pace.go), the target should find out within a
+	// frame or two, not after megabytes more have been taken off its hands.
+	// Still far more than a LAN needs to run at full rate.
+	if tcp, ok := raw.(*net.TCPConn); ok {
+		_ = tcp.SetReadBuffer(targetReadBuffer)
 	}
 
 	if _, err := raw.Write(rdp.BuildConnectionRequest(protocol)); err != nil {

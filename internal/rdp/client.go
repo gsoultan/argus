@@ -407,9 +407,9 @@ func (c *Client) Next() ([]Rect, error) {
 // NextBitmaps is Next without the decoding, for a caller that forwards the
 // rectangles to something that decodes them itself.
 func (c *Client) NextBitmaps() ([]Bitmap, error) {
-	if c.pace != nil && !c.gfxLive.Load() {
-		// Bitmap updates: no more are read while the browser is a window
-		// behind, so the target waits rather than the person.
+	if c.pace != nil {
+		// No more is read while the browser is a window behind, so the
+		// target waits rather than the person.
 		c.pace.wait()
 	}
 	if err := c.conn.SetReadDeadline(time.Now().Add(c.readTimeout)); err != nil {
@@ -444,6 +444,9 @@ func (c *Client) NextBitmaps() ([]Bitmap, error) {
 	}
 	if c.dynvc != 0 && frame[0]&actionMask == actionX224 {
 		if ch, payload, err := ParseSendDataIndication(frame); err == nil && ch == c.dynvc {
+			if c.pace != nil && c.gfxLive.Load() {
+				c.pace.graphics(len(payload))
+			}
 			return nil, c.virtual(payload)
 		}
 	}

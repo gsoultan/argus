@@ -175,3 +175,30 @@ func TestPacerWindowFollowsTheAcknowledgements(t *testing.T) {
 		t.Fatalf("the window fell to %d, past its least of %d", p.window, paceWindowMin)
 	}
 }
+
+// A graphics frame larger than the window is still read to its end: its
+// bytes are marked as they come, so the browser's acknowledgements keep
+// making room.
+func TestPacerReadsAFrameLargerThanTheWindow(t *testing.T) {
+	p, _ := testPacer(time.Hour)
+	defer p.close()
+	_ = p.frame(1)
+	takeAndAck(t, p)
+	p.window = paceWindowMin
+
+	read := 0
+	for read < 4*paceWindowMin {
+		done := make(chan struct{})
+		go func() { p.wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("reading stopped %d bytes into one frame, with every mark acknowledged", read)
+		}
+		p.graphics(1500)
+		read += 1500
+		if id, _, ok := p.TakeMark(); ok {
+			p.Ack(id)
+		}
+	}
+}

@@ -161,7 +161,7 @@ jobs:
         run: go test -count=1 ./internal/agent/... ./cmd/argus-agent/...
       - name: Encode H.264 with Media Foundation
         if: runner.os == 'Windows'
-        run: go test -count=1 -v -run TestMediaFoundationEncodesTheScreen ./internal/agent/
+        run: go test -count=1 -v -run TestMediaFoundation ./internal/agent/
       - name: Build and start each binary
         run: |
           set -euo pipefail

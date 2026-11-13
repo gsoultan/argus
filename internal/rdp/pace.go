@@ -22,14 +22,15 @@ has read it. Each frame the target sends is followed by a mark (EncodeMark);
 the browser acknowledges a mark once everything before it is decoded.
 
   - On the graphics pipeline, Windows' own frame acknowledgement is held
-    until then. Windows counts the frames it has not heard back about, slows
-    to what comes back, and so encodes for the link the person really has.
-  - Bitmap updates have no acknowledgement in the protocol. There the agent
-    stops reading from the target while more than a window of bytes is
-    unacknowledged; Windows, unable to send, keeps the screen's changes
-    together and sends them as they are when there is room again. The window
-    follows the time acknowledgements take: it grows while they come back
-    promptly and shrinks when they start to queue.
+    until then, with how many frames are waiting here. Windows slows for
+    that, but not by enough on its own: measured behind 2 Mbit/s it still
+    ran a second and more ahead of the browser.
+  - So, for the pipeline and for bitmap updates (which have no
+    acknowledgement in the protocol at all), the agent also stops reading
+    from the target while more than a window of bytes is unacknowledged.
+    Windows, unable to send, skips to the screen as it is when there is
+    room again. The window follows the time acknowledgements take: it grows
+    while they come back promptly and shrinks when they start to queue.
 
 A browser that never acknowledges (an older console, a tool) is not paced at
 all, as before. One that did and stopped is given up on a frame at a time
@@ -172,8 +173,14 @@ func (p *pacer) bitmaps(n int) {
 	}
 }
 
-// wait holds the reader while the browser is more than a window of bitmap
-// bytes behind: until it acknowledges, or the floor passes.
+// graphics notes n bytes of the graphics pipeline read from the target.
+// They count toward the same window, and are marked as bitmap bytes are as
+// well as by frame: a frame larger than the window would otherwise wait for
+// an acknowledgement only its own end could bring.
+func (p *pacer) graphics(n int) { p.bitmaps(n) }
+
+// wait holds the reader while the browser is more than a window of bytes
+// behind: until it acknowledges, or the floor passes.
 func (p *pacer) wait() {
 	var timeout <-chan time.Time
 	for {

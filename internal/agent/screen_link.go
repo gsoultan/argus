@@ -75,7 +75,9 @@ type linkGauge struct {
 	// max is what motion costs with no limit: the encoder's own figure.
 	max  int
 	rate int // bits a second; 0 until max is known
-	told int // what the helper was last told
+	// least is the lowest the rate has been, for the session's last word.
+	least int
+	told  int // what the helper was last told
 
 	sent   int64 // bytes written toward the browser
 	points [64]linkPoint
@@ -137,6 +139,9 @@ func (g *linkGauge) ack(id uint32, now time.Time) (time.Duration, bool) {
 			through = g.rate * 7 / 8
 		}
 		g.rate = max(min(through*linkShareNum/linkShareDen, g.rate), linkRateMin)
+		if g.least == 0 || g.rate < g.least {
+			g.least = g.rate
+		}
 		g.cut, g.probed = now, now
 	}
 	return took, true
