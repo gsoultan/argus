@@ -137,8 +137,11 @@ const BUDGET_KB = {
    * header's "sessions open" link, which have to be in the shell so a
    * terminal or desktop keeps running while you move between pages. The
    * Connect drawer and the workspace are lazy chunks.
+   * 312.4 kB with the console noticing a new build: the check that brings a
+   * tab left open across an update onto the new console, which has to be in
+   * the shell that tab is running.
    */
-  overview: 312,
+  overview: 313,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most
@@ -191,8 +194,9 @@ const BUDGET_KB = {
    * without Select and the bundler splits the Combobox code both share out
    * of Select's chunk. The bytes are the same; the rest is the extra file.
    * 412.1 kB with session tabs: the overview's sessions store and header link.
+   * 413.6 kB with the console noticing a new build, as the overview, above.
    */
-  sessionDetail: 413,
+  sessionDetail: 414,
 }
 
 /**

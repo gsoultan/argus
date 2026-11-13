@@ -1,7 +1,9 @@
+import { useEffect, useRef } from 'react'
 import { Alert, Text } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { IconRefresh } from '@tabler/icons-react'
 import { controlUpdateBanner } from '~/lib/live'
+import { checkForNewBuild } from '~/lib/update'
 import { FS } from '~/theme'
 
 /* ── Everyone's banner ──────────────────────────────────────────────────── */
@@ -11,6 +13,9 @@ import { FS } from '~/theme'
  * sees. Polled slowly, quickly while one runs; while the control plane is
  * restarting the request fails and the last answer is kept, which is what
  * keeps the banner up through the restart.
+ *
+ * When it clears, the new version is serving, and this page is still the old
+ * console: it asks at once for the new one rather than at the next minute.
  */
 export function useControlUpdating(enabled: boolean): { target: string } | null {
   const { data } = useQuery({
@@ -20,7 +25,13 @@ export function useControlUpdating(enabled: boolean): { target: string } | null 
     retry: false,
     refetchInterval: (q) => (q.state.data?.active ? 3_000 : 60_000),
   })
-  return data?.active ? { target: data.target ?? '' } : null
+  const active = Boolean(data?.active)
+  const was = useRef(active)
+  useEffect(() => {
+    if (was.current && !active) checkForNewBuild()
+    was.current = active
+  }, [active])
+  return active ? { target: data?.target ?? '' } : null
 }
 
 export function ControlUpdatingBanner({ target, unreachable }: { target: string; unreachable: boolean }) {
