@@ -88,22 +88,33 @@ func TestMediaFoundationBitrateFollowsTheLink(t *testing.T) {
 	fb := make([]byte, w*h*4)
 	shot := screenShot{fb: fb, stride: w * 4, width: w, height: h}
 	seed := uint32(1)
-	// A band of noise across a still screen. A whole screen of noise is no
-	// measure: at this size the encoder's coarsest picture of it is 29 kB,
-	// which is what the full rate allows too, so both come out the same.
-	// The band's coarsest is an eighth of that, well under the full rate.
-	band := fb[:96*w*4]
-	// run encodes n pictures, the band all new each time, a
+	// The screen is grey blocks, eight pixels square, each a new shade
+	// every picture. Noise is no measure: the encoder's coarsest picture
+	// of it (29 kB for this whole screen, 13 kB for a band of it) is what
+	// the full rate allows too, so held or not the pictures came out the
+	// same. Flat blocks cost what the encoder chooses to spend on them.
+	paint := func() {
+		for by := 0; by < h; by += 8 {
+			for bx := 0; bx < w; bx += 8 {
+				seed = seed*1664525 + 1013904223
+				shade := byte(seed >> 24)
+				for y := by; y < by+8; y++ {
+					row := fb[(y*w+bx)*4 : (y*w+bx+8)*4]
+					for i := range row {
+						row[i] = shade
+					}
+				}
+			}
+		}
+	}
+	// run encodes n pictures, the screen all new each time, a
 	// thirtieth of a second apart, and returns the bytes of the last half.
 	var sizes []int
 	run := func(n int) int {
 		total := 0
 		sizes = sizes[:0]
 		for i := range n {
-			for j := range band {
-				seed = seed*1664525 + 1013904223
-				band[j] = byte(seed >> 24)
-			}
+			paint()
 			time.Sleep(time.Second / 30)
 			p, err := v.Encode(shot, false)
 			if err != nil {
