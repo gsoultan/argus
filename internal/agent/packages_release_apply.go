@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -89,7 +90,7 @@ func (a *PackageApplier) applyRelease(ctx context.Context) PackageRunStatus {
 
 	switch info.Tool {
 	case releaseToolUbuntu:
-		err = a.upgradeUbuntu(ctx)
+		err = a.upgradeUbuntu(ctx, info)
 	case releaseToolDebian:
 		err = a.upgradeDebian(ctx, m, info)
 	case releaseToolLeapp:
@@ -153,7 +154,7 @@ func (a *PackageApplier) aptPartWay(ctx context.Context, tool string, code int, 
 		tool, code, next, log, tail(out, 400))
 }
 
-func (a *PackageApplier) upgradeUbuntu(ctx context.Context) error {
+func (a *PackageApplier) upgradeUbuntu(ctx context.Context, info *ReleaseInfo) error {
 	cfg := filepath.Join(ubuntuUpgradeOverrides, ubuntuOverrideName)
 	if err := os.MkdirAll(ubuntuUpgradeOverrides, 0o755); err != nil {
 		return fmt.Errorf("cannot write the upgrade's settings: %w", err)
@@ -162,6 +163,10 @@ func (a *PackageApplier) upgradeUbuntu(ctx context.Context) error {
 		return fmt.Errorf("cannot write the upgrade's settings: %w", err)
 	}
 	defer os.Remove(cfg)
+	// What the upgrader writes to its own log this run, kept whole: its
+	// output says little, and why it stopped is only there.
+	mainLog := &tailer{files: ubuntuUpgradeLogs[:1], offsets: map[string]int64{}}
+	mainLog.start()
 	var b bytes.Buffer
 	stop := a.follow(ctx, "upgrading", ubuntuUpgradeLogs)
 	code, err := a.Run(ctx, io.MultiWriter(&b, a.lw), releaseEnv, "do-release-upgrade",
@@ -170,10 +175,98 @@ func (a *PackageApplier) upgradeUbuntu(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if code != 0 {
-		return a.aptPartWay(ctx, "do-release-upgrade", code, b.Bytes(), "/var/log/dist-upgrade/main.log")
+	if code == 0 {
+		return nil
 	}
-	return nil
+	var logged bytes.Buffer
+	mainLog.read(&logged)
+	why, restored := distUpgradeFailure(logged.Bytes())
+	if why == "" {
+		why = tail(b.Bytes(), 400)
+	}
+	if restored && versionIs(osRelease()["VERSION_ID"], info.Version) {
+		return fmt.Errorf("do-release-upgrade stopped before upgrading anything and put the server back the way it "+
+			"was, so it is still on %s and nothing was changed. It said: %s. Fix that, look for updates again, and "+
+			"ask again; the whole log is %s", info.Current, why, ubuntuUpgradeLogs[0])
+	}
+	return a.aptPartWay(ctx, "do-release-upgrade", code, []byte(why), "/var/log/dist-upgrade/main.log")
+}
+
+// reDistUpgradeError is a line the upgrader logs when something is wrong:
+//
+//	2026-11-13 13:30:02,117 ERROR Dist-upgrade failed: 'E:Unable to correct problems, you have held broken packages.'
+var reDistUpgradeError = regexp.MustCompile(`^(?:\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d+ )?(?:ERROR|CRITICAL) (.+)$`)
+
+// Lines in the upgrader's log that name a package it wants gone but will
+// not remove, and a package no source offers any more:
+//
+//	ERROR Dist-upgrade failed: 'The package postgresql-18-mobilitydb is marked for removal but it is in the removal deny list.'
+//	ERROR Package libgdal39 has no priority set
+var (
+	reDistUpgradeDenied   = regexp.MustCompile(`The package (\S+) is marked for removal but it is in the removal deny list`)
+	reDistUpgradeNoSource = regexp.MustCompile(`^Package (\S+) has no priority set$`)
+)
+
+// distUpgradeNoise are ERROR lines the upgrader logs on runs that go on fine.
+var distUpgradeNoise = []string{"failed to import AptClone", "view.abort called"}
+
+// distUpgradeFailure reads the upgrader's log for why it stopped: its last
+// few errors, and whether it gave up before upgrading anything. It gave up
+// early when it put the system back ("Restoring original system state") or
+// could not work out the upgrade at all ("Could not calculate the upgrade"),
+// which it does before it changes a package.
+func distUpgradeFailure(log []byte) (why string, restored bool) {
+	var errs, noSource []string
+	denied := ""
+	for _, line := range strings.Split(string(log), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "Restoring original system state") ||
+			strings.Contains(line, "Could not calculate the upgrade") {
+			restored = true
+		}
+		m := reDistUpgradeError.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		e := strings.TrimSpace(m[1])
+		if d := reDistUpgradeDenied.FindStringSubmatch(e); d != nil {
+			denied = d[1]
+		}
+		if n := reDistUpgradeNoSource.FindStringSubmatch(e); n != nil {
+			if !hasString(noSource, n[1]) {
+				noSource = append(noSource, n[1])
+			}
+			continue
+		}
+		noise := false
+		for _, s := range distUpgradeNoise {
+			noise = noise || strings.Contains(e, s)
+		}
+		if noise {
+			continue
+		}
+		if len(e) > 300 {
+			e = e[:300] + "…"
+		}
+		if !hasString(errs, e) {
+			errs = append(errs, e)
+		}
+	}
+	if denied != "" {
+		why = "the new release has no version of " + denied + ", so upgrading would remove it, and the upgrader " +
+			"refuses to remove it (its deny list protects database server packages such as postgresql-*)"
+		if len(noSource) > 0 {
+			why += ". No source offers these installed packages for the new release either: " + strings.Join(noSource, ", ")
+		}
+		why += ". They usually come from a third-party source, such as apt.postgresql.org, which the upgrader " +
+			"turns off while it runs. Remove the ones you do not use, or make sure that source has packages for " +
+			"the new release, then try again"
+		return why, restored
+	}
+	if len(errs) > 3 {
+		errs = errs[len(errs)-3:]
+	}
+	return strings.Join(errs, "; "), restored
 }
 
 func (a *PackageApplier) upgradeDebian(ctx context.Context, m pkgManager, info *ReleaseInfo) error {

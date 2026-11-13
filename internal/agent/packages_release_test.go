@@ -963,3 +963,111 @@ func TestApplyReleaseKeepsGrubsDiskWhenStillThere(t *testing.T) {
 		t.Error("the upgrade did not run")
 	}
 }
+
+const distUpgradeAborted = `2026-11-13 13:30:00,001 INFO Using config files '['./DistUpgrade.cfg']'
+2026-11-13 13:30:01,500 DEBUG checking for held packages
+2026-11-13 13:30:02,117 ERROR Dist-upgrade failed: 'E:Unable to correct problems, you have held broken packages.'
+2026-11-13 13:30:02,118 ERROR Dist-upgrade failed: 'E:Unable to correct problems, you have held broken packages.'
+2026-11-13 13:30:02,200 DEBUG abort called
+2026-11-13 13:30:02,201 DEBUG Restoring original system state
+`
+
+func TestDistUpgradeFailure(t *testing.T) {
+	why, restored := distUpgradeFailure([]byte(distUpgradeAborted))
+	if !restored || why != "Dist-upgrade failed: 'E:Unable to correct problems, you have held broken packages.'" {
+		t.Errorf("why %q restored %v", why, restored)
+	}
+	if why, restored := distUpgradeFailure([]byte("2026-11-13 13:30:00,001 INFO fine\n")); why != "" || restored {
+		t.Errorf("why %q restored %v", why, restored)
+	}
+}
+
+// From a real 24.04 to 26.04 run: PostgreSQL extensions from a source the
+// upgrader turned off had no version in the new release.
+const distUpgradeDenied = `2026-11-13 13:37:47,902 ERROR failed to import AptClone
+2026-11-13 13:38:18,766 ERROR Package libgdal39 has no priority set
+2026-11-13 13:38:19,011 ERROR Package postgresql-18-pgrouting has no priority set
+2026-11-13 13:38:19,704 DEBUG denylist expr '^postgresql-.*[0-9][0-9].*' matches 'postgresql-18-mobilitydb'
+2026-11-13 13:38:19,870 ERROR Could not calculate the upgrade An unresolvable problem occurred while calculating the upgrade.
+
+ The package postgresql-18-mobilitydb is marked for removal but it is in the removal deny list.
+
+ (None)
+2026-11-13 13:38:19,870 ERROR Dist-upgrade failed: 'The package postgresql-18-mobilitydb is marked for removal but it is in the removal deny list.'
+2026-11-13 13:38:19,876 DEBUG abort called
+2026-11-13 13:38:19,877 ERROR view.abort called
+2026-11-13 13:38:19,877 DEBUG openCache()
+`
+
+func TestDistUpgradeFailureDenyList(t *testing.T) {
+	why, restored := distUpgradeFailure([]byte(distUpgradeDenied))
+	if !restored {
+		t.Error("a failed calculation changed nothing")
+	}
+	for _, want := range []string{"no version of postgresql-18-mobilitydb", "libgdal39, postgresql-18-pgrouting",
+		"third-party source"} {
+		if !strings.Contains(why, want) {
+			t.Errorf("why %q lacks %q", why, want)
+		}
+	}
+	for _, not := range []string{"AptClone", "view.abort"} {
+		if strings.Contains(why, not) {
+			t.Errorf("why %q has %q", why, not)
+		}
+	}
+}
+
+// The upgrader gave up before touching anything: Argus says so, with its
+// reason from main.log, and does not call the server half upgraded.
+func TestApplyReleaseUbuntuRolledBack(t *testing.T) {
+	newReleaseHost(t, jammy)
+	sr := &scriptRun{on: map[string]func(io.Writer, []string) int{
+		"do-release-upgrade -c": func(w io.Writer, _ []string) int {
+			fmt.Fprintln(w, "New release '24.04.1 LTS' available.")
+			return 0
+		},
+		"do-release-upgrade -f DistUpgradeViewNonInteractive": func(w io.Writer, _ []string) int {
+			fmt.Fprintln(w, "extracting 'noble.tar.gz'")
+			if err := os.WriteFile(ubuntuUpgradeLogs[0], []byte(distUpgradeAborted), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return 1
+		},
+	}}
+	a, rebooted := releaseApplier(t, sr, looks("apt-get", "dpkg-query", "do-release-upgrade"), "24.04")
+	st := a.Apply(context.Background())
+	if st.State != RunFailed || *rebooted || !strings.Contains(st.Message, "nothing was changed") ||
+		!strings.Contains(st.Message, "held broken packages") || strings.Contains(st.Message, "part way") ||
+		strings.Contains(st.Message, "extracting") {
+		t.Fatalf("run = %+v", st)
+	}
+	if sr.ran("dpkg --force-confdef --force-confold --configure -a") {
+		t.Error("repaired a server nothing was done to")
+	}
+}
+
+// Part way: the reason is the upgrader's error, not its download chatter.
+func TestApplyReleaseUbuntuPartWayGivesTheLogsReason(t *testing.T) {
+	h := newReleaseHost(t, jammy)
+	sr := &scriptRun{on: map[string]func(io.Writer, []string) int{
+		"do-release-upgrade -c": func(w io.Writer, _ []string) int {
+			fmt.Fprintln(w, "New release '24.04.1 LTS' available.")
+			return 0
+		},
+		"do-release-upgrade -f DistUpgradeViewNonInteractive": func(w io.Writer, _ []string) int {
+			fmt.Fprintln(w, "authenticate 'noble.tar.gz' against 'noble.tar.gz.gpg'")
+			h.setOS(t, noble)
+			if err := os.WriteFile(ubuntuUpgradeLogs[0],
+				[]byte("2026-11-13 13:40:00,000 ERROR got an error from dpkg for pkg: 'grub-pc'\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return 1
+		},
+	}}
+	a, _ := releaseApplier(t, sr, looks("apt-get", "dpkg-query", "do-release-upgrade"), "24.04")
+	st := a.Apply(context.Background())
+	if st.State != RunFailed || !strings.Contains(st.Message, "part way") ||
+		!strings.Contains(st.Message, "error from dpkg for pkg: 'grub-pc'") || strings.Contains(st.Message, "authenticate") {
+		t.Fatalf("run = %+v", st)
+	}
+}
