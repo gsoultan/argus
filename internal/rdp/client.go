@@ -166,6 +166,9 @@ func Connect(conn net.Conn, cfg ClientConfig) (*Client, error) {
 	}
 	cfg.Logon.SlowLink = cfg.SlowLink
 	c.slowLink = cfg.SlowLink
+	if cfg.SlowLink {
+		c.pace.slow()
+	}
 	if err := c.sendClientInfo(cfg.Logon); err != nil {
 		return nil, err
 	}

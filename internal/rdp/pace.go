@@ -59,6 +59,14 @@ const (
 	// paceShrinkGap is the least time between two cuts of the window: one
 	// queue is one cut, however many late acknowledgements report it.
 	paceShrinkGap = 200 * time.Millisecond
+	// paceWindowSlow is where the window starts for a browser that says
+	// its link is slow: a quarter of a second of 2 Mbit/s, not a second.
+	paceWindowSlow = 64 << 10
+	// paceTarget is how far behind the browser may be once a queue is
+	// seen: the window is cut to what the link carried in this long.
+	paceTarget = 150 * time.Millisecond
+	// paceRateSpan is the least time the link's rate is measured over.
+	paceRateSpan = 250 * time.Millisecond
 
 	// paceRing is how many marks are remembered. More may be outstanding
 	// only if the browser has stopped answering, and then the floor rules.
@@ -106,6 +114,11 @@ type pacer struct {
 	sent, acked, marked int64
 	window              int64
 	shrunk              time.Time
+	// rate is what the browser acknowledged lately, in bytes a second,
+	// measured from rateAt, when rateFrom bytes were acknowledged.
+	rate     int64
+	rateAt   time.Time
+	rateFrom int64
 
 	wake   chan struct{}
 	done   chan struct{}
@@ -228,7 +241,9 @@ func (p *pacer) Ack(id uint32) {
 	p.browser = true
 	if n := p.notes[id%paceRing]; n.id == id {
 		p.acked = max(p.acked, n.sent)
-		p.tune(p.now(), p.now().Sub(n.at))
+		now := p.now()
+		p.measure(now)
+		p.tune(now, now.Sub(n.at))
 	} else {
 		// Too long ago to say how much it covered: all of it.
 		p.acked = p.sent
@@ -252,9 +267,35 @@ func (p *pacer) tune(now time.Time, took time.Duration) {
 		return
 	}
 	if now.Sub(p.shrunk) >= paceShrinkGap {
-		p.window = max(p.window*3/4, paceWindowMin)
+		// A queue: a quarter off, or straight down to what the link is
+		// known to carry in the time a browser may be behind, whichever
+		// is less. Cutting by quarters alone took seconds to clear one.
+		cut := p.window * 3 / 4
+		if p.rate > 0 {
+			cut = min(cut, p.rate*int64(paceTarget)/int64(time.Second))
+		}
+		p.window = max(cut, paceWindowMin)
 		p.shrunk = now
 	}
+}
+
+// measure keeps the rate the browser acknowledges bytes at.
+func (p *pacer) measure(now time.Time) {
+	if p.rateAt.IsZero() {
+		p.rateAt, p.rateFrom = now, p.acked
+		return
+	}
+	if span := now.Sub(p.rateAt); span >= paceRateSpan {
+		p.rate = (p.acked - p.rateFrom) * int64(time.Second) / int64(span)
+		p.rateAt, p.rateFrom = now, p.acked
+	}
+}
+
+// slow starts the window as for a link the browser called slow.
+func (p *pacer) slow() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.window = min(p.window, paceWindowSlow)
 }
 
 // close lets a waiting reader go and stops acknowledging.

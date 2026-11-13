@@ -90,8 +90,10 @@ func TestMediaFoundationBitrateFollowsTheLink(t *testing.T) {
 	seed := uint32(1)
 	// run encodes n pictures of a screen that is all new each time, a
 	// thirtieth of a second apart, and returns the bytes of the last half.
+	var sizes []int
 	run := func(n int) int {
 		total := 0
+		sizes = sizes[:0]
 		for i := range n {
 			for j := range fb {
 				seed = seed*1664525 + 1013904223
@@ -105,6 +107,7 @@ func TestMediaFoundationBitrateFollowsTheLink(t *testing.T) {
 			if i > 0 && h264HasIDR(p) {
 				t.Fatalf("picture %d is a key frame nobody asked for", i)
 			}
+			sizes = append(sizes, len(p))
 			if i >= n/2 {
 				total += len(p)
 			}
@@ -113,7 +116,9 @@ func TestMediaFoundationBitrateFollowsTheLink(t *testing.T) {
 	}
 	full := run(30) / 15
 	rater.SetBitrate(screenMotionBits(w, h) / 10)
+	t.Logf("pictures at full rate: %v", sizes)
 	held := run(60) / 30
+	t.Logf("pictures held to a tenth: %v", sizes)
 	t.Logf("a picture at full rate: %d bytes; held to a tenth: %d bytes", full, held)
 	// A screen that is all noise is the worst there is: at its coarsest
 	// the encoder cannot make such a picture a tenth the size (a runner

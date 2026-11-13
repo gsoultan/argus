@@ -202,3 +202,41 @@ func TestPacerReadsAFrameLargerThanTheWindow(t *testing.T) {
 		}
 	}
 }
+
+// Once the link's rate is known, a queue cuts the window straight to what
+// the link carries in the time a browser may be behind, not by a quarter.
+func TestPacerCutsToWhatTheLinkCarries(t *testing.T) {
+	p := newPacer(func(uint32, uint32, uint32) error { return nil })
+	now := time.Unix(1000, 0)
+	p.now = func() time.Time { return now }
+	// 250 kB a second (2 Mbit/s), acknowledged promptly for a second.
+	for range 10 {
+		p.bitmaps(25_000)
+		id, _, ok := p.TakeMark()
+		if !ok {
+			t.Fatal("no mark after 25 kB")
+		}
+		now = now.Add(100 * time.Millisecond)
+		p.Ack(id)
+	}
+	if p.rate < 200_000 || p.rate > 300_000 {
+		t.Fatalf("the link reads as %d bytes a second, want about 250000", p.rate)
+	}
+	p.bitmaps(25_000)
+	id, _, _ := p.TakeMark()
+	now = now.Add(2 * time.Second)
+	p.Ack(id)
+	want := p.rate * int64(paceTarget) / int64(time.Second)
+	if p.window != max(want, paceWindowMin) {
+		t.Fatalf("a queue left the window at %d, want %d", p.window, max(want, paceWindowMin))
+	}
+}
+
+// A browser that says its link is slow starts with a small window.
+func TestPacerStartsSmallOnASlowLink(t *testing.T) {
+	p := newPacer(func(uint32, uint32, uint32) error { return nil })
+	p.slow()
+	if p.window != paceWindowSlow {
+		t.Fatalf("the window starts at %d, want %d", p.window, paceWindowSlow)
+	}
+}
