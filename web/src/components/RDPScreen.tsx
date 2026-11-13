@@ -10,7 +10,7 @@ import {
   writeClipboard, type ClipboardRule,
 } from '~/lib/clipboard'
 import { chord, isMac, KeyMapper, loadKeyboardPrefs, type KeyboardPrefs, type KeyOut } from '~/lib/keymap'
-import { pictureSize, type PicturePrefs } from '~/lib/picture'
+import { pictureSize, slowLink, type PicturePrefs } from '~/lib/picture'
 import type { RDPWorkerRequest, RDPWorkerResponse } from '~/workers/rdp.worker'
 
 /**
@@ -429,6 +429,7 @@ export function RDPScreen({
               password: takePassword?.() ?? '',
               graphics,
               video,
+              slowLink: slowLink(pictureRef.current?.size ?? 'fit'),
               ...pictureSize(pictureRef.current?.size ?? 'fit', wantedSize()),
             }),
           )

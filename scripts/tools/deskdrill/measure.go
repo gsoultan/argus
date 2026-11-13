@@ -67,6 +67,20 @@ type Report struct {
 	// BusyVideoShare is the part of the busy window's bytes that were
 	// H.264 pictures rather than exact tiles.
 	BusyVideoShare float64
+
+	// LinkKbit is the link the drill pretended to be behind (-link), or 0
+	// for the one it really has.
+	LinkKbit int
+	// BusyStopMS is how long the screen kept changing after the busy
+	// window was told to stop (Ctrl+C): what was still on its way, which is
+	// how far behind the picture was. On a slow link it is the number a
+	// person feels as lag.
+	BusyStopMS float64
+	// BusyLag is the agent's own measure, from the frame marks: how long
+	// after a frame was sent the drill had it. Zero where a desktop sends
+	// no marks.
+	BusyLagP50MS float64
+	BusyLagP95MS float64
 }
 
 type meter struct {
@@ -77,12 +91,17 @@ type meter struct {
 	errs    chan error
 	width   int
 	height  int
+	// link is the pretended link, in bits a second; 0 is none.
+	link int
+	// lag is the round trip each frame mark carried, in milliseconds.
+	lag chan float64
 }
 
 func measure(ctx context.Context, c *websocket.Conn, send func(any), busyFor time.Duration,
-	keys int, reportPath string) {
+	keys int, reportPath string, linkKbit int) {
 
-	m := &meter{ctx: ctx, c: c, send: send, updates: make(chan update, 4096), errs: make(chan error, 1)}
+	m := &meter{ctx: ctx, c: c, send: send, updates: make(chan update, 4096), errs: make(chan error, 1),
+		link: linkKbit * 1000, lag: make(chan float64, 65536)}
 
 	// The session first: until the desktop is up there is nothing to time.
 	start := time.Now()
@@ -108,7 +127,7 @@ func measure(ctx context.Context, c *websocket.Conn, send func(any), busyFor tim
 		}
 	}
 	go m.read()
-	r := Report{Width: m.width, Height: m.height, Depth: 16}
+	r := Report{Width: m.width, Height: m.height, Depth: 16, LinkKbit: linkKbit}
 	fmt.Fprintf(os.Stderr, "ready %dx%d\n", m.width, m.height)
 
 	// First paint: everything until the desktop stops changing. A new
@@ -153,7 +172,21 @@ func measure(ctx context.Context, c *websocket.Conn, send func(any), busyFor tim
 	// Busy: a maximised console listing a large tree, which redraws most of
 	// the screen for as long as it runs.
 	m.run(`cmd /c start /max cmd /k dir /s c:\windows`)
+	m.lags()
 	busy := m.window(busyFor)
+	if lags := m.lags(); len(lags) > 0 {
+		slices.Sort(lags)
+		r.BusyLagP50MS, r.BusyLagP95MS = pct(lags, 50), pct(lags, 95)
+	}
+	// Stop the listing and time how long the screen goes on changing: the
+	// frames that were still on their way.
+	stop := time.Now()
+	m.send(map[string]any{"type": "key", "code": "ControlLeft", "down": true})
+	m.key("KeyC", false)
+	m.send(map[string]any{"type": "key", "code": "ControlLeft", "down": false})
+	if tail := m.until(time.Second, 120*time.Second); len(tail) > 0 {
+		r.BusyStopMS = ms(tail[len(tail)-1].at.Sub(stop))
+	}
 	if len(busy) > 1 {
 		secs := busyFor.Seconds()
 		r.BusySeconds = secs
@@ -210,6 +243,7 @@ func (m *meter) read() {
 		if typ != websocket.MessageBinary {
 			continue
 		}
+		m.shape(len(data))
 		u := update{at: time.Now(), bytes: len(data)}
 		t0 := time.Now()
 		for p := data; len(p) >= rdp.FrameHeaderSize; {
@@ -250,8 +284,12 @@ func (m *meter) read() {
 			case rdp.FrameMark:
 				// A shared console paces itself on these, as the console
 				// acknowledges them: once the frame before it is decoded.
-				if id, _, ok := rdp.ParseMark(p); ok {
+				if id, rtt, ok := rdp.ParseMark(p); ok {
 					m.send(map[string]any{"type": "ack", "frame": id})
+					select {
+					case m.lag <- ms(rtt):
+					default:
+					}
 				}
 			}
 			p = p[min(size, len(p)):]
@@ -259,6 +297,31 @@ func (m *meter) read() {
 		u.decode = time.Since(t0)
 		if u.rects > 0 {
 			m.updates <- u
+		}
+	}
+}
+
+// shape holds a message for as long as the pretended link would have taken
+// to carry it. Nothing else is read meanwhile, so what the control plane
+// sends faster than that waits in the connection, as it would behind a real
+// slow link.
+func (m *meter) shape(n int) {
+	if m.link <= 0 {
+		return
+	}
+	time.Sleep(time.Duration(float64(n*8) / float64(m.link) * float64(time.Second)))
+}
+
+// lags takes the round trips the marks have carried since it was last
+// asked.
+func (m *meter) lags() []float64 {
+	var got []float64
+	for {
+		select {
+		case v := <-m.lag:
+			got = append(got, v)
+		default:
+			return got
 		}
 	}
 }

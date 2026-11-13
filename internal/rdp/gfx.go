@@ -215,9 +215,10 @@ func gfxCapsAdvertise() []byte {
 
 // gfxFrameAcknowledge tells the server a frame is done with, which is what
 // lets it send the next: a client that never acknowledges gets a few frames
-// and then a frozen screen.
-func gfxFrameAcknowledge(frameID, decoded uint32) []byte {
-	b := binary.LittleEndian.AppendUint32(nil, 0) // queueDepth: not reported
+// and then a frozen screen. depth is how many frames are here and not yet
+// drawn, which the server slows for; zero says nothing about it.
+func gfxFrameAcknowledge(frameID, decoded, depth uint32) []byte {
+	b := binary.LittleEndian.AppendUint32(nil, depth)
 	b = binary.LittleEndian.AppendUint32(b, frameID)
 	b = binary.LittleEndian.AppendUint32(b, decoded)
 	return gfxPDU(GfxFrameAcknowledge, b)

@@ -141,16 +141,6 @@ const (
 	// thirty a second once the browser's acknowledgements pace it, and a
 	// plan for sixty gave each picture half the bits it could have had.
 	screenVideoRate = 30
-
-	// screenVideoBits is what motion costs on average, in bits a second for
-	// each pixel of the screen: 3 Mbit/s at 1024x768, 8 Mbit/s at full HD,
-	// and twice that at the peak. Two bits still smudged small text while
-	// it scrolled. It is still sent again exactly an eighth of a second
-	// after it stops, and H.264 takes nothing more from the recording's own
-	// compression, so a recording of a lot of motion is larger for it.
-	screenVideoBits = 4
-	// screenVideoMaxBits caps the mean, for screens past full HD.
-	screenVideoMaxBits = 24_000_000
 )
 
 // screenVideoProfiles are tried in turn: High compresses a screen best,
@@ -182,7 +172,10 @@ type mfEncoder struct {
 	codec  *comObject // ICodecAPI; nil if the encoder has none
 	width  int
 	height int
-	start  time.Time
+	// limit is what the link carries, in bits a second; 0 is no limit.
+	limit int
+	// clock gives each picture its time.
+	clock  pictureClock
 	out    mftOutputStreamInfo
 	header []byte // SPS and PPS, for key frames that come without them
 	com    bool   // CoInitializeEx needs undoing
@@ -191,7 +184,7 @@ type mfEncoder struct {
 
 // newMFEncoder opens the encoder for a screen of width by height.
 func newMFEncoder(width, height int) (screenVideo, error) {
-	e := &mfEncoder{width: width, height: height, start: time.Now()}
+	e := &mfEncoder{width: width, height: height}
 	if err := e.open(); err != nil {
 		e.Close()
 		return nil, err
@@ -321,7 +314,26 @@ func (e *mfEncoder) setValue(api *windows.GUID, vt uint16, v uint64) {
 
 // bitrate is what motion on this screen may cost, in bits a second.
 func (e *mfEncoder) bitrate() uint32 {
-	return uint32(min(max(int64(e.width)*int64(e.height)*screenVideoBits, 1_000_000), screenVideoMaxBits))
+	full := screenMotionBits(e.width, e.height)
+	if e.limit > 0 && e.limit < full {
+		return uint32(e.limit)
+	}
+	return uint32(full)
+}
+
+// SetBitrate holds motion to what the link carries, or with zero lets it
+// cost what it would on its own. The encoder takes a new mean while it
+// runs; one that does not keeps the rate it has, and the frame rate gives
+// instead.
+func (e *mfEncoder) SetBitrate(bits int) {
+	if bits == e.limit {
+		return
+	}
+	e.limit = bits
+	if e.codec != nil {
+		e.setValue(&codecAPIMeanBitRate, vtUI4, uint64(e.bitrate()))
+		e.setValue(&codecAPIMaxBitRate, vtUI4, uint64(e.bitrate())*2)
+	}
 }
 
 // sequenceHeader reads the SPS and PPS the encoder put on its output type.
@@ -411,7 +423,7 @@ func (e *mfEncoder) picture(s screenShot) (*comObject, error) {
 		return nil, hresult("AddBuffer", hr)
 	}
 	// In hundreds of nanoseconds, from when the encoder opened.
-	sample.call(vtSampleSetTime, uintptr(time.Since(e.start)/100))
+	sample.call(vtSampleSetTime, uintptr(e.clock.stamp(time.Now(), e.limit > 0)/100))
 	sample.call(vtSampleSetDuration, uintptr(time.Second/screenVideoRate/100))
 	return sample, nil
 }

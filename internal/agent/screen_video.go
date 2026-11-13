@@ -50,6 +50,16 @@ const (
 	// screenMaxRegions is how many rectangles a picture names before one
 	// around them all is cheaper.
 	screenMaxRegions = 128
+
+	// screenVideoBits is what motion costs on average, in bits a second for
+	// each pixel of the screen: 3 Mbit/s at 1024x768, 8 Mbit/s at full HD,
+	// and twice that at the peak. Two bits still smudged small text while
+	// it scrolled. It is still sent again exactly an eighth of a second
+	// after it stops, and H.264 takes nothing more from the recording's own
+	// compression, so a recording of a lot of motion is larger for it.
+	screenVideoBits = 4
+	// screenVideoMaxBits caps the mean, for screens past full HD.
+	screenVideoMaxBits = 24_000_000
 )
 
 // The helper's video messages.
@@ -296,4 +306,34 @@ func nv12Rows(luma, chroma, fb []byte, stride, width, p int) {
 		c[x] = byte((-38*r-74*g+112*b+128)>>8 + 128)
 		c[x+1] = byte((112*r-94*g-18*b+128)>>8 + 128)
 	}
+}
+
+// screenVideoFrame is a frame at the rate the encoder plans its bits for.
+const screenVideoFrame = time.Second / 30
+
+// pictureClock gives each picture the time the encoder is told it has. The
+// encoder spends by that time: a picture a third of a second after the last
+// gets ten frames' bits. On a link with room that is a sharper first picture
+// of a burst. Held to a slow link it is one picture the size of ten, which
+// arrives a third of a second late and holds back the next, so there the
+// clock never moves by more than a frame: every picture is a frame's worth,
+// and they keep coming.
+type pictureClock struct {
+	last time.Time
+	pts  time.Duration
+}
+
+// stamp returns the time of the picture going in at now.
+func (c *pictureClock) stamp(now time.Time, held bool) time.Duration {
+	if c.last.IsZero() {
+		c.last = now
+		return c.pts
+	}
+	step := now.Sub(c.last)
+	if held && step > screenVideoFrame {
+		step = screenVideoFrame
+	}
+	c.last = now
+	c.pts += max(step, time.Microsecond)
+	return c.pts
 }

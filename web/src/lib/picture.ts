@@ -53,3 +53,24 @@ export function pictureSize(size: PictureSize, room: { width: number; height: nu
   if (size === 'hd') return { width: 1280, height: 720 }
   return room
 }
+
+/**
+ * Whether the screen should open as for a slow link: the person chose the
+ * size meant for one, or the browser says the link is slow (Chromium tells;
+ * the others do not, and are taken to be fine). Remote Desktop is then asked
+ * to leave out wallpaper, animations and window contents while dragging,
+ * which are pixels that cost time and say nothing.
+ */
+export function slowLink(
+  size: PictureSize,
+  connection: { effectiveType?: string; downlink?: number; saveData?: boolean } | undefined = (
+    navigator as Navigator & { connection?: { effectiveType?: string; downlink?: number; saveData?: boolean } }
+  ).connection,
+): boolean {
+  if (size === 'hd') return true
+  if (!connection) return false
+  if (connection.saveData) return true
+  if (connection.effectiveType && connection.effectiveType !== '4g') return true
+  // Mbit/s, as the browser estimates it; it reports no more than 10.
+  return typeof connection.downlink === 'number' && connection.downlink > 0 && connection.downlink < 3
+}

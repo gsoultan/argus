@@ -92,6 +92,7 @@ const (
 	scrInput   byte = 10 // one rdp.InputEvent as JSON
 	scrRefresh byte = 11 // send every tile next time
 	scrNext    byte = 12 // room for one more frame
+	// scrRate (13) is what the link carries: see screen_link.go.
 )
 
 // maxScreenMsg bounds one message from the helper. A full 4K screen of
@@ -165,6 +166,9 @@ type screenPace struct {
 	// idleMax is the longest a polling capturer waits between looks at a
 	// screen that is not changing. Input resets it.
 	idleMax time.Duration
+	// linkRate is what the link is taken to carry before the agent has
+	// measured it, in bits a second; 0 is no limit.
+	linkRate int
 }
 
 var defaultScreenPace = screenPace{minGap: screenMinGap, idleMax: screenIdleMax}
@@ -347,6 +351,9 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 	// lastInput is when the last key or click went in (UnixNano), until a
 	// frame captured after it is sent: see screenStats.input.
 	var lastInput atomic.Int64
+	// linkRate is what the agent last said the link carries (scrRate).
+	var linkRate atomic.Int64
+	linkRate.Store(int64(pace.linkRate))
 	done := make(chan error, 1)
 	stop := make(chan struct{})
 	defer close(stop)
@@ -379,6 +386,10 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 				signal(refresh)
 			case scrNext:
 				signal(credit)
+			case scrRate:
+				if len(p) == 4 {
+					linkRate.Store(int64(binary.LittleEndian.Uint32(p)))
+				}
 			}
 		}
 	}()
@@ -428,6 +439,7 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 	mo := motion{newVideo: newVideo, out: out}
 	defer mo.close()
 	stats := newScreenStats()
+	var budget linkBudget
 	credits := 1
 	force := true
 	lastW, lastH := 0, 0
@@ -503,15 +515,23 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 		}
 		found := time.Now()
 		if repaint {
-			// Everything goes exactly; and a viewer who arrived late (what
-			// a refresh is for) needs a key frame before the next picture.
+			// A viewer who arrived late (what a refresh is for) needs a
+			// key frame before the next picture.
 			sharp.reset(diff.cols * diff.rows)
 			mo.needKey = true
 		}
 
 		now := found
 		sent := false
-		if !repaint && mo.wants(len(jobs), now) {
+		// What the link carries, as the agent last measured it: motion
+		// costs no more, and sharpening is spread to fit.
+		budget.rate = int(linkRate.Load())
+		mo.setRate(budget.rate)
+		// A whole screen goes exactly where the link takes it in a moment.
+		// On a slow one that is seconds of nothing, so it goes as a key
+		// picture, there at once, and is sharpened as the link allows.
+		if (!repaint || (budget.rate != 0 && mo.newVideo != nil && !mo.off)) &&
+			(repaint || mo.wants(len(jobs), now)) {
 			ok, err := mo.send(last, &diff, &sharp, jobs, now)
 			if err != nil {
 				return err
@@ -530,7 +550,7 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 			}
 		}
 		if last.fb != nil {
-			for _, i := range sharp.due(now, busy, screenRefineMax) {
+			for _, i := range sharp.due(now, busy, budget.refine()) {
 				jobs = append(jobs, diff.job(last, i))
 			}
 		}
@@ -562,11 +582,14 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 			}
 			continue
 		}
+		exact := 0
 		for _, b := range batches {
+			exact += len(b)
 			if err := writeScreenMsg(out, scrRects, b); err != nil {
 				return err
 			}
 		}
+		budget.sized(len(jobs), exact)
 		if err := writeScreenMsg(out, scrFrame, nil); err != nil {
 			return err
 		}
@@ -604,6 +627,16 @@ type motion struct {
 	off     bool
 	needKey bool
 	last    time.Time
+	// rate is what the link carries, in bits a second; 0 is no limit.
+	rate int
+}
+
+// setRate holds motion to what the link carries, where the encoder can be.
+func (m *motion) setRate(bits int) {
+	m.rate = bits
+	if r, ok := m.video.(screenRater); ok {
+		r.SetBitrate(bits)
+	}
 }
 
 // wants says whether a frame of changed tiles is motion.
@@ -684,6 +717,7 @@ func (m *motion) open(width, height int) error {
 		return m.disable(err.Error())
 	}
 	m.video, m.w, m.h, m.needKey = v, width, height, true
+	m.setRate(m.rate)
 	return writeScreenMsg(m.out, scrCodec, []byte("h264"))
 }
 
@@ -749,6 +783,9 @@ type helperMode struct {
 	gdiOnly bool
 	// video lets it send motion as H.264, for a browser that decodes it.
 	video bool
+	// slow starts it as for a slow link: the browser said its link is one,
+	// before any frame has measured it.
+	slow bool
 }
 
 // screenGraphicsChannel is the MCS channel a screen session's pictures are
@@ -826,18 +863,28 @@ type screenClient struct {
 	mark     uint32 // a frame ended and its mark is not yet written
 	markedAt [8]time.Time
 	rtt      time.Duration
+	// link reads what the link carries from those acknowledgements.
+	link linkGauge
+	// slow is the browser having said its link is slow.
+	slow bool
 }
 
 // openScreen starts the helper in the console's session and waits for it
 // to say how large the screen is.
 func openScreen(host screenHost, video bool, log *slog.Logger) (*screenClient, error) {
+	return openScreenOn(host, video, false, log)
+}
+
+// openScreenOn is openScreen for a browser that says whether its link is
+// slow, which starts the screen as for one.
+func openScreenOn(host screenHost, video, slow bool, log *slog.Logger) (*screenClient, error) {
 	session, ok := host.ConsoleSession()
 	if !ok {
 		return nil, errors.New("this host has no console session to share; " +
 			"it may be starting or shutting down")
 	}
 	c := &screenClient{host: host, log: log, msgs: make(chan screenMsg, 8),
-		done: make(chan struct{}), checkEvery: time.Second, video: video}
+		done: make(chan struct{}), checkEvery: time.Second, video: video, slow: slow}
 	if video {
 		c.gfx, c.gtap = &GraphicsSink{}, rdp.NewGraphicsTap(screenGraphicsChannel)
 	}
@@ -860,6 +907,10 @@ func openScreen(host screenHost, video bool, log *slog.Logger) (*screenClient, e
 			if m.typ == scrSize && len(m.p) == 4 {
 				c.width = int(binary.LittleEndian.Uint16(m.p[0:]))
 				c.height = int(binary.LittleEndian.Uint16(m.p[2:]))
+				c.link.size(c.width, c.height)
+				if slow {
+					c.link.slow()
+				}
 				// The first tiles follow; NextBitmaps reads them.
 				return c, nil
 			}
@@ -875,7 +926,7 @@ func (c *screenClient) start(session uint32) error {
 	c.mu.Lock()
 	failed := c.failed > 0
 	c.mu.Unlock()
-	h, err := c.host.StartHelper(session, helperMode{gdiOnly: failed, video: c.video && !failed})
+	h, err := c.host.StartHelper(session, helperMode{gdiOnly: failed, video: c.video && !failed, slow: c.slow})
 	if err != nil {
 		return err
 	}
@@ -891,6 +942,9 @@ func (c *screenClient) start(session uint32) error {
 	c.gen++
 	gen := c.gen
 	c.helper, c.session = h, session
+	// A new helper has been told nothing about the link.
+	c.link.told = -1
+	c.tellLocked()
 	// A new helper starts with one credit of its own.
 	c.holding, c.granted = true, time.Now()
 	c.mu.Unlock()
@@ -955,6 +1009,7 @@ func (c *screenClient) NextBitmaps() ([]rdp.Bitmap, error) {
 					h := int(binary.LittleEndian.Uint16(m.p[2:]))
 					c.mu.Lock()
 					c.width, c.height = w, h
+					c.link.size(w, h)
 					c.mu.Unlock()
 					c.record(map[string]any{"type": "resize", "width": w, "height": h})
 					return nil, nil
@@ -1009,6 +1064,9 @@ func (c *screenClient) NextBitmaps() ([]rdp.Bitmap, error) {
 // rects reads the helper's display frames back into bitmaps, recording them
 // as the Fast-Path PDUs a Remote Desktop server would have sent.
 func (c *screenClient) rects(p []byte) ([]rdp.Bitmap, error) {
+	c.mu.Lock()
+	c.link.sent += int64(len(p))
+	c.mu.Unlock()
 	var out []rdp.Bitmap
 	for len(p) >= rdp.FrameHeaderSize {
 		if p[0] != rdp.FrameEncoded {
@@ -1054,6 +1112,7 @@ func (c *screenClient) picture(p []byte) error {
 		return errors.New("the screen helper sent video nobody asked for")
 	}
 	c.mu.Lock()
+	c.link.sent += int64(len(p))
 	c.pictures++
 	if m.key {
 		c.keys++
@@ -1148,7 +1207,7 @@ func (c *screenClient) grantLocked(floor bool) {
 	if c.holding || c.closed || c.helper == nil {
 		return
 	}
-	room := !c.acks || c.marked-c.acked < screenWindow
+	room := !c.acks || c.marked-c.acked < c.link.window()
 	if !room && !(floor && time.Since(c.granted) >= screenAckFloor) {
 		return
 	}
@@ -1168,6 +1227,7 @@ func (c *screenClient) TakeMark() (uint32, time.Duration, bool) {
 	id := c.mark
 	c.mark = 0
 	c.markedAt[id%uint32(len(c.markedAt))] = time.Now()
+	c.link.mark(id, time.Now())
 	return id, c.rtt, true
 }
 
@@ -1187,7 +1247,20 @@ func (c *screenClient) Ack(id uint32) {
 	if id > c.acked {
 		c.acked = id
 	}
+	c.link.ack(id, time.Now())
+	c.tellLocked()
 	c.grantLocked(false)
+}
+
+// tellLocked tells the helper what the link carries, when that has moved.
+// c.mu is held.
+func (c *screenClient) tellLocked() {
+	if c.closed || c.helper == nil {
+		return
+	}
+	if bits, ok := c.link.tell(); ok {
+		_ = writeScreenMsg(c.helper, scrRate, encodeRate(bits))
+	}
 }
 
 func (c *screenClient) record(v any) {
@@ -1278,7 +1351,8 @@ func (c *screenClient) Close() error {
 	c.closed = true
 	close(c.done)
 	c.log.Info("tunnel: screen sharing ended", "codec", c.codec,
-		"pictures", c.pictures, "key_frames", c.keys, "frames", string(c.stats))
+		"pictures", c.pictures, "key_frames", c.keys, "frames", string(c.stats),
+		"link_bits", c.link.rate, "link_least_bits", c.link.least, "link_best_ms", c.link.best.Milliseconds())
 	if c.helper != nil {
 		return c.helper.Close()
 	}
@@ -1295,7 +1369,7 @@ func connectScreen(cfg DesktopConfig, _ tunnel.Grant, open tunnel.DesktopOpen,
 	if host == nil {
 		return nil, DesktopInfo{}, errors.New("screen sharing works on Windows, Linux and macOS hosts only")
 	}
-	c, err := openScreen(host, open.Graphics, log)
+	c, err := openScreenOn(host, open.Graphics, open.SlowLink, log)
 	if err != nil {
 		return nil, DesktopInfo{}, err
 	}
