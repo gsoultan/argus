@@ -158,6 +158,11 @@ type StoreRequest struct {
 	RemoveHashes []string `json:"removeHashes,omitempty"`
 	Rules        []string `json:"rules,omitempty"`
 	Create       bool     `json:"create,omitempty"`
+	// Password is only for acl_login, the sign-in check: it is used once and
+	// never recorded, logged or kept.
+	Password string `json:"password,omitempty"`
+	// Addresses are the LAN addresses Redis should listen on (network_set).
+	Addresses []string `json:"addresses,omitempty"`
 }
 
 // StoreAnswer is the agent's reply to a request, or news about the session.

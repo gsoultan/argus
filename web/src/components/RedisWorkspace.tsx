@@ -367,7 +367,7 @@ export function RedisWorkspace({ database, access, getTicket, endpoint, onAskFor
           <Suspense fallback={<Loader size="sm" m="md" />}>
             {tab === 'overview' && <RedisOverview s={s} canSave={can('save')} change={change} go={setTab} />}
             {tab === 'config' && <RedisConfig s={s} canSet={can('config_set')} change={change} />}
-            {tab === 'users' && <RedisUsers s={s} database={database} canManage={can('acl_setuser')} canCheck={can('acl_dryrun')} change={change} />}
+            {tab === 'users' && <RedisUsers s={s} database={database} canManage={can('acl_setuser')} canCheck={can('acl_dryrun')} canNetwork={can('network')} change={change} />}
           </Suspense>
         </Box>
       )}
