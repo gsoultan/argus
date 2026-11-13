@@ -18,6 +18,8 @@ export interface Costs {
   lastMonth: number
   lastMonthToDate: number
   forecast: number | null
+  /** The part of forecast that is AWS's prediction, from today to the month's end; the rest was spent before today. */
+  forecastRest?: number | null
   days: DayCost[]
   services: ServiceCost[]
 }
@@ -157,9 +159,18 @@ export function totals(reads: CloudCostRead[]) {
     lastMonth: sum((c) => c.lastMonth),
     lastMonthToDate: sum((c) => c.lastMonthToDate),
     forecast: forecastWhole ? sum((c) => c.forecast ?? 0) : null,
+    forecastRest: forecastWhole && cur.every((c) => c.forecastRest != null) ? sum((c) => c.forecastRest ?? 0) : null,
     days: [...days.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, amount]) => ({ date, amount: Math.round(amount * 100) / 100 })),
     services: [...services.values()].sort((a, b) => b.thisMonth - a.thisMonth || a.service.localeCompare(b.service)),
   }
+}
+
+/** Days from today to the end of month ("2026-11"), today included, in UTC as AWS counts them. */
+export function daysLeft(month: string, now = new Date()): number {
+  const [y = 0, m = 0] = month.split('-').map(Number)
+  const end = Date.UTC(y, m, 1)
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+  return Math.max(0, Math.round((end - today) / 86_400_000))
 }
 
 /** Where a budget stands: the share spent, and whether spend or forecast is over. */

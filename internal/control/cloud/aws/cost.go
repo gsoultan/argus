@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"errors"
+	"math"
 	"strconv"
 	"time"
 
@@ -85,10 +86,14 @@ func readCosts(ctx context.Context, c costAPI, accountID string, now time.Time) 
 		in.NextPageToken = out.NextPageToken
 	}
 
-	// The forecast covers today to the month's end; spent before today
-	// plus that is the month's end. On the last day there is nothing to
+	// The forecast is asked from today to the month's end, but with
+	// MONTHLY granularity AWS answers for the whole month: its Total
+	// already holds what was spent before today, and is the figure the
+	// Billing home page shows as the month's forecast. Adding the spend
+	// before today to it counts that spend twice. ForecastRest is the part
+	// that is AWS's prediction. On the last day there is nothing to
 	// forecast and AWS refuses; with too little history it refuses too.
-	var forecast *float64
+	var forecast, rest *float64
 	if next := this.AddDate(0, 1, 0); today.Before(next) && !today.AddDate(0, 0, 1).Equal(next) {
 		out, err := c.GetCostForecast(ctx, &costexplorer.GetCostForecastInput{
 			TimePeriod:  &cetypes.DateInterval{Start: awssdk.String(today.Format(time.DateOnly)), End: awssdk.String(next.Format(time.DateOnly))},
@@ -102,12 +107,17 @@ func readCosts(ctx context.Context, c costAPI, accountID string, now time.Time) 
 						before += r.Amount
 					}
 				}
-				total := before + f
-				forecast = &total
+				r := max(f-before, 0)
+				forecast, rest = &f, &r
 			}
 		}
 	}
-	return cloud.SumCosts(now, currency, rows, forecast), nil
+	costs := cloud.SumCosts(now, currency, rows, forecast)
+	if rest != nil {
+		r := math.Round(*rest*100) / 100
+		costs.ForecastRest = &r
+	}
+	return costs, nil
 }
 
 func costErr(err error) error {
