@@ -594,7 +594,9 @@ func TestDesktopModeIsValidated(t *testing.T) {
 	}{
 		{AssetInput{Hostname: "w1", Protocol: "rdp"}, "rdp", false},
 		{AssetInput{Hostname: "w1", Protocol: "rdp", DesktopMode: "Screen"}, "screen", false},
-		{AssetInput{Hostname: "l1", Protocol: "ssh", DesktopMode: "screen"}, "", true},
+		// A Linux or Mac server shares its screen beside the terminal.
+		{AssetInput{Hostname: "l1", Protocol: "ssh", DesktopMode: "screen"}, "screen", false},
+		{AssetInput{Hostname: "l1", Protocol: "ssh"}, "rdp", false},
 		{AssetInput{Hostname: "w1", Protocol: "rdp", DesktopMode: "vnc"}, "", true},
 	} {
 		got, err := tc.in.normalise()

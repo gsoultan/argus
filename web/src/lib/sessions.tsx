@@ -75,6 +75,13 @@ export function waysFor(asset: Asset): Way[] {
   // A Windows server: its desktop first, and the agent's terminal and files
   // as well, which need no Windows password.
   if (asset.protocol === 'rdp') return [asset.desktopMode === 'screen' ? 'screen' : 'desktop', 'terminal', 'files', 'split']
+  // A Linux or Mac machine whose screen is shared: someone's workstation
+  // is mostly for its screen, a server mostly for its terminal.
+  if (asset.desktopMode === 'screen') {
+    return asset.kind === 'workstation'
+      ? ['screen', 'terminal', 'files', 'split']
+      : ['terminal', 'screen', 'files', 'split']
+  }
   return ['terminal', 'files', 'split']
 }
 

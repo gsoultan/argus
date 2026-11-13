@@ -550,3 +550,36 @@ func TestScreenEndsWhenClosedOnAStillScreen(t *testing.T) {
 		t.Fatal("the session went on after it was closed")
 	}
 }
+
+// noSASHost is a console with no secure attention sequence (Linux, macOS).
+type noSASHost struct{ *fakeScreenHost }
+
+func (noSASHost) SecureAttention() error { return errNoSecureAttention }
+
+// Where there is no secure attention sequence, Ctrl+Alt+Del reaches the
+// screen as the keys, as it would from a keyboard there.
+func TestScreenSendsCtrlAltDelAsKeysWhereThereIsNoSecureSequence(t *testing.T) {
+	host := noSASHost{&fakeScreenHost{session: 1,
+		screens: map[uint32]*fakeScreen{1: newFakeScreen(64, 64, 0)}}}
+	c, err := openScreen(host, false, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	for _, e := range []rdp.InputEvent{
+		{Kind: "key", Scancode: 0x1D, Down: true},
+		{Kind: "key", Scancode: 0x38, Down: true},
+		{Kind: "key", Scancode: 0x53, Extended: true, Down: true},
+	} {
+		if err := c.Send(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for host.screens[1].inputCount() < 3 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if n := host.screens[1].inputCount(); n != 3 {
+		t.Fatalf("%d of the three keys reached the console", n)
+	}
+}
