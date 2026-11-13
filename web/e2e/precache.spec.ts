@@ -63,9 +63,13 @@ const DIST = new URL('../dist/', import.meta.url).pathname
  * the check that asks the server for its index.html every minute and brings
  * the new build in. It has to be in the shell, since the shell is what a tab
  * left open across an update is running.
+ * 732.0 kB on main once that, saving an asset's alias on servers and
+ * workstations, and screen sharing on Linux and macOS were all merged: each
+ * fitted alone, and together they went over 732 by 0.02 kB. Nothing new is
+ * stored; the same ten entries.
  */
 const MAX_ENTRIES = 10
-const MAX_KB = 732
+const MAX_KB = 733
 
 async function precached(): Promise<string[]> {
   const sw = await readFile(join(DIST, 'sw.js'), 'utf8')
