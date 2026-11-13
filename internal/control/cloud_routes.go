@@ -242,7 +242,7 @@ func (a *API) cloudPrepare(ctx context.Context, in cloudPrepareIn) (CloudPrepare
 		Provider: provider, AccountID: accountID, ExternalID: ext, Principal: base.Principal, Source: base.Source,
 		Identity: ident.ID, IdentityName: ident.Name, Kept: kept,
 		RoleName: aws.ReadRoleName, ReadRoleARN: cloudRoleARN(accountID, aws.ReadRoleName),
-		Template: aws.TemplateTrusting(principals, ext, in.Manage), Command: aws.DeployCommandTrusting(principals, ext, in.Manage),
+		Template: aws.TemplateFor(accountID, principals, ext, in.Manage), Command: aws.DeployCommandFor(accountID, principals, ext, in.Manage),
 	}
 	if in.Manage {
 		out.ManageRoleName = aws.ManageRoleName
@@ -250,7 +250,7 @@ func (a *API) cloudPrepare(ctx context.Context, in cloudPrepareIn) (CloudPrepare
 	}
 	if _, ok := ident.Provider.(cloud.Deployer); ok && cloud.HomeAccount(base.Principal) == accountID {
 		out.CanDeploy = true
-		out.DeployRights = aws.DeployRights(accountID)
+		out.DeployRights = aws.DeployRights(accountID, base.Principal)
 	}
 	return out, http.StatusOK, nil
 }
