@@ -50,6 +50,16 @@ const (
 	// screenMaxRegions is how many rectangles a picture names before one
 	// around them all is cheaper.
 	screenMaxRegions = 128
+
+	// screenVideoBits is what motion costs on average, in bits a second for
+	// each pixel of the screen: 3 Mbit/s at 1024x768, 8 Mbit/s at full HD,
+	// and twice that at the peak. Two bits still smudged small text while
+	// it scrolled. It is still sent again exactly an eighth of a second
+	// after it stops, and H.264 takes nothing more from the recording's own
+	// compression, so a recording of a lot of motion is larger for it.
+	screenVideoBits = 4
+	// screenVideoMaxBits caps the mean, for screens past full HD.
+	screenVideoMaxBits = 24_000_000
 )
 
 // The helper's video messages.

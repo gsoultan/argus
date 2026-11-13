@@ -92,6 +92,7 @@ const (
 	scrInput   byte = 10 // one rdp.InputEvent as JSON
 	scrRefresh byte = 11 // send every tile next time
 	scrNext    byte = 12 // room for one more frame
+	// scrRate (13) is what the link carries: see screen_link.go.
 )
 
 // maxScreenMsg bounds one message from the helper. A full 4K screen of
@@ -347,6 +348,8 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 	// lastInput is when the last key or click went in (UnixNano), until a
 	// frame captured after it is sent: see screenStats.input.
 	var lastInput atomic.Int64
+	// linkRate is what the agent last said the link carries (scrRate).
+	var linkRate atomic.Int64
 	done := make(chan error, 1)
 	stop := make(chan struct{})
 	defer close(stop)
@@ -379,6 +382,10 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 				signal(refresh)
 			case scrNext:
 				signal(credit)
+			case scrRate:
+				if len(p) == 4 {
+					linkRate.Store(int64(binary.LittleEndian.Uint32(p)))
+				}
 			}
 		}
 	}()
@@ -428,6 +435,7 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 	mo := motion{newVideo: newVideo, out: out}
 	defer mo.close()
 	stats := newScreenStats()
+	var budget linkBudget
 	credits := 1
 	force := true
 	lastW, lastH := 0, 0
@@ -511,6 +519,10 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 
 		now := found
 		sent := false
+		// What the link carries, as the agent last measured it: motion
+		// costs no more, and sharpening is spread to fit.
+		budget.rate = int(linkRate.Load())
+		mo.setRate(budget.rate)
 		if !repaint && mo.wants(len(jobs), now) {
 			ok, err := mo.send(last, &diff, &sharp, jobs, now)
 			if err != nil {
@@ -530,7 +542,7 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 			}
 		}
 		if last.fb != nil {
-			for _, i := range sharp.due(now, busy, screenRefineMax) {
+			for _, i := range sharp.due(now, busy, budget.refine()) {
 				jobs = append(jobs, diff.job(last, i))
 			}
 		}
@@ -562,11 +574,14 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 			}
 			continue
 		}
+		exact := 0
 		for _, b := range batches {
+			exact += len(b)
 			if err := writeScreenMsg(out, scrRects, b); err != nil {
 				return err
 			}
 		}
+		budget.sized(len(jobs), exact)
 		if err := writeScreenMsg(out, scrFrame, nil); err != nil {
 			return err
 		}
@@ -604,6 +619,16 @@ type motion struct {
 	off     bool
 	needKey bool
 	last    time.Time
+	// rate is what the link carries, in bits a second; 0 is no limit.
+	rate int
+}
+
+// setRate holds motion to what the link carries, where the encoder can be.
+func (m *motion) setRate(bits int) {
+	m.rate = bits
+	if r, ok := m.video.(screenRater); ok {
+		r.SetBitrate(bits)
+	}
 }
 
 // wants says whether a frame of changed tiles is motion.
@@ -684,6 +709,7 @@ func (m *motion) open(width, height int) error {
 		return m.disable(err.Error())
 	}
 	m.video, m.w, m.h, m.needKey = v, width, height, true
+	m.setRate(m.rate)
 	return writeScreenMsg(m.out, scrCodec, []byte("h264"))
 }
 
@@ -822,6 +848,8 @@ type screenClient struct {
 	mark     uint32 // a frame ended and its mark is not yet written
 	markedAt [8]time.Time
 	rtt      time.Duration
+	// link reads what the link carries from those acknowledgements.
+	link linkGauge
 }
 
 // openScreen starts the helper in the console's session and waits for it
@@ -856,6 +884,7 @@ func openScreen(host screenHost, video bool, log *slog.Logger) (*screenClient, e
 			if m.typ == scrSize && len(m.p) == 4 {
 				c.width = int(binary.LittleEndian.Uint16(m.p[0:]))
 				c.height = int(binary.LittleEndian.Uint16(m.p[2:]))
+				c.link.size(c.width, c.height)
 				// The first tiles follow; NextBitmaps reads them.
 				return c, nil
 			}
@@ -887,6 +916,9 @@ func (c *screenClient) start(session uint32) error {
 	c.gen++
 	gen := c.gen
 	c.helper, c.session = h, session
+	// A new helper has been told nothing about the link.
+	c.link.told = -1
+	c.tellLocked()
 	// A new helper starts with one credit of its own.
 	c.holding, c.granted = true, time.Now()
 	c.mu.Unlock()
@@ -951,6 +983,7 @@ func (c *screenClient) NextBitmaps() ([]rdp.Bitmap, error) {
 					h := int(binary.LittleEndian.Uint16(m.p[2:]))
 					c.mu.Lock()
 					c.width, c.height = w, h
+					c.link.size(w, h)
 					c.mu.Unlock()
 					c.record(map[string]any{"type": "resize", "width": w, "height": h})
 					return nil, nil
@@ -1144,7 +1177,7 @@ func (c *screenClient) grantLocked(floor bool) {
 	if c.holding || c.closed || c.helper == nil {
 		return
 	}
-	room := !c.acks || c.marked-c.acked < screenWindow
+	room := !c.acks || c.marked-c.acked < c.link.window()
 	if !room && !(floor && time.Since(c.granted) >= screenAckFloor) {
 		return
 	}
@@ -1164,6 +1197,7 @@ func (c *screenClient) TakeMark() (uint32, time.Duration, bool) {
 	id := c.mark
 	c.mark = 0
 	c.markedAt[id%uint32(len(c.markedAt))] = time.Now()
+	c.link.mark(id, time.Now())
 	return id, c.rtt, true
 }
 
@@ -1183,7 +1217,20 @@ func (c *screenClient) Ack(id uint32) {
 	if id > c.acked {
 		c.acked = id
 	}
+	c.link.ack(id, time.Now())
+	c.tellLocked()
 	c.grantLocked(false)
+}
+
+// tellLocked tells the helper what the link carries, when that has moved.
+// c.mu is held.
+func (c *screenClient) tellLocked() {
+	if c.closed || c.helper == nil {
+		return
+	}
+	if bits, ok := c.link.tell(); ok {
+		_ = writeScreenMsg(c.helper, scrRate, encodeRate(bits))
+	}
 }
 
 func (c *screenClient) record(v any) {
