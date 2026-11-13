@@ -284,6 +284,10 @@ type Packages struct {
 	// Changed is called when there is something new to report, so it
 	// reaches the console without waiting for the next heartbeat.
 	Changed func()
+	// RunEnded is called once when a run finishes, so what the run changed
+	// about the host, such as its OS after a release upgrade, is looked at
+	// again without waiting for the next facts pass.
+	RunEnded func()
 	// Fetch downloads a library file for a file_install run, on the
 	// agent's credential.
 	Fetch AppFetch
@@ -652,6 +656,12 @@ func (p *Packages) Watch(ctx context.Context) {
 func (p *Packages) tick(ctx context.Context) {
 	if p.followRun(ctx) {
 		p.changed()
+		p.mu.Lock()
+		ended := p.run.Finished()
+		p.mu.Unlock()
+		if ended && p.RunEnded != nil {
+			p.RunEnded()
+		}
 	}
 	p.maybeCheck(ctx)
 }

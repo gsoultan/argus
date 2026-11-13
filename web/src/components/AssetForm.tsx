@@ -152,9 +152,16 @@ export function AssetForm({
   const submit = async () => {
     // A device's principals are fixed; a row from before it was one, or one
     // emptied by hand, gets both back rather than becoming unopenable.
-    const input: AssetInput = device && form.principals.length === 0
-      ? { ...form, principals: [...DEVICE_PRINCIPALS] }
-      : form
+    // Control mode and approval belong to a device and before-connecting to
+    // everything else; each is sent only where it applies, so the control
+    // plane never sees a setting the asset cannot have.
+    const input: AssetInput = device
+      ? {
+          ...form,
+          connectAsk: null,
+          principals: form.principals.length === 0 ? [...DEVICE_PRINCIPALS] : form.principals,
+        }
+      : { ...form, controlMode: undefined, controlNeedsApproval: undefined }
     const ok = await run(
       () =>
         asset

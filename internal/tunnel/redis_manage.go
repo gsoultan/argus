@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"net/netip"
 	"regexp"
 	"sort"
 	"strconv"
@@ -40,7 +41,15 @@ const (
 	RedisOpACLSet    = "acl_setuser"
 	RedisOpACLDel    = "acl_deluser"
 	RedisOpACLDryRun = "acl_dryrun" // would these rules allow this command
+	RedisOpACLLogin  = "acl_login"  // sign in as a user, on every address Redis listens on
+
+	RedisOpNetwork       = "network"        // where Redis listens and who can reach it
+	RedisOpNetworkSet    = "network_set"    // which LAN addresses it listens on
+	RedisOpDefaultSecure = "default_secure" // give the default user a password
 )
+
+// MaxRedisPassword bounds a password sent for a sign-in check.
+const MaxRedisPassword = 512
 
 // RedisBulkApprovalOver is how many keys a bulk change may touch before it
 // waits for approval where changes need it.
@@ -82,9 +91,10 @@ func RedisOpLevel(op string) string {
 		return LevelRead
 	case RedisOpEdit, RedisOpCount, RedisOpBulk, RedisOpUndo:
 		return LevelWrite
-	case RedisOpConfigGet, RedisOpACLList, RedisOpACLDryRun:
+	case RedisOpConfigGet, RedisOpACLList, RedisOpACLDryRun, RedisOpNetwork:
 		return LevelOwner
-	case RedisOpConfigSet, RedisOpSave, RedisOpACLSet, RedisOpACLDel:
+	case RedisOpConfigSet, RedisOpSave, RedisOpACLSet, RedisOpACLDel, RedisOpACLLogin,
+		RedisOpNetworkSet, RedisOpDefaultSecure:
 		return LevelDBA
 	}
 	return ""
@@ -116,6 +126,11 @@ func RedisApproval(req StoreRequest) (RedisApprovalNeed, bool) {
 		return RedisApprovalNeed{Text: JoinRedisCommand(RedisSetUserArgs(req))}, true
 	case RedisOpACLDel:
 		return RedisApprovalNeed{Text: JoinRedisCommand([]string{"ACL", "DELUSER", req.User})}, true
+	case RedisOpNetworkSet:
+		return RedisApprovalNeed{Text: JoinRedisCommand([]string{"CONFIG", "SET", "bind", RedisBind(req.Addresses)}) +
+			"\nCONFIG REWRITE"}, true
+	case RedisOpDefaultSecure:
+		return RedisApprovalNeed{Text: "CONFIG SET requirepass <a new password made on the server>\nCONFIG REWRITE"}, true
 	}
 	return RedisApprovalNeed{}, false
 }
@@ -479,3 +494,28 @@ func RedisHashRef(h string) string {
 // ValidRedisHashRef reports whether r names a password to remove: a whole
 // hash or a short one as RedisHashRef shows it.
 func ValidRedisHashRef(r string) bool { return ValidRedisHash(r) || redisHashRefRE.MatchString(r) }
+
+// RedisBind is the bind line for listening on the loopback and these LAN
+// addresses. Loopback stays, because the agent signs in there; each LAN
+// address is optional ("-"), so Redis still starts if it goes away.
+func RedisBind(addrs []string) string {
+	out := []string{"127.0.0.1", "-::1"}
+	for _, a := range addrs {
+		out = append(out, "-"+a)
+	}
+	return strings.Join(out, " ")
+}
+
+// ValidRedisLANAddress says why addr may not be one Redis listens on for
+// the LAN, or "". Only private (RFC 1918, RFC 4193) addresses: opening a
+// Redis to a public address is done on the server, never from here.
+func ValidRedisLANAddress(addr string) string {
+	ip, err := netip.ParseAddr(addr)
+	if err != nil || ip.Zone() != "" {
+		return addr + " is not an IP address"
+	}
+	if !ip.IsPrivate() {
+		return addr + " is not a private LAN address; Argus opens Redis only to the LAN"
+	}
+	return ""
+}

@@ -864,6 +864,16 @@ func runDaemon(args []string) int {
 	}
 	go loop(log, "heartbeat", *beatEvery, stop, heartbeat)
 	go agent.Supervise(ctx, log, "agent updates", updater.Watch)
+	// A finished package run can change the OS itself (a point release
+	// updating os-release, or a release upgrade), so it asks for a facts pass
+	// rather than leaving the console on the old version for ten minutes.
+	factsNow := make(chan struct{}, 1)
+	pkgs.RunEnded = func() {
+		select {
+		case factsNow <- struct{}{}:
+		default:
+		}
+	}
 	go agent.Supervise(ctx, log, "package updates", pkgs.Watch)
 	logs.Changed = func() {
 		if rep.Enabled() {
@@ -890,7 +900,7 @@ func runDaemon(args []string) int {
 		lastFacts []byte
 		lastSent  time.Time
 	)
-	go loop(log, "host facts", 10*time.Minute, stop, func() {
+	go loopOrNow(log, "host facts", 10*time.Minute, stop, factsNow, func() {
 		f := agent.Discover(agent.DefaultDiscoverConfig())
 		apps := agent.DiscoverApps(ctx)
 		sys := agent.DiscoverSystem()
@@ -1207,6 +1217,24 @@ func loop(log *slog.Logger, what string, every time.Duration, stop <-chan struct
 	for {
 		select {
 		case <-t.C:
+			pass()
+		case <-stop:
+			return
+		}
+	}
+}
+
+// loopOrNow is loop that also runs a pass whenever now is signalled.
+func loopOrNow(log *slog.Logger, what string, every time.Duration, stop <-chan struct{}, now <-chan struct{}, fn func()) {
+	pass := func() { _ = agent.Protect(log, what, fn) }
+	pass()
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-t.C:
+			pass()
+		case <-now:
 			pass()
 		case <-stop:
 			return

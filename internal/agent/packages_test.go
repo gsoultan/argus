@@ -1013,3 +1013,38 @@ func TestDaemonRebootOnlyThatNeverHappened(t *testing.T) {
 		t.Fatalf("run = %+v", st)
 	}
 }
+
+// A finished run asks for a facts pass once, so a release upgrade's new OS
+// reaches the console as the run ends, including when it ends in a reboot.
+func TestDaemonSaysOnceWhenARunEnds(t *testing.T) {
+	fp := &fakePlatform{boot: "b2"}
+	p, clock := daemon(t, fp)
+	ended := 0
+	p.RunEnded = func() { ended++ }
+	writeFileAtomicT(t, filepath.Join(p.StateDir, packagesRunFile), PackageRunStatus{ID: "dededede-1",
+		State: RunRebooting, Unit: "u", BootID: "b1", StartedAt: clock.Add(-time.Hour)})
+	p.tick(context.Background())
+	if st := p.Beat().Run; st == nil || st.State != RunDone {
+		t.Fatalf("run = %+v", st)
+	}
+	p.tick(context.Background())
+	if ended != 1 {
+		t.Errorf("RunEnded called %d times, want once", ended)
+	}
+}
+
+// Progress is not an end: no facts pass for every line of output.
+func TestDaemonDoesNotSayARunEndedWhileItRuns(t *testing.T) {
+	fp := &fakePlatform{boot: "b1", isActive: true}
+	p, clock := daemon(t, fp)
+	ended := 0
+	p.RunEnded = func() { ended++ }
+	req := PackageRunRequest{ID: "edededed-1", Mode: PackagesAll}
+	writeFileAtomicT(t, filepath.Join(p.StateDir, packagesRunFile), PackageRunStatus{ID: req.ID,
+		State: RunRunning, Step: "install", Unit: "u", BootID: "b1", StartedAt: clock.Add(-time.Minute), At: *clock})
+	p.Handle(context.Background(), &PackageOrders{Run: &req})
+	p.tick(context.Background())
+	if ended != 0 {
+		t.Errorf("RunEnded called %d times for a run still going", ended)
+	}
+}

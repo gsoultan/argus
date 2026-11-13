@@ -22,6 +22,10 @@ an approval id too, so the API and the agent refuse the same thing.
 // redisGate decides whether a Redis request may pass to the agent. It
 // returns the refusal to answer with, or nil.
 func (a *API) redisGate(ctx context.Context, email string, db Database, level string, req *tunnel.StoreRequest) *tunnel.StoreAnswer {
+	// A password reaches the agent only for the sign-in check it is for.
+	if req.Op != tunnel.RedisOpACLLogin {
+		req.Password = ""
+	}
 	need := tunnel.RedisOpLevel(req.Op)
 	if need == "" {
 		req.Approval = ""

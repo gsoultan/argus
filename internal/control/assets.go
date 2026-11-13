@@ -197,7 +197,11 @@ func (in AssetInput) normalise() (AssetInput, error) {
 		if in.Kind == "" {
 			in.Kind = "server"
 		}
-		if in.ControlMode != "" || in.ControlNeedsApproval {
+		// "attended" without approval is what every server and workstation
+		// is stored with, so an edit form that sends the asset back as it
+		// read it must not be refused for it. Only a setting that would mean
+		// something on a device is.
+		if (in.ControlMode != "" && in.ControlMode != "attended") || in.ControlNeedsApproval {
 			return bad("control mode and approval apply to a device, not a %s", in.Kind)
 		}
 		in.ControlMode = "attended"

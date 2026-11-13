@@ -277,3 +277,46 @@ export function editText(edits: string[][]): string {
 export function unitSeconds(n: number, unit: 'seconds' | 'minutes' | 'hours' | 'days'): number {
   return Math.round(n * { seconds: 1, minutes: 60, hours: 3600, days: 86400 }[unit])
 }
+
+export type AddressState = 'signin' | 'open' | 'protected' | 'closed'
+export interface RedisAddress { ip: string; iface: string; prefix: string; private: boolean; state: AddressState; detail?: string }
+export interface RedisNetworkData {
+  port: number; tlsPort?: number; bind: string[]; protectedMode: boolean; defaultOpen: boolean; defaultClients: number
+  configFile: string; agentConf: boolean; addresses: RedisAddress[]; firewall: '' | 'ufw' | 'firewalld'
+}
+export interface RedisNetworkResult { network: RedisNetworkData; rewritten: boolean; rewriteError?: string }
+export interface RedisSecureResult { network: RedisNetworkData; savedTo: string }
+export interface RedisLogin { address: string; ok: boolean; detail?: string }
+export interface RedisLoginResult { user: string; port: number; logins: RedisLogin[] }
+
+export const ADDRESS_STATE: Record<AddressState, { label: string; tone: string }> = {
+  signin: { label: 'Reachable, asks for a sign-in', tone: 'teal' },
+  open: { label: 'Reachable with no sign-in', tone: 'rose' },
+  protected: { label: 'Refused by protected mode', tone: 'amber' },
+  closed: { label: 'Not listening', tone: 'slate' },
+}
+
+/** What the network can reach, in one line. */
+export function networkSummary(n: RedisNetworkData): { tone: Tone | 'teal'; text: string } {
+  const lan = n.addresses.filter((a) => a.state !== 'closed')
+  if (lan.some((a) => a.state === 'open')) return { tone: 'rose', text: `Anyone who reaches ${lan.filter((a) => a.state === 'open').map((a) => a.ip).join(', ')} can use Redis with no password.` }
+  if (lan.some((a) => a.state === 'protected')) return { tone: 'amber', text: 'Redis listens on the network, but protected mode refuses every client there until the default user has a password.' }
+  if (lan.length === 0) return { tone: 'azure', text: `Only programs on this server can connect: Redis listens on ${n.bind.join(' ') || 'its defaults'}.` }
+  return { tone: 'teal', text: `Clients on the LAN can connect to ${lan.map((a) => `${a.ip}:${n.port}`).join(', ')} with a user and password.` }
+}
+
+/** The firewall command that lets a LAN reach the port, for the firewall found. */
+export function firewallCommand(fw: RedisNetworkData['firewall'], prefix: string, port: number): string | null {
+  if (fw === 'ufw') return `sudo ufw allow from ${prefix} to any port ${port} proto tcp`
+  if (fw === 'firewalld') {
+    const fam = prefix.includes(':') ? 'ipv6' : 'ipv4'
+    return `sudo firewall-cmd --permanent --add-rich-rule='rule family="${fam}" source address="${prefix}" port port="${port}" protocol="tcp" accept' && sudo firewall-cmd --reload`
+  }
+  return null
+}
+
+/** How an application on the LAN checks it can sign in. */
+export function connectCommand(ip: string, port: number, user: string): string {
+  const host = ip.includes(':') ? `[${ip}]` : ip
+  return `redis-cli -h ${ip} -p ${port} --user ${user} --askpass PING   # or redis://${user}:<password>@${host}:${port}/0`
+}

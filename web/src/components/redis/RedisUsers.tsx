@@ -14,6 +14,8 @@ import {
   type RedisDryRun, type RedisUser, type RedisUserResult, type RedisUsersData,
 } from '~/lib/redisManage'
 import { dataOf, type ChangeAnswer } from '~/components/redis/useRedisChange'
+import { LoginResult, RedisNetwork, TestSignIn } from '~/components/redis/RedisNetwork'
+import type { RedisLoginResult } from '~/lib/redisManage'
 
 /*
 The server's own Redis users (ACL), for the applications that sign in to it,
@@ -23,11 +25,12 @@ the agent ever has the password; Redis keeps hashes too. Argus's own users and
 the one the agent signs in as are shown, not changed here.
 */
 
-export function RedisUsers({ s, database, canManage, canCheck, change }: {
+export function RedisUsers({ s, database, canManage, canCheck, canNetwork, change }: {
   s: StoreSession
   database: Database
   canManage: boolean
   canCheck: boolean
+  canNetwork: boolean
   change: (req: StoreRequest) => Promise<ChangeAnswer>
 }) {
   const [data, setData] = useState<RedisUsersData | null>(null)
@@ -36,6 +39,17 @@ export function RedisUsers({ s, database, canManage, canCheck, change }: {
   const [creating, setCreating] = useState(false)
   const [deleting, setDeleting] = useState<RedisUser | null>(null)
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null)
+  const [login, setLogin] = useState<RedisLoginResult | null>(null)
+  const [testing, setTesting] = useState<string | null>(null)
+
+  // Right after a user is made with a password typed or generated here,
+  // check it really signs in, here and on the LAN, while the password is
+  // still in hand.
+  const checkLogin = async (user: string, password: string) => {
+    const a = await s.ask({ op: 'acl_login', user, password })
+    const r = dataOf<RedisLoginResult>(a)
+    if (r) setLogin(r)
+  }
 
   const load = useCallback(async () => {
     const a = await s.ask({ op: 'acl_list' })
@@ -61,12 +75,13 @@ export function RedisUsers({ s, database, canManage, canCheck, change }: {
   return (
     <Stack gap="md" p="md">
       {note && <Alert color={note.ok ? 'teal' : 'rose'} withCloseButton onClose={() => setNote(null)}>{note.text}</Alert>}
+      {login && <LoginResult r={login} onClose={() => setLogin(null)} />}
       <SectionCard title="Server users" icon={IconUserShield}
         description={data.aclFile ? 'Kept in the server’s ACL file' : 'Kept in redis.conf (no aclfile is set)'}
         action={canManage ? <Button size="compact-xs" leftSection={<IconPlus size={12} />} onClick={() => setCreating(true)}>New user</Button> : undefined} flush>
         <Table verticalSpacing={6} fz="xs">
           <Table.Thead>
-            <Table.Tr><Table.Th>User</Table.Th><Table.Th>Passwords</Table.Th><Table.Th>Can reach</Table.Th><Table.Th ta="right">Signed in</Table.Th>{canManage && <Table.Th w={70} />}</Table.Tr>
+            <Table.Tr><Table.Th>User</Table.Th><Table.Th>Passwords</Table.Th><Table.Th>Can reach</Table.Th><Table.Th ta="right">Signed in</Table.Th>{canManage && <Table.Th w={190} />}</Table.Tr>
           </Table.Thead>
           <Table.Tbody>
             {own.map((u) => {
@@ -91,6 +106,7 @@ export function RedisUsers({ s, database, canManage, canCheck, change }: {
                       {!u.self && (
                         <Group gap={2} wrap="nowrap">
                           <Button size="compact-xs" variant="subtle" onClick={() => setEditing(u)}>Edit</Button>
+                          {u.on && !u.nopass && <Button size="compact-xs" variant="subtle" onClick={() => setTesting(u.name)}>Test sign-in</Button>}
                           {u.name !== 'default' && <ActionIcon size="sm" variant="subtle" color="rose" aria-label={`Delete ${u.name}`} onClick={() => setDeleting(u)}><IconTrash size={12} /></ActionIcon>}
                         </Group>
                       )}
@@ -102,6 +118,8 @@ export function RedisUsers({ s, database, canManage, canCheck, change }: {
           </Table.Tbody>
         </Table>
       </SectionCard>
+
+      {canNetwork && <RedisNetwork s={s} canChange={canManage} change={change} />}
 
       <SectionCard title="Argus session users" description="One per person and level while a session is open; made and removed by Argus" flush>
         <Table verticalSpacing={4} fz="xs">
@@ -115,14 +133,23 @@ export function RedisUsers({ s, database, canManage, canCheck, change }: {
       </SectionCard>
 
       {canCheck && <LevelCheck s={s} database={database} />}
+      <TestSignIn s={s} user={testing} onClose={() => setTesting(null)} onResult={setLogin} />
 
       {creating && (
         <UserForm s={s} onClose={() => setCreating(false)} existing={data.users.map((u) => u.name)}
-          onSave={async (req, what) => { const ok = saved(await change(req), what); if (ok) setCreating(false); return ok }} />
+          onSave={async (req, what, password) => {
+            const ok = saved(await change(req), what)
+            if (ok) { setCreating(false); if (password) void checkLogin(String(req.user), password) }
+            return ok
+          }} />
       )}
       {editing && (
         <UserForm s={s} user={editing} onClose={() => setEditing(null)} existing={[]}
-          onSave={async (req, what) => { const ok = saved(await change(req), what); if (ok) setEditing(null); return ok }} />
+          onSave={async (req, what, password) => {
+            const ok = saved(await change(req), what)
+            if (ok) { setEditing(null); if (password) void checkLogin(String(req.user), password) }
+            return ok
+          }} />
       )}
       <DeleteUser user={deleting} onClose={() => setDeleting(null)}
         onDelete={async (u) => { const ok = saved(await change({ op: 'acl_deluser', user: u.name }), `${u.name} was deleted.`); if (ok) setDeleting(null) }} />
@@ -139,7 +166,7 @@ function UserForm({ s, user, existing, onClose, onSave }: {
   user?: RedisUser
   existing: string[]
   onClose: () => void
-  onSave: (req: StoreRequest, what: string) => Promise<boolean>
+  onSave: (req: StoreRequest, what: string, password?: string) => Promise<boolean>
 }) {
   const create = !user
   const [name, setName] = useState(user?.name ?? '')
@@ -168,7 +195,7 @@ function UserForm({ s, user, existing, onClose, onSave }: {
     if (addPw && password) req.addHashes = [await sha256Hex(password)]
     if (remove.length) req.removeHashes = remove
     if (create || rulesChanged) req.rules = ruleList
-    await onSave(req, create ? `${name} was made.` : `${name} was changed.`)
+    await onSave(req, create ? `${name} was made.` : `${name} was changed.`, addPw && password && on ? password : undefined)
     setSaving(false)
   }
 

@@ -39,7 +39,7 @@ const db: Database = {
   createdBy: '', createdAt: '2026-11-02T00:00:00Z', tunnelConnected: true,
 }
 
-const ALL = ['run', 'scan', 'value', 'info', 'edit', 'count', 'bulk', 'undo_list', 'undo', 'config_get', 'config_set', 'save', 'acl_list', 'acl_setuser', 'acl_deluser', 'acl_dryrun']
+const ALL = ['run', 'scan', 'value', 'info', 'edit', 'count', 'bulk', 'undo_list', 'undo', 'config_get', 'config_set', 'save', 'acl_list', 'acl_setuser', 'acl_deluser', 'acl_dryrun', 'acl_login', 'network', 'network_set', 'default_secure']
 
 async function open() {
   renderWithProviders(
@@ -90,5 +90,44 @@ describe('Redis management', () => {
     expect(req.addHashes).toEqual([expect.stringMatching(/^[0-9a-f]{64}$/)])
     expect(JSON.stringify(req)).not.toContain('hunter2hunter2')
     expect(req.rules).toEqual(['~*', '+@read', '+@connection', '-@dangerous'])
+
+    // Made with a password typed here: it is checked for real, on every address.
+    const check = await ws.reply('acl_login', { type: 'result', data: { user: 'checkout-api', port: 6379, logins: [
+      { address: '127.0.0.1:6379', ok: true },
+      { address: '192.168.1.20:6379', ok: false, detail: 'nothing answers here: Redis does not listen on this address' },
+    ] } })
+    expect(check).toMatchObject({ user: 'checkout-api', password: 'hunter2hunter2' })
+    expect(await screen.findByText('checkout-api signs in on this server only')).toBeInTheDocument()
+  })
+
+  it('opens Redis to the LAN only on purpose, once the default user has a password', async () => {
+    const ws = await open()
+    fireEvent.click(screen.getByRole('tab', { name: 'Users & ACL' }))
+    await ws.reply('acl_list', { type: 'result', data: { aclFile: true, users: [] } })
+    const net = {
+      port: 6379, bind: ['127.0.0.1', '-::1'], protectedMode: true, defaultOpen: true, defaultClients: 0,
+      configFile: '/etc/redis/redis.conf', agentConf: true, firewall: 'ufw',
+      addresses: [{ ip: '192.168.1.20', iface: 'eth0', prefix: '192.168.1.0/24', private: true, state: 'closed' }],
+    }
+    await ws.reply('network', { type: 'result', data: net })
+    expect(await screen.findByText('The default user has no password')).toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText('Listen on 192.168.1.20'))
+    expect(screen.getByRole('button', { name: 'Open to the LAN…' })).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Give the default user a password' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Set a password' }))
+    await ws.reply('default_secure', { type: 'result', data: { savedTo: '/etc/redis/redis.conf', network: { ...net, defaultOpen: false } } })
+    fireEvent.click(await screen.findByLabelText('Listen on 192.168.1.20'))
+    fireEvent.click(screen.getByRole('button', { name: 'Open to the LAN…' }))
+    const go = await screen.findByRole('button', { name: 'Open to the LAN' })
+    expect(go).toBeDisabled()
+    expect(ws.sent.some((r) => r.op === 'network_set')).toBe(false)
+    fireEvent.click(screen.getByLabelText('I understand every machine on these networks can reach Redis'))
+    fireEvent.click(go)
+    const set = await ws.reply('network_set', { type: 'result', data: { rewritten: true, network: {
+      ...net, defaultOpen: false, bind: ['127.0.0.1', '-::1', '-192.168.1.20'],
+      addresses: [{ ...net.addresses[0], state: 'signin' }] } } })
+    expect(set).toMatchObject({ addresses: ['192.168.1.20'] })
+    expect(await screen.findByText('sudo ufw allow from 192.168.1.0/24 to any port 6379 proto tcp')).toBeInTheDocument()
   })
 })

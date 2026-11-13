@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_LEVEL_RULES, attention, editText, hashRef, keyRuleWords, keyspace, levelRules, rulesProblem, sha256Hex,
-  treeLevel, userFinding, userNameProblem, type RedisInfoData, type RedisUser,
+  treeLevel, userFinding, userNameProblem, networkSummary, firewallCommand, type RedisInfoData, type RedisUser,
 } from '~/lib/redisManage'
 
 describe('rulesProblem', () => {
@@ -77,5 +77,24 @@ describe('helpers', () => {
     const u: RedisUser = { name: 'default', on: true, nopass: true, passwords: [], keys: ['~*'], channels: ['&*'], commands: ['+@all'], selectors: [], argus: false, self: false, clients: 2 }
     expect(userFinding(u)?.tone).toBe('rose')
     expect(userFinding({ ...u, argus: true })).toBeNull()
+  })
+})
+
+describe('network', () => {
+  const base = {
+    port: 6379, bind: ['127.0.0.1', '-::1'], protectedMode: true, defaultOpen: false, defaultClients: 0,
+    configFile: '/etc/redis/redis.conf', agentConf: true, firewall: '' as const,
+    addresses: [{ ip: '192.168.1.20', iface: 'eth0', prefix: '192.168.1.0/24', private: true, state: 'closed' as const }],
+  }
+  it('says who can connect', () => {
+    expect(networkSummary(base).text).toMatch(/Only programs on this server/)
+    expect(networkSummary({ ...base, addresses: [{ ...base.addresses[0]!, state: 'protected' }] }).tone).toBe('amber')
+    expect(networkSummary({ ...base, addresses: [{ ...base.addresses[0]!, state: 'open' }] }).tone).toBe('rose')
+    expect(networkSummary({ ...base, addresses: [{ ...base.addresses[0]!, state: 'signin' }] }).text).toMatch(/192\.168\.1\.20:6379/)
+  })
+  it('gives the firewall command for the firewall found', () => {
+    expect(firewallCommand('ufw', '192.168.1.0/24', 6379)).toBe('sudo ufw allow from 192.168.1.0/24 to any port 6379 proto tcp')
+    expect(firewallCommand('firewalld', '10.0.0.0/8', 6380)).toMatch(/source address="10.0.0.0\/8" port port="6380"/)
+    expect(firewallCommand('', '10.0.0.0/8', 6380)).toBeNull()
   })
 })
