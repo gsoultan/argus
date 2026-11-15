@@ -54,19 +54,10 @@ func Server(opts ServerOptions) (*tls.Config, error) {
 		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 			return r.Get()
 		},
-		// 1.2 floor. 1.0 and 1.1 have no place in a product whose entire
-		// purpose is protecting privileged access.
-		MinVersion: tls.VersionTLS12,
-		// For 1.2 only; 1.3 negotiates its own and ignores this. AEAD suites
-		// with forward secrecy, nothing with CBC or RSA key exchange.
-		CipherSuites: []uint16{
-			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-			tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
-			tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
-		},
+		// TLS 1.3 only (see tlsconfig.MinVersion). 1.3 has no cipher suite
+		// list to configure: every suite it offers is AEAD with forward
+		// secrecy.
+		MinVersion: tlsconfig.MinVersion,
 	}
 
 	if opts.ClientCAFile != "" {

@@ -21,6 +21,12 @@ import (
 // pool that trusts it, standing in for a public CA.
 func server(t *testing.T) (*httptest.Server, *x509.CertPool) {
 	t.Helper()
+	return serverUpTo(t, 0)
+}
+
+// serverUpTo is server speaking TLS no newer than max (0: Go's newest).
+func serverUpTo(t *testing.T, max uint16) (*httptest.Server, *x509.CertPool) {
+	t.Helper()
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(time.Now().UnixNano()), Subject: pkix.Name{CommonName: "edge"},
@@ -35,7 +41,8 @@ func server(t *testing.T) (*httptest.Server, *x509.CertPool) {
 	}
 	cert, _ := x509.ParseCertificate(der)
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	srv.TLS = &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}},
+		MaxVersion: max}
 	srv.StartTLS()
 	t.Cleanup(srv.Close)
 	pool := x509.NewCertPool()

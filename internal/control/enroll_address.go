@@ -60,7 +60,9 @@ func probeServerPin(ctx context.Context, hostport string) (PinProbeResult, error
 	}
 	d := tls.Dialer{Config: &tls.Config{
 		ServerName: host,
-		MinVersion: tls.VersionTLS12,
+		// What an agent will accept: a server that cannot speak it is
+		// one no agent can enroll with.
+		MinVersion: tlsconfig.MinVersion,
 		// What is compared is the key, after the handshake; a chain check
 		// would only stop the probe from seeing it.
 		InsecureSkipVerify: true, //nolint:gosec // reads the key, trusts nothing

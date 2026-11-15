@@ -28,6 +28,14 @@ import (
 	"github.com/gsoultan/argus/internal/secrets"
 )
 
+// MinVersion is the oldest TLS version either end of an Argus link accepts:
+// the agent's tunnel and reports, enrollment, and the control plane's
+// listener. TLS 1.3 only: every handshake has forward secrecy, the
+// certificate is encrypted on the wire, and there are no cipher suites left
+// to choose badly. Agents are Go, which has spoken 1.3 since 1.13, so the
+// only peers this turns away are old browsers and old curl or proxies.
+const MinVersion = tls.VersionTLS13
+
 // ClientOptions configures an outbound connection.
 type ClientOptions struct {
 	// CAFile is the CA that signed the server's certificate. Empty uses the
@@ -52,7 +60,7 @@ type ClientOptions struct {
 // recordings and audit records.
 func Client(opts ClientOptions) (*tls.Config, error) {
 	cfg := &tls.Config{
-		MinVersion: tls.VersionTLS12,
+		MinVersion: MinVersion,
 		ServerName: opts.ServerName,
 	}
 

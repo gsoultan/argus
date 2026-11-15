@@ -15,8 +15,31 @@ func TestClientNeverSkipsVerification(t *testing.T) {
 	if cfg.InsecureSkipVerify {
 		t.Error("client config skips certificate verification")
 	}
-	if cfg.MinVersion < tls.VersionTLS12 {
-		t.Errorf("MinVersion = %x, want at least TLS 1.2", cfg.MinVersion)
+	if cfg.MinVersion != tls.VersionTLS13 {
+		t.Errorf("MinVersion = %x, want TLS 1.3", cfg.MinVersion)
+	}
+}
+
+// A control plane, or a proxy in front of it, that speaks nothing newer than
+// TLS 1.2 is refused by every way an agent trusts one: the CA, the pin, and
+// the pin-or-public fallback.
+func TestClientRefusesATLS12Server(t *testing.T) {
+	srv, pool := serverUpTo(t, tls.VersionTLS12)
+	pin := Pin(srv.Certificate())
+
+	pinned, err := Pinned(pin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orPublic, err := pinnedOrRoots(pin, pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byCA := &tls.Config{RootCAs: pool, MinVersion: MinVersion}
+	for name, cfg := range map[string]*tls.Config{"pinned": pinned, "pin or public": orPublic, "CA": byCA} {
+		if err := get(t, cfg, srv); err == nil {
+			t.Errorf("%s: connected to a TLS 1.2-only server", name)
+		}
 	}
 }
 

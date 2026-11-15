@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/recorder"
+	"github.com/gsoultan/argus/internal/tlsconfig"
 )
 
 // Client posts records to argus-control.
@@ -87,6 +88,8 @@ func NewWithTLS(baseURL, token, spoolPath string, tlsCfg *tls.Config, log *slog.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if tlsCfg != nil {
 		transport.TLSClientConfig = tlsCfg
+	} else {
+		transport.TLSClientConfig = &tls.Config{MinVersion: tlsconfig.MinVersion}
 	}
 	return &Client{
 		baseURL:   baseURL,

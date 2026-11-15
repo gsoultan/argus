@@ -109,15 +109,45 @@ func TestServerRefusesObsoleteTLS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Server: %v", err)
 	}
-	if cfg.MinVersion < tls.VersionTLS12 {
-		t.Errorf("MinVersion = %x, want at least TLS 1.2", cfg.MinVersion)
+	if cfg.MinVersion != tls.VersionTLS13 {
+		t.Errorf("MinVersion = %x, want TLS 1.3", cfg.MinVersion)
 	}
-	for _, suite := range cfg.CipherSuites {
-		for _, weak := range tls.InsecureCipherSuites() {
-			if suite == weak.ID {
-				t.Errorf("cipher suite %s is known-weak", weak.Name)
-			}
-		}
+}
+
+// The refusal itself, on a real handshake: a client that offers nothing newer
+// than TLS 1.2 does not get a connection, and one that offers 1.3 gets 1.3.
+func TestServerRefusesATLS12Client(t *testing.T) {
+	dir := devPKI(t)
+	serverTLS, err := Server(ServerOptions{
+		CertFile: p(dir, "server.crt"), KeyFile: p(dir, "server.key"),
+	})
+	if err != nil {
+		t.Fatalf("Server: %v", err)
+	}
+	url := startTLSServer(t, serverTLS, http.HandlerFunc(
+		func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) }))
+	pool, err := tlsconfig.LoadCAPool(p(dir, "ca.crt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	old := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
+		RootCAs: pool, MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12}}}
+	if resp, err := old.Get(url); err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("a TLS 1.2-only client was served")
+	}
+
+	// What an agent already installed sends: Go's default, which offers 1.3.
+	current := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
+		RootCAs: pool, MinVersion: tls.VersionTLS12}}}
+	resp, err := current.Get(url)
+	if err != nil {
+		t.Fatalf("an agent built before this change could not connect: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.TLS == nil || resp.TLS.Version != tls.VersionTLS13 {
+		t.Errorf("negotiated %x, want TLS 1.3", resp.TLS.Version)
 	}
 }
 
