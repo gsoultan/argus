@@ -36,6 +36,13 @@ vi.mock('~/lib/packageApi', async (orig) => ({
   ...live,
 }))
 
+const soft = vi.hoisted(() => ({ previewSoftware: vi.fn() }))
+
+vi.mock('~/lib/softwareApi', async (orig) => ({
+  ...(await orig<typeof import('~/lib/softwareApi')>()),
+  ...soft,
+}))
+
 vi.mock('~/components/links', () => ({
   AnchorLink: ({ children }: { children: React.ReactNode }) => <a href="/assets">{children}</a>,
 }))
@@ -343,6 +350,29 @@ describe('Release upgrade', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: /^Install/ }))
     await waitFor(() => expect(live.startPackageRun).toHaveBeenCalledWith('a1',
       expect.objectContaining({ mode: 'all' })))
+  })
+
+  it('lists what no source offers and removes only what nothing uses, through a preview', async () => {
+    live.assetPackages.mockResolvedValue(ready({ stranded: { count: 3, protected: 3,
+      unused: ['postgresql-17', 'postgresql-18-mobilitydb'],
+      kept: [{ name: 'postgresql-18', why: 'PostgreSQL 18 runs here' }] } }))
+    soft.previewSoftware.mockResolvedValue({
+      id: 'pv1', assetId: 'a1', action: 'remove', items: [{ name: 'postgresql-17' }, { name: 'postgresql-18-mobilitydb' }],
+      purge: false, startServices: false, needsApproval: false, createdBy: 'grace@example.com',
+      createdAt: new Date().toISOString(), expiresAt: new Date().toISOString(),
+      result: { action: 'remove', purge_allowed: false, hash: 'h', changes: [
+        { kind: 'remove', name: 'postgresql-17', from: '17.12' },
+        { kind: 'remove', name: 'postgresql-18-mobilitydb', from: '1.3.1' }] },
+    })
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    expect(await screen.findByText('3 installed packages no apt source offers')).toBeTruthy()
+    expect(screen.getByText(/will not remove PostgreSQL packages/)).toBeTruthy()
+    expect(screen.getByText(/PostgreSQL 18 runs here/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /Remove the 2 unused packages/ }))
+    await waitFor(() => expect(soft.previewSoftware).toHaveBeenCalledWith('a1', {
+      action: 'remove', items: [{ name: 'postgresql-17' }, { name: 'postgresql-18-mobilitydb' }] }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByRole('button', { name: 'Remove' })).toBeTruthy()
   })
 
   it('asks to update an agent too old to upgrade, with no button', async () => {

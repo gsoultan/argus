@@ -399,7 +399,7 @@ export function Changes({ preview: pv, hostname }: { preview: SoftwarePreview; h
 
 /* ── Remove, reinstall and undo: a preview to confirm ────────────────────── */
 
-function ConfirmPreview({ asset, preview, apps, onClose }: {
+export function ConfirmPreview({ asset, preview, apps, onClose }: {
   asset: Asset
   preview: SoftwarePreview
   apps: ServerApp[]
@@ -410,7 +410,7 @@ function ConfirmPreview({ asset, preview, apps, onClose }: {
   const ask = usePreviewSoftware(asset.id)
   const go = useStartSoftwareRun(asset.id)
   const removing = pv.action === 'remove'
-  const names = pv.items.map((i) => i.label || i.name).join(', ')
+  const names = pv.items.length > 3 ? `${pv.items.length} packages` : pv.items.map((i) => i.label || i.name).join(', ')
   const short = asset.hostname.split('.')[0] ?? asset.hostname
   const confirmed = !removing || typed.trim() === short || typed.trim() === asset.hostname
   // What runs here knows what is listening; say it before it stops.

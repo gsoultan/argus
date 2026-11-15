@@ -2285,6 +2285,17 @@ export interface ReleaseInfo {
   reason?: string
   /** Why not now: each something a person can fix first. */
   blockers?: string[]
+  /** What is installed that no apt source offers, which the upgrade cannot carry over. */
+  stranded?: StrandedPackages
+}
+
+/** Installed packages no apt source offers: the ones the agent showed nothing uses, and why it keeps the rest. */
+export interface StrandedPackages {
+  count: number
+  unused?: string[]
+  kept?: { name: string; why: string }[]
+  /** How many the upgrader will not remove (postgresql-*). */
+  protected?: number
 }
 
 export type PackageMode = 'off' | 'notify' | 'security' | 'all'

@@ -692,7 +692,19 @@ func (p *Packages) followRun(ctx context.Context) bool {
 	}
 	if !disk.Finished() && disk.Unit != "" && !p.platform.active(disk.Unit) &&
 		p.now().Sub(disk.StartedAt) > 10*time.Second {
-		disk = p.settle(ctx, disk)
+		if pid := releaseUpgraderAlive(); disk.Release != nil && pid != "" {
+			// The helper is gone but the upgrader it started is not: the
+			// upgrade is still going, and ends when it does.
+			disk.Message = "the upgrade to " + disk.Release.ToName + " is still going (process " + pid +
+				"), without the agent's helper; do not reboot. Its progress is in " + disk.Release.logFile()
+			if p.run.Message != disk.Message {
+				disk.At = p.now().UTC()
+			} else {
+				disk.At = p.run.At
+			}
+		} else {
+			disk = p.settle(ctx, disk)
+		}
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -747,6 +759,15 @@ func (p *Packages) settle(ctx context.Context, st PackageRunStatus) PackageRunSt
 		if len(st.Upgraded) == 0 {
 			st.Message = "the reboot did not happen, so the server still needs one"
 		}
+	case st.Release != nil && versionIs(osRelease()["VERSION_ID"], st.Release.To):
+		// The helper went before it said how the upgrade ended, but the
+		// server is on the new release: the upgrade got there.
+		if rebooted {
+			p.settleRelease(ctx, &st)
+		} else {
+			p.settleReleaseUnrebooted(ctx, &st)
+		}
+		p.askCheckAfter(st.ID)
 	default:
 		st.State, st.Step = RunInterrupted, ""
 		why := "the update stopped before it finished"

@@ -108,6 +108,23 @@ then wants to remove one of them, refuses because its deny list protects
 no source offers. Remove the ones you do not use, or make sure the source has
 packages for the new release, then try again.
 
+To catch this before an upgrade starts, the **New release available** card
+lists the installed packages that no apt source offers. The agent works out
+which of them nothing uses: no database on the server has their extension,
+no `shared_preload_libraries` (or session or local preload) setting loads
+their library, and no package that stays needs them. It does not offer a
+package that installs programs or services it cannot judge, or any extension
+of a PostgreSQL cluster it could not ask. **Remove the N unused packages…**
+simulates the removal on the server and shows every package before you
+confirm. It keeps configuration, and removes no data. The rest are listed
+with the reason each one stays.
+
+While the upgrader runs, it holds apt's lock. A check for updates then says
+an operating system upgrade is running, rather than failing. If the agent's
+helper stops while the upgrader itself goes on, the run stays open until the
+upgrader ends. Ubuntu writes the new release into `/etc/os-release` early,
+so do not judge by that file alone.
+
 If the upgrade tool fails part way, the server is **not** rebooted. The
 helper runs `dpkg --configure -a` and `apt-get -f install` to finish what can
 be finished, and the run's message says what to do next. Do not reboot until

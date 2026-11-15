@@ -81,6 +81,9 @@ type ReleaseInfo struct {
 	// all; Blockers why not now, each something a person can fix.
 	Reason   string   `json:"reason,omitempty"`
 	Blockers []string `json:"blockers,omitempty"`
+	// Stranded is what is installed that no apt source offers, which the
+	// upgrade cannot carry over and may stop on (packages_stranded.go).
+	Stranded *StrandedPackages `json:"stranded,omitempty"`
 }
 
 // ReleaseChange is the upgrade a run is making.
@@ -259,6 +262,9 @@ func (c PackageChecker) release(ctx context.Context, r PackageReport) *ReleaseIn
 		return info
 	}
 	info.Blockers = releaseBlockers(r)
+	if info.Tool == releaseToolUbuntu || info.Tool == releaseToolDebian {
+		info.Stranded = c.stranded(ctx)
+	}
 	return info
 }
 

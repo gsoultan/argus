@@ -46,7 +46,10 @@ const (
 	MaxSoftwareInstalled = 5000
 	MaxSoftwareFound     = 50
 	MaxSoftwareItems     = 50
-	MaxSoftwareVersions  = 20
+	// MaxSoftwareRemoveItems is higher: clearing out what a turned-off
+	// source left before a release upgrade can be hundreds of packages.
+	MaxSoftwareRemoveItems = 1000
+	MaxSoftwareVersions    = 20
 )
 
 // SoftwareItem is one package a person picked, with the version they picked
@@ -134,8 +137,11 @@ func ValidateSoftwareChange(action string, items []SoftwareItem, purge bool) err
 	if len(items) == 0 {
 		return errors.New("pick at least one package")
 	}
-	if len(items) > MaxSoftwareItems {
-		return fmt.Errorf("pick at most %d packages at a time", MaxSoftwareItems)
+	if max := MaxSoftwareItems; len(items) > max && (action != SoftwareRemove || len(items) > MaxSoftwareRemoveItems) {
+		if action == SoftwareRemove {
+			max = MaxSoftwareRemoveItems
+		}
+		return fmt.Errorf("pick at most %d packages at a time", max)
 	}
 	seen := map[string]bool{}
 	for _, it := range items {
