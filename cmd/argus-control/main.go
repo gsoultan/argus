@@ -574,6 +574,13 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 			"admins", api.SignInPolicy.Admins, "person", api.SignInPolicy.Person, "every", api.SignInPolicy.Every)
 	}
 	api.Version, api.AgentReleasesURL = version, cfg.AgentReleasesURL
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(cfg.AgentReleasesURL)), "http://") {
+		// Agents refuse it (agent.checkReleaseURL): over plain http the
+		// package and its checksums could both be replaced in transit.
+		log.Warn("agent_releases_url is plain http://; agents will refuse to update from it",
+			"agent_releases_url", cfg.AgentReleasesURL,
+			"detail", "serve the mirror over https://, or leave agent_releases_url unset for GitHub")
+	}
 	api.AndroidAPK = cfg.AndroidAPK
 	if (cfg.AgentReleaseCheck == nil || *cfg.AgentReleaseCheck) &&
 		(cfg.AgentReleasesURL == "" || cfg.AgentReleasesAPI != "") {

@@ -1022,6 +1022,47 @@ A control plane from before the console shipped, or before agents' tunnels,
 gets both by saving Settings once: the console is found where the package
 installs it, and **Addresses > QUIC** turns the tunnel's UDP listener on.
 
+### TLS 1.3 and signed heartbeat orders
+
+From this release both ends of every agent link speak TLS 1.3 only, and
+argus-control signs what it tells agents on each heartbeat. Agents and a
+control plane already installed keep working through the upgrade, in either
+order:
+
+| | Older argus-control | This argus-control |
+|---|---|---|
+| **Older agent** | as before | connects on TLS 1.3 (Go has offered it by default for years); ignores the signature, which is a response header, and acts on the reply as before |
+| **This agent** | connects on TLS 1.3, which the older control plane already accepts; gets no signature and acts on the reply as before | checks the signature; from its first good one it acts only on signed replies |
+
+The safe order is **argus-control first, then the agents** (see [Upgrading the agent](#upgrading-the-agent)). Each agent switches to signed replies on its first heartbeat after
+its tunnel has connected, and records that in `signed-orders.json` in its state
+directory. From then on a reply that is unsigned, signed with another key, for
+another server, or older than the last one it acted on changes nothing on the
+server, and the agent's log says why. Interactive sessions were already signed
+(session grants); this covers everything else a heartbeat can ask: package
+runs and reboots, release upgrades, agent updates, personal accounts and their
+sudo and SSH keys, direct SSH, log cleanup, disk growing, uninstall.
+
+What TLS 1.3 turns away is anything that cannot speak it to argus-control:
+
+- curl on OpenSSL older than 1.1.1 (CentOS/RHEL 7, Ubuntu 16.04, Debian 9)
+  running the install command. Install those servers' agents from the
+  package instead, then `argus-agent enroll`.
+- a load balancer or proxy that connects to argus-control with TLS 1.2 only.
+  Cloudflare speaks 1.3 unless it has been switched off for the zone.
+- very old browsers.
+
+Agents also refuse to update from a plain `http://` `agent_releases_url` (a
+loopback address excepted): the package and its checksums come from the same
+place, so anyone on the path could replace both. argus-control warns at start
+when it is set that way; serve the mirror over `https://`, or leave it unset
+for GitHub.
+
+If you change `signing_secret`, the agents' pinned key no longer matches:
+delete `grant-key.pub` from each agent's state directory and restart it, as for
+session grants. Until its tunnel has pinned the new key, an agent acts on no
+heartbeat orders.
+
 ### Coming from argus-gateway
 
 There is no `argus-gateway` any more. Every terminal and desktop opens from the

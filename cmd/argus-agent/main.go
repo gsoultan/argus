@@ -655,6 +655,9 @@ func runDaemon(args []string) int {
 	// One heartbeat at a time: an update reports a change at once, between
 	// the regular ones, and two in flight would apply replies out of order.
 	var beating sync.Mutex
+	// Which replies are acted on: signed ones only, once this agent has had
+	// one from its control plane. See internal/agent/orders.go.
+	orderGate := &agent.OrderGate{StateDir: *stateDir}
 	// Usage rides about one heartbeat a minute: often enough for the
 	// server page to be current, and half the writes of every beat.
 	var (
@@ -712,6 +715,15 @@ func runDaemon(args []string) int {
 			"logs":              logBeat,
 			"disks":             diskBeat,
 		})
+		// A reply the gate refuses is treated as one that never arrived:
+		// nothing in it starts, stops or changes anything here.
+		if ok {
+			orderGate.Host = hostname
+			if take, gerr := orderGate.Accept(reply.Signature, reply.Body); !take {
+				log.Error("heartbeat: the control plane's reply was not acted on", "error", gerr)
+				ok = false
+			}
+		}
 		// Like an update: only a delivered reply starts or stops anything.
 		if ok {
 			pkgs.Delivered(pkgBeat)

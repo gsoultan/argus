@@ -1071,14 +1071,44 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 			"detail", "coverage is not being tracked for this host; add it to the "+
 				"inventory or set its agent_hostname")
 		reply["warning"] = "no matching asset; coverage not tracked"
-		writeJSON(w, http.StatusOK, reply)
+		a.writeHeartbeatReply(w, r, in.Hostname, reply)
 		return
 	}
 	if err != nil {
 		a.fail(w, "heartbeat", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, reply)
+	a.writeHeartbeatReply(w, r, in.Hostname, reply)
+}
+
+// writeHeartbeatReply writes a heartbeat's reply with the control plane's
+// signature over its exact bytes in tunnel.OrdersHeader, so an agent can act
+// on the orders in it knowing they are this control plane's for this host and
+// not something a party on the link wrote (see tunnel/orders.go). The body is
+// what it always was; an agent older than signing never reads the header.
+//
+// With no grant key (no signing_secret) the reply goes unsigned, as before:
+// an agent that has had signed replies then acts on none, and says why.
+func (a *API) writeHeartbeatReply(w http.ResponseWriter, r *http.Request, host string, reply map[string]any) {
+	body, err := json.Marshal(reply)
+	if err != nil {
+		a.fail(w, "heartbeat reply", err)
+		return
+	}
+	body = append(body, '\n')
+	if a.Tunnels != nil {
+		if key := a.Tunnels.grantKeyFor(r.Context()); key != nil {
+			sig, serr := tunnel.SignOrders(key, host, body, time.Now())
+			if serr != nil {
+				a.fail(w, "sign heartbeat reply", serr)
+				return
+			}
+			w.Header().Set(tunnel.OrdersHeader, sig)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
 }
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */

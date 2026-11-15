@@ -332,6 +332,7 @@ func (a *Agent) Start() error {
 	}
 	a.apps = apps
 	var facts func()
+	gate := &agent.OrderGate{StateDir: a.stateDir, Host: hostname}
 	heartbeat := func() {
 		beat := map[string]any{
 			"hostname":        hostname,
@@ -345,6 +346,14 @@ func (a *Agent) Start() error {
 				Run: apps.Status()}
 		}
 		reply, ok := rep.HeartbeatWithReply(ctx, beat)
+		// Signed replies only, once one has come: see internal/agent/orders.go.
+		if ok {
+			take, gerr := gate.Accept(reply.Signature, reply.Body)
+			if !take {
+				log.Error("heartbeat: the control plane's reply was not acted on", "error", gerr)
+				ok = false
+			}
+		}
 		if ok && reply.Uninstall {
 			// Removed in the console: the device takes itself off Argus,
 			// as a server's agent does. Not on this goroutine, which

@@ -317,3 +317,35 @@ func TestARestartSaysWhyNot(t *testing.T) {
 		t.Error("a host that cannot restart launched the helper")
 	}
 }
+
+// Over plain http the package and its checksums come from the same place, so
+// whoever is on the path could serve both. Loopback has nobody on the path.
+func TestAPlainHTTPReleaseAddressIsRefused(t *testing.T) {
+	for _, bad := range []string{"http://mirror.example.com", "http://10.0.0.5:8080/releases", "ftp://mirror.example.com"} {
+		if err := checkReleaseURL(bad); err == nil {
+			t.Errorf("%s was accepted", bad)
+		}
+	}
+	for _, good := range []string{"https://github.com/gsoultan/argus/releases/download",
+		"http://127.0.0.1:9000", "http://localhost:9000", "http://[::1]:9000"} {
+		if err := checkReleaseURL(good); err != nil {
+			t.Errorf("%s was refused: %v", good, err)
+		}
+	}
+}
+
+// An https release address that redirects to plain http is refused at the
+// redirect, before anything is downloaded from it.
+func TestARedirectToPlainHTTPIsRefused(t *testing.T) {
+	var busy atomic.Int64
+	u := testUpdater(t, &fakeUpdates{}, &busy)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://mirror.example.com"+r.URL.Path, http.StatusFound)
+	}))
+	t.Cleanup(srv.Close)
+	tr := srv.Client().Transport
+	u.HTTP.Transport = tr
+	if _, err := u.get(context.Background(), srv.URL+"/v1.1.0/checksums.txt", 1<<20); err == nil {
+		t.Fatal("followed a redirect to plain http")
+	}
+}
