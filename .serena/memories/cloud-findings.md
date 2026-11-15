@@ -45,7 +45,7 @@ The account-wide S3 block (`s3:GetAccountPublicAccessBlock`) is not readable,
 so a bucket finding says it may be overridden.
 
 ## Keeping a finding
-Table `cloud_finding_keeps` (migration 079). A keep hides a finding until
+Table `cloud_finding_keeps` (migration 081). A keep hides a finding until
 `expires_at`, or with `until_change` until the finding's `Basis` (a digest of
 what it rests on) differs. A High risk is never kept for more than 90 days.
 Keep and un-keep write `cloud.finding.kept` / `cloud.finding.unkept`.
