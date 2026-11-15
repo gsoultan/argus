@@ -87,7 +87,7 @@ zypper only through unit tests.
 
 - The agent sends `outcome` {changed yes/no/unknown, why, next[]} on a run
   that ended badly, and `steps` [{step, at}] on every run; stored together in
-  `package_runs.detail` (migration 079), served as `outcome` and `steps`.
+  `package_runs.detail` (migration 080), served as `outcome` and `steps`.
   Older agents send neither; the console then reads `message` and says
   "Not sure" unless the run's own record settles it.
 - "Part way between releases" is said only when dpkg's log
