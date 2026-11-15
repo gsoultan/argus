@@ -28,7 +28,7 @@ import { FS, SP } from '~/theme'
 import type { Asset, ServerApp } from '~/types/domain'
 
 /**
- * The Installed segment of What runs here: every package someone asked for
+ * The Software tab (and a Windows server's Apps): every package someone asked for
  * on this server (libraries behind a switch), installing more from the
  * repositories the server already uses, and removing what is there.
  *
