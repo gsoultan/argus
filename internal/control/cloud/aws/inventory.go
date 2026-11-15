@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
@@ -212,7 +213,63 @@ func firewalls(ctx context.Context, c *ec2.Client, region string) ([]cloud.Resou
 			out = append(out, Firewall(g, region))
 		}
 	}
+	users, err := groupUsers(ctx, c)
+	if err != nil {
+		// Which groups are in use is a nicety for Risks & waste; the
+		// groups themselves were read. Leave usage unknown, never zero.
+		return out, nil
+	}
+	MarkGroupUse(out, users)
 	return out, nil
+}
+
+// groupUsers counts, per security group, the network interfaces that use
+// it, and names what kind of thing each is. Every user of a group has an
+// interface: instances, load balancers, databases, Lambda, endpoints.
+func groupUsers(ctx context.Context, c *ec2.Client) (map[string][]string, error) {
+	users := map[string][]string{}
+	pg := ec2.NewDescribeNetworkInterfacesPaginator(c, &ec2.DescribeNetworkInterfacesInput{})
+	for pg.HasMorePages() {
+		page, err := pg.NextPage(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, n := range page.NetworkInterfaces {
+			what := string(n.InterfaceType)
+			if n.Attachment != nil && awssdk.ToString(n.Attachment.InstanceId) != "" {
+				what = "instance"
+			} else if d := awssdk.ToString(n.RequesterId); what == "interface" && d != "" {
+				what = "AWS service"
+			}
+			for _, g := range n.Groups {
+				id := awssdk.ToString(g.GroupId)
+				users[id] = append(users[id], what)
+			}
+		}
+	}
+	return users, nil
+}
+
+// MarkGroupUse records on each firewall how many network interfaces use
+// it and of which kinds. A firewall it is called for has its use known,
+// even when that is none.
+func MarkGroupUse(fws []cloud.Resource, users map[string][]string) {
+	for i := range fws {
+		if fws[i].Details == nil {
+			fws[i].Details = map[string]string{}
+		}
+		u := users[fws[i].ID]
+		fws[i].Details["interfaces"] = strconv.Itoa(len(u))
+		seen := map[string]bool{}
+		var kinds []string
+		for _, k := range u {
+			if !seen[k] {
+				seen[k] = true
+				kinds = append(kinds, k)
+			}
+		}
+		set(fws[i].Details, "interfaceKinds", strings.Join(kinds, ", "))
+	}
 }
 
 // Firewall maps one security group.
@@ -228,6 +285,9 @@ func Firewall(g types.SecurityGroup, region string) cloud.Resource {
 		Tags: tags, Details: map[string]string{},
 	}
 	set(r.Details, "description", awssdk.ToString(g.Description))
+	if name == "default" && awssdk.ToString(g.GroupName) == "default" {
+		r.Details["default"] = "yes"
+	}
 	r.Rules = append(r.Rules, rules(g.IpPermissions, true)...)
 	r.Rules = append(r.Rules, rules(g.IpPermissionsEgress, false)...)
 	return r
@@ -366,6 +426,24 @@ func snapshots(ctx context.Context, c *ec2.Client, region string) ([]cloud.Resou
 			out = append(out, Snapshot(s, region))
 		}
 	}
+	// Snapshots any AWS account may restore: one more call, filtered by AWS.
+	public := map[string]bool{}
+	pp := ec2.NewDescribeSnapshotsPaginator(c, &ec2.DescribeSnapshotsInput{OwnerIds: []string{"self"}, RestorableByUserIds: []string{"all"}})
+	for pp.HasMorePages() {
+		page, err := pp.NextPage(ctx)
+		if err != nil {
+			return out, nil // unknown is left unset, never "not public"
+		}
+		for _, s := range page.Snapshots {
+			public[awssdk.ToString(s.SnapshotId)] = true
+		}
+	}
+	for i := range out {
+		out[i].Details["publicChecked"] = "yes"
+		if public[out[i].ID] {
+			out[i].Details["public"] = "yes"
+		}
+	}
 	return out, nil
 }
 
@@ -399,6 +477,27 @@ func images(ctx context.Context, c *ec2.Client, region string) ([]cloud.Resource
 		}
 		for _, im := range page.Images {
 			out = append(out, OwnImage(im, region))
+		}
+	}
+	// Images a launch template starts from count as in use. With no
+	// template id, AWS answers every template's $Latest and $Default.
+	inTemplate := map[string]bool{}
+	pt := ec2.NewDescribeLaunchTemplateVersionsPaginator(c, &ec2.DescribeLaunchTemplateVersionsInput{Versions: []string{"$Latest", "$Default"}})
+	for pt.HasMorePages() {
+		page, err := pt.NextPage(ctx)
+		if err != nil {
+			return out, nil // left unknown: no image is called unused
+		}
+		for _, v := range page.LaunchTemplateVersions {
+			if v.LaunchTemplateData != nil {
+				inTemplate[awssdk.ToString(v.LaunchTemplateData.ImageId)] = true
+			}
+		}
+	}
+	for i := range out {
+		out[i].Details["templatesChecked"] = "yes"
+		if inTemplate[out[i].ID] {
+			out[i].Details["inTemplate"] = "yes"
 		}
 	}
 	return out, nil
