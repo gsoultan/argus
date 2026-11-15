@@ -147,7 +147,9 @@ test.describe('the data-source badge', () => {
     await page.route('**/api/v1/**', (route) => route.abort())
     await page.reload()
 
-    await expect(page.getByText('Not answering', { exact: true })).toBeVisible()
+    // By its place in the header: a server's card on Assets says "Not
+    // answering" too, about that server.
+    await expect(page.getByTestId('data-source')).toHaveText('Not answering')
 
     // And says it at the size of the problem. The corner badge alone left the
     // page underneath announcing "13 hosts would not record a bypass", three
