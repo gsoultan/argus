@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/recorder"
+	"github.com/gsoultan/argus/internal/tlsconfig"
+	"github.com/gsoultan/argus/internal/tunnel"
 )
 
 // Client posts records to argus-control.
@@ -87,6 +89,8 @@ func NewWithTLS(baseURL, token, spoolPath string, tlsCfg *tls.Config, log *slog.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if tlsCfg != nil {
 		transport.TLSClientConfig = tlsCfg
+	} else {
+		transport.TLSClientConfig = &tls.Config{MinVersion: tlsconfig.MinVersion}
 	}
 	return &Client{
 		baseURL:   baseURL,
@@ -166,7 +170,17 @@ type HeartbeatReply struct {
 	// shipped recording in. Absent from a control plane older than them,
 	// which is then sent every recording plain.
 	RecordingEncodings []string `json:"recording_encodings"`
+	// Body is the reply exactly as it was read, and Signature the control
+	// plane's signature over it (tunnel.OrdersHeader), empty from a control
+	// plane older than signed orders. See agent.OrderGate.
+	Body      []byte `json:"-"`
+	Signature string `json:"-"`
 }
+
+// maxReply bounds what is read of a reply: a reply is a few fields, and a
+// control plane that is not one must not be able to make the agent buffer
+// without limit.
+const maxReply = 64 << 10
 
 // AcceptsPacked reports whether the reply says a packed zstd recording may
 // be shipped as it is.
@@ -194,8 +208,28 @@ func (r HeartbeatReply) AcceptsZstd() bool {
 // answer. ok is false when it was not delivered (and was spooled), so the
 // caller keeps whatever it last heard rather than acting on a zero value.
 func (c *Client) HeartbeatWithReply(ctx context.Context, v any) (reply HeartbeatReply, ok bool) {
-	ok = c.postInto(ctx, "/api/v1/report/heartbeat", v, &reply)
-	return reply, ok
+	if !c.Enabled() {
+		return HeartbeatReply{}, false
+	}
+	const path = "/api/v1/report/heartbeat"
+	body, err := json.Marshal(v)
+	if err != nil {
+		c.log.Error("marshal report", "path", path, "error", err)
+		return HeartbeatReply{}, false
+	}
+	raw, header, err := c.sendRaw(ctx, path, body)
+	if err != nil {
+		c.log.Warn("control plane unreachable, spooling report", "path", path, "error", err)
+		c.spool(spoolEntry{Path: path, Body: body, At: time.Now().UTC()})
+		c.noteFailure(err)
+		return HeartbeatReply{}, false
+	}
+	c.noteSuccess()
+	// Delivered either way, as every report is; an undecodable reply just
+	// leaves the fields empty.
+	_ = json.Unmarshal(raw, &reply)
+	reply.Body, reply.Signature = raw, header.Get(tunnel.OrdersHeader)
+	return reply, true
 }
 
 // Login reports a login the agent let through without recording it. Spooled
@@ -399,12 +433,33 @@ func (c *Client) sendInto(ctx context.Context, path string, body []byte, out any
 		return fmt.Errorf("control plane returned %d", resp.StatusCode)
 	}
 	if out != nil {
-		// Bounded: a reply is a few fields, and a control plane that is not
-		// one must not be able to make the agent buffer without limit.
-		// Delivered either way; an undecodable reply just leaves out as it was.
-		_ = json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(out)
+		// Bounded (maxReply). Delivered either way; an undecodable reply
+		// just leaves out as it was.
+		_ = json.NewDecoder(io.LimitReader(resp.Body, maxReply)).Decode(out)
 	}
 	return nil
+}
+
+// sendRaw is sendInto keeping the reply's bytes and headers, for a reply
+// whose signature covers its body.
+func (c *Client) sendRaw(ctx context.Context, path string, body []byte) ([]byte, http.Header, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, nil, fmt.Errorf("control plane returned %d", resp.StatusCode)
+	}
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxReply))
+	return raw, resp.Header, nil
 }
 
 func (c *Client) spool(e spoolEntry) {

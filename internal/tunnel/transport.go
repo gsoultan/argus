@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/gsoultan/argus/internal/tlsconfig"
 	"github.com/hashicorp/yamux"
 	"github.com/quic-go/quic-go"
 )
@@ -263,7 +264,7 @@ func clientTLS(base *tls.Config, serverName string) *tls.Config {
 	if base != nil {
 		c = base.Clone()
 	} else {
-		c = &tls.Config{MinVersion: tls.VersionTLS12}
+		c = &tls.Config{MinVersion: tlsconfig.MinVersion}
 	}
 	if c.ServerName == "" {
 		c.ServerName = serverName

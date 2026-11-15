@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -263,6 +265,14 @@ func NewUpdater(stateDir, version, executable string, log *slog.Logger) *Updater
 		HTTP: &http.Client{
 			Timeout:   10 * time.Minute,
 			Transport: &http.Transport{Proxy: http.ProxyFromEnvironment},
+			// GitHub answers a release download with a redirect; one to
+			// plain http would undo checkReleaseURL.
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if len(via) >= 10 {
+					return errors.New("too many redirects")
+				}
+				return checkReleaseURL(req.URL.String())
+			},
 		},
 	}
 }
@@ -571,8 +581,8 @@ func (u *Updater) prepare(ctx context.Context, req UpdateRequest) (UpdatePlan, e
 		return UpdatePlan{}, fmt.Errorf("cannot make %s: %w", dir, err)
 	}
 	base := strings.TrimRight(req.URL, "/")
-	if !strings.HasPrefix(base, "https://") && !strings.HasPrefix(base, "http://") {
-		return UpdatePlan{}, fmt.Errorf("the release address %q is not http(s)", req.URL)
+	if err := checkReleaseURL(base); err != nil {
+		return UpdatePlan{}, err
 	}
 
 	plan := UpdatePlan{
@@ -625,6 +635,31 @@ func (u *Updater) prepareRestart(ctx context.Context, req UpdateRequest) (Update
 		Executable: u.Executable, Unit: u.Unit, StateDir: u.StateDir, Marker: u.Marker,
 		NeedTunnel: u.NeedTunnel,
 	}, ctx.Err()
+}
+
+// checkReleaseURL refuses a release address the package could be swapped on
+// in transit. The package is checked against checksums from the same address,
+// so over plain http anyone on the path could serve both: a new agent binary,
+// run as root, of their choosing. Loopback is the one exception, since nothing
+// off this host sits on that path.
+func checkReleaseURL(base string) error {
+	u, err := url.Parse(base)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("the release address %q is not a URL", base)
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		host := u.Hostname()
+		if ip := net.ParseIP(host); (ip != nil && ip.IsLoopback()) || host == "localhost" {
+			return nil
+		}
+		return fmt.Errorf("the release address %s is plain http://, where the package and its "+
+			"checksums could both be replaced on the way here; set agent_releases_url to an "+
+			"https:// address. Nothing was changed", base)
+	}
+	return fmt.Errorf("the release address %q is not https://", base)
 }
 
 // fetchVerified downloads version's file for this host into dir and checks

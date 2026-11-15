@@ -35,6 +35,7 @@ var SecretStateFiles = []string{
 	EnrollmentFile,
 	enrolledCAFile,
 	GrantKeyFile,
+	SignedOrdersFile,
 	"console-only",
 	"direct-ssh",
 	"direct-ssh.json",

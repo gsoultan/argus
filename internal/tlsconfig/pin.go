@@ -57,7 +57,7 @@ func Pinned(pin string) (*tls.Config, error) {
 	}
 	want := strings.ToLower(pin)
 	return &tls.Config{
-		MinVersion: tls.VersionTLS12,
+		MinVersion: MinVersion,
 		// The standard verification is what the pin replaces. VerifyConnection
 		// below runs on every handshake and is the check.
 		InsecureSkipVerify: true, //nolint:gosec // replaced by the pin check
