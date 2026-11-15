@@ -1046,6 +1046,48 @@ func TestApplyReleaseUbuntuRolledBack(t *testing.T) {
 	}
 }
 
+// A real run on 2026-11-15: main.log was left by the run before, and
+// do-release-upgrade moved it aside and wrote a new one about as long. Argus
+// has to read the new file from its start, or it misses the errors, falls
+// back to the download chatter and calls the server part way.
+func TestApplyReleaseUbuntuReadsTheNewMainLogWhole(t *testing.T) {
+	newReleaseHost(t, noble)
+	old := strings.Repeat("2026-11-13 13:38:00,000 DEBUG an earlier run\n", len(distUpgradeDenied)/46)
+	if err := os.WriteFile(ubuntuUpgradeLogs[0], []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sr := &scriptRun{on: map[string]func(io.Writer, []string) int{
+		"do-release-upgrade -c": func(w io.Writer, _ []string) int {
+			fmt.Fprintln(w, "New release '26.04.1 LTS' available.")
+			return 0
+		},
+		"do-release-upgrade -f DistUpgradeViewNonInteractive": func(w io.Writer, _ []string) int {
+			fmt.Fprintln(w, "extracting 'resolute.tar.gz'")
+			dir := filepath.Dir(ubuntuUpgradeLogs[0])
+			if err := os.MkdirAll(filepath.Join(dir, "20261113-1337"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(ubuntuUpgradeLogs[0], filepath.Join(dir, "20261113-1337", "main.log")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(ubuntuUpgradeLogs[0], []byte(distUpgradeDenied), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return 1
+		},
+	}}
+	a, rebooted := releaseApplier(t, sr, looks("apt-get", "dpkg-query", "do-release-upgrade"), "26.04")
+	st := a.Apply(context.Background())
+	if st.State != RunFailed || *rebooted || !strings.Contains(st.Message, "nothing was changed") ||
+		!strings.Contains(st.Message, "postgresql-18-mobilitydb") || strings.Contains(st.Message, "part way") ||
+		strings.Contains(st.Message, "extracting") {
+		t.Fatalf("run = %+v", st)
+	}
+	if sr.ran("dpkg --force-confdef --force-confold --configure -a") {
+		t.Error("repaired a server nothing was done to")
+	}
+}
+
 // Part way: the reason is the upgrader's error, not its download chatter.
 func TestApplyReleaseUbuntuPartWayGivesTheLogsReason(t *testing.T) {
 	h := newReleaseHost(t, jammy)

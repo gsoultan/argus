@@ -66,18 +66,30 @@ func (a *PackageApplier) follow(ctx context.Context, what string, files []string
 }
 
 // tailer reads what has been appended to a set of files since it last
-// looked. A file that shrinks was started again, and is read from its start.
+// looked. A file that shrinks, or was replaced by a new one, was started
+// again and is read from its start: do-release-upgrade moves the last run's
+// logs aside and opens a fresh main.log on every run, which may well be
+// longer than the old one by the time it is read.
 type tailer struct {
 	files   []string
 	offsets map[string]int64
+	seen    map[string]os.FileInfo
 }
 
 func (t *tailer) start() {
 	for _, f := range t.files {
 		if st, err := os.Stat(f); err == nil {
 			t.offsets[f] = st.Size()
+			t.remember(f, st)
 		}
 	}
+}
+
+func (t *tailer) remember(f string, st os.FileInfo) {
+	if t.seen == nil {
+		t.seen = map[string]os.FileInfo{}
+	}
+	t.seen[f] = st
 }
 
 func (t *tailer) read(w io.Writer) {
@@ -87,8 +99,11 @@ func (t *tailer) read(w io.Writer) {
 			continue
 		}
 		off := t.offsets[f]
-		if st, err := fh.Stat(); err == nil && st.Size() < off {
-			off = 0
+		if st, err := fh.Stat(); err == nil {
+			if prev, ok := t.seen[f]; (ok && !os.SameFile(prev, st)) || st.Size() < off {
+				off = 0
+			}
+			t.remember(f, st)
 		}
 		if _, err := fh.Seek(off, io.SeekStart); err == nil {
 			// Bounded per look; the run log keeps only its end anyway.
