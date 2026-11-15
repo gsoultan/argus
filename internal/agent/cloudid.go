@@ -47,7 +47,7 @@ type CloudInstance struct {
 const cloudMetadataBudget = 2 * time.Second
 
 var (
-	cloudMu   sync.Mutex
+	cloudMu     sync.Mutex
 	cloudCached *CloudInstance
 )
 

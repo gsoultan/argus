@@ -267,16 +267,16 @@ func (s *Store) SetCloudSynced(ctx context.Context, id string, at time.Time, err
 
 // CloudItem is one present resource with the account it is in.
 type CloudItem struct {
-	AccountID   string         `json:"accountId"`
+	AccountID string `json:"accountId"`
 	// Provider and ProviderAccount are the cloud and its own id for the
 	// account (twelve digits on AWS), which an agent's report names.
-	Provider        string `json:"provider"`
-	ProviderAccount string `json:"providerAccount"`
-	AccountName string         `json:"accountName"`
-	Environment string         `json:"environment"`
-	FirstSeen   time.Time      `json:"firstSeen"`
-	SeenAt      time.Time      `json:"seenAt"`
-	Resource    cloud.Resource `json:"resource"`
+	Provider        string         `json:"provider"`
+	ProviderAccount string         `json:"providerAccount"`
+	AccountName     string         `json:"accountName"`
+	Environment     string         `json:"environment"`
+	FirstSeen       time.Time      `json:"firstSeen"`
+	SeenAt          time.Time      `json:"seenAt"`
+	Resource        cloud.Resource `json:"resource"`
 	// Server is the Argus server this instance appears to be.
 	Server *CloudServerMatch `json:"server,omitempty"`
 	// MadeByArgus is whether Argus launched or created it, by its own
