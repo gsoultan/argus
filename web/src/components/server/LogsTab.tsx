@@ -604,12 +604,12 @@ function ConfirmRow({ title, detail, size }: { title: string; detail: string; si
 
 const STATE: Record<LogRun['state'], { label: string; color: string }> = {
   awaiting_approval: { label: 'Waiting for approval', color: 'amber' },
-  queued: { label: 'Asked', color: 'azure' },
+  queued: { label: 'Starting', color: 'azure' },
   running: { label: 'Cleaning', color: 'azure' },
   done: { label: 'Done', color: 'teal' },
   failed: { label: 'Failed', color: 'rose' },
   interrupted: { label: 'Interrupted', color: 'rose' },
-  cancelled: { label: 'Taken back', color: 'slate' },
+  cancelled: { label: 'Cancelled', color: 'slate' },
   denied: { label: 'Denied', color: 'slate' },
 }
 
@@ -663,8 +663,8 @@ function RunActions({ run: r, canEdit }: { run: LogRun; canEdit: boolean }) {
       )}
       {canTakeBack && (
         <Button size="compact-xs" variant="default" loading={decide.isPending}
-          onClick={() => act('cancel', ['Taken back', 'Nothing was removed.'], 'Not taken back')}>
-          Take back
+          onClick={() => act('cancel', ['Cancelled', 'Nothing was removed.'], 'Not cancelled')}>
+          Cancel run
         </Button>
       )}
     </Group>

@@ -61,13 +61,14 @@ describe('Home for whoever sees the whole fleet', () => {
     await renderRoute('/')
     expect(await screen.findByRole('heading', { name: HOME }, { timeout: 5_000 })).toHaveTextContent(/Dewi$/)
 
-    // Six numbers, each with what it means.
+    // Five numbers, each with what it means. Approvals are in Needs you only.
     const servers = await screen.findByTestId('tile-servers', {}, { timeout: 5_000 })
     expect(servers).toHaveTextContent('12of 12')
     expect(servers).toHaveTextContent('Every server answers')
     expect(screen.getByTestId('tile-live')).toHaveTextContent('1 as root')
     expect(screen.getByTestId('tile-sessions')).toHaveTextContent('+14% on a week ago')
     expect(screen.getByTestId('tile-cpu')).toHaveTextContent('busiest web-07 · 88%')
+    expect(screen.queryByTestId('tile-waiting')).toBeNull()
 
     // Live now is the control plane's list, with Watch.
     const rows = await screen.findByTestId('live-now')
@@ -101,6 +102,41 @@ describe('Home for whoever sees the whole fleet', () => {
     expect(within(needs).getByText('2 servers are waiting to be added')).toBeInTheDocument()
     expect(screen.getByTestId('tile-signins')).toHaveAttribute('data-tone', 'denied')
     expect(screen.getByTestId('tile-servers')).toHaveAttribute('data-tone', 'calm')
+  }, 15_000)
+
+  // Home once said "7 not answering" beside Fleet health's "5 not answering,
+  // 2 no agent": a server with no agent was counted as down in one place only.
+  it('counts servers the same way on the tile, Fleet health and Needs you', async () => {
+    fleetHome('admin', snapshot({ servers: { total: 41, answering: 34, quiet: 2, down: 5 } }))
+    await renderRoute('/')
+    const tile = await screen.findByTestId('tile-servers', {}, { timeout: 5_000 })
+    expect(tile).toHaveTextContent('34of 41')
+    expect(tile).toHaveTextContent('5 not answering · 2 no agent')
+    expect(tile).toHaveAttribute('data-tone', 'denied')
+    expect(screen.getByTestId('fleet-health')).toHaveTextContent('5 not answering')
+    expect(screen.getByTestId('fleet-health')).toHaveTextContent('2 no agent')
+    const needs = screen.getByTestId('needs-you')
+    expect(within(needs).getByText('5 servers are not answering')).toBeInTheDocument()
+    expect(within(needs).getByRole('link', { name: /See which/ })).toHaveAttribute('href', '/assets?status=down')
+  }, 15_000)
+
+  it('says what happened in words, not "ok"', async () => {
+    const at = new Date().toISOString()
+    const ev = (seq: number, action: string, detail: string, target = 'pay-03.payments.northwind.id') =>
+      ({ seq, id: `e-${seq}`, at, action, severity: 'info', actorEmail: 'kevin.tan@northwind.id', target, detail, prevHash: '', hash: '' })
+    fleetHome('admin', snapshot({
+      audit: [
+        ev(3, 'session.start', 'ok'),
+        ev(2, 'session.command', 'tail -f /var/log/syslog'),
+        ev(1, 'auth.login', 'Signed in via password as role admin.', 'console'),
+      ] as HomeSnapshot['audit'],
+    }))
+    await renderRoute('/')
+    const feed = await screen.findByTestId('recent-audit', {}, { timeout: 5_000 })
+    expect(feed).toHaveTextContent('opened a session on pay-03')
+    expect(feed).toHaveTextContent('ran tail -f /var/log/syslog on pay-03')
+    expect(feed).toHaveTextContent('Signed in via password as role admin.')
+    expect(feed).not.toHaveTextContent(/· ok\b/)
   }, 15_000)
 
   it('says so in one line when nothing is waiting', async () => {

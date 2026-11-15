@@ -217,6 +217,12 @@ type PackageRunStatus struct {
 	// release to which. The agent that comes back after the reboot checks
 	// the server is on To before it calls the run done.
 	Release *ReleaseChange `json:"release,omitempty"`
+	// Outcome is how a run that ended badly is to be read: whether the
+	// server changed, why it stopped, what to do. Absent on runs that went
+	// well and from older agents.
+	Outcome *RunOutcome `json:"outcome,omitempty"`
+	// Steps are when the run reached each step.
+	Steps []RunStep `json:"steps,omitempty"`
 	// Log is the end of what the package manager printed.
 	Log        string    `json:"log,omitempty"`
 	Unit       string    `json:"unit,omitempty"`

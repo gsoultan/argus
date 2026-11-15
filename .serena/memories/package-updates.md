@@ -82,3 +82,21 @@ fixture.
 
 Tested live on Ubuntu 24.04 (apt) and Oracle Linux 9 (dnf) in containers;
 zypper only through unit tests.
+
+## How a run ended (2026-11)
+
+- The agent sends `outcome` {changed yes/no/unknown, why, next[]} on a run
+  that ended badly, and `steps` [{step, at}] on every run; stored together in
+  `package_runs.detail` (migration 080), served as `outcome` and `steps`.
+  Older agents send neither; the console then reads `message` and says
+  "Not sure" unless the run's own record settles it.
+- "Part way between releases" is said only when dpkg's log
+  (`/var/log/dpkg.log`) shows an install/upgrade/remove/purge/configure at or
+  after the run started (`dpkgChangedSince`). No change: no repair, and on
+  Debian the apt sources go back to the old release. Unreadable log: unknown,
+  worded "may be part way".
+- Console: `components/server/RunPanel.tsx` holds the result card (newest
+  ended run at the top of the Updates tab; a failure for a day, a success for
+  an hour, until dismissed in that browser), `LastHeard` (from the view's
+  `heardAt`, the agent's last_seen_at; amber after 60 s, explained while
+  rebooting) and per-step times.

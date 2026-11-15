@@ -685,7 +685,7 @@ function DataSourceBadge({ source }: { source: DataSource }) {
       multiline
       maw={300}
     >
-      <Badge variant="light" color="rose" size="sm">
+      <Badge variant="light" color="rose" size="sm" data-testid="data-source">
         Not answering
       </Badge>
     </Tooltip>

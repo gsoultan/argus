@@ -53,7 +53,7 @@ export function LivePill() {
   )
 }
 
-/* ── Six numbers ─────────────────────────────────────────────────────────── */
+/* ── Five numbers (approvals are in Needs you, not here as well) ─────────────────────────────────────────────────────────── */
 
 type Tone = 'calm' | 'pending' | 'denied'
 
@@ -133,17 +133,14 @@ export function HomeTiles() {
   const servers = useHome((s) => s.servers)
   const live = useHome((s) => s.live)
   const sessions = useHome((s) => s.sessions)
-  const waiting = useHome((s) => s.waiting)
   const cpu = useHome((s) => s.processor)
   const signIns = useHome((s) => s.signIns)
   const trends = useHome((s) => s.trends)
 
-  const notAnswering = servers ? servers.down + servers.quiet : 0
   const total24 = sessions?.hours.map((h) => h[0] + h[1] + h[2])
   const change = sessions && sessions.weekAgo > 0 ? Math.round(((sessions.last24h - sessions.weekAgo) / sessions.weekAgo) * 100) : null
   const busiest = cpu?.busiest[0]
   const cpuTone: Tone = cpu?.average != null && cpu.average >= 85 ? 'denied' : cpu?.average != null && cpu.average >= 60 ? 'pending' : 'calm'
-  const oldestMin = waiting?.oldestAt ? Math.max(0, Math.round((now() - Date.parse(waiting.oldestAt)) / 60_000)) : null
 
   return (
     <Box className="argus-tiles" data-testid="home-tiles">
@@ -152,9 +149,16 @@ export function HomeTiles() {
         label="Servers online"
         value={servers ? servers.answering : undefined}
         small={servers ? `of ${servers.total}` : undefined}
-        tone={servers && servers.down > 0 ? 'denied' : notAnswering > 0 ? 'pending' : 'calm'}
-        sub={servers ? (notAnswering === 0 ? 'Every server answers'
-          : <Text span inherit c={servers.down > 0 ? INK.denied : INK.pending} fw={600}>{plural(notAnswering, 'not answering', 'not answering')}</Text>) : undefined}
+        tone={servers && servers.down > 0 ? 'denied' : servers && servers.quiet > 0 ? 'pending' : 'calm'}
+        sub={servers ? (servers.down + servers.quiet === 0 ? 'Every server answers' : (
+          // The same two words, and the same counts, as Fleet health and the
+          // Assets list: a server with no agent is not counted as down.
+          <>
+            {servers.down > 0 && <Text span inherit c={INK.denied} fw={600}>{servers.down} not answering</Text>}
+            {servers.down > 0 && servers.quiet > 0 && ' · '}
+            {servers.quiet > 0 && <Text span inherit c={servers.down > 0 ? undefined : INK.pending} fw={servers.down > 0 ? undefined : 600}>{servers.quiet} no agent</Text>}
+          </>
+        )) : undefined}
         viz={<Line values={trends?.answering} max={servers?.total} color={servers && servers.down > 0 ? 'var(--color-denied)' : 'var(--color-verified)'} label="Servers answering, last hour" />}
         to={() => void navigate({ to: '/assets' })}
       />
@@ -173,15 +177,6 @@ export function HomeTiles() {
         sub={change === null ? (sessions ? 'Each bar is one hour' : undefined)
           : <><Text span inherit fw={600} c={change >= 0 ? INK.verified : undefined}>{change >= 0 ? '+' : ''}{change}%</Text> on a week ago</>}
         viz={<Bars values={total24} label="Sessions by hour, last 24 hours" />}
-      />
-      <Tile
-        testid="tile-waiting"
-        label="Waiting on approval"
-        value={waiting?.count}
-        tone={waiting && waiting.count > 0 && (oldestMin ?? 0) >= 15 ? 'pending' : 'calm'}
-        sub={waiting ? (waiting.count === 0 ? 'Nothing waiting' : oldestMin !== null ? `oldest ${oldestMin < 1 ? 'just now' : `${oldestMin} min`}` : '') : undefined}
-        viz={<Line values={trends?.waiting} color="var(--color-pending)" label="Waiting on approval, last hour" />}
-        to={() => void navigate({ to: '/approvals' })}
       />
       <Tile
         testid="tile-cpu"
@@ -455,7 +450,10 @@ export function useLiveNeeds(): {
   unreviewed: number | undefined
   fullDisks: HomeSnapshot['disks']
   failed15m: number
+  /** Servers whose agent went silent or that were found unreachable. */
+  down: number
 } {
+  const servers = useHome((s) => s.servers)
   const waiting = useHome((s) => s.waiting)
   const unreviewed = useHome((s) => s.unreviewedHosts)
   const disks = useHome((s) => s.disks)
@@ -465,6 +463,7 @@ export function useLiveNeeds(): {
     unreviewed,
     fullDisks: (disks ?? []).filter((d) => d.used >= 95),
     failed15m: signIns?.failed15m ?? 0,
+    down: servers?.down ?? 0,
   }
 }
 

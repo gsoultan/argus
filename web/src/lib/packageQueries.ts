@@ -18,7 +18,11 @@ const fleetKey = ['packages', 'fleet'] as const
 const policyKey = ['packages', 'policy'] as const
 const runKey = (id: string) => ['packages', 'run', id] as const
 
-/** Fast while a look or a run is going, so its steps show as they happen. */
+/**
+ * Fast while a look or a run is going, so its steps show as they happen;
+ * every 15 s otherwise, so a run asked from elsewhere or a new report shows
+ * without a reload. Paused while the browser tab is hidden.
+ */
 export const assetPackagesQuery = (assetId: string) =>
   queryOptions({
     queryKey: viewKey(assetId),
@@ -28,7 +32,7 @@ export const assetPackagesQuery = (assetId: string) =>
       const v = q.state.data
       if (!v) return false
       const moving = v.checking || v.checkAsked || v.runs.some((r) => !runFinished(r.state))
-      return moving ? 3_000 : 60_000
+      return moving ? 3_000 : 15_000
     },
   })
 

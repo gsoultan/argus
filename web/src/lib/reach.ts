@@ -42,6 +42,27 @@ export function isUp(r: Reach): boolean {
 }
 
 /**
+ * The one set of words for whether a server answers, the same on Home, the
+ * Assets list and a server's Overview: Online (online or slow), Not answering
+ * (its agent went silent, or it was found unreachable), No agent (nothing
+ * reports on it, so Argus cannot tell) and Blocked (its identity changed).
+ * Home's counts come from the control plane by the same rules; see
+ * internal/control/home_snapshot.go.
+ */
+export type Answer = 'online' | 'down' | 'noagent' | 'blocked'
+
+export function answerOf(a: Asset): Answer {
+  return ({ online: 'online', slow: 'online', offline: 'down', unknown: 'noagent', blocked: 'blocked' } as const)[reachOf(a)]
+}
+
+export const ANSWER_LABEL: Record<Answer, string> = {
+  online: 'Online',
+  down: 'Not answering',
+  noagent: 'No agent',
+  blocked: 'Blocked',
+}
+
+/**
  * "Android", "Windows" or "Linux", which is the distinction a person picking
  * a server makes. A device says so in its kind; a server is told apart by
  * how it opens and what it reports.

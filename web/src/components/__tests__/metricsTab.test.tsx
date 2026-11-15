@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react'
+import { fireEvent, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { MetricsHistory, type AssetMetrics, type MetricsPoint } from '~/components/server/MetricsTab'
 import { renderWithProviders } from '~/test/render'
@@ -42,5 +42,29 @@ describe('MetricsHistory', () => {
     expect(screen.getByTestId('chart-net').textContent).toContain('not reported')
     expect(Number(screen.getByTestId('chart-cpu').dataset.gaps)).toBe(0)
     expect(screen.getByTestId('chart-disks').textContent).toContain('/')
+  })
+
+  // The tiles said "18% busy" and the chart "average 33%": both right, one
+  // the last minute and one the whole range, but neither said which.
+  it('names the range in every summary', () => {
+    renderWithProviders(<MetricsHistory m={metrics(Array.from({ length: 72 }, (_, i) => point(i)))} />)
+    for (const id of ['chart-cpu', 'chart-mem', 'chart-disks', 'chart-net']) {
+      expect(screen.getByTestId(id).textContent).toContain('last 6 h:')
+    }
+  })
+
+  it('reads out the exact values and time under the pointer', () => {
+    renderWithProviders(<MetricsHistory m={metrics(Array.from({ length: 72 }, (_, i) => point(i)))} />)
+    const cpu = screen.getByTestId('chart-cpu')
+    const svg = cpu.querySelector('svg[role="img"]')!
+    // jsdom has no layout: give the chart a box so the pointer maps to a time.
+    svg.getBoundingClientRect = () => ({ left: 0, top: 0, width: 520, height: 150, right: 520, bottom: 150, x: 0, y: 0, toJSON: () => ({}) })
+    // Half way across the plot is about point 35: average 55%, peak 75%.
+    fireEvent.mouseMove(svg, { clientX: 60 + (520 - 68) / 2 })
+    expect(cpu.textContent).toMatch(/average 5\d% · peak 7\d%/)
+    expect(screen.getByTestId('chart-cpu-hover').querySelectorAll('circle')).toHaveLength(2)
+    fireEvent.mouseLeave(svg)
+    expect(screen.queryByTestId('chart-cpu-hover')).toBeNull()
+    expect(cpu.textContent).toContain('last 6 h:')
   })
 })

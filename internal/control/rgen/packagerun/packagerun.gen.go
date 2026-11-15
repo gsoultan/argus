@@ -61,6 +61,7 @@ type Row struct {
 	ScriptSecrets   []byte
 	ScriptReport    runtime.Null[runtime.JSON]
 	SoftwareFileID  runtime.Null[[16]byte]
+	Detail          runtime.Null[runtime.JSON]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -99,7 +100,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 41
+const nCols = 42
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -658,6 +659,7 @@ var (
 	ScriptSecrets   = NullBytesCol{38}
 	ScriptReport    = NullJSONCol{39}
 	SoftwareFileID  = NullUUIDCol{40}
+	Detail          = NullJSONCol{41}
 )
 
 // UUIDCol addresses a uuid column.
@@ -1299,6 +1301,13 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyRaw[q.nar] = p.anyRaw
 			q.nar++
+		case 41:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1567,6 +1576,13 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.raws[q.nr] = p.raw
 		q.nr++
+	case 41:
+		if int(q.njs) >= 2 {
+			q.over = true
+			return
+		}
+		q.jsns[q.njs] = p.jsn
+		q.njs++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1871,8 +1887,14 @@ func (q Query) SoftwareFileIDIn(v ...[16]byte) Query    { return q.Where(Softwar
 func (q Query) SoftwareFileIDNotIn(v ...[16]byte) Query { return q.Where(SoftwareFileID.NotIn(v...)) }
 func (q Query) SoftwareFileIDIsNull() Query             { return q.Where(SoftwareFileID.IsNull()) }
 func (q Query) SoftwareFileIDIsNotNull() Query          { return q.Where(SoftwareFileID.IsNotNull()) }
+func (q Query) DetailContains(v runtime.JSON) Query     { return q.Where(Detail.Contains(v)) }
+func (q Query) DetailContainedBy(v runtime.JSON) Query  { return q.Where(Detail.ContainedBy(v)) }
+func (q Query) DetailHasAnyKey(v ...string) Query       { return q.Where(Detail.HasAnyKey(v...)) }
+func (q Query) DetailHasAllKeys(v ...string) Query      { return q.Where(Detail.HasAllKeys(v...)) }
+func (q Query) DetailIsNull() Query                     { return q.Where(Detail.IsNull()) }
+func (q Query) DetailIsNotNull() Query                  { return q.Where(Detail.IsNotNull()) }
 
-const selectPrefix = `SELECT "id", "hostname", "asset_hostname", "mode", "packages", "holds", "reboot", "trigger", "state", "requested_by", "requested_at", "decided_by", "decided_at", "sent_at", "started_at", "finished_at", "updated_at", "step", "message", "planned", "upgraded", "restarted", "reboot_required", "rebooted", "log", "batch_id", "batch_position", "window_start", "items", "purge", "start_services", "expect", "preview_id", "undo_of", "started", "script_version_id", "script_action", "script_params", "script_secrets", "script_report", "software_file_id" FROM "package_runs"`
+const selectPrefix = `SELECT "id", "hostname", "asset_hostname", "mode", "packages", "holds", "reboot", "trigger", "state", "requested_by", "requested_at", "decided_by", "decided_at", "sent_at", "started_at", "finished_at", "updated_at", "step", "message", "planned", "upgraded", "restarted", "reboot_required", "rebooted", "log", "batch_id", "batch_position", "window_start", "items", "purge", "start_services", "expect", "preview_id", "undo_of", "started", "script_version_id", "script_action", "script_params", "script_secrets", "script_report", "software_file_id", "detail" FROM "package_runs"`
 const countPrefix = `SELECT count(*) FROM "package_runs"`
 const existsPrefix = `SELECT 1 FROM "package_runs"`
 const existsSuffix = ` LIMIT 1`
@@ -2155,6 +2177,12 @@ var orderTable = [nCols][4]string{
 		"\"software_file_id\" ASC NULLS FIRST",
 		"\"software_file_id\" DESC NULLS LAST",
 	},
+	{ // detail
+		"\"detail\"",
+		"\"detail\" DESC",
+		"\"detail\" ASC NULLS FIRST",
+		"\"detail\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -2201,6 +2229,7 @@ var identTable = [nCols]string{
 	"\"script_secrets\"",
 	"\"script_report\"",
 	"\"software_file_id\"",
+	"\"detail\"",
 }
 
 var lowering = runtime.Lowering{
@@ -2233,7 +2262,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [41][28]runtime.Frag{
+var fragTable = [42][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -3464,6 +3493,36 @@ var fragTable = [41][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // detail
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"detail\" @> $", B: ""},
+		{A: "\"detail\" <@ $", B: ""},
+		{A: "\"detail\" ?| $", B: ""},
+		{A: "\"detail\" ?& $", B: ""},
+		{A: "\"detail\" IS NULL", B: ""},
+		{A: "\"detail\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -3674,6 +3733,7 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.ScriptSecrets = runtime.Bytes(rv[38])
 	r.ScriptReport = runtime.NullJSON(rv[39], sl)
 	r.SoftwareFileID = runtime.Nullable(rv[40], runtime.UUID)
+	r.Detail = runtime.NullJSON(rv[41], sl)
 	return decErr
 }
 
@@ -3862,6 +3922,10 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyRaw[nar] = q.anyRaw[nar]
 				v = append(v, &b.anyRaw[nar])
 				nar++
+			case 41:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -4014,6 +4078,10 @@ func (q Query) bindPreds(b *binder) []any {
 			b.raws[nr] = q.raws[nr]
 			v = append(v, &b.raws[nr])
 			nr++
+		case 41:
+			b.jsns[njs] = q.jsns[njs]
+			v = append(v, &b.jsns[njs])
+			njs++
 		}
 	}
 	b.vals = v
@@ -4151,7 +4219,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "package_runs" ("id", "hostname", "asset_hostname", "mode", "packages", "holds", "reboot", "trigger", "state", "requested_by", "requested_at", "decided_by", "decided_at", "sent_at", "started_at", "finished_at", "updated_at", "step", "message", "planned", "upgraded", "restarted", "reboot_required", "rebooted", "log", "batch_id", "batch_position", "window_start", "items", "purge", "start_services", "expect", "preview_id", "undo_of", "started", "script_version_id", "script_action", "script_params", "script_secrets", "script_report", "software_file_id") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41) RETURNING "id", "hostname", "asset_hostname", "mode", "packages", "holds", "reboot", "trigger", "state", "requested_by", "requested_at", "decided_by", "decided_at", "sent_at", "started_at", "finished_at", "updated_at", "step", "message", "planned", "upgraded", "restarted", "reboot_required", "rebooted", "log", "batch_id", "batch_position", "window_start", "items", "purge", "start_services", "expect", "preview_id", "undo_of", "started", "script_version_id", "script_action", "script_params", "script_secrets", "script_report", "software_file_id"`
+const insertSQL = `INSERT INTO "package_runs" ("id", "hostname", "asset_hostname", "mode", "packages", "holds", "reboot", "trigger", "state", "requested_by", "requested_at", "decided_by", "decided_at", "sent_at", "started_at", "finished_at", "updated_at", "step", "message", "planned", "upgraded", "restarted", "reboot_required", "rebooted", "log", "batch_id", "batch_position", "window_start", "items", "purge", "start_services", "expect", "preview_id", "undo_of", "started", "script_version_id", "script_action", "script_params", "script_secrets", "script_report", "software_file_id", "detail") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42) RETURNING "id", "hostname", "asset_hostname", "mode", "packages", "holds", "reboot", "trigger", "state", "requested_by", "requested_at", "decided_by", "decided_at", "sent_at", "started_at", "finished_at", "updated_at", "step", "message", "planned", "upgraded", "restarted", "reboot_required", "rebooted", "log", "batch_id", "batch_position", "window_start", "items", "purge", "start_services", "expect", "preview_id", "undo_of", "started", "script_version_id", "script_action", "script_params", "script_secrets", "script_report", "software_file_id", "detail"`
 
 const updatePrefix = `UPDATE "package_runs" SET `
 const deletePrefix = `DELETE FROM "package_runs"`
@@ -4199,9 +4267,10 @@ const (
 	dScriptSecrets   uint64 = 1 << 37
 	dScriptReport    uint64 = 1 << 38
 	dSoftwareFileID  uint64 = 1 << 39
+	dDetail          uint64 = 1 << 40
 )
 
-const nUpdatable = 40
+const nUpdatable = 41
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -4245,6 +4314,7 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"script_secrets\" = $", B: ""},    // script_secrets
 	{A: "\"script_report\" = $", B: ""},     // script_report
 	{A: "\"software_file_id\" = $", B: ""},  // software_file_id
+	{A: "\"detail\" = $", B: ""},            // detail
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -4291,6 +4361,7 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{},                                                        // script_secrets has no server-side form
 	{},                                                        // script_report has no server-side form
 	{},                                                        // software_file_id has no server-side form
+	{},                                                        // detail has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -4343,9 +4414,10 @@ const (
 	iScriptSecrets   uint64 = 1 << 38
 	iScriptReport    uint64 = 1 << 39
 	iSoftwareFileID  uint64 = 1 << 40
+	iDetail          uint64 = 1 << 41
 )
 
-const nInsertable = 41
+const nInsertable = 42
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -4390,6 +4462,7 @@ var insCols = [nInsertable]string{
 	"\"script_secrets\"",
 	"\"script_report\"",
 	"\"software_file_id\"",
+	"\"detail\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -4398,7 +4471,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"package_runs\""
-const insReturning = " RETURNING \"id\", \"hostname\", \"asset_hostname\", \"mode\", \"packages\", \"holds\", \"reboot\", \"trigger\", \"state\", \"requested_by\", \"requested_at\", \"decided_by\", \"decided_at\", \"sent_at\", \"started_at\", \"finished_at\", \"updated_at\", \"step\", \"message\", \"planned\", \"upgraded\", \"restarted\", \"reboot_required\", \"rebooted\", \"log\", \"batch_id\", \"batch_position\", \"window_start\", \"items\", \"purge\", \"start_services\", \"expect\", \"preview_id\", \"undo_of\", \"started\", \"script_version_id\", \"script_action\", \"script_params\", \"script_secrets\", \"script_report\", \"software_file_id\""
+const insReturning = " RETURNING \"id\", \"hostname\", \"asset_hostname\", \"mode\", \"packages\", \"holds\", \"reboot\", \"trigger\", \"state\", \"requested_by\", \"requested_at\", \"decided_by\", \"decided_at\", \"sent_at\", \"started_at\", \"finished_at\", \"updated_at\", \"step\", \"message\", \"planned\", \"upgraded\", \"restarted\", \"reboot_required\", \"rebooted\", \"log\", \"batch_id\", \"batch_position\", \"window_start\", \"items\", \"purge\", \"start_services\", \"expect\", \"preview_id\", \"undo_of\", \"started\", \"script_version_id\", \"script_action\", \"script_params\", \"script_secrets\", \"script_report\", \"software_file_id\", \"detail\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -4417,7 +4490,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"hostname\", \"asset_hostname\", \"mode\", \"packages\", \"holds\", \"reboot\", \"trigger\", \"state\", \"requested_by\", \"requested_at\", \"decided_by\", \"decided_at\", \"sent_at\", \"started_at\", \"finished_at\", \"updated_at\", \"step\", \"message\", \"planned\", \"upgraded\", \"restarted\", \"reboot_required\", \"rebooted\", \"log\", \"batch_id\", \"batch_position\", \"window_start\", \"items\", \"purge\", \"start_services\", \"expect\", \"preview_id\", \"undo_of\", \"started\", \"script_version_id\", \"script_action\", \"script_params\", \"script_secrets\", \"script_report\", \"software_file_id\""
+const updReturning = " RETURNING \"id\", \"hostname\", \"asset_hostname\", \"mode\", \"packages\", \"holds\", \"reboot\", \"trigger\", \"state\", \"requested_by\", \"requested_at\", \"decided_by\", \"decided_at\", \"sent_at\", \"started_at\", \"finished_at\", \"updated_at\", \"step\", \"message\", \"planned\", \"upgraded\", \"restarted\", \"reboot_required\", \"rebooted\", \"log\", \"batch_id\", \"batch_position\", \"window_start\", \"items\", \"purge\", \"start_services\", \"expect\", \"preview_id\", \"undo_of\", \"started\", \"script_version_id\", \"script_action\", \"script_params\", \"script_secrets\", \"script_report\", \"software_file_id\", \"detail\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -4906,6 +4979,20 @@ func (m *Mut) SetSoftwareFileIDNull() {
 	m.expr &^= dSoftwareFileID
 }
 
+func (m *Mut) SetDetail(v runtime.JSON) {
+	m.row.Detail = runtime.Null[runtime.JSON]{V: v, Valid: true}
+	m.dirty |= dDetail
+	m.expr &^= dDetail
+}
+
+// SetDetailNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetDetailNull() {
+	m.row.Detail = runtime.Null[runtime.JSON]{}
+	m.dirty |= dDetail
+	m.expr &^= dDetail
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -5247,6 +5334,18 @@ func (n *Ins) SetSoftwareFileIDNull() {
 	n.set |= iSoftwareFileID
 }
 
+func (n *Ins) SetDetail(v runtime.JSON) {
+	n.row.Detail = runtime.Null[runtime.JSON]{V: v, Valid: true}
+	n.set |= iDetail
+}
+
+// SetDetailNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetDetailNull() {
+	n.row.Detail = runtime.Null[runtime.JSON]{}
+	n.set |= iDetail
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -5298,7 +5397,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 40)
+	set := make([]string, 0, 41)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -5421,6 +5520,9 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<40) != 0 {
 			set = append(set, "software_file_id")
 		}
+		if mask&(1<<41) != 0 {
+			set = append(set, "detail")
+		}
 	case 1:
 		if mask&(1<<1) != 0 {
 			set = append(set, "hostname")
@@ -5542,6 +5644,9 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<40) != 0 {
 			set = append(set, "software_file_id")
 		}
+		if mask&(1<<41) != 0 {
+			set = append(set, "detail")
+		}
 	case 2:
 		if mask&(1<<1) != 0 {
 			set = append(set, "hostname")
@@ -5659,6 +5764,9 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<40) != 0 {
 			set = append(set, "software_file_id")
+		}
+		if mask&(1<<41) != 0 {
+			set = append(set, "detail")
 		}
 	}
 	return set
@@ -5784,6 +5892,7 @@ var assignFor = map[string]string{
 	"script_secrets":    "\"script_secrets\" = EXCLUDED.\"script_secrets\"",
 	"script_report":     "\"script_report\" = EXCLUDED.\"script_report\"",
 	"software_file_id":  "\"software_file_id\" = EXCLUDED.\"software_file_id\"",
+	"detail":            "\"detail\" = EXCLUDED.\"detail\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -5916,6 +6025,8 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.ScriptReport.Arg())
 		case 40:
 			args = append(args, n.row.SoftwareFileID.Arg())
+		case 41:
+			args = append(args, n.row.Detail.Arg())
 		}
 	}
 	var out Row
@@ -5953,7 +6064,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 41)
+	args := make([]any, 0, 42)
 	args = append(args, r.ID)
 	args = append(args, r.Hostname)
 	args = append(args, r.AssetHostname)
@@ -5995,6 +6106,7 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.ScriptSecrets)
 	args = append(args, r.ScriptReport.Arg())
 	args = append(args, r.SoftwareFileID.Arg())
+	args = append(args, r.Detail.Arg())
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -6062,13 +6174,14 @@ var copyCols = []string{
 	"script_secrets",
 	"script_report",
 	"software_file_id",
+	"detail",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [41]any
+	buf  [42]any
 }
 
 func (s *rowSource) Next() bool {
@@ -6127,6 +6240,7 @@ func (s *rowSource) Values() []any {
 	s.buf[38] = &r.ScriptSecrets
 	s.buf[39] = r.ScriptReport.Ptr()
 	s.buf[40] = r.SoftwareFileID.Ptr()
+	s.buf[41] = r.Detail.Ptr()
 	return s.buf[:]
 }
 
@@ -6198,8 +6312,9 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 38
 	mask |= 1 << 39
 	mask |= 1 << 40
+	mask |= 1 << 41
 	st := stmtForInsertNoReturn(mask, 0, 0)
-	args := make([]any, 0, 41)
+	args := make([]any, 0, 42)
 	args = append(args, r.ID)
 	args = append(args, r.Hostname)
 	args = append(args, r.AssetHostname)
@@ -6241,6 +6356,7 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.ScriptSecrets)
 	args = append(args, r.ScriptReport.Arg())
 	args = append(args, r.SoftwareFileID.Arg())
+	args = append(args, r.Detail.Arg())
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -6356,6 +6472,8 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.ScriptReport.Arg())
 		case 40:
 			args = append(args, n.row.SoftwareFileID.Arg())
+		case 41:
+			args = append(args, n.row.Detail.Arg())
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -6491,6 +6609,8 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.ScriptReport.Arg())
 		case 39:
 			args = append(args, m.row.SoftwareFileID.Arg())
+		case 40:
+			args = append(args, m.row.Detail.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -6653,6 +6773,8 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.ScriptReport.Arg())
 		case 39:
 			args = append(args, m.row.SoftwareFileID.Arg())
+		case 40:
+			args = append(args, m.row.Detail.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -6881,6 +7003,8 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.ScriptReport.Arg())
 		case 39:
 			args = append(args, m.row.SoftwareFileID.Arg())
+		case 40:
+			args = append(args, m.row.Detail.Arg())
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

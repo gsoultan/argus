@@ -73,9 +73,6 @@ export function ApplicationsOnServer({ asset, canEdit }: { asset: Asset; canEdit
         <Tabs value={tab} onChange={setTab} variant="pills" radius="sm">
           <Tabs.List mb="xs" className="argus-tabs-scroll">
             <Tabs.Tab value="apps" fz={FS.meta}>Applications {apps.length}</Tabs.Tab>
-            {isConfigured() && (asset.protocol ?? 'ssh') === 'ssh' && (
-              <Tabs.Tab value="installed" fz={FS.meta}>Installed</Tabs.Tab>
-            )}
             <Tabs.Tab value="ports" fz={FS.meta}>Listening ports {listeners.length}</Tabs.Tab>
             <Tabs.Tab value="containers" fz={FS.meta} disabled={!data.sources.some((s) => s === 'docker' || s === 'podman')}>
               Containers {containers.length}
@@ -129,12 +126,6 @@ export function ApplicationsOnServer({ asset, canEdit }: { asset: Asset; canEdit
               </Table.ScrollContainer>
             )}
           </Tabs.Panel>
-
-          {isConfigured() && (asset.protocol ?? 'ssh') === 'ssh' && (
-            <Tabs.Panel value="installed">
-              <InstalledSoftware asset={asset} canEdit={canEdit} apps={apps} active={tab === 'installed'} />
-            </Tabs.Panel>
-          )}
 
           <Tabs.Panel value="ports">
             <Table.ScrollContainer minWidth={0} type="native">

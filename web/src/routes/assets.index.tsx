@@ -5,11 +5,12 @@ import { createFileRoute } from '@tanstack/react-router'
 import { IconClipboardCheck, IconHourglassHigh, IconPlus, IconRefresh } from '@tabler/icons-react'
 import { PageBody, PageHeader } from '~/components/page'
 import { ButtonLink } from '~/components/links'
+import { Freshness } from '~/components/Freshness'
 import { ServerCards } from '~/components/myservers'
 import { relTime } from '~/components/primitives'
-import { agentFleetQuery, assetsQuery, discoveredQuery, meQuery } from '~/lib/queries'
+import { ASSETS_EVERY, agentFleetQuery, assetsQuery, discoveredQuery, meQuery } from '~/lib/queries'
 import { isConfigured } from '~/lib/live'
-import { kindOfHost } from '~/lib/reach'
+import { kindOfHost, type Answer } from '~/lib/reach'
 import { canSee, seesWholeFleet } from '~/lib/roles'
 import { FS, SP } from '~/theme'
 
@@ -39,6 +40,10 @@ export const Route = createFileRoute('/assets/')({
   // No role guard: this is the one page every role is sent to. The control
   // plane has already narrowed the list to what each person may reach.
   component: Servers,
+  // ?status=down opens the list narrowed, as Home's "not answering" links it.
+  validateSearch: (s: Record<string, unknown>): { status?: Answer } => ({
+    status: typeof s.status === 'string' && (ANSWERS as readonly string[]).includes(s.status) ? (s.status as Answer) : undefined,
+  }),
   loader: ({ context }) =>
     Promise.all([
       context.queryClient.ensureQueryData(meQuery()).catch(() => undefined),
@@ -46,11 +51,15 @@ export const Route = createFileRoute('/assets/')({
     ]),
 })
 
+const ANSWERS = ['online', 'down', 'noagent', 'blocked'] as const
+
 function Servers() {
+  const { status } = Route.useSearch()
   const { data: me } = useQuery(meQuery())
-  const { data: assets } = useQuery(assetsQuery({}))
+  const { data: assets, dataUpdatedAt } = useQuery(assetsQuery({}))
   const whole = seesWholeFleet(me?.role)
   const admin = canSee(me?.role, 'admin')
+  const fresh = isConfigured() && <Freshness at={dataUpdatedAt} every={ASSETS_EVERY} what="Each server's status, as its agent last checked in." />
 
   return (
     <Box>
@@ -64,6 +73,7 @@ function Servers() {
         actions={
           admin ? (
             <>
+              {fresh}
               <ButtonLink to="/assets/updates" size="sm" variant="default" leftSection={<IconRefresh size={16} />}>
                 Updates
               </ButtonLink>
@@ -72,9 +82,12 @@ function Servers() {
               </ButtonLink>
             </>
           ) : whole ? (
-            <ButtonLink to="/assets/updates" size="sm" variant="default" leftSection={<IconRefresh size={16} />}>
-              Updates
-            </ButtonLink>
+            <>
+              {fresh}
+              <ButtonLink to="/assets/updates" size="sm" variant="default" leftSection={<IconRefresh size={16} />}>
+                Updates
+              </ButtonLink>
+            </>
           ) : (
             (assets?.length ?? 0) > 0 && (
               <ButtonLink to="/approvals" variant="default" leftSection={<IconClipboardCheck size={16} />}>
@@ -92,7 +105,7 @@ function Servers() {
             <PackageFleetCard canEdit={admin} />
           </Suspense>
         )}
-        <ServerCards />
+        <ServerCards initialShow={status} />
       </PageBody>
     </Box>
   )

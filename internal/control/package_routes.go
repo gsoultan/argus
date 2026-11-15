@@ -382,8 +382,9 @@ func (a *API) packagesFor(ctx context.Context, asset Asset) (packageTarget, erro
 	}
 	v := PackagesView{Hostname: asset.Hostname, Holds: []string{}, Runs: []PackageRun{}}
 	var checkAsked *string
-	err = a.store.db(ctx).QueryRow(ctx, `SELECT packages_check_id FROM agents WHERE lower(hostname) = lower($1)`,
-		agent).Scan(&checkAsked)
+	var heard time.Time
+	err = a.store.db(ctx).QueryRow(ctx, `SELECT packages_check_id, last_seen_at FROM agents WHERE lower(hostname) = lower($1)`,
+		agent).Scan(&checkAsked, &heard)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 	case err != nil:
@@ -391,6 +392,7 @@ func (a *API) packagesFor(ctx context.Context, asset Asset) (packageTarget, erro
 	default:
 		v.Enrolled = true
 		v.CheckAsked = checkAsked != nil
+		v.HeardAt = &heard
 	}
 	report, st, err := a.store.packageReportFor(ctx, agent)
 	if err != nil {

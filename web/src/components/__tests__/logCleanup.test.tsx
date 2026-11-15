@@ -206,7 +206,7 @@ describe('LogsTab', () => {
     renderWith(<LogsTab asset={asset} canEdit />, 'ada@example.com')
     expect(await screen.findByText('Waiting for approval')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
-    expect(screen.getByRole('button', { name: 'Take back' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Cancel run' })).toBeTruthy()
   })
 
   it('shows what a past cleanup removed', async () => {

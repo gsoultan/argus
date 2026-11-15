@@ -189,7 +189,7 @@ describe('DisksTab', () => {
   it('does not let the one who asked approve', async () => {
     live.assetDisks.mockResolvedValue(view({ runs: [runOf({ state: 'awaiting_approval' })] }))
     renderWith(<DisksTab asset={asset} canEdit />, 'ada@example.com')
-    expect(await screen.findByRole('button', { name: 'Take back' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: 'Cancel run' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
   })
 

@@ -28,6 +28,7 @@ import { assetLogsQuery } from '~/lib/logQueries'
 import { bytes, systemQuery } from '~/components/server/SystemCard'
 import { parseServerTab, type ServerTab } from '~/components/server/tabs'
 import { TABS_BY_TYPE, tabLabel } from '~/components/server/tabsByType'
+import { SoftwareTab } from '~/components/server/SoftwareTab'
 import { ASSET_TYPE_LABEL, assetHostnameAside, assetName, assetShortName, assetTypeOf } from '~/lib/assetType'
 import { AgentTab } from '~/components/server/AgentTab'
 import { assetQuery, meQuery, sessionsQuery } from '~/lib/queries'
@@ -106,7 +107,15 @@ function AssetDetail() {
 
   // A tab this type does not have (a link to Logs on a workstation, say)
   // lands on Overview rather than on a tab missing from the row above.
-  const tab: ServerTab = TABS_BY_TYPE[assetTypeOf(asset)].includes(asked) ? asked : 'overview'
+  // Software is installed and removed through a control plane, on servers
+  // reached over SSH; a Windows server lists its programs under Apps.
+  const seesSoftware = isConfigured() && asset.protocol !== 'rdp'
+  const shown = TABS_BY_TYPE[assetTypeOf(asset)].filter((t) => {
+    if (t === 'software') return seesSoftware
+    // Updates, disks and logs are for those who may act on them, or audit.
+    return (t !== 'updates' && t !== 'disks' && t !== 'logs' && t !== 'metrics') || seesUpdates
+  })
+  const tab: ServerTab = shown.includes(asked) ? asked : 'overview'
   const sessions = allSessions?.filter((s) => s.assetId === asset.id)
   const setTab = (t: ServerTab) =>
     void navigate({ search: t === 'overview' ? {} : { tab: t }, replace: true, resetScroll: false })
@@ -167,10 +176,7 @@ function AssetDetail() {
         tabs={
           <Tabs value={tab} onChange={(v) => v && setTab(v as ServerTab)} keepMounted={false}>
             <Tabs.List className="argus-tabs-scroll" style={{ borderBottom: 0 }}>
-              {TABS_BY_TYPE[assetTypeOf(asset)].filter((t) => {
-                // Updates, disks and logs are for those who may act on them, or audit.
-                return (t !== 'updates' && t !== 'disks' && t !== 'logs' && t !== 'metrics') || seesUpdates
-              }).map((t) => (
+              {shown.map((t) => (
                 <Tabs.Tab
                   key={t}
                   value={t}
@@ -214,6 +220,7 @@ function AssetDetail() {
         {tab === 'access' && <AccessTab asset={asset} canEdit={canEdit} />}
         {tab === 'sessions' && <SessionsTab asset={asset} sessions={sessions} />}
         {tab === 'apps' && <AppsTab asset={asset} canEdit={canEdit} />}
+        {tab === 'software' && seesSoftware && <SoftwareTab asset={asset} canEdit={canEdit} />}
         {tab === 'updates' && seesUpdates && <UpdatesTab asset={asset} canEdit={canEdit} />}
         {tab === 'disks' && seesUpdates && <DisksTab asset={asset} canEdit={canEdit} />}
         {tab === 'logs' && seesUpdates && <LogsTab asset={asset} canEdit={canEdit} />}

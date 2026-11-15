@@ -46,41 +46,43 @@ func (a *PackageApplier) applyRelease(ctx context.Context) PackageRunStatus {
 	})
 	m := detectManager(a.Look)
 	if m == nil {
-		return a.fail(errNoManager.Error())
+		return a.unchanged(errNoManager.Error())
 	}
 	if err := m.refresh(ctx, a.Run, a.lw); err != nil {
-		return a.fail(err.Error())
+		return a.unchanged(err.Error())
 	}
 	_, off := a.Now().Zone()
 	r := PackageReport{CheckedAt: a.Now().UTC(), Manager: m.name(), Supported: true, UTCOffsetMinutes: off / 60}
 	r, err := a.listInto(ctx, m, r)
 	if err != nil {
-		return a.fail(err.Error())
+		return a.unchanged(err.Error())
 	}
 	info := r.Release
 	switch {
 	case info == nil:
-		return a.fail("the server does not say which release it runs (no /etc/os-release)")
+		return a.unchanged("the server does not say which release it runs (no /etc/os-release)")
 	case info.Reason != "":
-		return a.fail(info.Reason)
+		return a.unchanged(info.Reason)
 	case info.Next == "":
-		return a.fail("no newer release is offered for " + info.Current + " now")
+		return a.unchanged("no newer release is offered for " + info.Current + " now")
 	case info.Next != a.Plan.Expect:
-		return a.fail(fmt.Sprintf("the server now offers %s, not the %s this run was approved for; nothing was "+
-			"changed. Look for updates again and ask again", info.Next, a.Plan.Expect))
+		return a.unchanged(fmt.Sprintf("the server now offers %s, not the %s this run was approved for; nothing was "+
+			"changed. Look for updates again and ask again", info.Next, a.Plan.Expect),
+			"Press Check for updates, so Argus sees what the server offers now.",
+			"Ask for the upgrade to "+info.Next+" if that is the one you want.")
 	case len(info.Blockers) > 0:
-		return a.fail("not upgraded, nothing was changed: " + strings.Join(info.Blockers, "; "))
+		return a.unchanged("not upgraded, nothing was changed: " + strings.Join(info.Blockers, "; "))
 	}
 	if info.Tool == releaseToolUbuntu || info.Tool == releaseToolDebian {
 		if err := a.answerGrub(ctx); err != nil {
-			return a.fail(err.Error())
+			return a.unchanged(err.Error())
 		}
 	}
 	change := &ReleaseChange{Distro: info.Distro, From: info.Version, FromName: info.Current, To: info.Next,
 		ToName: info.NextName, Tool: info.Tool}
 	deps := snapshotDeps(ctx, a.Run, a.Look, managerFamily(m))
 	if err := writeFileAtomic(filepath.Join(a.Plan.StateDir, packagesDir, releaseDepsFile), mustJSON(deps), 0o600); err != nil {
-		return a.fail("cannot keep the list of what the agent uses on the server: " + err.Error())
+		return a.unchanged("cannot keep the list of what the agent uses on the server, so nothing was changed: " + err.Error())
 	}
 	fmt.Fprintf(a.lw, "argus: upgrading %s to %s with %s\n", info.Current, info.NextName, info.Tool)
 	a.update(func(s *PackageRunStatus) {
@@ -101,7 +103,7 @@ func (a *PackageApplier) applyRelease(ctx context.Context) PackageRunStatus {
 	a.lw.Flush()
 	if err != nil {
 		a.writeReport(ctx, m)
-		return a.fail(err.Error())
+		return a.failErr(err, &RunOutcome{Changed: ChangedUnknown})
 	}
 	if info.Tool != releaseToolLeapp {
 		// The upgrade has rewritten os-release by now. A tool that exited 0
@@ -127,6 +129,15 @@ func (a *PackageApplier) applyRelease(ctx context.Context) PackageRunStatus {
 	return a.snapshot()
 }
 
+// unchanged ends a release upgrade that stopped before it changed anything,
+// with what to do next: what is given, or what fits most stops.
+func (a *PackageApplier) unchanged(msg string, next ...string) PackageRunStatus {
+	if len(next) == 0 {
+		next = againSteps
+	}
+	return a.failWith(msg, RunOutcome{Changed: ChangedNo, Why: msg, Next: next})
+}
+
 func orUnknown(s string) string {
 	if s == "" {
 		return "an unknown release"
@@ -134,24 +145,52 @@ func orUnknown(s string) string {
 	return s
 }
 
-// aptPartWay is what to say when an apt upgrade itself failed, after trying to finish what dpkg
-// left half done: whether that worked, and what a person does next. The
-// server is not rebooted: a boot loader left unconfigured may not boot.
+// aptPartWay is what to say when an apt upgrade itself failed: first
+// whether dpkg changed any package since the run started, read from its log.
+// Nothing changed is said as that, with the tool's reason, and nothing is
+// repaired. Otherwise Argus tries to finish what dpkg left half done and
+// says whether that worked and what a person does next. The server is not
+// rebooted: a boot loader left unconfigured may not boot.
 func (a *PackageApplier) aptPartWay(ctx context.Context, tool string, code int, out []byte, log string) error {
+	why := tail(out, 400)
+	changed := dpkgChangedSince(a.snapshot().StartedAt)
+	if changed == ChangedNo {
+		fmt.Fprintln(a.lw, "argus: "+tool+" stopped before dpkg changed any package; nothing was changed")
+		a.lw.Flush()
+		return &outcomeError{
+			msg: fmt.Sprintf("%s failed (exit %d) before changing any package, so nothing was changed and the server "+
+				"is still on its release. It said: %s. Its log is %s", tool, code, why, log),
+			outcome: RunOutcome{Changed: ChangedNo, Why: why, Next: againSteps},
+		}
+	}
 	fmt.Fprintln(a.lw, "argus: the upgrade stopped part way; finishing what dpkg left half done")
 	repaired := aptManager{}.repair(ctx, a.Run, a.lw) == nil
 	a.lw.Flush()
-	next := "Argus tried to finish configuring the packages and could not. Do not reboot until " +
+	next := []string{
+		"Do not reboot yet.",
+		"Run `sudo dpkg --configure -a` and `sudo apt-get -f install` until both finish without errors. If grub-pc " +
+			"is what fails, run `sudo dpkg-reconfigure grub-pc` and tick the disk the server boots from.",
+		"Run `sudo apt full-upgrade` to finish the release.",
+		"Check that /etc/os-release names the new release, and only then reboot.",
+	}
+	said := "Argus tried to finish configuring the packages and could not. Do not reboot until " +
 		"`sudo dpkg --configure -a` and `sudo apt-get -f install` finish without errors (if grub-pc is what " +
 		"fails, `sudo dpkg-reconfigure grub-pc` and tick the disk the server boots from), then run " +
 		"`sudo apt full-upgrade` to finish the release, and only then reboot."
 	if repaired {
-		next = "Argus then finished configuring the packages (dpkg --configure -a, apt-get -f install). Do not " +
+		next = append(next[:1:1], next[2:]...)
+		said = "Argus then finished configuring the packages (dpkg --configure -a, apt-get -f install). Do not " +
 			"reboot yet: run `sudo apt full-upgrade` to finish the release, check /etc/os-release names it, " +
 			"and only then reboot."
 	}
-	return fmt.Errorf("%s failed (exit %d), so the server is part way between releases. %s Its log is %s. %s",
-		tool, code, next, log, tail(out, 400))
+	where := "so the server is part way between releases"
+	if changed == ChangedUnknown {
+		where = "and dpkg's log could not be read, so the server may be part way between releases"
+	}
+	return &outcomeError{
+		msg:     fmt.Sprintf("%s failed (exit %d), %s. %s Its log is %s. %s", tool, code, where, said, log, why),
+		outcome: RunOutcome{Changed: changed, Why: why, Next: next},
+	}
 }
 
 func (a *PackageApplier) upgradeUbuntu(ctx context.Context, info *ReleaseInfo) error {
@@ -185,9 +224,12 @@ func (a *PackageApplier) upgradeUbuntu(ctx context.Context, info *ReleaseInfo) e
 		why = tail(b.Bytes(), 400)
 	}
 	if restored && versionIs(osRelease()["VERSION_ID"], info.Version) {
-		return fmt.Errorf("do-release-upgrade stopped before upgrading anything and put the server back the way it "+
-			"was, so it is still on %s and nothing was changed. It said: %s. Fix that, look for updates again, and "+
-			"ask again; the whole log is %s", info.Current, why, ubuntuUpgradeLogs[0])
+		return &outcomeError{
+			msg: fmt.Sprintf("do-release-upgrade stopped before upgrading anything and put the server back the way "+
+				"it was, so it is still on %s and nothing was changed. It said: %s. Fix that, look for updates again, "+
+				"and ask again; the whole log is %s", info.Current, why, ubuntuUpgradeLogs[0]),
+			outcome: RunOutcome{Changed: ChangedNo, Why: why, Next: againSteps},
+		}
 	}
 	return a.aptPartWay(ctx, "do-release-upgrade", code, []byte(why), "/var/log/dist-upgrade/main.log")
 }
@@ -312,7 +354,20 @@ func (a *PackageApplier) upgradeDebian(ctx context.Context, m pkgManager, info *
 			return err
 		}
 		if code != 0 {
-			return a.aptPartWay(ctx, "apt-get "+step[0], code, b.Bytes(), "/var/log/apt/term.log")
+			err := a.aptPartWay(ctx, "apt-get "+step[0], code, b.Bytes(), "/var/log/apt/term.log")
+			var oe *outcomeError
+			if errors.As(err, &oe) && oe.outcome.Changed == ChangedNo {
+				// Nothing was installed: apt goes back on the old release,
+				// as when the new lists cannot be downloaded.
+				if rerr := restoreSources(aptSourcesRoot, backup); rerr != nil {
+					oe.msg += fmt.Sprintf(". The old sources could not be put back (%v); fix /etc/apt by hand", rerr)
+					oe.outcome.Next = append([]string{"Point /etc/apt back at " + from + " by hand."}, oe.outcome.Next...)
+				} else {
+					_ = m.refresh(ctx, a.Run, a.lw)
+					oe.msg += ". apt is back on " + from
+				}
+			}
+			return err
 		}
 	}
 	return nil

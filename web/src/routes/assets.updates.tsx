@@ -27,7 +27,7 @@ const AGENT_STATE: Record<NonNullable<UpdatesWaitingRow['agent']>, string> = {
 /**
  * Assets › Updates: everything waiting to be updated across the fleet, in
  * one place. Security fixes first, then agents, then other updates and
- * restarts. Each asset links to its own Packages or Agent tab, where the
+ * restarts. Each asset links to its own Updates or Agent tab, where the
  * single-asset controls are; the buttons here act on the whole group.
  */
 function FleetUpdates() {
@@ -66,7 +66,7 @@ function FleetUpdates() {
       <PageHeader
         crumbs={[{ label: 'Assets', to: '/assets' }, { label: 'Updates' }]}
         title="Updates"
-        description="Everything waiting to be updated across your assets. Agents update once nobody is connected."
+        description="Operating system updates, security fixes, Argus agent releases and restarts waiting across your assets. Each asset's own Updates tab has the details."
       />
       <PageBody>
         {!isConfigured() ? (

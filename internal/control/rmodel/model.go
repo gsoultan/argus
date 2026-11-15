@@ -1562,6 +1562,9 @@ type PackageRun struct {
 	ScriptReport    *storm.JSON
 	// The library file an app install on a device hands it (migration 059).
 	SoftwareFileID *[16]byte
+	// How a run ended (did it change the server, why, what next) and when
+	// it reached each step (migration 080).
+	Detail *storm.JSON
 }
 
 func (m *PackageRun) Schema(t *storm.Table) {

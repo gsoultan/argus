@@ -1,15 +1,18 @@
-import { Box, Group, ScrollArea, SegmentedControl, Text, TextInput } from '@mantine/core'
+import { Box, Group, NativeSelect, ScrollArea, Text, TextInput } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { IconBrandWindows, IconDeviceMobile, IconSearch, IconTerminal2 } from '@tabler/icons-react'
 import { useMemo, useState } from 'react'
-import { ReachBadge, isUp, kindOf, reachOf } from '~/components/myservers'
+import { ANSWER_LABEL, ReachBadge, answerOf, kindOf, reachOf, type Answer } from '~/components/myservers'
 import { assetHostnameAside, assetShortName } from '~/lib/assetType'
 import { addressesOf } from '~/lib/assetAddresses'
 import { assetsQuery } from '~/lib/queries'
 import { FS } from '~/theme'
 
-type Show = 'all' | 'online' | 'offline'
+type Show = 'all' | Answer
+
+/** The same choices as the Assets list, in a column too narrow for a row of buttons. */
+const SHOWN: Answer[] = ['online', 'down', 'noagent', 'blocked']
 
 /** What to call a server that has not said what it runs. */
 export const KIND_NAME = { linux: 'Linux', windows: 'Windows', android: 'Android' } as const
@@ -30,14 +33,11 @@ export function ServerList({ currentId }: { currentId: string }) {
       .filter((a) => !needle || a.hostname.toLowerCase().includes(needle) ||
         (a.alias ?? '').toLowerCase().includes(needle) || a.tags.some((t) => t.toLowerCase().includes(needle)) ||
         addressesOf(a).some((x) => x.address.toLowerCase().includes(needle)))
-      .filter((a) => {
-        if (show === 'all') return true
-        return show === 'online' ? isUp(reachOf(a)) : !isUp(reachOf(a))
-      })
+      .filter((a) => show === 'all' || answerOf(a) === show)
       .sort((a, b) => assetShortName(a).localeCompare(assetShortName(b)))
   }, [assets, q, show])
 
-  const online = (assets ?? []).filter((a) => isUp(reachOf(a))).length
+  const count = (k: Answer) => (assets ?? []).filter((a) => answerOf(a) === k).length
   const total = assets?.length ?? 0
 
   return (
@@ -51,16 +51,16 @@ export function ServerList({ currentId }: { currentId: string }) {
           value={q}
           onChange={(e) => setQ(e.currentTarget.value)}
         />
-        <SegmentedControl
+        <NativeSelect
           mt="xs"
           size="xs"
-          fullWidth
+          aria-label="Show servers"
           value={show}
-          onChange={(v) => setShow(v as Show)}
+          onChange={(e) => setShow(e.currentTarget.value as Show)}
           data={[
-            { value: 'all', label: `All ${total}` },
-            { value: 'online', label: `Online ${online}` },
-            { value: 'offline', label: `Offline ${total - online}` },
+            { value: 'all', label: `All servers (${total})` },
+            ...SHOWN.filter((k) => k === show || k === 'online' || count(k) > 0)
+              .map((k) => ({ value: k, label: `${ANSWER_LABEL[k]} (${count(k)})` })),
           ]}
         />
       </Box>

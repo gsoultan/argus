@@ -6,10 +6,11 @@ import { useQuery } from '@tanstack/react-query'
 import { ButtonLink } from '~/components/links'
 import {
   IconActivityHeartbeat, IconCircleCheck, IconClipboardCheck, IconDatabaseExclamation, IconServerBolt,
-  IconShieldExclamation, type IconProps,
+  IconServerOff, IconShieldExclamation, type IconProps,
 } from '@tabler/icons-react'
 import { PageBody } from '~/components/page'
 import { Mono, now, relTime } from '~/components/primitives'
+import { shortName } from '~/lib/reach'
 import { isStatus, Label } from '~/components/home/parts'
 import { CommandBand } from '~/components/home/Command'
 import { FleetHealth, HappeningNow, HomeTiles, LiveNow, LivePill, SessionsChart, useLiveNeeds } from '~/components/home/Live'
@@ -181,7 +182,7 @@ function NeedCard({ need: n }: { need: Need }) {
 /* ── The fleet, for whoever sees all of it ─────────────────────────────── */
 
 /**
- * The fleet, live: what needs someone, six numbers, the day by hour, who is
+ * The fleet, live: what needs someone, five numbers, the day by hour, who is
  * on a server, how the servers are doing, and the audit log as it is written.
  * All of it from one dashboard the control plane builds and streams; see
  * lib/homeLive.ts. argus-control's own card is for platform managers.
@@ -206,7 +207,7 @@ function FleetHome({ me }: { me: User }) {
           {platform && <Suspense fallback={<Skeleton h={240} radius="md" />}><ControlCard /></Suspense>}
         </Stack>
       </Box>
-      <HappeningNow words={(e) => e.detail || <>{ACTION_WORDS[e.action] ?? <Mono>{e.action}</Mono>} {e.target}</>} />
+      <HappeningNow words={eventWords} />
     </Stack>
   )
 }
@@ -219,7 +220,7 @@ function FleetHome({ me }: { me: User }) {
 function FleetNeeds({ me }: { me: User }) {
   const admin = canSee(me.role, 'admin')
   const platform = Boolean(me.platformOwner) && isConfigured()
-  const { waiting, unreviewed, fullDisks, failed15m } = useLiveNeeds()
+  const { waiting, unreviewed, fullDisks, failed15m, down } = useLiveNeeds()
   const { data: status } = useQuery({ ...controlStatusQuery(), enabled: platform })
   if (!waiting) return <Skeleton h={48} radius="md" />
 
@@ -231,6 +232,14 @@ function FleetNeeds({ me }: { me: User }) {
       title: `${waiting.count} ${waiting.count === 1 ? 'request is' : 'requests are'} waiting on you`,
       detail: mins === null ? '' : mins < 1 ? 'the oldest just now' : `the oldest for ${mins} min`,
       action: <ButtonLink variant="subtle" size="compact-sm" style={{ flexShrink: 0 }} to="/approvals">Review ›</ButtonLink>,
+    })
+  }
+  if (down > 0) {
+    needs.push({
+      key: 'down', icon: IconServerOff, color: 'rose',
+      title: `${down} ${down === 1 ? 'server is' : 'servers are'} not answering`,
+      detail: 'Their agents went quiet or could not be reached',
+      action: <ButtonLink variant="subtle" size="compact-sm" style={{ flexShrink: 0 }} to="/assets" search={{ status: 'down' }}>See which ›</ButtonLink>,
     })
   }
   for (const d of fullDisks.slice(0, 2)) {
@@ -274,6 +283,23 @@ function controlNeed(status: unknown): Need | null {
   }
 }
 
+/**
+ * One audit entry as a sentence after the person's name. A detail the
+ * control plane wrote as a sentence says the most, so it wins; anything
+ * shorter ("ok", a status word) says nothing on its own, so the action and
+ * its target are named instead. A command is shown as the command, with the
+ * server it ran on.
+ */
+function eventWords(e: AuditEvent): ReactNode {
+  const host = e.target && e.target !== 'console' ? shortName(e.target) : ''
+  if (e.action === 'session.command' && e.detail) return <>ran <Mono>{e.detail}</Mono>{host && ` on ${host}`}</>
+  const sentence = /\s/.test(e.detail.trim()) && e.detail.trim().length > 12
+  if (sentence) return e.detail
+  const verb = ACTION_WORDS[e.action]
+  if (verb) return host ? `${verb} ${host}` : verb
+  return <><Mono>{e.action}</Mono>{host && ` on ${host}`}</>
+}
+
 const ACTION_WORDS: Partial<Record<AuditEvent['action'], string>> = {
   'session.start': 'opened a session on',
   'session.end': 'ended a session on',
@@ -297,6 +323,8 @@ const ACTION_WORDS: Partial<Record<AuditEvent['action'], string>> = {
   'policy.change': 'changed the policy for',
   'auth.login': 'signed in',
   'auth.mfa_fail': 'failed a second-factor check',
+  'session.shadow': 'watched a session on',
+  'sshd_config.drift': 'saw the SSH settings change on',
 }
 
 function lowerFirst(s: string): string {

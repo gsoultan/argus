@@ -185,7 +185,7 @@ describe('UpdatesTab', () => {
     expect(await screen.findByText(/Unpacking openssl/)).toBeTruthy()
     expect((screen.getByRole('button', { name: 'Update 2 packages' }) as HTMLButtonElement).disabled).toBe(true)
     // A run the server has started cannot be taken back.
-    expect(screen.queryByRole('button', { name: 'Take back' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Cancel run' })).toBeNull()
   })
 
   it('lets another admin approve a run, but not the one who asked', async () => {
@@ -201,7 +201,7 @@ describe('UpdatesTab', () => {
     renderWith(<UpdatesTab asset={asset} canEdit />, 'ada@example.com')
     expect(await screen.findByText('Waiting for approval')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
-    expect(screen.getByRole('button', { name: 'Take back' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Cancel run' })).toBeTruthy()
   })
 })
 
@@ -469,5 +469,75 @@ describe('PackageUpdateSettings', () => {
     renderWith(<PackageUpdateSettings canEdit={false} />)
     expect(((await screen.findByLabelText('Servers tagged')) as HTMLInputElement).disabled).toBe(true)
     expect(screen.queryByRole('button', { name: 'Add rule' })).toBeNull()
+  })
+})
+
+describe('how a run ended', () => {
+  afterEach(() => window.localStorage.clear())
+  const ago = (ms: number) => new Date(Date.now() - ms).toISOString()
+
+  // The release upgrade that failed on 2026-11-15: nothing had changed,
+  // and the screen must say so rather than "part way between releases".
+  it('says a failed upgrade changed nothing, why, and what to do, at the top of the tab', async () => {
+    const failed = runOf({
+      id: 'up1', mode: 'release_upgrade', release: '24.04', state: 'failed', startedAt: ago(180_000), finishedAt: ago(60_000),
+      message: 'do-release-upgrade failed (exit 1) before changing any package, so nothing was changed',
+      outcome: {
+        changed: 'no', why: 'E:Could not calculate the upgrade',
+        next: ['Remove it with `sudo apt remove postgresql-16-postgis-3`.', 'Press Check for updates, so Argus sees the change.'],
+      },
+    })
+    live.assetPackages.mockResolvedValue(view({ runs: [failed] }))
+    live.packageRun.mockResolvedValue({ ...failed, log: 'Reading cache' })
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    const card = await screen.findByRole('region', { name: 'How the last run ended' })
+    expect(within(card).getByText('The upgrade to 24.04 did not start')).toBeTruthy()
+    expect(within(card).getByTestId('run-changed').textContent).toBe('No, nothing on the server changed')
+    expect(within(card).getByText('E:Could not calculate the upgrade')).toBeTruthy()
+    expect(within(card).getByRole('button', { name: 'Copy sudo apt remove postgresql-16-postgis-3' })).toBeTruthy()
+    expect(within(card).queryByText(/part way/)).toBeNull()
+
+    fireEvent.click(within(card).getByRole('button', { name: 'Dismiss' }))
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'How the last run ended' })).toBeNull())
+    expect(window.localStorage.getItem('argus.run.dismissed.up1')).toBe('1')
+  })
+
+  it('says a run from an older agent may have changed things, from its message', async () => {
+    const failed = runOf({ id: 'old1', mode: 'all', state: 'interrupted', finishedAt: ago(60_000), message: 'the server restarted during the run' })
+    live.assetPackages.mockResolvedValue(view({ runs: [failed] }))
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    const card = await screen.findByRole('region', { name: 'How the last run ended' })
+    expect(within(card).getByText('The update run was interrupted')).toBeTruthy()
+    expect(within(card).getByTestId('run-changed').textContent).toBe('Not sure: the agent could not tell')
+    expect(within(card).getByText('the server restarted during the run')).toBeTruthy()
+  })
+
+  it('leaves an old success out', async () => {
+    const done = runOf({ id: 'd1', state: 'done', finishedAt: ago(2 * 3_600_000), upgraded: [{ name: 'openssl', to: '3' }] })
+    live.assetPackages.mockResolvedValue(view({ runs: [done] }))
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    expect(await screen.findByText('Recent runs')).toBeTruthy()
+    expect(screen.queryByRole('region', { name: 'How the last run ended' })).toBeNull()
+  })
+
+  it('says how long a run has gone, each step, and when the server was last heard from', async () => {
+    const running = runOf({
+      id: 'go1', state: 'running', step: 'install', startedAt: ago(125_000), sentAt: ago(130_000),
+      steps: [{ step: 'refresh', at: ago(125_000) }, { step: 'install', at: ago(65_000) }],
+    })
+    live.assetPackages.mockResolvedValue(view({ runs: [running], heardAt: ago(3_000) }))
+    live.packageRun.mockResolvedValue(running)
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    expect((await screen.findByTestId('run-elapsed')).textContent).toMatch(/^2:0\d$/)
+    expect(screen.getByText('1:00')).toBeTruthy()
+    expect(screen.getByTestId('last-heard').textContent).toMatch(/Server last heard from \d s ago/)
+  })
+
+  it('turns amber and explains a quiet server while it reboots', async () => {
+    const rebooting = runOf({ id: 'rb1', mode: 'reboot', state: 'rebooting', step: 'reboot', startedAt: ago(120_000), sentAt: ago(125_000) })
+    live.assetPackages.mockResolvedValue(view({ runs: [rebooting], heardAt: ago(100_000) }))
+    live.packageRun.mockResolvedValue(rebooting)
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    expect((await screen.findByTestId('last-heard')).textContent).toMatch(/Server silent for 1 min 4\d s while it restarts/)
   })
 })
