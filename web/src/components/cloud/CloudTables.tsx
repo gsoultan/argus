@@ -3,7 +3,7 @@ import { IconArrowsSplit, IconCamera, IconDeviceFloppy, IconNetwork, IconPhoto, 
 import { useState } from 'react'
 import { DataTable, EmptyState } from '~/components/page'
 import { relTime, rowNav } from '~/components/primitives'
-import { openToInternet, scheduleOf, type CloudItem } from '~/lib/cloud'
+import { latestRead, openToInternet, scheduleOf, type CloudItem } from '~/lib/cloud'
 import { FS, INK } from '~/theme'
 import { NameCell, OriginBadge, ResourceDrawer, ServerCell, StateBadge, WhereCell } from './common'
 import { SecurityGroupMap } from './SecurityMap'
@@ -15,9 +15,14 @@ interface TableProps {
   filtered: boolean
 }
 
-function useDrawer(names: Map<string, string>) {
+/**
+ * The panel for one row. It shows the row's latest read from the lists
+ * passed in, not the copy that was clicked, so a snapshot's progress or an
+ * instance's state moves while the panel is open.
+ */
+function useDrawer(names: Map<string, string>, lists: (CloudItem[] | undefined)[]) {
   const [open, setOpen] = useState<CloudItem | null>(null)
-  return { show: setOpen, drawer: <ResourceDrawer it={open} onClose={() => setOpen(null)} names={names} /> }
+  return { show: setOpen, drawer: <ResourceDrawer it={latestRead(open, lists)} onClose={() => setOpen(null)} names={names} /> }
 }
 
 function emptyText(filtered: boolean, what: string) {
@@ -25,7 +30,7 @@ function emptyText(filtered: boolean, what: string) {
 }
 
 export function InstancesTable({ items, loading, names, filtered }: TableProps) {
-  const { show, drawer } = useDrawer(names)
+  const { show, drawer } = useDrawer(names, [items])
   return (
     <>
       <DataTable minWidth={980} loading={loading} isEmpty={(items?.length ?? 0) === 0}
@@ -102,7 +107,7 @@ export function StorageTables({ volumes, snapshots, images, loading, names, filt
   filtered: boolean
 }) {
   const [view, setView] = useState<StorageView>('disks')
-  const { show, drawer } = useDrawer(names)
+  const { show, drawer } = useDrawer(names, [volumes, snapshots, images])
   const imageOf = new Map<string, string>()
   for (const im of images ?? []) for (const l of im.resource.links ?? []) if (l.kind === 'snapshot') imageOf.set(l.id, im.resource.name)
   return (
@@ -129,7 +134,11 @@ export function StorageTables({ volumes, snapshots, images, loading, names, filt
                 <Table.Td><Text size={FS.meta} ff="monospace">{r.size}</Text></Table.Td>
                 <Table.Td>
                   {r.state === 'pending'
-                    ? <Badge variant="light" color="sky" radius="sm">Taking {r.details?.progress ?? ''}</Badge>
+                    ? (
+                      <Tooltip label={`AWS said so when Argus last read it, ${relTime(it.seenAt)}. Argus reads it again every half minute until it finishes.`} multiline w={260}>
+                        <Badge variant="light" color="sky" radius="sm">Taking {r.details?.progress ?? ''}</Badge>
+                      </Tooltip>
+                    )
                     : <StateBadge state={r.state} />}
                 </Table.Td>
                 <Table.Td><Text size={FS.meta} c={of ? undefined : 'dimmed'}>{of ? names.get(of.id) ?? of.id : '—'}</Text></Table.Td>
@@ -187,7 +196,7 @@ export function NetworkTables({ firewalls, instances, networks, subnets, address
 }) {
   const [view, setView] = useState<NetView>('firewalls')
   const [drawn, setDrawn] = useState<'list' | 'map'>('list')
-  const { show, drawer } = useDrawer(names)
+  const { show, drawer } = useDrawer(names, [firewalls, instances, networks, subnets, addresses, balancers, targetGroups])
   return (
     <Stack gap="md">
       <Group justify="space-between" gap="sm">

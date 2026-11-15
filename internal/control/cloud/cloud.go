@@ -140,6 +140,19 @@ type Resource struct {
 	Details   map[string]string `json:"details,omitempty"`
 }
 
+// Settling reports whether a resource is on its way from one state to
+// another: a snapshot being taken, an instance starting or stopping, a disk
+// being made. Its region is read again sooner than the usual interval, so
+// the console does not show a finished snapshot at 0% for minutes. The
+// console's settling() in web/src/lib/cloud.ts mirrors this list.
+func (r Resource) Settling() bool {
+	switch r.State {
+	case "pending", "stopping", "shutting-down", "creating", "deleting", "provisioning", "modifying", "optimizing":
+		return true
+	}
+	return false
+}
+
 // Snapshot is one region's inventory of the kinds asked for, read at one
 // time.
 type Snapshot struct {

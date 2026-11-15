@@ -7,6 +7,7 @@ import { useState } from 'react'
 import { DataTable, EmptyState, SectionCard } from '~/components/page'
 import { Stat, relTime } from '~/components/primitives'
 import type { CloudAccount, CloudItem, CloudKind } from '~/lib/cloud'
+import { latestRead } from '~/lib/cloud'
 import {
   budgetState, change, daysLeft, cloudCostsQuery, cloudIdleQuery, dollars, parseThresholds, totals, useDeleteBudget, useReadCosts, useSaveBudget,
   type CloudBudget, type CloudCostRead, type CloudIdleItem, type DayCost,
@@ -121,7 +122,7 @@ export function CostsPanel({ accounts, items, names }: {
         </SectionCard>
       )}
 
-      <ResourceDrawer it={open} onClose={() => setOpen(null)} names={names} />
+      <ResourceDrawer it={latestRead(open, Object.values(items))} onClose={() => setOpen(null)} names={names} />
     </Stack>
   )
 }
