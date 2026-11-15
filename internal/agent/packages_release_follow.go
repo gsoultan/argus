@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -133,6 +134,25 @@ func (l *runLog) lastLine() string {
 			line = line[:maxStatusLine] + "…"
 		}
 		return line
+	}
+	return ""
+}
+
+// releaseUpgraderAlive is the process id of a release upgrader still
+// running on the server, or "": Ubuntu's upgrader runs from
+// /tmp/ubuntu-release-upgrader-*/<new codename>, started by
+// do-release-upgrade. Tests replace it.
+var releaseUpgraderAlive = func() string {
+	dirs, _ := filepath.Glob("/proc/[0-9]*")
+	for _, d := range dirs {
+		b, err := os.ReadFile(filepath.Join(d, "cmdline"))
+		if err != nil {
+			continue
+		}
+		cmd := strings.ReplaceAll(string(b), "\x00", " ")
+		if strings.Contains(cmd, "ubuntu-release-upgrader") || strings.Contains(cmd, "do-release-upgrade") {
+			return filepath.Base(d)
+		}
 	}
 	return ""
 }

@@ -787,6 +787,50 @@ func TestDaemonReleaseUpgradeInterrupted(t *testing.T) {
 	}
 }
 
+// The helper went before it reported, but the server is on the new
+// release: the run is done, not interrupted, and says to reboot.
+func TestDaemonReleaseUpgradeGotThereUnreported(t *testing.T) {
+	newReleaseHost(t, noble)
+	fp := &fakePlatform{boot: "b1"}
+	p, clock := daemon(t, fp)
+	_ = writeFileAtomic(filepath.Join(p.StateDir, packagesRunFile), mustJSON(PackageRunStatus{ID: "bcbcbcbc-2",
+		State: RunRunning, Step: "upgrade", Unit: "u", BootID: "b1", StartedAt: clock.Add(-time.Hour),
+		Release: &ReleaseChange{From: "22.04", FromName: "Ubuntu 22.04.5 LTS", To: "24.04",
+			ToName: "Ubuntu 24.04.1 LTS", Tool: releaseToolUbuntu}}), 0o600)
+	p.tick(context.Background())
+	st := p.Beat().Run
+	if st == nil || st.State != RunDone || !st.RebootRequired || !strings.Contains(st.Message, "upgraded from") ||
+		!strings.Contains(st.Message, "has not rebooted into it yet") || fp.repairs != 1 {
+		t.Fatalf("run = %+v", st)
+	}
+}
+
+// The helper went, but the upgrader it started goes on: the run stays
+// open and says so, rather than calling the server interrupted while
+// /etc/os-release already names the new release part way through.
+func TestDaemonReleaseUpgradeOutlivesItsHelper(t *testing.T) {
+	newReleaseHost(t, noble)
+	old := releaseUpgraderAlive
+	releaseUpgraderAlive = func() string { return "106866" }
+	t.Cleanup(func() { releaseUpgraderAlive = old })
+	fp := &fakePlatform{boot: "b1"}
+	p, clock := daemon(t, fp)
+	_ = writeFileAtomic(filepath.Join(p.StateDir, packagesRunFile), mustJSON(PackageRunStatus{ID: "bcbcbcbc-3",
+		State: RunRunning, Step: "upgrade", Unit: "u", BootID: "b1", StartedAt: clock.Add(-time.Hour),
+		Release: &ReleaseChange{To: "24.04", ToName: "Ubuntu 24.04.1 LTS", Tool: releaseToolUbuntu}}), 0o600)
+	p.tick(context.Background())
+	st := p.Beat().Run
+	if st == nil || st.State != RunRunning || !strings.Contains(st.Message, "still going (process 106866)") ||
+		fp.repairs != 0 {
+		t.Fatalf("run = %+v", st)
+	}
+	releaseUpgraderAlive = func() string { return "" }
+	p.tick(context.Background())
+	if st := p.Beat().Run; st == nil || st.State != RunDone || !st.RebootRequired {
+		t.Fatalf("run once the upgrader ended = %+v", st)
+	}
+}
+
 // The upgrader writes to its own logs, not to its output: the console sees
 // them while it runs, and the step says the newest line.
 func TestApplyReleaseFollowsTheUpgradersLogs(t *testing.T) {

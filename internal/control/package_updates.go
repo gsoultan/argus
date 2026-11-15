@@ -90,6 +90,25 @@ type ReleaseInfo struct {
 	Tool     string   `json:"tool,omitempty"`
 	Reason   string   `json:"reason,omitempty"`
 	Blockers []string `json:"blockers,omitempty"`
+	// Stranded is what is installed that no apt source offers, which the
+	// upgrade cannot carry over; absent from an older agent.
+	Stranded *StrandedPackages `json:"stranded,omitempty"`
+}
+
+// StrandedPackages is what the agent found installed that no apt source
+// offers (internal/agent/packages_stranded.go): the ones it can show
+// nothing uses, and why it keeps the rest.
+type StrandedPackages struct {
+	Count     int            `json:"count"`
+	Unused    []string       `json:"unused,omitempty"`
+	Kept      []StrandedKept `json:"kept,omitempty"`
+	Protected int            `json:"protected,omitempty"`
+}
+
+// StrandedKept is a stranded package the agent leaves, and why.
+type StrandedKept struct {
+	Name string `json:"name"`
+	Why  string `json:"why"`
 }
 
 // maxPackageUpdates bounds a stored report, whatever an agent sends.
@@ -127,6 +146,21 @@ func (r *PackageReport) bounded() {
 		}
 		for i := range rel.Blockers {
 			clip(&rel.Blockers[i], 500)
+		}
+		if st := rel.Stranded; st != nil {
+			if len(st.Unused) > 1000 {
+				st.Unused = st.Unused[:1000]
+			}
+			for i := range st.Unused {
+				clip(&st.Unused[i], 200)
+			}
+			if len(st.Kept) > 200 {
+				st.Kept = st.Kept[:200]
+			}
+			for i := range st.Kept {
+				clip(&st.Kept[i].Name, 200)
+				clip(&st.Kept[i].Why, 300)
+			}
 		}
 	}
 	if r.UTCOffsetMinutes < -14*60 || r.UTCOffsetMinutes > 14*60 {

@@ -370,6 +370,20 @@ type releaseFinisher interface {
 
 // settleRelease ends a release upgrade whose reboot happened: done if the
 // server is on the release it was asked for, failed if not.
+// settleReleaseUnrebooted ends a release upgrade whose helper stopped
+// before it reported, on a server that is on the new release but has not
+// rebooted into it yet.
+func (p *Packages) settleReleaseUnrebooted(ctx context.Context, st *PackageRunStatus) {
+	c := st.Release
+	st.State, st.Step, st.RebootRequired = RunDone, "", true
+	st.Message = "upgraded from " + c.FromName + " to " + c.ToName + ", but the agent's helper stopped before it " +
+		"said so, and the server has not rebooted into it yet: reboot it when you are ready"
+	if err := p.platform.repair(ctx); err != nil {
+		st.Message += ". Finishing what the package manager left failed (" + err.Error() + "); run `dpkg " +
+			"--configure -a` on the server before rebooting"
+	}
+}
+
 func (p *Packages) settleRelease(ctx context.Context, st *PackageRunStatus) {
 	c := st.Release
 	st.Rebooted, st.RebootRequired, st.Step = true, false, ""

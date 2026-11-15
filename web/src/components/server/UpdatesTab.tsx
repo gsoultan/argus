@@ -12,6 +12,7 @@ import { absTime, AssetDialogTitle, relTime, Stat } from '~/components/primitive
 import {
   isConfigured,
   type PackageReboot, type PackageRule, type PackageRun, type PackageUpdate, type PackagesView, type ReleaseInfo,
+  type StrandedPackages,
 } from '~/lib/live'
 import { run as notifyRun } from '~/lib/notify'
 import {
@@ -22,6 +23,9 @@ import { runFinished } from '~/lib/packageApi'
 import { FS, SP } from '~/theme'
 import type { Asset } from '~/types/domain'
 import { assetName } from '~/lib/assetType'
+import { ConfirmPreview } from '~/components/server/InstalledSoftware'
+import type { SoftwarePreview } from '~/lib/softwareApi'
+import { usePreviewSoftware } from '~/lib/softwareQueries'
 
 /**
  * A server's operating system updates: what its package manager says can be
@@ -83,7 +87,7 @@ export function UpdatesTab({ asset, canEdit }: { asset: Asset; canEdit: boolean 
             <RebootNeeded view={v} assetId={asset.id} name={assetName(asset)} canEdit={canEdit} busy={Boolean(active)} />
           )}
           {v.report?.release && active?.mode !== 'release_upgrade' && (
-            <ReleaseUpgrade view={v} release={v.report.release} assetId={asset.id} name={assetName(asset)} canEdit={canEdit} busy={Boolean(active)} />
+            <ReleaseUpgrade view={v} release={v.report.release} asset={asset} assetId={asset.id} name={assetName(asset)} canEdit={canEdit} busy={Boolean(active)} />
           )}
           <Packages view={v} assetId={asset.id} name={assetName(asset)} canEdit={canEdit} busy={Boolean(active)} />
         </>
@@ -234,9 +238,10 @@ const RELEASE_TOOL: Record<string, string> = {
  * release the agent says the server offers, and only when the server is
  * ready: the reasons it is not are the agent's own, each something to fix.
  */
-function ReleaseUpgrade({ view: v, release: rel, assetId, name, canEdit, busy }: {
+function ReleaseUpgrade({ view: v, release: rel, asset, assetId, name, canEdit, busy }: {
   view: PackagesView
   release: ReleaseInfo
+  asset: Asset
   assetId: string
   name: string
   canEdit: boolean
@@ -301,6 +306,9 @@ function ReleaseUpgrade({ view: v, release: rel, assetId, name, canEdit, busy }:
             release, and Argus calls it done only once the server says it is on {rel.next_name}.
           </Text>
         )}
+        {rel.stranded && rel.stranded.count > 0 && (
+          <Stranded stranded={rel.stranded} release={rel} asset={asset} canEdit={canEdit} busy={busy} />
+        )}
         {why && <Text size={FS.meta} c="dimmed">{why}</Text>}
       </Stack>
       {asking && <ConfirmRelease assetId={assetId} name={name} view={v} release={rel} onClose={() => setAsking(false)} />}
@@ -309,6 +317,70 @@ function ReleaseUpgrade({ view: v, release: rel, assetId, name, canEdit, busy }:
           onClose={() => setInstalling(false)} />
       )}
     </SectionCard>
+  )
+}
+
+/**
+ * What is installed that no apt source offers: the upgrade cannot carry it
+ * over, and Ubuntu's upgrader stops rather than remove PostgreSQL packages.
+ * The agent sorts out what nothing uses (no database has the extension,
+ * nothing preloads it, nothing that stays needs it), and only those are
+ * offered for removal, through the same simulated, confirmed removal as the
+ * Software tab.
+ */
+function Stranded({ stranded: st, release: rel, asset, canEdit, busy }: {
+  stranded: StrandedPackages
+  release: ReleaseInfo
+  asset: Asset
+  canEdit: boolean
+  busy: boolean
+}) {
+  const [preview, setPreview] = useState<SoftwarePreview | null>(null)
+  const ask = usePreviewSoftware(asset.id)
+  const unused = st.unused ?? []
+  const kept = st.kept ?? []
+  const n = (k: number, one: string, many = `${one}s`) => `${k} ${k === 1 ? one : many}`
+  const remove = () => void notifyRun(async () => {
+    setPreview(await ask.mutateAsync({ action: 'remove', items: unused.map((name) => ({ name })) }))
+  }, { failure: 'Could not simulate removing them' })
+  return (
+    <Alert color={st.protected ? 'amber' : 'gray'} p="xs"
+      title={`${n(st.count, 'installed package')} no apt source offers`}>
+      <Stack gap={SP.cozy}>
+        <Text size={FS.body} lh={1.5}>
+          The upgrade cannot carry {st.count === 1 ? 'it' : 'them'} to {rel.next_name}; they usually come from a
+          source that was turned off.
+          {st.protected ? <> Ubuntu&apos;s upgrader will not remove PostgreSQL packages ({st.protected} of these), so
+            it stops before upgrading anything if the new release cannot keep one.</> : null}
+        </Text>
+        {unused.length > 0 && (
+          <Text size={FS.body} lh={1.5}>
+            Argus checked that nothing uses {unused.length === 1 ? 'one of them' : `${unused.length} of them`}: no
+            database has their extension, nothing preloads their library, and nothing that stays needs them.
+          </Text>
+        )}
+        {canEdit && unused.length > 0 && (
+          <Group gap={SP.cozy} wrap="wrap">
+            <Button size="compact-sm" variant="white" color="rose" leftSection={<IconPackage size={14} />}
+              disabled={busy} loading={ask.isPending} onClick={remove}>
+              Remove the {n(unused.length, 'unused package')}…
+            </Button>
+            <Text size={FS.meta} c="dimmed">
+              The server simulates it first and you see every package before anything changes. Configuration is kept.
+            </Text>
+          </Group>
+        )}
+        {kept.length > 0 && (
+          <details>
+            <summary><Text span size={FS.meta} c="dimmed">Kept: {n(kept.length, 'package')} in use, or Argus could not tell</Text></summary>
+            <List size="sm" spacing={2} mt={4}>
+              {kept.map((k) => <List.Item key={k.name}><Text span inherit ff="monospace">{k.name}</Text>: {k.why}</List.Item>)}
+            </List>
+          </details>
+        )}
+      </Stack>
+      {preview && <ConfirmPreview asset={asset} preview={preview} apps={[]} onClose={() => setPreview(null)} />}
+    </Alert>
   )
 }
 
