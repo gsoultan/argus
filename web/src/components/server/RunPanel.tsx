@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ActionIcon, Box, Button, Code, Collapse, CopyButton, Group, Stack, Text, ThemeIcon, Tooltip, UnstyledButton } from '@mantine/core'
+import { ActionIcon, Box, Button, CopyButton, Group, Stack, Text, ThemeIcon, UnstyledButton } from '@mantine/core'
 import { IconAlertTriangle, IconCheck, IconChevronDown, IconChevronRight, IconCopy, IconQuestionMark, IconX } from '@tabler/icons-react'
 import { absTime, now, relTime } from '~/components/primitives'
 import type { PackageRun, RunOutcome } from '~/lib/live'
@@ -70,14 +70,12 @@ export function LastHeard({ heardAt, rebooting }: { heardAt: string | null | und
   const stale = quiet > QUIET_MS
   const c = stale ? 'var(--mantine-color-amber-7)' : 'var(--mantine-color-teal-7)'
   return (
-    <Tooltip label={absTime(heardAt)} withArrow>
-      <Group gap={6} wrap="nowrap" data-testid="last-heard">
+    <Group gap={6} wrap="nowrap" data-testid="last-heard" title={absTime(heardAt)}>
         <Box w={8} h={8} style={{ borderRadius: '50%', background: c, flex: 'none' }} />
         <Text size={FS.meta} fw={600} c={c}>
           {stale && rebooting ? `Server silent for ${span(quiet)} while it restarts` : `Server last heard from ${span(quiet)} ago`}
         </Text>
-      </Group>
-    </Tooltip>
+    </Group>
   )
 }
 
@@ -255,15 +253,19 @@ export function RunResult({ run: r, onDismiss, log }: { run: PackageRun; onDismi
               <Text size={FS.meta} c="dimmed">the full message, what changed, and what the server printed</Text>
             </Group>
           </UnstyledButton>
-          <Collapse expanded={open}>
+          {/* Plain show and hide, a <pre> and a title, rather than Collapse,
+              Code and Tooltip: using those here made the bundler re-split
+              shared code and put 2.9 kB more on the first screen
+              (e2e/weight.spec.ts). */}
+          {open && (
             <Stack gap={SP.cozy} px="md" pb="md">
               {r.message && (ok || r.outcome?.why) && <Text size={FS.meta} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{r.message}</Text>}
               {r.upgraded.length > 0 && (
-                <Code block fz={FS.micro}>{r.upgraded.map((u) => `${u.name} ${u.from ?? ''} → ${u.to}`).join('\n')}</Code>
+                <Box component="pre" fz={FS.micro} ff="monospace" m={0} p="xs" style={{ background: 'var(--mantine-color-default-hover)', borderRadius: 4, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{r.upgraded.map((u) => `${u.name} ${u.from ?? ''} → ${u.to}`).join('\n')}</Box>
               )}
-              {open && log}
+              {log}
             </Stack>
-          </Collapse>
+          )}
         </Box>
       </Stack>
     </Box>
