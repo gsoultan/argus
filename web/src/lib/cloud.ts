@@ -9,12 +9,27 @@ import { queryOptions, useMutation, useQueryClient } from '@tanstack/react-query
 import { get, isConfigured, send } from '~/lib/live'
 
 export type CloudEnvironment = 'production' | 'staging' | 'development'
+/** A cloud an account can be connected in. A Google Cloud project is an account here. */
+export type CloudProvider = 'aws' | 'gcp'
+
+export const PROVIDER_LABEL: Record<CloudProvider, string> = { aws: 'AWS', gcp: 'Google Cloud' }
+
+/** What one account is called in a provider. */
+export const ACCOUNT_WORD: Record<CloudProvider, string> = { aws: 'account', gcp: 'project' }
+
+/** An account's id as people read it: AWS's twelve digits in groups of four, a project id as it is. */
+export function accountIdText(provider: CloudProvider, id: string): string {
+  return provider === 'aws' ? id.replace(/(\d{4})(\d{4})(\d{4})/, '$1 $2 $3') : id
+}
+
+/** A Google Cloud project id: 6 to 30 lower case letters, digits and dashes, starting with a letter. */
+export const GCP_PROJECT = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/
 export type CloudKind = 'instance' | 'volume' | 'firewall' | 'network' | 'subnet' | 'address' | 'snapshot' | 'image'
   | 'load-balancer' | 'target-group'
 
 export interface CloudAccount {
   id: string
-  provider: 'aws'
+  provider: CloudProvider
   name: string
   accountId: string
   roleArn: string
@@ -93,7 +108,7 @@ export interface CloudItem {
 }
 
 export interface CloudPrepared {
-  provider: 'aws'
+  provider: CloudProvider
   accountId: string
   externalId: string
   principal: string
@@ -132,7 +147,7 @@ export interface CloudCheck {
 }
 
 export interface CloudAccountInput {
-  provider: 'aws'
+  provider: CloudProvider
   name: string
   accountId: string
   /** Empty for the role the template makes. */
@@ -169,13 +184,13 @@ export const cloudItemsQuery = (kind: CloudKind) =>
  * connected gets its own identity's and a new one the default's; keep is an
  * identity the roles go on trusting while the account moves off it.
  */
-export function prepareCloudAccount(accountId: string, manage = false, identity = '', keep = ''): Promise<CloudPrepared> {
-  return send('POST', '/api/v1/cloud/accounts/prepare', { provider: 'aws', accountId, manage, identity, keep })
+export function prepareCloudAccount(accountId: string, manage = false, identity = '', keep = '', provider: CloudProvider = 'aws'): Promise<CloudPrepared> {
+  return send('POST', '/api/v1/cloud/accounts/prepare', { provider, accountId, manage, identity, keep })
 }
 
 /** Whether the template's roles are there and let Argus in yet. Nothing is kept or recorded. */
-export function checkCloudAccount(accountId: string, manage: boolean, identity = ''): Promise<CloudCheck> {
-  return send('POST', '/api/v1/cloud/accounts/check', { provider: 'aws', accountId, manage, identity })
+export function checkCloudAccount(accountId: string, manage: boolean, identity = '', provider: CloudProvider = 'aws'): Promise<CloudCheck> {
+  return send('POST', '/api/v1/cloud/accounts/check', { provider, accountId, manage, identity })
 }
 
 /** Asks Argus to make the stack with its own identity, in the account that identity is in. */

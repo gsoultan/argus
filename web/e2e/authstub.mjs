@@ -26,6 +26,7 @@ const DIST = process.env.STUB_DIST ?? 'dist-live'
 const SECURE = process.env.STUB_SECURE_COOKIE === '1'
 
 const SESSION = 'stub-session-token'
+const GCP_PRINCIPAL = 'argus-control@northwind-ops.iam.gserviceaccount.com'
 const PASSWORD = 'stub-password'
 /** @type {Record<string, string>} */
 const TYPES = {
@@ -416,6 +417,8 @@ const server = createServer(async (req, res) => {
         { provider: 'aws', identity: 'northwind-iam-user', name: 'Northwind IAM user', default: true, principal: KEY_ARN,
           source: 'the access key in Settings › Cloud identities' },
         { provider: 'aws', identity: 'main', name: 'Main', default: false, error: NO_IMDS },
+        { provider: 'gcp', identity: 'main', name: 'Main', default: true, principal: GCP_PRINCIPAL,
+          source: 'the service account of the VM argus-control runs on' },
       ]
       if (!orgOf(req).default) return json(res, 200, { accounts: [], bases })
       return json(res, 200, { accounts: [{
@@ -423,7 +426,38 @@ const server = createServer(async (req, res) => {
         identity: 'northwind-iam-user', identityMissing: false, roleArn: 'arn:aws:iam::412788931204:role/ArgusRead',
         identityArn: KEY_ARN, regions: ['us-east-1'], connectedBy: 'dev@northwind.id', connectedAt: '2026-11-01T08:00:00Z',
         syncedAt: new Date(Date.now() - 120_000).toISOString(), syncErrors: {}, counts: {}, manageMissing: [], manageCheckedAt: null,
+      }, {
+        id: 'ca2', provider: 'gcp', accountId: 'analytics-prod-4182', name: 'analytics-prod', access: 'read', environment: 'production',
+        identity: 'main', identityMissing: false, roleArn: 'argus-read@analytics-prod-4182.iam.gserviceaccount.com',
+        identityArn: 'argus-read@analytics-prod-4182.iam.gserviceaccount.com', regions: ['europe-west1', 'us-central1', 'global'],
+        connectedBy: 'dev@northwind.id', connectedAt: '2026-11-14T08:00:00Z', syncedAt: new Date(Date.now() - 60_000).toISOString(),
+        syncErrors: {}, counts: { instance: 6, volume: 7, firewall: 4 }, manageMissing: [], manageCheckedAt: null,
       }], bases })
+    }
+    // A Google Cloud project: argus-read is where it will be, and is not
+    // there yet, which is what the page waits on.
+    if (path === '/api/v1/cloud/accounts/prepare' && req.method === 'POST') {
+      const body = /** @type {any} */ (await readBody(req))
+      if (body.provider !== 'gcp') return json(res, 400, { error: 'only Google Cloud is stubbed' })
+      const p = body.accountId
+      const sa = `argus-read@${p}.iam.gserviceaccount.com`
+      const ext = 'argus-6f1c0e9a2b7d4c5e8f9a0b1c2d3e4f50'
+      return json(res, 200, { provider: 'gcp', accountId: p, externalId: ext, principal: GCP_PRINCIPAL,
+        source: 'the service account of the VM argus-control runs on', identity: 'main', identityName: 'Main', roleName: 'argus-read',
+        readRoleArn: sa, template: '', canDeploy: false,
+        command: `# Makes argus-read in ${p}: it may list and describe Compute Engine, nothing else.\nP=${p} SA=${sa}\n`
+          + 'retry() { for i in 1 2 3 4 5 6 7 8 9 10; do "$@" >/dev/null && return 0; sleep 6; done; return 1; }\n'
+          + 'gcloud services enable iam.googleapis.com iamcredentials.googleapis.com --project=$P && \\\n'
+          + `{ gcloud iam service-accounts describe $SA --project=$P >/dev/null 2>&1 \\\n  && gcloud iam service-accounts update $SA --project=$P --description="Argus reads this project's Compute Engine inventory through this account. argus-external-id=${ext}" >/dev/null \\\n`
+          + `  || gcloud iam service-accounts create argus-read --project=$P --display-name="Argus (read only)" --description="Argus reads this project's Compute Engine inventory through this account. argus-external-id=${ext}"; } && \\\n`
+          + 'retry gcloud projects add-iam-policy-binding $P --member=serviceAccount:$SA --role=roles/compute.viewer --condition=None --quiet && \\\n'
+          + 'retry gcloud projects add-iam-policy-binding $P --member=serviceAccount:$SA --role=roles/iam.serviceAccountViewer --condition=None --quiet && \\\n'
+          + `retry gcloud iam service-accounts add-iam-policy-binding $SA --project=$P --member=serviceAccount:${GCP_PRINCIPAL} --role=roles/iam.serviceAccountTokenCreator --quiet && \\\n`
+          + 'echo "Done. Argus connects by itself within a minute."\n' })
+    }
+    if (path === '/api/v1/cloud/accounts/check' && req.method === 'POST') {
+      const body = /** @type {any} */ (await readBody(req))
+      return json(res, 200, { ready: false, detail: `argus-read@${body.accountId}.iam.gserviceaccount.com does not let Argus in yet: Permission 'iam.serviceAccounts.getAccessToken' denied` })
     }
     if (path === '/api/v1/coverage') return json(res, 200, COVERAGE)
     if (path === '/api/v1/assets') return json(res, 200, ASSETS)

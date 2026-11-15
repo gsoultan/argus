@@ -104,7 +104,7 @@ export function WatchForRoles({ prepared, manage, connecting, failed, onReady }:
   const [stale, setStale] = useState(false)
   const check = useQuery({
     queryKey: ['cloud', 'connect-check', prepared.accountId, manage, since],
-    queryFn: () => checkCloudAccount(prepared.accountId, manage, prepared.identity),
+    queryFn: () => checkCloudAccount(prepared.accountId, manage, prepared.identity, prepared.provider),
     enabled: !stale && !connecting && !failed,
     // A failed stack keeps being watched: the fix is to run the command
     // below, and the page should notice when that works.
@@ -123,7 +123,12 @@ export function WatchForRoles({ prepared, manage, connecting, failed, onReady }:
       onReady()
     }
   }, [check.data?.ready, onReady])
-  const again = () => { fired.current = false; setStale(false); setSince(Date.now()) }
+  const again = () => { fired.current = false; setStale(false); setSince(Date.now()); setAsked(0) }
+  // Google's answer is shown once the person has had time to run the
+  // command: before that, a refusal is only the expected "not yet".
+  const [asked, setAsked] = useState(0)
+  useEffect(() => { if (check.dataUpdatedAt) setAsked((n) => n + 1) }, [check.dataUpdatedAt])
+  const gcp = prepared.provider === 'gcp'
   const stack = check.data?.stack
   // The stack is finished, so a role that still does not work is not
   // waiting on CloudFormation, and AWS's answer is the reason to show.
@@ -134,7 +139,7 @@ export function WatchForRoles({ prepared, manage, connecting, failed, onReady }:
 
   if (failed) {
     return (
-      <Alert color="rose" variant="light" title="The roles are there, but Argus could not connect">
+      <Alert color="rose" variant="light" title={gcp ? 'argus-read is there, but Argus could not connect' : 'The roles are there, but Argus could not connect'}>
         <Stack gap="xs">
           <Text size={FS.meta}>{failed.message}</Text>
           <Group><Button size="xs" variant="default" onClick={onReady}>Try again</Button></Group>
@@ -163,17 +168,22 @@ export function WatchForRoles({ prepared, manage, connecting, failed, onReady }:
           : waiting ? <Loader size={16} mt={2} /> : null}
         <Stack gap={2} style={{ flex: 1 }}>
           <Text size={FS.body} fw={500}>
-            {connecting || check.data?.ready ? `The ${manage ? 'roles work' : 'role works'}. Connecting…`
-              : waiting ? `Waiting for the ${manage ? 'roles' : 'role'} in ${prepared.accountId}`
+            {connecting || check.data?.ready ? `${gcp ? 'argus-read works' : `The ${manage ? 'roles work' : 'role works'}`}. Connecting…`
+              : waiting ? (gcp ? `Waiting for argus-read in ${prepared.accountId}` : `Waiting for the ${manage ? 'roles' : 'role'} in ${prepared.accountId}`)
                 : 'Argus stopped checking'}
           </Text>
           <Text size={FS.meta} c="dimmed">
             {check.error ? (check.error as Error).message
+              : gcp ? (stale ? 'It checked for half an hour. Look again once the command has run.'
+                : 'Argus checks every few seconds and connects by itself as soon as the command has run. Leave this page open.')
               : stale ? 'It checked for half an hour. Look again once the stack is made.'
                 : made && check.data?.detail ? `CloudFormation: ${stack?.status}, but AWS does not let Argus use the ${manage ? 'roles' : 'role'} yet. ${check.data.detail}`
                 : stack?.status ? `CloudFormation: ${stack.status}. Argus connects as soon as it is done.`
                   : 'Argus checks every few seconds and connects by itself as soon as the stack is made. Leave this page open.'}
           </Text>
+          {gcp && asked >= 12 && check.data?.detail && !check.data.ready && (
+            <Text size={FS.micro} c="dimmed" style={{ overflowWrap: 'anywhere' }}>Google's last answer: {check.data.detail}</Text>
+          )}
         </Stack>
         {(!waiting) && <Button size="xs" variant="default" onClick={again}>Check again</Button>}
       </Group>

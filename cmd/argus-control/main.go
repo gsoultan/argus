@@ -17,6 +17,7 @@ import (
 	"flag"
 	"fmt"
 	awscloud "github.com/gsoultan/argus/internal/control/cloud/aws"
+	gcpcloud "github.com/gsoultan/argus/internal/control/cloud/gcp"
 	"github.com/gsoultan/argus/internal/control/confexpand"
 	"github.com/gsoultan/argus/internal/control/servertls"
 	"log/slog"
@@ -618,6 +619,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	// After the store is set: the archive reads and writes it.
 	go api.RunRecordingArchive(ctx, time.Hour)
 	api.SetCloudIdentities("aws", cfg.Cloud.cloudIdentities())
+	api.SetCloudIdentities("gcp", cfg.Cloud.gcpCloudIdentities())
 	go api.RunCloudSync(ctx, control.CloudSyncInterval)
 	go api.RunCloudSchedules(ctx, time.Minute)
 	go api.RunCloudCosts(ctx, 30*time.Minute)
@@ -1254,6 +1256,61 @@ func runAuditVerify(configPath string) error {
 // cloudConfig is the cloud block of the config.
 type cloudConfig struct {
 	AWS awsCloudConfig `yaml:"aws"`
+	// GCP is Google Cloud's identities. Absent is one, Main, from where
+	// argus-control runs: the VM's service account, or the key
+	// GOOGLE_APPLICATION_CREDENTIALS names.
+	GCP *gcpCloudConfig `yaml:"gcp,omitempty"`
+}
+
+// gcpCloudConfig is the service accounts argus-control can start from in
+// Google Cloud, before it acts as argus-read in a connected project.
+type gcpCloudConfig struct {
+	// Default is the identity a new connection starts with.
+	Default string `yaml:"default,omitempty"`
+	// Identities is every identity, in the order the console lists them.
+	Identities []gcpIdentityConfig `yaml:"identities,omitempty"`
+	// CredentialsFile is the one identity, Main, when Identities is empty:
+	// a service account key file only its owner can read.
+	CredentialsFile string `yaml:"credentials_file,omitempty"`
+}
+
+// gcpIdentityConfig is one Google Cloud identity.
+type gcpIdentityConfig struct {
+	ID   string `yaml:"id"`
+	Name string `yaml:"name"`
+	// CredentialsFile is a service account key file only its owner can
+	// read; empty is where argus-control runs.
+	CredentialsFile string `yaml:"credentials_file,omitempty"`
+	// Organizations may use it, by id. Empty is every organization.
+	Organizations []string `yaml:"organizations,omitempty"`
+}
+
+// gcpIdentities is the configured Google Cloud identities and the default.
+func (c *cloudConfig) gcpIdentities() ([]gcpIdentityConfig, string) {
+	if c == nil || c.GCP == nil || len(c.GCP.Identities) == 0 {
+		m := gcpIdentityConfig{ID: mainIdentity, Name: "Main"}
+		if c != nil && c.GCP != nil {
+			m.CredentialsFile = c.GCP.CredentialsFile
+		}
+		return []gcpIdentityConfig{m}, mainIdentity
+	}
+	def := c.GCP.Default
+	if def == "" {
+		def = c.GCP.Identities[0].ID
+	}
+	return c.GCP.Identities, def
+}
+
+// gcpCloudIdentities is the Google Cloud identities as the API registers
+// them, each with its own provider and token cache.
+func (c *cloudConfig) gcpCloudIdentities() []control.CloudIdentity {
+	list, def := c.gcpIdentities()
+	out := make([]control.CloudIdentity, 0, len(list))
+	for _, i := range list {
+		out = append(out, control.CloudIdentity{ID: i.ID, Name: i.Name, Default: i.ID == def,
+			Organizations: i.Organizations, Provider: gcpcloud.New(gcpcloud.Options{CredentialsFile: i.CredentialsFile})})
+	}
+	return out
 }
 
 // awsCloudConfig is the identities argus-control can start from in AWS,

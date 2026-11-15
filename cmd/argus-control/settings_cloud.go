@@ -139,12 +139,21 @@ func applyCloud(c *config, in *control.CloudSettings, st *secretStage) error {
 		return control.BadInput(fmt.Errorf("the default identity %q is not in the list", def))
 	}
 	// The host's own identity alone, as Main, is what no cloud block means.
+	// Google Cloud's identities are set in the config, not here: a save
+	// keeps them as they are.
+	var gcp *gcpCloudConfig
+	if c.Cloud != nil {
+		gcp = c.Cloud.GCP
+	}
 	if len(out) == 1 && out[0].ID == mainIdentity && out[0].Name == "Main" && out[0].source() == control.IdentityDefault &&
 		out[0].HomeRegion == "" && len(out[0].Organizations) == 0 {
 		c.Cloud = nil
+		if gcp != nil {
+			c.Cloud = &cloudConfig{GCP: gcp}
+		}
 		return nil
 	}
-	c.Cloud = &cloudConfig{AWS: awsCloudConfig{Default: def, Identities: out}}
+	c.Cloud = &cloudConfig{AWS: awsCloudConfig{Default: def, Identities: out}, GCP: gcp}
 	return nil
 }
 
@@ -294,6 +303,9 @@ func (b *settingsBackend) TestCloud(ctx context.Context, provider string, in con
 // run on: ids that are not ids or repeat, a default that is not there, two
 // identities from the host, too many.
 func validateCloud(c *cloudConfig) error {
+	if err := validateGCP(c); err != nil {
+		return err
+	}
 	if c == nil || len(c.AWS.Identities) == 0 {
 		return nil
 	}
@@ -318,6 +330,55 @@ func validateCloud(c *cloudConfig) error {
 	}
 	if d := c.AWS.Default; d != "" && !seen[d] {
 		return fmt.Errorf("cloud.aws.default: no identity has the id %q", d)
+	}
+	return nil
+}
+
+// validateGCP refuses a Google Cloud block argus-control could not run on,
+// the same way as AWS's: ids, a default that is there, one identity from
+// the host at most, and key files given as full paths.
+func validateGCP(c *cloudConfig) error {
+	if c == nil || c.GCP == nil {
+		return nil
+	}
+	g := c.GCP
+	if g.CredentialsFile != "" && !filepath.IsAbs(g.CredentialsFile) {
+		return errors.New("cloud.gcp.credentials_file must be a full path")
+	}
+	if len(g.Identities) == 0 {
+		return nil
+	}
+	if len(g.Identities) > control.MaxCloudIdentities {
+		return fmt.Errorf("cloud.gcp: at most %d identities", control.MaxCloudIdentities)
+	}
+	seen, hosts := map[string]bool{}, 0
+	for _, i := range g.Identities {
+		if !reIdentityID.MatchString(i.ID) {
+			return fmt.Errorf("cloud.gcp.identities: %q is not an id: lower case letters, digits and dashes", i.ID)
+		}
+		if seen[i.ID] {
+			return fmt.Errorf("cloud.gcp.identities: the id %q is there twice", i.ID)
+		}
+		seen[i.ID] = true
+		if strings.TrimSpace(i.Name) == "" {
+			return fmt.Errorf("cloud.gcp.identities: %q has no name", i.ID)
+		}
+		if i.CredentialsFile == "" {
+			hosts++
+		} else if !filepath.IsAbs(i.CredentialsFile) {
+			return fmt.Errorf("cloud.gcp.identities: %q: credentials_file must be a full path", i.ID)
+		}
+		for _, o := range i.Organizations {
+			if !reOrgID.MatchString(o) {
+				return fmt.Errorf("cloud.gcp.identities: %q: %q is not an organization", i.ID, o)
+			}
+		}
+	}
+	if hosts > 1 {
+		return errors.New("cloud.gcp.identities: only one identity can come from where argus-control runs")
+	}
+	if d := g.Default; d != "" && !seen[d] {
+		return fmt.Errorf("cloud.gcp.default: no identity has the id %q", d)
 	}
 	return nil
 }

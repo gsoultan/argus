@@ -14,6 +14,7 @@ import (
 
 	"github.com/gsoultan/argus/internal/control/cloud"
 	"github.com/gsoultan/argus/internal/control/cloud/aws"
+	"github.com/gsoultan/argus/internal/control/cloud/gcp"
 )
 
 /*
@@ -136,11 +137,15 @@ func (a *API) getCloudAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	// Only the identities this organization may use: an account on any
 	// other is shown as having lost its identity.
-	ids := a.cloudIdentitiesFor(r.Context(), "aws")
-	out := cloudAccountsView{Accounts: list, Bases: a.cloudBases(r.Context(), "aws", ids)}
+	out := cloudAccountsView{Accounts: list, Bases: []CloudBase{}}
+	ids := map[string][]CloudIdentity{}
+	for _, kind := range CloudProviders {
+		ids[kind] = a.cloudIdentitiesFor(r.Context(), kind)
+		out.Bases = append(out.Bases, a.cloudBases(r.Context(), kind, ids[kind])...)
+	}
 	for n := range out.Accounts {
 		c := &out.Accounts[n]
-		c.IdentityMissing = !slices.ContainsFunc(ids, func(i CloudIdentity) bool { return i.ID == c.Identity })
+		c.IdentityMissing = !slices.ContainsFunc(ids[c.Provider], func(i CloudIdentity) bool { return i.ID == c.Identity })
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, out)
@@ -194,14 +199,43 @@ func cloudRoleARN(accountID, name string) string {
 	return "arn:aws:iam::" + accountID + ":role/" + name
 }
 
+// CloudProviders is every cloud an account can be connected in, in the
+// order the console offers them.
+var CloudProviders = []string{"aws", "gcp"}
+
+// cloudProviderName is a provider as people call it.
+func cloudProviderName(p string) string {
+	if p == "gcp" {
+		return "Google Cloud"
+	}
+	return "AWS"
+}
+
+// checkCloudAccountID refuses an id that cannot be an account in provider.
+func checkCloudAccountID(provider, id string) error {
+	switch provider {
+	case "aws":
+		if !reAWSAccount.MatchString(id) {
+			return errors.New("an AWS account id is 12 digits")
+		}
+	case "gcp":
+		if !gcp.ValidProject(id) {
+			return errors.New("a Google Cloud project id is 6 to 30 lower case letters, digits and dashes, starting with a letter")
+		}
+	default:
+		return errors.New("Argus connects AWS accounts and Google Cloud projects")
+	}
+	return nil
+}
+
 // cloudPrepare works out the roles an account needs, or says why it cannot.
 func (a *API) cloudPrepare(ctx context.Context, in cloudPrepareIn) (CloudPrepared, int, error) {
 	provider, accountID := in.Provider, in.AccountID
-	if provider != "aws" {
-		return CloudPrepared{}, http.StatusBadRequest, errors.New("only AWS can be connected so far")
+	if err := checkCloudAccountID(provider, accountID); err != nil {
+		return CloudPrepared{}, http.StatusBadRequest, err
 	}
-	if !reAWSAccount.MatchString(accountID) {
-		return CloudPrepared{}, http.StatusBadRequest, errors.New("an AWS account id is 12 digits")
+	if provider == "gcp" && in.Manage {
+		return CloudPrepared{}, http.StatusBadRequest, errors.New("Google Cloud projects are read only in Argus so far")
 	}
 	if in.Identity == "" {
 		// An account already connected keeps the identity it uses: its
@@ -218,8 +252,8 @@ func (a *API) cloudPrepare(ctx context.Context, in cloudPrepareIn) (CloudPrepare
 	}
 	base := a.cloudBase(ctx, provider, ident)
 	if base.Error != "" {
-		return CloudPrepared{}, http.StatusConflict, errors.New("argus-control's identity " + ident.Name + " does not answer: " + base.Error +
-			". " + cloudIdentityNextStep(ctx))
+		return CloudPrepared{}, http.StatusConflict, errors.New("argus-control's " + cloudProviderName(provider) + " identity " + ident.Name +
+			" does not answer: " + base.Error + ". " + cloudIdentityNextStep(ctx, provider))
 	}
 	principals := []string{base.Principal}
 	var kept string
@@ -237,6 +271,14 @@ func (a *API) cloudPrepare(ctx context.Context, in cloudPrepareIn) (CloudPrepare
 	ext, err := a.cloudExternalID(ctx, provider, accountID)
 	if err != nil {
 		return CloudPrepared{}, http.StatusInternalServerError, err
+	}
+	if provider == "gcp" {
+		sa := gcp.AccountEmail(accountID, gcp.ReadAccountName)
+		return CloudPrepared{
+			Provider: provider, AccountID: accountID, ExternalID: ext, Principal: base.Principal, Source: base.Source,
+			Identity: ident.ID, IdentityName: ident.Name, Kept: kept,
+			RoleName: gcp.ReadAccountName, ReadRoleARN: sa, Command: gcp.SetupCommandFor(accountID, principals, ext),
+		}, http.StatusOK, nil
 	}
 	out := CloudPrepared{
 		Provider: provider, AccountID: accountID, ExternalID: ext, Principal: base.Principal, Source: base.Source,
@@ -257,7 +299,14 @@ func (a *API) cloudPrepare(ctx context.Context, in cloudPrepareIn) (CloudPrepare
 
 // cloudIdentityNextStep is who fixes an identity that does not answer:
 // only the default organization edits the identities.
-func cloudIdentityNextStep(ctx context.Context) string {
+func cloudIdentityNextStep(ctx context.Context, provider string) string {
+	if provider == "gcp" {
+		if platformScope(ctx) {
+			return "Run argus-control on a Google Cloud VM with a service account and the cloud-platform access scope, " +
+				"or set cloud.gcp.credentials_file in its config to a service account key"
+		}
+		return "The platform's owner sets argus-control's Google Cloud identity in its config"
+	}
 	if platformScope(ctx) {
 		return "Fix it under Settings › Cloud identities: run argus-control on EC2 with an instance profile, or give the identity an IAM user's access key"
 	}
@@ -331,14 +380,14 @@ func (in *cloudAccountIn) validate() error {
 			in.ManageRoleARN = cloudRoleARN(in.AccountID, aws.ManageRoleName)
 		}
 	}
-	if in.Provider != "aws" {
-		return errors.New("only AWS can be connected so far")
-	}
 	if in.Name == "" || len(in.Name) > 64 {
 		return errors.New("give the account a name of up to 64 characters")
 	}
-	if !reAWSAccount.MatchString(in.AccountID) {
-		return errors.New("an AWS account id is 12 digits")
+	if err := checkCloudAccountID(in.Provider, in.AccountID); err != nil {
+		return err
+	}
+	if in.Provider == "gcp" {
+		return in.validateGCP()
 	}
 	if !aws.ValidRoleARN(in.RoleARN) {
 		return errors.New("that is not an IAM role ARN; it looks like arn:aws:iam::" + in.AccountID + ":role/" + aws.ReadRoleName)
@@ -349,6 +398,30 @@ func (in *cloudAccountIn) validate() error {
 	if err := checkManageRole(in.ManageRoleARN, in.AccountID, in.RoleARN); err != nil {
 		return err
 	}
+	return in.checkEnvironment()
+}
+
+// validateGCP checks a project: argus-read, or another service account in
+// the same project, and read only.
+func (in *cloudAccountIn) validateGCP() error {
+	if in.RoleARN == "" {
+		in.RoleARN = gcp.AccountEmail(in.AccountID, gcp.ReadAccountName)
+	}
+	if !gcp.ValidAccountEmail(in.RoleARN) {
+		return errors.New("that is not a service account; it looks like " + gcp.AccountEmail(in.AccountID, gcp.ReadAccountName))
+	}
+	if gcp.ProjectOf(in.RoleARN) != in.AccountID {
+		return errors.New("that service account is in another project than " + in.AccountID)
+	}
+	if in.Manage || in.ManageRoleARN != "" {
+		return errors.New("Google Cloud projects are read only in Argus so far")
+	}
+	return in.checkEnvironment()
+}
+
+// checkEnvironment defaults the environment and refuses one Argus has no
+// rules for.
+func (in *cloudAccountIn) checkEnvironment() error {
 	if in.Environment == "" {
 		in.Environment = "production"
 	}
@@ -396,8 +469,11 @@ func (a *API) postCloudAccount(w http.ResponseWriter, r *http.Request) {
 		a.auditAsset(r, AuditEvent{Action: "cloud.account.refused", Severity: "notice", ActorEmail: actor,
 			Target: cloudTarget(in.Provider, in.AccountID, in.Name),
 			Detail: "Could not connect " + in.RoleARN + ": " + err.Error()})
-		writeErr(w, http.StatusUnprocessableEntity, "Argus could not use that role: "+err.Error()+
-			". Check the stack finished and the template came from this Argus.")
+		next := ". Check the stack finished and the template came from this Argus."
+		if in.Provider == "gcp" {
+			next = ". Check the command from this page finished without an error."
+		}
+		writeErr(w, http.StatusUnprocessableEntity, "Argus could not use "+in.RoleARN+": "+err.Error()+next)
 		return
 	}
 	access := "read only"
@@ -422,7 +498,11 @@ func (a *API) postCloudAccount(w http.ResponseWriter, r *http.Request) {
 		Environment: in.Environment, IdentityARN: id.ARN, Regions: id.Regions, ConnectedBy: actor, Identity: ident.ID,
 	})
 	if errors.Is(err, ErrCloudAccountExists) {
-		writeErr(w, http.StatusConflict, "account "+in.AccountID+" is already connected")
+		what := "account "
+		if in.Provider == "gcp" {
+			what = "project "
+		}
+		writeErr(w, http.StatusConflict, what+in.AccountID+" is already connected")
 		return
 	}
 	if err != nil {
@@ -607,6 +687,10 @@ func (a *API) putCloudManage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		a.fail(w, "cloud account", err)
+		return
+	}
+	if c.Provider != "aws" {
+		writeErr(w, http.StatusNotImplemented, cloudProviderName(c.Provider)+" projects are read only in Argus so far")
 		return
 	}
 	in.RoleARN = strings.TrimSpace(in.RoleARN)
