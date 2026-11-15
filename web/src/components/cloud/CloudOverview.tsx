@@ -53,7 +53,7 @@ export function CloudOverview({ accounts, bases, instances, firewalls, volumes, 
         <Stat label="Open to the internet" value={open?.length} icon={IconLockOpen} tone={open && open.length > 0 ? 'warn' : 'ok'} color="rose"
           sub="Firewalls letting anyone reach SSH, RDP or a database" onClick={() => onTab('network')} />
         <Stat label="Accounts" value={accounts.length} icon={IconCloud}
-          sub={`${accounts.reduce((n, a) => n + a.regions.filter((r) => r !== 'global').length, 0)} regions read every 5 minutes`} />
+          sub={`${accounts.reduce((n, a) => n + a.regions.filter((r) => r !== 'global').length, 0)} regions read every 5 minutes, and every 30 seconds while something changes`} />
       </SimpleGrid>
 
       <Box style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))', gap: 16 }}>

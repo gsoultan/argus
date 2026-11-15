@@ -171,12 +171,50 @@ export const cloudAccountsQuery = () =>
     refetchInterval: 60_000,
   })
 
+/**
+ * How often a list of resources is asked for again: quickly while anything
+ * in it is between two states, since the control plane re-reads those
+ * regions sooner too, and once a minute otherwise.
+ */
+export function itemsRefetchEvery(items: CloudItem[] | undefined): number {
+  return items?.some((it) => settling(it.resource.state)) ? ITEMS_SETTLING_EVERY : ITEMS_EVERY
+}
+
+export const ITEMS_EVERY = 60_000
+export const ITEMS_SETTLING_EVERY = 10_000
+
+/**
+ * Whether a state is on its way to another one: a snapshot being taken, an
+ * instance starting or stopping, a disk being made. Mirrors Settling in
+ * internal/control/cloud.
+ */
+export function settling(state: string | undefined): boolean {
+  return state !== undefined && SETTLING.has(state)
+}
+
+const SETTLING = new Set(['pending', 'stopping', 'shutting-down', 'creating', 'deleting', 'provisioning', 'modifying', 'optimizing', 'uploading'])
+
+/**
+ * The latest read of an opened item, found by account, kind and id in the
+ * lists as they are now. A panel opened on an item shows this, not the copy
+ * that was clicked, so it moves when the inventory does. When the item is
+ * no longer listed, the copy that was clicked is kept.
+ */
+export function latestRead(open: CloudItem | null, lists: (CloudItem[] | undefined)[]): CloudItem | null {
+  if (!open) return null
+  for (const list of lists) {
+    const now = list?.find((it) => it.accountId === open.accountId && it.resource.kind === open.resource.kind && it.resource.id === open.resource.id)
+    if (now) return now
+  }
+  return open
+}
+
 export const cloudItemsQuery = (kind: CloudKind) =>
   queryOptions({
     queryKey: itemsKey(kind),
     queryFn: () => get<{ items: CloudItem[] }>(`/api/v1/cloud/resources?kind=${kind}`).then((r) => r.items),
     enabled: isConfigured(),
-    refetchInterval: 60_000,
+    refetchInterval: (q) => itemsRefetchEvery(q.state.data),
   })
 
 /**
@@ -478,6 +516,8 @@ export const ENV_LABEL: Record<CloudEnvironment, string> = {
 const STATE_COLOR: Record<string, string> = {
   running: 'teal', 'in-use': 'teal', available: 'slate', attached: 'teal', unattached: 'amber',
   pending: 'sky', stopping: 'amber', 'shutting-down': 'amber', stopped: 'slate', error: 'rose',
+  creating: 'sky', provisioning: 'sky', modifying: 'sky', optimizing: 'sky', deleting: 'amber',
+  completed: 'teal', active: 'teal', failed: 'rose', 'active_impaired': 'amber',
 }
 
 export function stateColor(s: string | undefined): string {

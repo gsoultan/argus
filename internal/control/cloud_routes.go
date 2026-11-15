@@ -36,6 +36,10 @@ type cloudState struct {
 	// loop never read one account twice at once. Bounded by the number of
 	// connected accounts.
 	syncing map[string]bool
+	// settling holds, per account, the regions whose last read found
+	// something between two states, so the loop reads just those again
+	// sooner. Bounded by connected accounts times their regions.
+	settling map[string][]string
 	// bases caches each identity's answer from its provider for a few
 	// minutes, by provider and identity id; bounded like identities.
 	bases map[string]cachedBase
