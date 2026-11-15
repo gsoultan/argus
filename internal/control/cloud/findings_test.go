@@ -98,15 +98,15 @@ func TestFindingsNothingListensNeedsEveryAgentFresh(t *testing.T) {
 	i2 := Resource{Kind: KindInstance, ID: "i-2", Name: "api-2", State: "running", Links: []Ref{{Kind: KindFirewall, ID: "sg-api"}}}
 	fresh := ptr(now.Add(-10 * time.Minute))
 	facts := map[string]ServerFacts{
-		"i-1": {ServerID: "s1", Listening: []int{22, 443}, ListenAt: fresh},
-		"i-2": {ServerID: "s2", Listening: []int{22, 443}, ListenAt: fresh},
+		"i-1": {ServerID: "s1", SeenAt: fresh, Listening: []int{22, 443}, ListenAt: fresh},
+		"i-2": {ServerID: "s2", SeenAt: fresh, Listening: []int{22, 443}, ListenAt: fresh},
 	}
 	rs := []Resource{fw, i1, i2}
 	if got := byCheck(Findings(rs, facts, now))["rule-nothing-listens"]; len(got) != 1 || got[0].Source != SourceAgent {
 		t.Fatalf("want one agent-measured finding, got %+v", got)
 	}
 
-	stale := map[string]ServerFacts{"i-1": facts["i-1"], "i-2": {ServerID: "s2", Listening: []int{22}, ListenAt: ptr(now.Add(-5 * time.Hour))}}
+	stale := map[string]ServerFacts{"i-1": facts["i-1"], "i-2": {ServerID: "s2", SeenAt: fresh, Listening: []int{22}, ListenAt: ptr(now.Add(-5 * time.Hour))}}
 	if got := byCheck(Findings(rs, stale, now))["rule-nothing-listens"]; len(got) != 0 {
 		t.Fatal("one stale report means Argus does not know")
 	}
@@ -121,7 +121,7 @@ func TestFindingsNothingListensNeedsEveryAgentFresh(t *testing.T) {
 		t.Fatal("a group something other than these instances uses (a load balancer) is not judged by them")
 	}
 
-	listening := map[string]ServerFacts{"i-1": facts["i-1"], "i-2": {ServerID: "s2", Listening: []int{8080}, ListenAt: fresh}}
+	listening := map[string]ServerFacts{"i-1": facts["i-1"], "i-2": {ServerID: "s2", SeenAt: fresh, Listening: []int{8080}, ListenAt: fresh}}
 	if got := byCheck(Findings(rs, listening, now))["rule-nothing-listens"]; len(got) != 0 {
 		t.Fatal("one instance listens, so the rule is needed")
 	}
@@ -129,7 +129,7 @@ func TestFindingsNothingListensNeedsEveryAgentFresh(t *testing.T) {
 
 func TestFindingsIdleInstanceIsAJudgement(t *testing.T) {
 	inst := Resource{Kind: KindInstance, ID: "i-1", Name: "worker", State: "running", Size: "t3.medium"}
-	quiet := ServerFacts{ServerID: "s1", HistoryFor: 30 * 24 * time.Hour, CPUP95: ptr(1.5), NetBps: ptr(800.0)}
+	quiet := ServerFacts{ServerID: "s1", SeenAt: ptr(now), HistoryFor: 30 * 24 * time.Hour, CPUP95: ptr(1.5), NetBps: ptr(800.0)}
 	got := byCheck(Findings([]Resource{inst}, map[string]ServerFacts{"i-1": quiet}, now))["instance-idle"]
 	if len(got) != 1 || got[0].Source != SourceJudgement || got[0].Fix != ActionStop || got[0].Monthly <= 0 {
 		t.Fatalf("idle = %+v", got)
@@ -156,7 +156,7 @@ func TestFindingsInstanceRisks(t *testing.T) {
 	if len(m["public-no-agent"]) != 1 || len(m["imds-v1"]) != 1 {
 		t.Fatalf("got %+v", m)
 	}
-	m = byCheck(Findings(rs, map[string]ServerFacts{"i-1": {ServerID: "s"}}, now))
+	m = byCheck(Findings(rs, map[string]ServerFacts{"i-1": {ServerID: "s", SeenAt: ptr(now)}}, now))
 	if len(m["public-no-agent"]) != 0 {
 		t.Fatal("it has an Argus server")
 	}

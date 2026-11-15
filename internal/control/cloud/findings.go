@@ -141,6 +141,10 @@ type ServerFacts struct {
 	ListenAt  *time.Time
 }
 
+// HasAgent is an instance matched to an Argus server whose agent has
+// checked in.
+func (s ServerFacts) HasAgent() bool { return s.ServerID != "" && s.SeenAt != nil }
+
 // Findings works out one account's risks and waste from its stored
 // inventory (every region, plus the account-wide kinds) and what agents
 // measured, keyed by instance id. Highest severity first, then biggest bill.
@@ -290,7 +294,7 @@ func (f *finder) firewall(r Resource) {
 	}
 	allAgents := len(insts) > 0 && usersRead && users == strconv.Itoa(len(insts))
 	for _, i := range insts {
-		if f.facts[i.ID].ServerID == "" {
+		if !f.facts[i.ID].HasAgent() {
 			allAgents = false
 		}
 	}
@@ -390,7 +394,7 @@ func (f *finder) nothingListens(insts []Resource, x Rule) (string, bool) {
 func (f *finder) instance(r Resource) {
 	s := f.facts[r.ID]
 	live := r.State == "running" || r.State == "stopped"
-	if r.State == "running" && r.PublicIP != "" && s.ServerID == "" {
+	if r.State == "running" && r.PublicIP != "" && !s.HasAgent() {
 		f.add(Finding{Check: "public-no-agent", Group: GroupRisk, Severity: SeverityMedium, Source: SourceCloud, Title: "Public instance without the Argus agent",
 			Why:      fmt.Sprintf("%s has the public IP %s and no Argus server matches it.", r.Name, r.PublicIP),
 			Matters:  "It can be reached from the internet, and sessions on it are not recorded by Argus.",
@@ -402,7 +406,7 @@ func (f *finder) instance(r Resource) {
 			Matters:  "A server-side request forgery bug in anything it runs can read its role's keys.",
 			HowToFix: "In AWS, set the instance's metadata to require tokens (IMDSv2). Most software since 2020 already uses tokens."}, r, "optional")
 	}
-	if r.State != "running" || s.ServerID == "" || s.CPUP95 == nil || s.HistoryFor < IdleMinHistory {
+	if r.State != "running" || !s.HasAgent() || s.CPUP95 == nil || s.HistoryFor < IdleMinHistory {
 		return
 	}
 	if *s.CPUP95 >= IdleCPUP95 || (s.NetBps != nil && *s.NetBps >= IdleNetBps) {
