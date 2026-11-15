@@ -18,6 +18,7 @@ import (
 	"github.com/gsoultan/argus/internal/control/rgen/cloudbudget"
 	"github.com/gsoultan/argus/internal/control/rgen/cloudchange"
 	"github.com/gsoultan/argus/internal/control/rgen/cloudcost"
+	"github.com/gsoultan/argus/internal/control/rgen/cloudfindingkeep"
 	"github.com/gsoultan/argus/internal/control/rgen/cloudkeeprunning"
 	"github.com/gsoultan/argus/internal/control/rgen/cloudresource"
 	"github.com/gsoultan/argus/internal/control/rgen/cloudschedule"
@@ -59,53 +60,54 @@ var FlushOrder = map[string]int{
 	"cloud_budgets":             5,
 	"cloud_changes":             6,
 	"cloud_costs":               7,
-	"cloud_keep_running":        8,
-	"cloud_resources":           9,
-	"cloud_schedules":           10,
-	"console_alert_prefs":       11,
-	"console_alerts":            12,
-	"databases":                 13,
-	"direct_login_requests":     14,
-	"disk_grow_rules":           15,
-	"disk_grow_runs":            16,
-	"gateway_policy":            17,
-	"host_key_pins":             18,
-	"log_cleanup_rules":         19,
-	"log_cleanup_runs":          20,
-	"package_runs":              21,
-	"package_update_rules":      22,
-	"redeemed_tickets":          23,
-	"revoked_sessions":          24,
-	"saved_queries":             25,
-	"schema_migrations":         26,
-	"server_logins":             27,
-	"sessions":                  28,
-	"sign_in_devices":           29,
-	"software_files":            30,
-	"software_previews":         31,
-	"software_scripts":          32,
-	"teams":                     33,
-	"usage_history":             34,
-	"users":                     35,
-	"access_requests":           36,
-	"agent_credentials":         37,
-	"asset_assignments":         38,
-	"asset_team_assignments":    39,
-	"cloud_access":              40,
-	"cloud_schedule_runs":       41,
-	"console_alert_reads":       42,
-	"database_access_rules":     43,
-	"database_assignments":      44,
-	"database_backup_schedules": 45,
-	"database_backups":          46,
-	"database_changes":          47,
-	"database_restores":         48,
-	"database_statements":       49,
-	"recovery_codes":            50,
-	"software_script_versions":  51,
-	"team_members":              52,
-	"database_backup_tests":     53,
-	"database_statement_items":  54,
+	"cloud_finding_keeps":       8,
+	"cloud_keep_running":        9,
+	"cloud_resources":           10,
+	"cloud_schedules":           11,
+	"console_alert_prefs":       12,
+	"console_alerts":            13,
+	"databases":                 14,
+	"direct_login_requests":     15,
+	"disk_grow_rules":           16,
+	"disk_grow_runs":            17,
+	"gateway_policy":            18,
+	"host_key_pins":             19,
+	"log_cleanup_rules":         20,
+	"log_cleanup_runs":          21,
+	"package_runs":              22,
+	"package_update_rules":      23,
+	"redeemed_tickets":          24,
+	"revoked_sessions":          25,
+	"saved_queries":             26,
+	"schema_migrations":         27,
+	"server_logins":             28,
+	"sessions":                  29,
+	"sign_in_devices":           30,
+	"software_files":            31,
+	"software_previews":         32,
+	"software_scripts":          33,
+	"teams":                     34,
+	"usage_history":             35,
+	"users":                     36,
+	"access_requests":           37,
+	"agent_credentials":         38,
+	"asset_assignments":         39,
+	"asset_team_assignments":    40,
+	"cloud_access":              41,
+	"cloud_schedule_runs":       42,
+	"console_alert_reads":       43,
+	"database_access_rules":     44,
+	"database_assignments":      45,
+	"database_backup_schedules": 46,
+	"database_backups":          47,
+	"database_changes":          48,
+	"database_restores":         49,
+	"database_statements":       50,
+	"recovery_codes":            51,
+	"software_script_versions":  52,
+	"team_members":              53,
+	"database_backup_tests":     54,
+	"database_statement_items":  55,
 }
 
 // NewUnit stages writes across this context and flushes them in foreign-key
@@ -1182,6 +1184,123 @@ func (p CloudCostWithAccountQuery) All(ctx context.Context, ex runtime.Executor)
 			// A foreign key pointing at a row that is not there. The database
 			// forbids it, so reaching this means the constraint was dropped.
 			return nil, fmt.Errorf("storm: %s references a missing %s row", "cloud_costs", "cloud_accounts")
+		}
+		out[i].Account = targets[j]
+	}
+	return out, nil
+}
+
+// CloudFindingKeepWithAccountRow is cloud_finding_keeps with its Account loaded.
+type CloudFindingKeepWithAccountRow struct {
+	cloudfindingkeep.Row
+	Account cloudaccount.Row
+}
+
+type CloudFindingKeepWithAccountQuery struct {
+	q cloudfindingkeep.Query
+}
+
+// CloudFindingKeepWithAccount starts the plan.
+func CloudFindingKeepWithAccount() CloudFindingKeepWithAccountQuery {
+	return CloudFindingKeepWithAccountQuery{q: cloudfindingkeep.New()}
+}
+
+func (p CloudFindingKeepWithAccountQuery) Where(ps ...cloudfindingkeep.Pred) CloudFindingKeepWithAccountQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p CloudFindingKeepWithAccountQuery) WhereIf(cond bool, pr cloudfindingkeep.Pred) CloudFindingKeepWithAccountQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p CloudFindingKeepWithAccountQuery) Any(ps ...cloudfindingkeep.Pred) CloudFindingKeepWithAccountQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p CloudFindingKeepWithAccountQuery) Not(pr cloudfindingkeep.Pred) CloudFindingKeepWithAccountQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p CloudFindingKeepWithAccountQuery) NotAny(ps ...cloudfindingkeep.Pred) CloudFindingKeepWithAccountQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p CloudFindingKeepWithAccountQuery) Order(ts ...cloudfindingkeep.Sort) CloudFindingKeepWithAccountQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p CloudFindingKeepWithAccountQuery) Limit(n int64) CloudFindingKeepWithAccountQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p CloudFindingKeepWithAccountQuery) Offset(n int64) CloudFindingKeepWithAccountQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p CloudFindingKeepWithAccountQuery) After(r CloudFindingKeepWithAccountRow) CloudFindingKeepWithAccountQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p CloudFindingKeepWithAccountQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p CloudFindingKeepWithAccountQuery) All(ctx context.Context, ex runtime.Executor) ([]CloudFindingKeepWithAccountRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]CloudFindingKeepWithAccountRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = CloudFindingKeepWithAccountRow{Row: r}
+		key := r.AccountID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := cloudaccount.New().Unordered().
+		Where(cloudaccount.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.AccountID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "cloud_finding_keeps", "cloud_accounts")
 		}
 		out[i].Account = targets[j]
 	}
