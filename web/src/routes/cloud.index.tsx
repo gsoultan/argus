@@ -1,7 +1,7 @@
 import { Alert, Badge, Box, Button, Group, Select, Stack, Tabs, Text, TextInput } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { IconBrandAws, IconCalendarTime, IconCirclePlus, IconInfoCircle, IconSearch, IconShieldPlus } from '@tabler/icons-react'
+import { IconBrandAws, IconBrandGoogle, IconCalendarTime, IconCirclePlus, IconCloudPlus, IconInfoCircle, IconSearch, IconShieldPlus } from '@tabler/icons-react'
 import { useMemo, useState } from 'react'
 import { AccessPanel } from '~/components/cloud/Access'
 import { CloudOverview } from '~/components/cloud/CloudOverview'
@@ -84,7 +84,7 @@ function Cloud() {
   const list = accounts.data?.accounts ?? []
   const newest = list.map((a) => a.syncedAt).filter(Boolean).sort().at(-1) ?? null
 
-  const description = 'Every instance, disk, image, firewall and load balancer in your AWS accounts, and which instances have an Argus server. Launch, stop and resize instances, manage disks, firewall rules and load balancer targets, with approval where the environment asks for it, and see what it all costs.'
+  const description = 'Every instance, disk, image, firewall and load balancer in your AWS accounts and Google Cloud projects, and which instances have an Argus server. Launch, stop and resize instances, manage disks, firewall rules and load balancer targets, with approval where the environment asks for it, and see what it all costs.'
   if (!isConfigured()) {
     return (
       <Box>
@@ -107,11 +107,14 @@ function Cloud() {
     <Box>
       <PageHeader
         title="Cloud"
-        status={<Badge variant="light" color="slate" radius="sm" leftSection={<IconBrandAws size={12} />}>AWS</Badge>}
+        status={<Group gap={6}>
+          {(list.length === 0 || list.some((a) => a.provider === 'aws')) && <Badge variant="light" color="slate" radius="sm" leftSection={<IconBrandAws size={12} />}>AWS</Badge>}
+          {list.some((a) => a.provider === 'gcp') && <Badge variant="light" color="slate" radius="sm" tt="none" leftSection={<IconBrandGoogle size={11} />}>Google Cloud</Badge>}
+        </Group>}
         description={description}
         actions={admin && hasAccounts ? (
           <Group gap="xs">
-            <ButtonLink to="/cloud/connect" size="sm" variant="default" leftSection={<IconBrandAws size={16} />}>Connect an account</ButtonLink>
+            <ButtonLink to="/cloud/connect" size="sm" variant="default" leftSection={<IconCloudPlus size={16} />}>Connect an account</ButtonLink>
             {canChange && tab === 'schedules' && <ButtonLink to="/cloud/schedule" size="sm" leftSection={<IconCalendarTime size={16} />}>Make a schedule</ButtonLink>}
             {canChange && tab === 'disks' && <Button size="sm" leftSection={<IconCirclePlus size={16} />} onClick={() => setMaking('disk')}>New disk</Button>}
             {canChange && tab === 'network' && <Button size="sm" variant="default" leftSection={<IconCirclePlus size={16} />} onClick={() => setMaking('address')}>Allocate an Elastic IP</Button>}

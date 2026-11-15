@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MakeItForMe, WatchForRoles } from '~/components/cloud/ConnectRoles'
 import { IdentityPicker } from '~/components/cloud/IdentityPicker'
+import { GcpSetup } from '~/components/cloud/GcpSetup'
 import { RoleSetup } from '~/components/cloud/RoleSetup'
 import type { CloudPrepared } from '~/lib/cloud'
 import { renderWithProviders } from '~/test/render'
@@ -41,7 +42,7 @@ describe('Connect an AWS account', () => {
     expect(await screen.findByText(/Waiting for the role in 412788931204/)).toBeInTheDocument()
     expect(onReady).not.toHaveBeenCalled()
     await waitFor(() => expect(onReady).toHaveBeenCalledTimes(1), { timeout: 8_000 })
-    expect(api.checkCloudAccount).toHaveBeenCalledWith('412788931204', false, 'main')
+    expect(api.checkCloudAccount).toHaveBeenCalledWith('412788931204', false, 'main', 'aws')
   }, 10_000)
 
   it('says why a stack failed instead of waiting forever', async () => {
@@ -127,5 +128,32 @@ describe('Connect an AWS account when a stack is stuck', () => {
     fireEvent.click(screen.getByRole('button', { name: /Make the roles for me/ }))
     expect(await screen.findByText('Argus made nothing')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Copy the policy/ })).toBeInTheDocument()
+  })
+})
+
+describe('Connect a Google Cloud project', () => {
+  const gcp: CloudPrepared = {
+    provider: 'gcp', accountId: 'payments-prod-4182', externalId: 'argus-0123', principal: 'argus-control@ops-home.iam.gserviceaccount.com',
+    source: 'the VM', roleName: 'argus-read', readRoleArn: 'argus-read@payments-prod-4182.iam.gserviceaccount.com',
+    template: '', command: 'gcloud iam service-accounts create argus-read', canDeploy: false, identity: 'main', identityName: 'Main',
+  }
+
+  it('watches for argus-read in the project and connects by itself', async () => {
+    api.checkCloudAccount.mockResolvedValueOnce({ ready: false, detail: 'denied' }).mockResolvedValue({ ready: true })
+    const onReady = vi.fn()
+    renderWithProviders(<WatchForRoles prepared={gcp} manage={false} connecting={false} failed={null} onReady={onReady} />)
+    expect(await screen.findByText('Waiting for argus-read in payments-prod-4182')).toBeInTheDocument()
+    expect(screen.queryByText(/denied/)).not.toBeInTheDocument()
+    await waitFor(() => expect(onReady).toHaveBeenCalledTimes(1), { timeout: 8_000 })
+    expect(api.checkCloudAccount).toHaveBeenCalledWith('payments-prod-4182', false, 'main', 'gcp')
+  }, 10_000)
+
+  it('gives one command and Cloud Shell on the project, with the console steps one click away', () => {
+    renderWithProviders(<GcpSetup prepared={gcp} />)
+    expect(screen.getByRole('button', { name: /Copy the command/ })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Open Cloud Shell/ })).toHaveAttribute('href', expect.stringContaining('project=payments-prod-4182'))
+    fireEvent.click(screen.getByText(/Rather click through the console/))
+    expect(screen.getByText(/argus-external-id=argus-0123/)).toBeInTheDocument()
+    expect(screen.getByText(gcp.principal)).toBeInTheDocument()
   })
 })

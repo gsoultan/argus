@@ -75,7 +75,11 @@ func (a *API) postCloudCheck(w http.ResponseWriter, r *http.Request) {
 	vctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 	if _, err := p.Verify(vctx, acct, cloud.Actor(actor)); err != nil {
-		out.Detail = "The read role does not let Argus in yet: " + err.Error()
+		what := "The read role"
+		if in.Provider == "gcp" {
+			what = prep.ReadRoleARN
+		}
+		out.Detail = what + " does not let Argus in yet: " + err.Error()
 	} else if in.Manage {
 		acct.RoleARN = prep.ManageRoleARN
 		if _, err := p.Verify(vctx, acct, cloud.Actor(actor)); err != nil {

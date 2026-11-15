@@ -107,7 +107,7 @@ func (a *API) readCloudCosts(ctx context.Context, c CloudAccount, now time.Time)
 	}
 	cr, ok := p.(cloud.CostReader)
 	if !ok {
-		return errors.New("this provider does not read costs")
+		return errors.New("Argus does not read " + cloudProviderName(c.Provider) + " costs yet")
 	}
 	ext, err := a.cloudExternalID(ctx, c.Provider, c.AccountID)
 	if err != nil {

@@ -118,7 +118,7 @@ function AskForm({ accounts, minutes, role }: { accounts: CloudAccount[]; minute
         </div>
         <Group grow align="flex-start">
           <Select label="Account" placeholder="Pick an account" value={acct} onChange={setAcct} allowDeselect={false}
-            data={accounts.map((a) => ({ value: a.id, label: `${a.name} · ${a.accountId}` }))} />
+            data={accounts.filter((a) => a.provider === 'aws').map((a) => ({ value: a.id, label: `${a.name} · ${a.accountId}` }))} />
           <Select label="For" value={len} onChange={(v) => v && setLen(v)} allowDeselect={false}
             data={minutes.map((m) => ({ value: String(m), label: minutesText(m) }))} />
         </Group>

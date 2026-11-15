@@ -167,3 +167,11 @@ log_level: "info"
 #     # profile: "argus"
 #     # credentials_file: "/var/lib/argus-control/aws-credentials"
 #     # home_region: "us-east-1"
+#   # Google Cloud: on a Google Cloud VM, argus-control uses the VM's service
+#   # account (give the VM the cloud-platform access scope), and nothing is
+#   # needed here. Anywhere else, a service account key only the argus user
+#   # can read. Either way, turn on the IAM Service Account Credentials API
+#   # in the project that service account is in. Connected projects trust it
+#   # through the command Cloud › Connect an account gives for each.
+#   gcp:
+#     credentials_file: "/var/lib/argus-control/secrets/gcp-key.json"

@@ -1,6 +1,6 @@
 import { Alert, Badge, Box, Button, Card, Flex, Group, List, Modal, SimpleGrid, Stack, Text, TextInput, ThemeIcon, Tooltip } from '@mantine/core'
 import {
-  IconAlertTriangle, IconBrandAws, IconCheck, IconCircleCheck, IconMinus, IconCloud, IconDeviceDesktopOff, IconLockOpen, IconPencil, IconRefresh, IconServer2,
+  IconAlertTriangle, IconBrandAws, IconBrandGoogle, IconCheck, IconCircleCheck, IconMinus, IconCloud, IconDeviceDesktopOff, IconLockOpen, IconPencil, IconRefresh, IconServer2,
 } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
@@ -8,7 +8,7 @@ import { EmptyState, SectionCard } from '~/components/page'
 import { Stat, relTime } from '~/components/primitives'
 import { ButtonLink } from '~/components/links'
 import {
-  SCHEDULE_TAG, openToInternet, prepareCloudAccount, staleness, useAllowCloudChanges, useDisconnectCloudAccount, useMakeCloudReadOnly, useSyncCloudAccount,
+  PROVIDER_LABEL, SCHEDULE_TAG, accountIdText, openToInternet, prepareCloudAccount, staleness, useAllowCloudChanges, useDisconnectCloudAccount, useMakeCloudReadOnly, useSyncCloudAccount,
   type CloudAccount, type CloudBase, type CloudItem,
 } from '~/lib/cloud'
 import { run } from '~/lib/notify'
@@ -30,8 +30,10 @@ export function CloudOverview({ accounts, bases, instances, firewalls, volumes, 
   platform?: boolean
   onTab: (t: CloudTab) => void
 }) {
-  const base = bases.find((b) => b.default) ?? bases[0]
+  const aws = bases.filter((b) => (b.provider || 'aws') === 'aws')
+  const base = aws.find((b) => b.default) ?? aws[0]
   if (accounts.length === 0) return <FirstAccount admin={admin} platform={platform} base={base} />
+  const providers = new Set(accounts.map((a) => a.provider))
 
   const running = instances?.filter((i) => i.resource.state === 'running').length
   const unmatched = instances?.filter((i) => !i.server)
@@ -51,11 +53,11 @@ export function CloudOverview({ accounts, bases, instances, firewalls, volumes, 
         <Stat label="Open to the internet" value={open?.length} icon={IconLockOpen} tone={open && open.length > 0 ? 'warn' : 'ok'} color="rose"
           sub="Firewalls letting anyone reach SSH, RDP or a database" onClick={() => onTab('network')} />
         <Stat label="Accounts" value={accounts.length} icon={IconCloud}
-          sub={`${accounts.reduce((n, a) => n + a.regions.length, 0)} regions read every 5 minutes`} />
+          sub={`${accounts.reduce((n, a) => n + a.regions.filter((r) => r !== 'global').length, 0)} regions read every 5 minutes`} />
       </SimpleGrid>
 
       <Box style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))', gap: 16 }}>
-        <SectionCard title="Accounts" icon={IconBrandAws} flush
+        <SectionCard title="Accounts" icon={providers.size === 1 && providers.has('gcp') ? IconBrandGoogle : providers.size === 1 ? IconBrandAws : IconCloud} flush
           action={admin ? <ButtonLink to="/cloud/connect" size="xs" variant="light">Connect another</ButtonLink> : undefined}>
           <Stack gap={0}>
             {accounts.map((a) => <AccountRow key={a.id} a={a} admin={admin} bases={bases} />)}
@@ -81,8 +83,8 @@ export function CloudOverview({ accounts, bases, instances, firewalls, volumes, 
               <Finding color="amber" icon={IconAlertTriangle}
                 title="Paid for, not in use"
                 text={[looseDisks?.length ? `${looseDisks.length} disk${looseDisks.length === 1 ? '' : 's'} not attached to anything` : '',
-                  looseIPs?.length ? `${looseIPs.length} Elastic IP${looseIPs.length === 1 ? '' : 's'} not attached` : '']
-                  .filter(Boolean).join(' and ') + '. AWS charges for both while they sit there.'}
+                  looseIPs?.length ? `${looseIPs.length} public address${looseIPs.length === 1 ? '' : 'es'} not attached` : '']
+                  .filter(Boolean).join(' and ') + `. ${[...providers].map((p) => PROVIDER_LABEL[p]).join(' and ')} charge${providers.size === 1 ? 's' : ''} for both while they sit there.`}
                 action={<Button size="xs" variant="default" onClick={() => onTab(looseDisks?.length ? 'disks' : 'network')}>See them</Button>} />
             )}
             {failing.map((a) => (
@@ -101,6 +103,11 @@ export function CloudOverview({ accounts, bases, instances, firewalls, volumes, 
       </Box>
     </Stack>
   )
+}
+
+/** The regions an account was read in; Google's "global" is not one. */
+function regionCount(a: CloudAccount): number {
+  return a.regions.filter((r) => r !== 'global').length
 }
 
 function names(list: CloudItem[]): string {
@@ -127,7 +134,10 @@ function Finding({ color, icon: Icon, title, text, action }: {
   )
 }
 
-function AccountRow({ a, admin, bases }: { a: CloudAccount; admin: boolean; bases: CloudBase[] }) {
+function AccountRow({ a, admin, bases: all }: { a: CloudAccount; admin: boolean; bases: CloudBase[] }) {
+  // Only this cloud's identities: an AWS account cannot move to a Google one.
+  const bases = all.filter((b) => (b.provider || 'aws') === a.provider)
+  const aws = a.provider === 'aws'
   const sync = useSyncCloudAccount()
   const [confirm, setConfirm] = useState(false)
   const [moving, setMoving] = useState(false)
@@ -144,6 +154,7 @@ function AccountRow({ a, admin, bases }: { a: CloudAccount; admin: boolean; base
         <Box style={{ minWidth: 0 }}>
           <Group gap="xs" wrap="wrap">
             <Text fw={600} size={FS.body}>{a.name}</Text>
+            {!aws && <Badge variant="light" color="slate" radius="sm" tt="none" fw={500}>{PROVIDER_LABEL[a.provider]}</Badge>}
             <EnvBadge env={a.environment} />
             {a.access === 'manage'
               ? <Badge variant="light" color="azure" radius="sm" tt="none" fw={500}>Can change</Badge>
@@ -159,7 +170,7 @@ function AccountRow({ a, admin, bases }: { a: CloudAccount; admin: boolean; base
               </Tooltip>
             )}
           </Group>
-          <Text size={FS.micro} c="dimmed" ff="monospace" mt={2}>{a.accountId.replace(/(\d{4})(\d{4})(\d{4})/, '$1 $2 $3')} · {a.regions.length} region{a.regions.length === 1 ? '' : 's'}</Text>
+          <Text size={FS.micro} c="dimmed" ff="monospace" mt={2}>{accountIdText(a.provider, a.accountId)} · {regionCount(a)} region{regionCount(a) === 1 ? '' : 's'}</Text>
           {!a.identityMissing && bases.length > 1 && (
             <Tooltip label={identity?.principal ?? a.identityArn} multiline w={320}>
               <Text size={FS.micro} c="dimmed" mt={2} w="fit-content">Connects as {identity?.name ?? a.identity}</Text>
@@ -184,8 +195,8 @@ function AccountRow({ a, admin, bases }: { a: CloudAccount; admin: boolean; base
             )}
             {a.access === 'manage'
               ? <Button size="xs" variant="subtle" color="gray" onClick={() => setAccess(true)}>Make read only</Button>
-              : <Button size="xs" variant="subtle" leftSection={<IconPencil size={13} />} onClick={() => setAccess(true)}>Allow changes</Button>}
-            {(a.identityMissing || bases.length > 1) && (
+              : aws && <Button size="xs" variant="subtle" leftSection={<IconPencil size={13} />} onClick={() => setAccess(true)}>Allow changes</Button>}
+            {aws && (a.identityMissing || bases.length > 1) && (
               <Button size="xs" variant={a.identityMissing ? 'light' : 'subtle'} color={a.identityMissing ? 'rose' : undefined}
                 onClick={() => setMoving(true)}>
                 Change identity
@@ -315,17 +326,17 @@ function FirstAccount({ admin, platform, base }: { admin: boolean; platform: boo
   return (
     <Card padding="xl">
       <Stack align="center" gap="lg" maw={640} mx="auto" py="lg">
-        <ThemeIcon size={56} radius="xl" variant="light" color="azure"><IconBrandAws size={30} /></ThemeIcon>
+        <ThemeIcon size={56} radius="xl" variant="light" color="azure"><IconCloud size={30} /></ThemeIcon>
         <Box ta="center">
-          <Text fw={700} size="lg">Connect your first AWS account</Text>
+          <Text fw={700} size="lg">Connect your first AWS account or Google Cloud project</Text>
           <Text size={FS.body} c="dimmed" mt={SP.tight} lh={1.6}>
             See every instance, disk and firewall across your accounts and regions, which ones have an Argus server, and what is
-            open to the internet. Argus never asks for access keys: it uses a role made in the account, read only unless you allow changes.
+            open to the internet. Argus never asks for access keys: it uses a role or service account made in the account, read only unless you allow changes.
           </Text>
         </Box>
         <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm" w="100%">
-          {[['1', 'Name the account', 'Its 12-digit id and whether it is production.'],
-            ['2', 'Create the role', 'One command in CloudShell, or Argus makes it itself. It connects as soon as the role works.']].map(([n, t, d]) => (
+          {[['1', 'Name the account', 'Its AWS account id or Google Cloud project id, and whether it is production.'],
+            ['2', 'Give Argus access', 'One command in CloudShell or Cloud Shell. Argus connects as soon as it works.']].map(([n, t, d]) => (
             <Box key={n} p="sm" style={{ border: '1px solid var(--color-line)', borderRadius: 10 }}>
               <Text size={FS.micro} c={INK.brand} fw={700}>STEP {n}</Text>
               <Text fw={600} size={FS.body} mt={2}>{t}</Text>
@@ -349,7 +360,12 @@ function FirstAccount({ admin, platform, base }: { admin: boolean; platform: boo
           </Alert>
         )}
         {admin ? (
-          <ButtonLink to="/cloud/connect" size="sm" leftSection={<IconBrandAws size={16} />}>Connect an AWS account</ButtonLink>
+          <Group gap="sm" justify="center">
+            <ButtonLink to="/cloud/connect" size="sm" leftSection={<IconBrandAws size={16} />}>Connect an AWS account</ButtonLink>
+            <ButtonLink to="/cloud/connect" search={{ provider: 'gcp' }} size="sm" variant="default" leftSection={<IconBrandGoogle size={15} />}>
+              Connect a Google Cloud project
+            </ButtonLink>
+          </Group>
         ) : (
           <Text size={FS.meta} c="dimmed">An administrator connects accounts.</Text>
         )}
