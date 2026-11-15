@@ -31,7 +31,7 @@ describe('itemsRefetchEvery', () => {
   })
 
   it('treats only states on their way somewhere as settling', () => {
-    for (const s of ['pending', 'stopping', 'shutting-down', 'creating', 'deleting', 'provisioning', 'modifying', 'optimizing']) expect(settling(s)).toBe(true)
+    for (const s of ['pending', 'stopping', 'shutting-down', 'creating', 'deleting', 'provisioning', 'modifying', 'optimizing', 'uploading']) expect(settling(s)).toBe(true)
     for (const s of ['running', 'stopped', 'completed', 'available', 'in-use', 'active', undefined]) expect(settling(s)).toBe(false)
   })
 })

@@ -192,7 +192,7 @@ export function settling(state: string | undefined): boolean {
   return state !== undefined && SETTLING.has(state)
 }
 
-const SETTLING = new Set(['pending', 'stopping', 'shutting-down', 'creating', 'deleting', 'provisioning', 'modifying', 'optimizing'])
+const SETTLING = new Set(['pending', 'stopping', 'shutting-down', 'creating', 'deleting', 'provisioning', 'modifying', 'optimizing', 'uploading'])
 
 /**
  * The latest read of an opened item, found by account, kind and id in the

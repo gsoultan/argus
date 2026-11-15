@@ -142,12 +142,12 @@ type Resource struct {
 
 // Settling reports whether a resource is on its way from one state to
 // another: a snapshot being taken, an instance starting or stopping, a disk
-// being made. Its region is read again sooner than the usual interval, so
+// being made, a Google snapshot uploading. Its region is read again sooner than the usual interval, so
 // the console does not show a finished snapshot at 0% for minutes. The
 // console's settling() in web/src/lib/cloud.ts mirrors this list.
 func (r Resource) Settling() bool {
 	switch r.State {
-	case "pending", "stopping", "shutting-down", "creating", "deleting", "provisioning", "modifying", "optimizing":
+	case "pending", "stopping", "shutting-down", "creating", "deleting", "provisioning", "modifying", "optimizing", "uploading":
 		return true
 	}
 	return false
