@@ -92,7 +92,7 @@ test('findings are grouped, say how Argus knows, and fix through the usual chang
 
   await expect(page.getByRole('tab', { name: /Risks & waste/ })).toContainText('2 high')
   await expect(page.getByText('SSH open to the whole internet')).toBeVisible()
-  await expect(page.getByText('Not in use', { exact: true })).toBeVisible()
+  await expect(page.getByRole('cell').filter({ hasText: 'Not in use · $74.74 a month' })).toBeVisible()
   await expect(page.getByText("Argus's judgement")).toBeVisible()
   await expect(page.getByText(/have not been read yet/)).toContainText('analytics')
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/01-list.png`, fullPage: true })
@@ -100,7 +100,10 @@ test('findings are grouped, say how Argus knows, and fix through the usual chang
   await page.getByText('SSH open to the whole internet').click()
   const drawer = page.getByRole('dialog')
   await expect(drawer.getByText('Why it matters')).toBeVisible()
-  if (SHOTS) await page.screenshot({ path: `${SHOTS}/02-risk.png` })
+  if (SHOTS) {
+    await page.waitForTimeout(400) // the drawer slides in
+    await page.screenshot({ path: `${SHOTS}/02-risk.png` })
+  }
   await drawer.getByRole('button', { name: 'Ask to remove this rule' }).click()
 
   const modal = page.getByRole('dialog', { name: /Rules of sg-web-public/ })

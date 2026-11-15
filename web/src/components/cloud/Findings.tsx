@@ -155,7 +155,7 @@ export function FindingsPanel({ names, admin }: { names: Map<string, string>; ad
           <Table miw={980} verticalSpacing="xs">
             <Table.Thead>
               <Table.Tr>
-                <Table.Th w={28} /><Table.Th w={84}>How bad</Table.Th><Table.Th>What Argus found</Table.Th><Table.Th w={210}>Where</Table.Th>
+                <Table.Th w={28} /><Table.Th w={84}>How bad</Table.Th><Table.Th>What Argus found</Table.Th><Table.Th w={250}>Where</Table.Th>
                 <Table.Th w={140}>How it knows</Table.Th><Table.Th w={100} ta="right">Cost</Table.Th><Table.Th w={190} />
               </Table.Tr>
             </Table.Thead>
