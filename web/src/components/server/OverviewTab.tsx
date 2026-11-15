@@ -58,7 +58,7 @@ export function OverviewTab({ asset, sessions, onTab, canFreeSpace = false }: {
         <Stat
           label="Status"
           value={reachLabel(asset)}
-          sub={`Checked ${relTime(asset.lastCheckedAt)}`}
+          sub={lastHeard(asset)}
           tone={reachLabel(asset) === 'Online' ? 'ok' : 'warn'}
         />
         <Stat
@@ -83,7 +83,7 @@ export function OverviewTab({ asset, sessions, onTab, canFreeSpace = false }: {
           value={agent?.agentVersion || agentStateLabel(asset)}
           sub={agent?.agentVersion
             ? agent.latest && agent.latest !== agent.agentVersion ? `${agent.latest} available` : 'Up to date'
-            : asset.agentLastSeenAt ? `Checked in ${relTime(asset.agentLastSeenAt)}` : 'Never checked in'}
+            : asset.agentState === 'absent' ? 'Not installed' : 'Version not reported yet'}
           tone={asset.agentState === 'healthy' ? 'ok' : 'warn'}
           onClick={() => onTab('agent')}
         />
@@ -224,7 +224,18 @@ export function connectsBy(a: Asset): string {
 }
 
 function reachLabel(a: Asset): string {
-  return { online: 'Online', slow: 'Slow', offline: 'Offline', blocked: 'Blocked', unknown: 'Unknown' }[reachOf(a)]
+  return { online: 'Online', slow: 'Slow', offline: 'Not answering', blocked: 'Blocked', unknown: 'No agent' }[reachOf(a)]
+}
+
+/**
+ * The one time the Overview gives for "is it there": when its agent last
+ * checked in, or, with no agent, when Argus last tried it. The System card's
+ * own time says how old its figures are, which is a different question.
+ */
+export function lastHeard(a: Asset): string {
+  if (a.agentLastSeenAt) return `Last heard from ${relTime(a.agentLastSeenAt)}`
+  if (a.agentState === 'absent') return a.lastCheckedAt ? `No agent · tried ${relTime(a.lastCheckedAt)}` : 'No agent to hear from'
+  return 'Never heard from'
 }
 
 export function agentStateLabel(a: Asset): string {

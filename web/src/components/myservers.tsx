@@ -21,19 +21,21 @@ import { assetsQuery, meQuery, myServersQuery, requestsQuery } from '~/lib/queri
 import { seesWholeFleet } from '~/lib/roles'
 import { useSessions } from '~/lib/sessions'
 import type { Asset, MyServer } from '~/types/domain'
-import { isUp, kindOf, reachOf, shortName, type Reach } from '~/lib/reach'
+import { ANSWER_LABEL, answerOf, isUp, kindOf, reachOf, shortName, type Answer, type Reach } from '~/lib/reach'
 import { ASSET_TYPES, ASSET_TYPE_LABEL, assetHostnameAside, assetShortName, assetTypeOf, type AssetType } from '~/lib/assetType'
 import { needsUpdates, updatesWaitingQuery, type UpdatesWaitingRow } from '~/lib/updatesWaiting'
 import { resourcesLowQuery, warningBadge, warningText, warningTone, type ResourcesLowRow } from '~/lib/resourcesLow'
 import { isConfigured } from '~/lib/live'
 
 // Re-exported: every page that shows a server's status imports them from here.
-export { isUp, kindOf, reachOf, shortName, type Reach }
+export { ANSWER_LABEL, answerOf, isUp, kindOf, reachOf, shortName, type Answer, type Reach }
 import { FS, SP, INK } from '~/theme'
 
-type Show = 'all' | 'online' | 'offline'
+type Show = 'all' | Answer
 type Kind = 'all' | 'linux' | 'windows' | 'android'
 type TypeFilter = 'all' | AssetType
+
+const SHOWN: Answer[] = ['online', 'down', 'noagent', 'blocked']
 
 /** What the Connect button opens: a phone's screen, a desktop or a terminal. */
 function OpenIcon({ kind, rdp }: { kind: ReturnType<typeof kindOf>; rdp: boolean }) {
@@ -53,12 +55,12 @@ const REACH: Record<Reach, { label: string; color: string; hint: string }> = {
     hint: 'Answered at the last check, but slowly. Connecting may take a moment.',
   },
   offline: {
-    label: 'Offline',
+    label: ANSWER_LABEL.down,
     color: 'rose',
     hint: 'Its Argus agent has stopped checking in. You can still try; it may be back.',
   },
   unknown: {
-    label: 'Unknown',
+    label: ANSWER_LABEL.noagent,
     color: 'slate',
     hint: 'No Argus agent reports from it, so Argus cannot tell whether it is up. You can still try.',
   },
@@ -390,7 +392,7 @@ export function GrantCard({
  * host's accounts cut down to the ones they were given -- so nothing here is a
  * filter the console applies and could get wrong.
  */
-export function ServerCards() {
+export function ServerCards({ initialShow = 'all' }: { initialShow?: Show } = {}) {
   const { data: me } = useQuery(meQuery())
   const { data: assets } = useQuery(assetsQuery({}))
   const { data: approved } = useQuery(requestsQuery('approved'))
@@ -400,7 +402,7 @@ export function ServerCards() {
   const canAdmin = me?.role === 'admin' || me?.role === 'owner'
 
   const [text, setText] = useState('')
-  const [show, setShow] = useState<Show>('all')
+  const [show, setShow] = useState<Show>(initialShow)
   const [kind, setKind] = useState<Kind>('all')
   const [type, setType] = useState<TypeFilter>('all')
   const [needs, setNeeds] = useState(false)
@@ -446,11 +448,9 @@ export function ServerCards() {
 
   const counts = useMemo(() => {
     if (!assets) return undefined
-    let online = 0
-    for (const a of assets) {
-      if (isUp(reachOf(a))) online++
-    }
-    return { all: assets.length, online, offline: assets.length - online }
+    const c: Record<Answer, number> = { online: 0, down: 0, noagent: 0, blocked: 0 }
+    for (const a of assets) c[answerOf(a)]++
+    return { all: assets.length, ...c }
   }, [assets])
 
   const needle = text.trim().toLowerCase()
@@ -462,9 +462,7 @@ export function ServerCards() {
             const hay = `${a.alias ?? ''} ${a.hostname} ${a.address} ${(a.addresses ?? []).map((x) => x.address).join(' ')} ${a.os} ${a.tags.join(' ')} ${a.principals.join(' ')}`
             if (!hay.toLowerCase().includes(needle)) return false
           }
-          const up = isUp(reachOf(a))
-          if (show === 'online' && !up) return false
-          if (show === 'offline' && up) return false
+          if (show !== 'all' && answerOf(a) !== show) return false
           if (kind !== 'all' && kindOf(a) !== kind) return false
           if (type !== 'all' && assetTypeOf(a) !== type) return false
           if (needs && !needsUpdates(waitingBy.get(a.id))) return false
@@ -544,8 +542,10 @@ export function ServerCards() {
           onChange={(v) => setShow(v as Show)}
           data={[
             { value: 'all', label: counts ? `All (${counts.all})` : 'All' },
-            { value: 'online', label: counts ? `Online (${counts.online})` : 'Online' },
-            { value: 'offline', label: counts ? `Offline (${counts.offline})` : 'Offline' },
+            // Blocked is rare, so it is offered only while a server is.
+            ...SHOWN.filter((k) => k !== 'blocked' || (counts?.blocked ?? 0) > 0 || show === 'blocked').map((k) => ({
+              value: k, label: counts ? `${ANSWER_LABEL[k]} (${counts[k]})` : ANSWER_LABEL[k],
+            })),
           ]}
         />
         {(needCount > 0 || needs) && (

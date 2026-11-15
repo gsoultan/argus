@@ -47,7 +47,7 @@
   .argus-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (min-width: 75em) {
-  .argus-tiles { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .argus-tiles { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 }
 .argus-tile {
   display: flex;

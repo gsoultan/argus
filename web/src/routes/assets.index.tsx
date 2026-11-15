@@ -9,7 +9,7 @@ import { ServerCards } from '~/components/myservers'
 import { relTime } from '~/components/primitives'
 import { agentFleetQuery, assetsQuery, discoveredQuery, meQuery } from '~/lib/queries'
 import { isConfigured } from '~/lib/live'
-import { kindOfHost } from '~/lib/reach'
+import { kindOfHost, type Answer } from '~/lib/reach'
 import { canSee, seesWholeFleet } from '~/lib/roles'
 import { FS, SP } from '~/theme'
 
@@ -39,6 +39,10 @@ export const Route = createFileRoute('/assets/')({
   // No role guard: this is the one page every role is sent to. The control
   // plane has already narrowed the list to what each person may reach.
   component: Servers,
+  // ?status=down opens the list narrowed, as Home's "not answering" links it.
+  validateSearch: (s: Record<string, unknown>): { status?: Answer } => ({
+    status: typeof s.status === 'string' && (ANSWERS as readonly string[]).includes(s.status) ? (s.status as Answer) : undefined,
+  }),
   loader: ({ context }) =>
     Promise.all([
       context.queryClient.ensureQueryData(meQuery()).catch(() => undefined),
@@ -46,7 +50,10 @@ export const Route = createFileRoute('/assets/')({
     ]),
 })
 
+const ANSWERS = ['online', 'down', 'noagent', 'blocked'] as const
+
 function Servers() {
+  const { status } = Route.useSearch()
   const { data: me } = useQuery(meQuery())
   const { data: assets } = useQuery(assetsQuery({}))
   const whole = seesWholeFleet(me?.role)
@@ -92,7 +99,7 @@ function Servers() {
             <PackageFleetCard canEdit={admin} />
           </Suspense>
         )}
-        <ServerCards />
+        <ServerCards initialShow={status} />
       </PageBody>
     </Box>
   )
