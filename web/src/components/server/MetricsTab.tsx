@@ -3,6 +3,7 @@ import { Box, Card, Group, SegmentedControl, SimpleGrid, Skeleton, Stack, Text }
 import { useElementSize } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { absTime, now as clockNow } from '~/components/primitives'
+import { span as spanWords, useTicker } from '~/components/server/RunPanel'
 import { LowStrip, bitRate, diskFull, systemQuery } from '~/components/server/SystemCard'
 import { get, live } from '~/lib/live'
 import { bytes, warningTone } from '~/lib/resourcesLow'
@@ -150,6 +151,11 @@ function NowTiles({ sys, fresh }: { sys: ServerSystem; fresh: boolean }) {
   const tx = (u.net ?? []).reduce((s, n) => s + (n.txBps ?? 0), 0)
   const memUsed = u.memTotal ? Math.round(((u.memTotal - u.memAvailable) / u.memTotal) * 100) : null
   return (
+    <Box>
+      <Group justify="space-between" gap="xs" mb={6}>
+        <Text component="h2" fw={600} size="sm" style={{ margin: 0 }}>Now <Text span inherit c="dimmed" fw={400}>(the last minute)</Text></Text>
+        {sys.usageAt && <ReportedAgo at={sys.usageAt} fresh={fresh} />}
+      </Group>
     <SimpleGrid cols={{ base: 2, md: 4 }} spacing="md" style={{ opacity: fresh ? 1 : 0.6 }}>
       <Tile label="Processor" value={u.cpuBusy !== null ? `${Math.round(u.cpuBusy)}% busy` : '—'} tone={warningTone(w('cpu'))}
         sub={[sys.system?.cpus ? `${sys.system.cpus} CPUs` : '', u.load ? `load ${u.load[0].toFixed(2)}` : ''].filter(Boolean).join(' · ')} />
@@ -158,13 +164,27 @@ function NowTiles({ sys, fresh }: { sys: ServerSystem; fresh: boolean }) {
       <Tile label="Fullest disk" value={fullest ? `${diskFull(fullest)}% full` : '—'} tone={fullest ? warningTone(w('disk', fullest.mount)) : undefined}
         sub={fullest ? `${fullest.mount} · ${bytes(fullest.avail)} left` : 'No disks reported'} mono />
       <Tile label="Network" value={u.net?.length ? `↓ ${bitRate(rx)}` : '—'}
-        sub={u.net?.length ? `↑ ${bitRate(tx)} · last minute` : 'Not reported by this agent'} />
+        sub={u.net?.length ? `↑ ${bitRate(tx)}` : 'Not reported by this agent'} />
       {!fresh && sys.usageAt && (
         <Text size={FS.micro} c="amber.7" style={{ gridColumn: '1 / -1' }}>
           These are from {absTime(sys.usageAt)}; the agent has not reported since.
         </Text>
       )}
     </SimpleGrid>
+    </Box>
+  )
+}
+
+/**
+ * How old the Now figures are, counting up. The agent sends them about once
+ * a minute, so up to a minute is as fresh as they get.
+ */
+function ReportedAgo({ at, fresh }: { at: string; fresh: boolean }) {
+  const t = useTicker(5_000)
+  return (
+    <Text size={FS.micro} c={fresh ? 'dimmed' : 'amber.7'} title={absTime(at)} data-testid="now-reported">
+      Reported {spanWords(Math.max(0, t - Date.parse(at)))} ago · the agent reports about once a minute
+    </Text>
   )
 }
 
@@ -213,19 +233,21 @@ export function MetricsHistory({ m }: { m: AssetMetrics }) {
   const lastMem = [...mem].reverse().find((v) => v !== null)
   const common = { times, from, to, step }
   const cpuAvg = avg(cpu)
+  // Every summary names its range, so it is not read against the Now tiles.
+  const over = `last ${RANGES.find((r) => r.value === m.range)?.label ?? m.range}`
   return (
     <SimpleGrid cols={{ base: 1, lg: 2 }} spacing={0} className="metrics-history">
       <Chart title="Processor" testId="chart-cpu" {...common} max={100} fmt={pct} threshold={90}
-        summary={cpuAvg === null ? 'not reported' : `average ${Math.round(cpuAvg)}% · peak ${Math.round(peak(cpuMax))}%`}
+        summary={cpuAvg === null ? 'not reported' : `${over}: average ${Math.round(cpuAvg)}% · peak ${Math.round(peak(cpuMax))}%`}
         lines={[{ label: 'average', color: C.azure, values: cpu }, { label: 'peak', color: C.azureSoft, dashed: true, values: cpuMax }]} />
       <Chart title="Memory used" testId="chart-mem" {...common} max={100} fmt={pct} threshold={90}
-        summary={lastMem == null ? 'not reported' : `latest ${Math.round(lastMem)}% · peak ${Math.round(peak(mem))}%`}
+        summary={lastMem == null ? 'not reported' : `${over}: latest ${Math.round(lastMem)}% · peak ${Math.round(peak(mem))}%`}
         lines={[{ label: 'memory', color: C.teal, values: mem }, ...(hasSwap ? [{ label: 'swap', color: C.slate, dashed: true, values: swap }] : [])]} />
       <Chart title="Disks" testId="chart-disks" {...common} max={100} fmt={pct} threshold={90}
-        summary={mounts.length ? `fullest: ${mounts[0]}` : 'not reported'}
+        summary={mounts.length ? `${over}: fullest ${mounts[0]}` : 'not reported'}
         lines={mounts.map((mt, i) => ({ label: mt, color: DISK_COLORS[i]!, values: pick((p) => p.disks?.[mt] ?? null) }))} />
       <Chart title="Network" testId="chart-net" {...common} max={niceMax(netPeak * 1.05)} fmt={bitRateShort}
-        summary={netPeak > 0 ? `all interfaces · peak ${bitRate(netPeak / 8)}` : 'not reported'}
+        summary={netPeak > 0 ? `${over}: all interfaces · peak ${bitRate(netPeak / 8)}` : 'not reported'}
         lines={[{ label: 'in', color: C.teal, values: rx }, { label: 'out', color: C.sky, values: tx }]} />
     </SimpleGrid>
   )
@@ -302,7 +324,7 @@ function Chart({ title, summary, lines, times, from, to, step, max, fmt, thresho
     return { l, segs }
   })
 
-  const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
+  const onMove = (e: { currentTarget: SVGSVGElement; clientX: number }) => {
     const box = e.currentTarget.getBoundingClientRect()
     const t = from + ((e.clientX - box.left) / box.width * W - pl) / iw * span
     let best = -1
@@ -334,6 +356,8 @@ function Chart({ title, summary, lines, times, from, to, step, max, fmt, thresho
         ))}
       </Group>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} role="img" onMouseMove={onMove} onMouseLeave={() => setHover(null)}
+        onTouchStart={(e) => e.touches[0] && onMove({ currentTarget: e.currentTarget, clientX: e.touches[0].clientX })}
+        onTouchMove={(e) => e.touches[0] && onMove({ currentTarget: e.currentTarget, clientX: e.touches[0].clientX })}
         aria-label={`${title}: ${summary}`}>
         {gaps.map(([a, b], i) => (
           <g key={i}>
@@ -369,7 +393,13 @@ function Chart({ title, summary, lines, times, from, to, step, max, fmt, thresho
                 strokeLinejoin="round" strokeDasharray={l.dashed ? '4 3' : undefined} />
         )))}
         {hover !== null && (
-          <line x1={x(times[hover]!)} x2={x(times[hover]!)} y1={pt} y2={pt + ih} stroke="var(--mantine-color-dimmed)" strokeWidth={1} />
+          <g data-testid={`${testId}-hover`}>
+            <line x1={x(times[hover]!)} x2={x(times[hover]!)} y1={pt} y2={pt + ih} stroke="var(--mantine-color-dimmed)" strokeWidth={1} />
+            {lines.map((l) => l.values[hover] == null ? null : (
+              <circle key={l.label} cx={x(times[hover]!)} cy={y(l.values[hover]!)} r={3} fill={l.color}
+                stroke="var(--mantine-color-body)" strokeWidth={1.5} />
+            ))}
+          </g>
         )}
       </svg>
     </Box>

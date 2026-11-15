@@ -20,7 +20,9 @@ export const systemQuery = (asset: Asset) =>
   queryOptions({
     queryKey: ['asset', asset.id, 'system'] as const,
     queryFn: () => live.orFallback(() => live.system(asset.id), async () => fixtureSystem(asset)),
-    refetchInterval: 60_000,
+    // The agent reports about once a minute; reading every 20 s shows each
+    // report within 20 s of it arriving. Not read while the tab is hidden.
+    refetchInterval: 20_000,
     retry: false,
   })
 
