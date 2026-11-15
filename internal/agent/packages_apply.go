@@ -173,7 +173,7 @@ func (a *PackageApplier) Apply(ctx context.Context) PackageRunStatus {
 	now := a.Now().UTC()
 	a.st = PackageRunStatus{ID: a.Plan.ID, State: RunRunning, Step: "refresh",
 		Message: "refreshing the package lists", Unit: a.Plan.Unit, BootID: a.BootID(),
-		StartedAt: now, At: now}
+		StartedAt: now, At: now, Steps: []RunStep{{Step: "refresh", At: now}}}
 	a.lw = &runLog{limit: maxRunLog, flush: a.flushLog}
 	a.save()
 	if a.Windows {
@@ -408,8 +408,12 @@ func (a *PackageApplier) snapshot() PackageRunStatus {
 
 func (a *PackageApplier) update(f func(*PackageRunStatus)) {
 	a.mu.Lock()
+	prev := a.st.Step
 	f(&a.st)
 	a.st.At = a.Now().UTC()
+	if a.st.Step != "" && a.st.Step != prev && len(a.st.Steps) < maxRunSteps {
+		a.st.Steps = append(a.st.Steps, RunStep{Step: a.st.Step, At: a.st.At})
+	}
 	a.mu.Unlock()
 	a.save()
 }

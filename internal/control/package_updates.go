@@ -196,8 +196,66 @@ type PackageRunStatus struct {
 	RebootRequired bool                 `json:"reboot_required,omitempty"`
 	Rebooted       bool                 `json:"rebooted,omitempty"`
 	Log            string               `json:"log,omitempty"`
+	Outcome        *RunOutcome          `json:"outcome,omitempty"`
+	Steps          []RunStep            `json:"steps,omitempty"`
 	StartedAt      *time.Time           `json:"started_at,omitempty"`
 	FinishedAt     *time.Time           `json:"finished_at,omitempty"`
+}
+
+// RunOutcome is how a run that ended badly is to be read, as the agent
+// says it: whether the server changed (yes, no, unknown), why it stopped,
+// and the steps to take next. Commands in the steps are in backticks.
+type RunOutcome struct {
+	Changed string   `json:"changed"`
+	Why     string   `json:"why,omitempty"`
+	Next    []string `json:"next,omitempty"`
+}
+
+// RunStep is when a run reached a step.
+type RunStep struct {
+	Step string    `json:"step"`
+	At   time.Time `json:"at"`
+}
+
+// runDetail is package_runs.detail.
+type runDetail struct {
+	Outcome *RunOutcome `json:"outcome,omitempty"`
+	Steps   []RunStep   `json:"steps,omitempty"`
+}
+
+// boundedDetail is st's outcome and steps as stored, cut to sizes a
+// heartbeat cannot grow, or nil when the agent sent neither.
+func boundedDetail(st PackageRunStatus) []byte {
+	if st.Outcome == nil && len(st.Steps) == 0 {
+		return nil
+	}
+	d := runDetail{Steps: st.Steps}
+	if len(d.Steps) > 32 {
+		d.Steps = d.Steps[:32]
+	}
+	for i := range d.Steps {
+		d.Steps[i].Step = clip(d.Steps[i].Step, 40)
+	}
+	if st.Outcome != nil {
+		o := *st.Outcome
+		switch o.Changed {
+		case "yes", "no", "unknown":
+		default:
+			o.Changed = "unknown"
+		}
+		o.Why = clip(o.Why, 1000)
+		if len(o.Next) > 10 {
+			o.Next = o.Next[:10]
+		}
+		next := make([]string, len(o.Next))
+		for i, n := range o.Next {
+			next[i] = clip(n, 600)
+		}
+		o.Next = next
+		d.Outcome = &o
+	}
+	b, _ := json.Marshal(d)
+	return b
 }
 
 // PackageChange is one package a run upgraded.
@@ -288,8 +346,11 @@ type PackageRun struct {
 	RebootRequired bool            `json:"rebootRequired"`
 	Rebooted       bool            `json:"rebooted"`
 	Log            string          `json:"log,omitempty"`
-	BatchID        *string         `json:"batchId"`
-	BatchPosition  *int            `json:"batchPosition"`
+	// Outcome and Steps are the agent's, absent for runs before them.
+	Outcome       *RunOutcome `json:"outcome,omitempty"`
+	Steps         []RunStep   `json:"steps,omitempty"`
+	BatchID       *string     `json:"batchId"`
+	BatchPosition *int        `json:"batchPosition"`
 	// Items, Purge and StartServices are an install or a removal's; Started
 	// the services an install started; PreviewID what a person said yes to,
 	// UndoOf the run it undoes.
@@ -322,7 +383,7 @@ const packageRunCols = `id::text, hostname, asset_hostname, mode, packages, hold
 	script_version_id::text, script_action, script_params, script_report,
 	(SELECT s.name || ' v' || v.version FROM software_script_versions v JOIN software_scripts s ON s.id = v.script_id
 	  WHERE v.id = package_runs.script_version_id),
-	software_file_id::text, (SELECT f.name FROM software_files f WHERE f.id = package_runs.software_file_id)`
+	software_file_id::text, (SELECT f.name FROM software_files f WHERE f.id = package_runs.software_file_id), detail`
 
 func scanPackageRun(row pgx.Row, withLog bool) (PackageRun, error) {
 	var (
@@ -334,13 +395,14 @@ func scanPackageRun(row pgx.Row, withLog bool) (PackageRun, error) {
 		label    *string
 		fileName *string
 		pos      *int32
+		detail   []byte
 	)
 	err := row.Scan(&r.ID, &r.Hostname, &r.AssetHostname, &r.Mode, &r.Packages, &r.Holds, &r.Reboot,
 		&r.Trigger, &r.State, &r.RequestedBy, &r.RequestedAt, &r.DecidedBy, &r.DecidedAt, &r.SentAt,
 		&r.StartedAt, &r.FinishedAt, &r.UpdatedAt, &r.Step, &r.Message, &r.Planned, &upgraded,
 		&r.Restarted, &r.RebootRequired, &r.Rebooted, &r.Log, &r.BatchID, &pos,
 		&items, &r.Purge, &r.StartServices, &r.Started, &r.PreviewID, &r.UndoOf, &r.expect,
-		&r.ScriptVersionID, &r.ScriptAction, &params, &report, &label, &r.SoftwareFileID, &fileName)
+		&r.ScriptVersionID, &r.ScriptAction, &params, &report, &label, &r.SoftwareFileID, &fileName, &detail)
 	if err != nil {
 		return r, err
 	}
@@ -349,6 +411,12 @@ func scanPackageRun(row pgx.Row, withLog bool) (PackageRun, error) {
 		r.BatchPosition = &p
 	}
 	_ = json.Unmarshal(upgraded, &r.Upgraded)
+	if len(detail) > 0 {
+		var d runDetail
+		if json.Unmarshal(detail, &d) == nil {
+			r.Outcome, r.Steps = d.Outcome, d.Steps
+		}
+	}
 	_ = json.Unmarshal(items, &r.Items)
 	_ = json.Unmarshal(params, &r.ScriptParams)
 	if len(report) > 0 {
@@ -782,6 +850,7 @@ func (s *Store) recordPackageRunStatus(ctx context.Context, host string, st Pack
 		       state = $3, step = $4, message = $5, planned = $6, upgraded = $7::jsonb,
 		       restarted = $8, reboot_required = $9, rebooted = $10, log = $11, started = $12,
 		       script_report = COALESCE($13::jsonb, script_report),
+		       detail = COALESCE($14::jsonb, detail),
 		       started_at = COALESCE(started_at, now()),
 		       finished_at = CASE WHEN $3 IN ('done','failed','interrupted') THEN now() ELSE NULL END,
 		       updated_at = now()
@@ -793,7 +862,7 @@ func (s *Store) recordPackageRunStatus(ctx context.Context, host string, st Pack
 		   AND ((state, step, message, log, rebooted) IS DISTINCT FROM ($3, $4, $5, $11, $10)
 		        OR updated_at < now() - interval '5 minutes')
 		RETURNING `+packageRunCols, host, st.ID, state, st.Step, st.Message, st.Planned, up, restarted,
-		st.RebootRequired, st.Rebooted, st.Log, started, scriptReport)
+		st.RebootRequired, st.Rebooted, st.Log, started, scriptReport, boundedDetail(st))
 	r, err := scanPackageRun(row, false)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -1269,8 +1338,11 @@ type PackagesView struct {
 	Holds      []string       `json:"holds"`
 	// NextWindow is when the next automatic run may start, nil when the
 	// rule starts none.
-	NextWindow *time.Time   `json:"nextWindow"`
-	Runs       []PackageRun `json:"runs"`
+	NextWindow *time.Time `json:"nextWindow"`
+	// HeardAt is when the server's agent last reported, so the console can
+	// say how fresh a run's progress is.
+	HeardAt *time.Time   `json:"heardAt"`
+	Runs    []PackageRun `json:"runs"`
 }
 
 // nextWindow is when r's window next opens after now.

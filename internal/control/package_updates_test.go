@@ -1170,3 +1170,43 @@ func TestPackageReleaseRequestValidate(t *testing.T) {
 		t.Errorf("an update run kept a release: %+v %v", in, err)
 	}
 }
+
+// A failed run's outcome and step times reach the console as the agent
+// sent them, bounded, and the view says when the agent last reported.
+func TestPackageRunOutcome(t *testing.T) {
+	e := packagesAPI(t)
+	asset, cred := e.server(t)
+	now := time.Now().UTC()
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, Report: pkgReport(now, openssl)})
+	run := e.ask(t, asset, "admin-token", `{"mode":"all"}`, http.StatusAccepted)
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true})
+
+	long := make([]string, 30)
+	for i := range long {
+		long[i] = strings.Repeat("x", 900)
+	}
+	failed := &PackageRunStatus{ID: run.ID, State: "failed", Message: "apt-get upgrade failed before changing any package",
+		Outcome:   &RunOutcome{Changed: "maybe", Why: "E: held broken packages", Next: long},
+		Steps:     []RunStep{{Step: "refresh", At: now}, {Step: "install", At: now.Add(time.Minute)}},
+		StartedAt: &now, FinishedAt: &now}
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, Run: failed})
+	got := e.run(t, run.ID)
+	if got.State != RunFailed || got.Outcome == nil || got.Outcome.Changed != "unknown" ||
+		got.Outcome.Why != "E: held broken packages" || len(got.Outcome.Next) != 10 || len(got.Outcome.Next[0]) > 610 {
+		t.Fatalf("outcome = %+v", got.Outcome)
+	}
+	if len(got.Steps) != 2 || got.Steps[1].Step != "install" {
+		t.Fatalf("steps = %+v", got.Steps)
+	}
+	if v := e.view(t, asset); v.HeardAt == nil || time.Since(*v.HeardAt) > time.Minute {
+		t.Fatalf("heardAt = %v", v.HeardAt)
+	}
+
+	// A run from an older agent has neither.
+	old := e.ask(t, asset, "admin-token", `{"mode":"all"}`, http.StatusAccepted)
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true})
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, Run: &PackageRunStatus{ID: old.ID, State: "done"}})
+	if got := e.run(t, old.ID); got.Outcome != nil || got.Steps != nil {
+		t.Fatalf("older agent's run = %+v", got)
+	}
+}

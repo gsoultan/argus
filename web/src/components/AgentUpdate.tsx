@@ -111,9 +111,9 @@ export function AgentUpdateCard({ asset, canEdit, bare = false }: {
             {(!pickedUp || st?.state === 'downloading' || st?.state === 'waiting') && (
               <Button size="compact-xs" variant="default" loading={cancel.isPending}
                 onClick={() => void run(() => cancel.mutateAsync(), restarting
-                  ? { failure: 'Restart not taken back', success: ['Restart taken back', 'The agent keeps running as it is.'] }
-                  : { failure: 'Update not taken back', success: ['Update taken back', 'The agent stays on the version it runs.'] })}>
-                Take back
+                  ? { failure: 'Restart not cancelled', success: ['Restart cancelled', 'The agent keeps running as it is.'] }
+                  : { failure: 'Update not cancelled', success: ['Update cancelled', 'The agent stays on the version it runs.'] })}>
+                Cancel
               </Button>
             )}
           </Group>

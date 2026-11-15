@@ -2324,6 +2324,12 @@ export type PackageRunState =
   | 'awaiting_approval' | 'waiting' | 'queued' | 'running' | 'rebooting'
   | 'done' | 'failed' | 'interrupted' | 'cancelled' | 'denied'
 
+export interface RunOutcome {
+  changed: 'yes' | 'no' | 'unknown'
+  why?: string
+  next?: string[]
+}
+
 export interface PackageRun {
   id: string
   hostname: string
@@ -2354,6 +2360,14 @@ export interface PackageRun {
   rebootRequired: boolean
   rebooted: boolean
   log?: string
+  /**
+   * How a run that ended badly is to be read, from the agent: whether the
+   * server changed, why it stopped, what to do next (commands in backticks).
+   * Absent for runs from older agents.
+   */
+  outcome?: RunOutcome
+  /** When the run reached each step; absent from older agents. */
+  steps?: { step: string; at: string }[]
   batchId: string | null
   batchPosition: number | null
   /** An install or a removal: what it was asked for, and how. */
@@ -2409,6 +2423,8 @@ export interface PackagesView {
   rule: PackageRule
   holds: string[]
   nextWindow: string | null
+  /** When the server's agent last reported; absent from an older control plane. */
+  heardAt?: string | null
   runs: PackageRun[]
 }
 

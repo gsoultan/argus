@@ -219,7 +219,8 @@ func newReleaseHost(t *testing.T, osr string) *releaseHost {
 	h.sources = filepath.Join(h.dir, "apt")
 	h.setOS(t, osr)
 	old := []any{osReleaseFiles, ubuntuUpgradeOverrides, aptSourcesRoot, leappReportFile, argusControlBinary, releaseFree,
-		toolGlob, ubuntuUpgradeLogs, leappUpgradeLogs, efiFirmwareDir, deviceExists}
+		toolGlob, ubuntuUpgradeLogs, leappUpgradeLogs, efiFirmwareDir, deviceExists, dpkgLogFile}
+	dpkgLogFile = filepath.Join(h.dir, "dpkg.log")
 	toolGlob = func(string) ([]string, error) { return nil, nil }
 	efiFirmwareDir = filepath.Join(h.dir, "no-efi")
 	deviceExists = func(string) bool { return false }
@@ -243,6 +244,7 @@ func newReleaseHost(t *testing.T, osr string) *releaseHost {
 		leappUpgradeLogs = old[8].([]string)
 		efiFirmwareDir = old[9].(string)
 		deviceExists = old[10].(func(string) bool)
+		dpkgLogFile = old[11].(string)
 	})
 	return h
 }
@@ -1155,5 +1157,145 @@ func TestApplyReleaseUbuntuPartWayGivesTheLogsReason(t *testing.T) {
 	if st.State != RunFailed || !strings.Contains(st.Message, "part way") ||
 		!strings.Contains(st.Message, "error from dpkg for pkg: 'grub-pc'") || strings.Contains(st.Message, "authenticate") {
 		t.Fatalf("run = %+v", st)
+	}
+}
+
+// dpkgSaid writes dpkg's log as it would read after lines logged now.
+func dpkgSaid(t *testing.T, lines ...string) {
+	t.Helper()
+	now := time.Now().Format("2006-01-02 15:04:05")
+	old := time.Now().Add(-48 * time.Hour).Format("2006-01-02 15:04:05")
+	b := old + " upgrade libc6:amd64 2.35-0ubuntu3.7 2.35-0ubuntu3.8\n"
+	for _, l := range lines {
+		b += now + " " + l + "\n"
+	}
+	if err := os.WriteFile(dpkgLogFile, []byte(b), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDpkgChangedSince(t *testing.T) {
+	newReleaseHost(t, jammy)
+	start := time.Now().Add(-time.Minute)
+	if got := dpkgChangedSince(start); got != ChangedUnknown {
+		t.Errorf("no log = %s", got)
+	}
+	dpkgSaid(t, "startup archives unpack")
+	if got := dpkgChangedSince(start); got != ChangedNo {
+		t.Errorf("only older changes and a startup line = %s", got)
+	}
+	dpkgSaid(t, "startup archives unpack", "upgrade libc6:amd64 2.35-0ubuntu3.8 2.39-0ubuntu8")
+	if got := dpkgChangedSince(start); got != ChangedYes {
+		t.Errorf("an upgrade since = %s", got)
+	}
+}
+
+// The upgrade failed in Gembit's case on 2026-11-15 and said the server was
+// part way between releases although dpkg had changed nothing. Root cause:
+// aptPartWay assumed any failure of the upgrade tool meant packages had
+// moved. Now it reads dpkg's log first.
+func TestApplyReleaseUbuntuFailsBeforeAnyPackageSaysNothingChanged(t *testing.T) {
+	newReleaseHost(t, jammy)
+	dpkgSaid(t)
+	sr := &scriptRun{on: map[string]func(io.Writer, []string) int{
+		"do-release-upgrade -c": func(w io.Writer, _ []string) int {
+			fmt.Fprintln(w, "New release '24.04.1 LTS' available.")
+			return 0
+		},
+		"do-release-upgrade -f": func(w io.Writer, _ []string) int {
+			fmt.Fprintln(w, "E:Could not calculate the upgrade")
+			return 1
+		},
+	}}
+	a, rebooted := releaseApplier(t, sr, looks("apt-get", "dpkg-query", "do-release-upgrade"), "24.04")
+	st := a.Apply(context.Background())
+	if st.State != RunFailed || *rebooted || strings.Contains(st.Message, "part way") ||
+		!strings.Contains(st.Message, "nothing was changed") {
+		t.Fatalf("run = %+v", st)
+	}
+	if st.Outcome == nil || st.Outcome.Changed != ChangedNo || !strings.Contains(st.Outcome.Why, "Could not calculate") ||
+		len(st.Outcome.Next) == 0 {
+		t.Fatalf("outcome = %+v", st.Outcome)
+	}
+	if sr.ran("dpkg --force-confdef --force-confold --configure -a") {
+		t.Error("repaired a server nothing was done to")
+	}
+}
+
+func TestApplyReleaseUbuntuPartWayOutcome(t *testing.T) {
+	newReleaseHost(t, jammy)
+	dpkgSaid(t, "upgrade libc6:amd64 2.35-0ubuntu3.8 2.39-0ubuntu8")
+	sr := &scriptRun{on: map[string]func(io.Writer, []string) int{
+		"do-release-upgrade -c": func(w io.Writer, _ []string) int {
+			fmt.Fprintln(w, "New release '24.04.1 LTS' available.")
+			return 0
+		},
+		"do-release-upgrade -f": func(w io.Writer, _ []string) int {
+			fmt.Fprintln(w, "E:Sub-process /usr/bin/dpkg returned an error code (1)")
+			return 1
+		},
+	}}
+	a, _ := releaseApplier(t, sr, looks("apt-get", "dpkg-query", "do-release-upgrade"), "24.04")
+	st := a.Apply(context.Background())
+	if st.State != RunFailed || !strings.Contains(st.Message, "so the server is part way between releases") {
+		t.Fatalf("run = %+v", st)
+	}
+	if st.Outcome == nil || st.Outcome.Changed != ChangedYes || st.Outcome.Next[0] != "Do not reboot yet." {
+		t.Fatalf("outcome = %+v", st.Outcome)
+	}
+	if !sr.ran("dpkg --force-confdef --force-confold --configure -a") {
+		t.Error("what dpkg left half done was not finished")
+	}
+}
+
+// Debian: the first apt step fails with nothing installed; apt goes back on
+// the old release.
+func TestApplyReleaseDebianFailsBeforeAnyPackagePutsSourcesBack(t *testing.T) {
+	h := newReleaseHost(t, bookworm)
+	dpkgSaid(t)
+	list := "deb http://deb.debian.org/debian bookworm main\n"
+	if err := os.MkdirAll(h.sources, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(h.sources, "sources.list"), []byte(list), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sr := &scriptRun{on: map[string]func(io.Writer, []string) int{
+		"apt-get -o DPkg::Lock::Timeout=120 -y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold -o Dpkg::Use-Pty=0 upgrade --without-new-pkgs": func(w io.Writer, _ []string) int {
+			fmt.Fprintln(w, "E: Unable to correct problems, you have held broken packages.")
+			return 100
+		},
+	}}
+	a, rebooted := releaseApplier(t, sr, looks("apt-get", "dpkg-query"), "13")
+	st := a.Apply(context.Background())
+	if st.State != RunFailed || *rebooted || !strings.Contains(st.Message, "apt is back on bookworm") ||
+		st.Outcome == nil || st.Outcome.Changed != ChangedNo {
+		t.Fatalf("run = %+v", st)
+	}
+	if b, _ := os.ReadFile(filepath.Join(h.sources, "sources.list")); string(b) != list {
+		t.Errorf("sources = %q", b)
+	}
+}
+
+func TestApplyReleaseRecordsSteps(t *testing.T) {
+	h := newReleaseHost(t, jammy)
+	sr := &scriptRun{on: map[string]func(io.Writer, []string) int{
+		"do-release-upgrade -c": func(w io.Writer, _ []string) int {
+			fmt.Fprintln(w, "New release '24.04.1 LTS' available.")
+			return 0
+		},
+		"do-release-upgrade -f": func(io.Writer, []string) int {
+			h.setOS(t, noble)
+			return 0
+		},
+	}}
+	a, _ := releaseApplier(t, sr, looks("apt-get", "dpkg-query", "do-release-upgrade"), "24.04")
+	st := a.Apply(context.Background())
+	var got []string
+	for _, s := range st.Steps {
+		got = append(got, s.Step)
+	}
+	if strings.Join(got, ",") != "refresh,preflight,upgrade,reboot" {
+		t.Fatalf("steps = %v (run %+v)", got, st)
 	}
 }

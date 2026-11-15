@@ -26,6 +26,7 @@ import { assetName } from '~/lib/assetType'
 import { ConfirmPreview } from '~/components/server/InstalledSoftware'
 import type { SoftwarePreview } from '~/lib/softwareApi'
 import { usePreviewSoftware } from '~/lib/softwareQueries'
+import { clock, LastHeard, resultToShow, RunResult, stepTimes, useTicker } from '~/components/server/RunPanel'
 
 /**
  * A server's operating system updates: what its package manager says can be
@@ -75,13 +76,14 @@ export function UpdatesTab({ asset, canEdit }: { asset: Asset; canEdit: boolean 
 
   return (
     <Stack gap="md">
+      {!active && <LastResult runs={v.runs} />}
       {blocked ? (
         <Card padding="md">
           <Text size={FS.body} c="dimmed" lh={1.5}>{blocked}</Text>
         </Card>
       ) : (
         <>
-          {active && <ActiveRun run={active} canEdit={canEdit} />}
+          {active && <ActiveRun run={active} canEdit={canEdit} heardAt={v.heardAt} />}
           <Summary view={v} />
           {v.report?.reboot_required && active?.mode !== 'reboot' && active?.mode !== 'release_upgrade' && (
             <RebootNeeded view={v} assetId={asset.id} name={assetName(asset)} canEdit={canEdit} busy={Boolean(active)} />
@@ -95,6 +97,19 @@ export function UpdatesTab({ asset, canEdit }: { asset: Asset; canEdit: boolean 
       {v.runs.length > 0 && <RecentRuns runs={v.runs} canEdit={canEdit} />}
     </Stack>
   )
+}
+
+/**
+ * How the newest run ended, at the top of the tab until put away, so a
+ * failure is not left in a folded row under Recent runs.
+ */
+function LastResult({ runs }: { runs: PackageRun[] }) {
+  const [, setHidden] = useState(0)
+  const at = useTicker(30_000)
+  const r = resultToShow(runs, at)
+  const { data: full } = useQuery(packageRunQuery(r?.id ?? '', Boolean(r)))
+  if (!r) return null
+  return <RunResult run={r} onDismiss={() => setHidden((n) => n + 1)} log={<RunLog log={full?.log} />} />
 }
 
 function whyNot(v: PackagesView): string | null {
@@ -552,7 +567,7 @@ function Packages({ view: v, assetId, name, canEdit, busy }: {
                   )}
                   <Table.Th>Package</Table.Th>
                   <Table.Th>Installed → available</Table.Th>
-                  <Table.Th>Why</Table.Th>
+                  <Table.Th>Notes</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
@@ -599,7 +614,7 @@ function PackageRow({ u, hold, canEdit, checked, onToggle }: {
           {u.security && <Badge size="xs" variant="light" color="rose">Security</Badge>}
           {hold && <Badge size="xs" variant="light" color="slate">Held · {hold}</Badge>}
           {u.reboot && <Badge size="xs" variant="light" color="amber">Reboot</Badge>}
-          {u.new && <Badge size="xs" variant="light" color="slate">Pulled in</Badge>}
+          {u.new && <Badge size="xs" variant="light" color="slate">New dependency</Badge>}
           {u.origin && <Text size={FS.micro} c="dimmed">{u.origin}</Text>}
         </Group>
       </Table.Td>
@@ -695,19 +710,19 @@ export function runTitle(r: PackageRun): string {
   }
   const what = r.mode === 'all' ? 'all updates' : r.mode === 'security' ? 'security updates'
     : r.packages.length <= 3 ? r.packages.join(', ') : `${r.packages.length} packages`
-  return `${r.trigger === 'automatic' ? 'Automatic' : 'By hand'} · ${what}`
+  return `${r.trigger === 'automatic' ? 'Automatic' : 'Manual'} · ${what}`
 }
 
 const STATE: Record<PackageRun['state'], { label: string; color: string }> = {
   awaiting_approval: { label: 'Waiting for approval', color: 'amber' },
-  waiting: { label: 'Waiting its turn', color: 'slate' },
-  queued: { label: 'Asked', color: 'azure' },
+  waiting: { label: 'Queued', color: 'slate' },
+  queued: { label: 'Starting', color: 'azure' },
   running: { label: 'Running', color: 'azure' },
   rebooting: { label: 'Rebooting', color: 'azure' },
   done: { label: 'Done', color: 'teal' },
   failed: { label: 'Failed', color: 'rose' },
   interrupted: { label: 'Interrupted', color: 'rose' },
-  cancelled: { label: 'Taken back', color: 'slate' },
+  cancelled: { label: 'Cancelled', color: 'slate' },
   denied: { label: 'Denied', color: 'slate' },
 }
 
@@ -716,16 +731,20 @@ export function RunState({ state }: { state: PackageRun['state'] }) {
   return <Badge size="sm" variant="light" color={s.color}>{s.label}</Badge>
 }
 
-function ActiveRun({ run: r, canEdit }: { run: PackageRun; canEdit: boolean }) {
+function ActiveRun({ run: r, canEdit, heardAt }: { run: PackageRun; canEdit: boolean; heardAt?: string | null }) {
   const started = r.state === 'running' || r.state === 'rebooting'
   const { data: full } = useQuery(packageRunQuery(r.id, started))
+  const t = useTicker()
+  const times = stepTimes(full ?? r, t)
+  const going = r.startedAt ? clock(t - Date.parse(r.startedAt)) : null
   const reboot = r.mode === 'reboot'
   const release = r.mode === 'release_upgrade'
   const steps = reboot ? REBOOT_STEPS : release ? RELEASE_STEPS : STEPS
   const at = steps.findIndex((s) => s.key === (r.state === 'rebooting' || reboot ? 'reboot' : r.step))
   return (
     <SectionCard title={reboot ? 'Reboot' : release ? 'Release upgrade' : 'Update run'}
-      icon={reboot ? IconPower : release ? IconArrowBigUpLines : IconPackage} badge={<RunState state={r.state} />}
+      icon={reboot ? IconPower : release ? IconArrowBigUpLines : IconPackage}
+      badge={<Group gap={SP.snug} wrap="nowrap"><RunState state={r.state} />{started && going && <Text size={FS.meta} c="dimmed" data-testid="run-elapsed">{going}</Text>}</Group>}
       description={reboot || release
         ? `${release ? `To ${r.release ?? 'the next release'} · ` : ''}Asked by ${r.requestedBy} ${relTime(r.requestedAt)}`
         : `${runTitle(r)} · ${r.trigger === 'automatic' ? 'started by its rule' : `asked by ${r.requestedBy}`} ${relTime(r.requestedAt)}${r.reboot === 'if_needed' ? ' · reboot if needed' : ''}`}
@@ -741,21 +760,25 @@ function ActiveRun({ run: r, canEdit }: { run: PackageRun; canEdit: boolean }) {
       ) : (
         <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
           <Stack gap={SP.cozy}>
+            <LastHeard heardAt={heardAt} rebooting={r.state === 'rebooting' || (at >= 0 && steps[at]?.key === 'reboot')} />
             {steps.map((s, i) => {
               const done = at > i
               const now = at === i
-              const skipped = s.key === 'reboot' && r.reboot === 'never'
+              const skipped = s.key === 'reboot' && r.reboot === 'never' && !release && !reboot
               return (
                 <Group key={s.key} gap={SP.cozy} wrap="nowrap" align="flex-start">
                   <ThemeIcon size={18} radius="xl" variant={done ? 'filled' : 'light'} color={done ? 'teal' : now ? 'azure' : 'slate'}>
                     {done ? <IconCheck size={12} /> : now ? <Loader size={10} color="azure" /> : <IconCircleDashed size={12} />}
                   </ThemeIcon>
-                  <Box>
+                  <Box style={{ flex: 1 }}>
                     <Text size={FS.body} fw={now ? 600 : 400} c={done || now ? undefined : 'dimmed'}>
                       {s.label}{s.key === 'install' && r.planned > 0 ? ` ${r.planned} package${r.planned === 1 ? '' : 's'}` : ''}
                     </Text>
                     <Text size={FS.micro} c="dimmed">{skipped ? 'not asked for this run' : now && r.message ? r.message : s.detail}</Text>
                   </Box>
+                  {(done || now) && times[s.key] !== undefined && (
+                    <Text size={FS.meta} c="dimmed" style={{ fontVariantNumeric: 'tabular-nums' }}>{clock(times[s.key]!)}</Text>
+                  )}
                 </Group>
               )
             })}
@@ -807,8 +830,8 @@ function RunActions({ run: r, canEdit }: { run: PackageRun; canEdit: boolean }) 
       )}
       {canTakeBack && (
         <Button size="compact-xs" variant="default" loading={decide.isPending}
-          onClick={() => act('cancel', ['Taken back', 'Nothing was installed.'], 'Not taken back')}>
-          Take back
+          onClick={() => act('cancel', ['Cancelled', 'Nothing was installed.'], 'Not cancelled')}>
+          Cancel run
         </Button>
       )}
     </Group>

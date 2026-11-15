@@ -526,8 +526,8 @@ function ChangeRow({ run: r, canEdit, onPreview }: { run: PackageRun; canEdit: b
             )}
             {canTakeBack && (
               <Button size="compact-xs" variant="default" loading={decide.isPending}
-                onClick={() => act('cancel', ['Taken back', 'Nothing was changed.'], 'Not taken back')}>
-                Take back
+                onClick={() => act('cancel', ['Cancelled', 'Nothing was changed.'], 'Not cancelled')}>
+                Cancel run
               </Button>
             )}
             {r.state === 'done' && undoLabel && (
