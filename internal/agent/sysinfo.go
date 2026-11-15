@@ -46,6 +46,10 @@ type SystemInfo struct {
 	// Interfaces are the network interfaces that are up and the addresses
 	// each holds (netinfo.go).
 	Interfaces []NetInterface `json:"interfaces,omitempty"`
+	// Cloud is the cloud instance this machine runs as, from the cloud's
+	// metadata service (cloudid.go). Nil off a cloud, or when it did not
+	// answer.
+	Cloud *CloudInstance `json:"cloud,omitempty"`
 }
 
 // Usage is how busy the machine is now.
@@ -121,6 +125,7 @@ func DiscoverSystem() SystemInfo {
 	}
 	s.OffsetSeconds = off
 	s.Interfaces = DiscoverInterfaces()
+	s.Cloud = discoverCloud(s.Hypervisor)
 	return s
 }
 

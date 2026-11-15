@@ -253,6 +253,21 @@ type cloudLaunchSpec struct {
 	Tags       map[string]string `json:"tags,omitempty"`
 }
 
+// UnmarshalJSON makes termination protection the default: a launch that
+// does not say otherwise is protected, so a new instance can be terminated
+// only after someone turns protection off, which is its own change. A
+// stored spec always carries the field, so this changes only what a caller
+// left out.
+func (s *cloudLaunchSpec) UnmarshalJSON(b []byte) error {
+	type plain cloudLaunchSpec
+	p := plain{Protect: true}
+	if err := json.Unmarshal(b, &p); err != nil {
+		return err
+	}
+	*s = cloudLaunchSpec(p)
+	return nil
+}
+
 type cloudResizeSpec struct {
 	Size string `json:"size"`
 	From string `json:"from"`

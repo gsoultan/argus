@@ -80,7 +80,7 @@ func TestMatchServersSaysHow(t *testing.T) {
 		{Resource: cloud.Resource{ID: "i-2", Name: "pay-api-01", Addresses: []string{"10.0.0.9"}}},
 		{Resource: cloud.Resource{ID: "i-3", Name: "i-3", Addresses: []string{"10.0.0.7"}}},
 	}
-	matchServers(items, []Asset{{ID: "a", Hostname: "web", Address: "10.0.0.5"}, {ID: "b", Hostname: "PAY-API-01", Address: "pay.internal"}}, nil)
+	matchServers(items, []Asset{{ID: "a", Hostname: "web", Address: "10.0.0.5"}, {ID: "b", Hostname: "PAY-API-01", Address: "pay.internal"}}, nil, nil)
 	if items[0].Server == nil || items[0].Server.By != "address" || items[0].Server.ID != "a" {
 		t.Errorf("address match: %+v", items[0].Server)
 	}
@@ -109,7 +109,7 @@ func TestMatchServersByWhatTheAgentReports(t *testing.T) {
 		"a": {{Address: "172.31.5.10"}},
 		"b": {{Address: "10.0.0.8"}}, "c": {{Address: "10.0.0.8"}},
 	}
-	matchServers(items, assets, reported)
+	matchServers(items, assets, reported, nil)
 	if items[0].Server == nil || items[0].Server.ID != "a" || items[0].Server.By != "address" {
 		t.Errorf("the agent's private address must match: %+v", items[0].Server)
 	}
@@ -118,6 +118,69 @@ func TestMatchServersByWhatTheAgentReports(t *testing.T) {
 	}
 	if items[2].Server == nil || items[2].Server.ID != "d" || items[2].Server.By != "name" {
 		t.Errorf("a name must match the hostname's first label: %+v", items[2].Server)
+	}
+}
+
+// What a server's agent read from the cloud's metadata service links it to
+// its instance before any address or name, in the account and region it
+// named, and only when no other server claims the same instance.
+func TestMatchServersByReportedInstance(t *testing.T) {
+	inst := func(id, acct, region, name, addr string) CloudItem {
+		return CloudItem{Provider: "aws", ProviderAccount: acct,
+			Resource: cloud.Resource{ID: id, Name: name, Region: region, Addresses: []string{addr}}}
+	}
+	items := []CloudItem{
+		inst("i-0a41c27b9e3f1d27d", "412788931204", "ap-southeast-3", "web-01", "10.0.0.5"), // a reports it
+		inst("i-0b93f12aa0c4d0e2e", "412788931204", "ap-southeast-3", "web-02", "10.0.0.6"), // b and c both claim it
+		inst("i-07c2aa3f0d19e4c91", "999999999999", "ap-southeast-3", "pay-01", "10.0.0.7"), // d names another account
+		inst("i-0e11d8a4c2f3b710c", "412788931204", "ap-southeast-3", "batch", "10.0.0.8"),  // e reports another instance
+	}
+	assets := []Asset{
+		// a's own address is another instance's: the report must win.
+		{ID: "a", Hostname: "web-01", Address: "10.0.0.8"},
+		{ID: "b", Hostname: "b"}, {ID: "c", Hostname: "c"},
+		{ID: "d", Hostname: "pay-01"},
+		{ID: "e", Hostname: "batch", Address: "10.0.0.8"},
+	}
+	instances := map[string]HostCloud{
+		"a": {Provider: "aws", Account: "412788931204", Region: "ap-southeast-3", ID: "i-0a41c27b9e3f1d27d"},
+		"b": {Provider: "aws", Account: "412788931204", Region: "ap-southeast-3", ID: "i-0b93f12aa0c4d0e2e"},
+		"c": {Provider: "aws", Account: "412788931204", Region: "ap-southeast-3", ID: "i-0b93f12aa0c4d0e2e"},
+		"d": {Provider: "aws", Account: "412788931204", Region: "ap-southeast-3", ID: "i-07c2aa3f0d19e4c91"},
+		"e": {Provider: "aws", Account: "412788931204", Region: "ap-southeast-3", ID: "i-00000000000000000"},
+	}
+	matchServers(items, assets, nil, instances)
+	if s := items[0].Server; s == nil || s.ID != "a" || s.By != "agent" {
+		t.Errorf("reported instance: %+v", s)
+	}
+	if s := items[1].Server; s != nil && s.By == "agent" {
+		t.Errorf("an instance two servers claim must not link by report: %+v", s)
+	}
+	if s := items[2].Server; s != nil && s.ID == "d" {
+		t.Errorf("a report naming another account must not link, nor fall back to the name: %+v", s)
+	}
+	if s := items[3].Server; s != nil {
+		t.Errorf("a server whose agent named its instance must not match another by address: %+v", s)
+	}
+}
+
+func TestHostCloudBounded(t *testing.T) {
+	good := HostCloud{Provider: "aws", Account: "412788931204", Region: "ap-southeast-3", Zone: "ap-southeast-3a", ID: "i-0a41c27b9e3f1d27d", Type: "m6i.large"}
+	if good.bounded() == nil {
+		t.Fatal("a real identity was dropped")
+	}
+	for _, mut := range []func(*HostCloud){
+		func(c *HostCloud) { c.ID = "i-0a41c27b9e3f1d27d'; DROP" },
+		func(c *HostCloud) { c.Account = "4127" },
+		func(c *HostCloud) { c.Provider = "azure" },
+		func(c *HostCloud) { c.Region = "<b>" },
+		func(c *HostCloud) { c.Type = "m6i.large\n" },
+	} {
+		c := good
+		mut(&c)
+		if c.bounded() != nil {
+			t.Errorf("kept %+v", c)
+		}
 	}
 }
 
@@ -356,4 +419,67 @@ func waitCloudSync(t *testing.T, e cloudEnv, c CloudAccount) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatal("the sync started by connecting never finished")
+}
+
+// The Cloud card's link comes from the instance the agent read from the
+// metadata service, even when the server's address points elsewhere, and
+// only fleet roles see it.
+func TestAssetCloudFollowsTheAgentsReport(t *testing.T) {
+	e := cloudAPI(t)
+	e.fake.Roles[e.roleARN()] = e.prepare(t).ExternalID
+	id := "i-0" + e.account
+	e.fake.Resources["ap-southeast-3"] = []cloud.Resource{
+		{Kind: cloud.KindInstance, ID: id, Name: "web-01", Region: "ap-southeast-3", State: "running", Size: "m6i.large",
+			Addresses: []string{"10.20.1.14"}},
+		{Kind: cloud.KindInstance, ID: "i-1" + e.account, Name: "decoy", Region: "ap-southeast-3", Addresses: []string{"203.0.113.77"}},
+	}
+	host := unique("web") + ".example"
+	ctx := context.Background()
+	asset, err := e.s.CreateAsset(ctx, AssetInput{Hostname: host, Address: "203.0.113.77",
+		Principals: []string{"ops"}, CredentialRef: "injected"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sys := `{"cloud":{"provider":"aws","account":"` + e.account + `","region":"ap-southeast-3","zone":"ap-southeast-3a","id":"` + id + `","type":"m6i.large"}}`
+	if _, err := e.s.pool.Exec(ctx, `INSERT INTO agents (hostname, version, last_seen_at, updated_at, system)
+		VALUES ($1, 'test', now(), now(), $2::jsonb)`, host, sys); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = e.s.pool.Exec(context.Background(), `DELETE FROM agents WHERE hostname = $1`, host) })
+
+	c := e.connect(t, http.StatusCreated)
+	waitCloudSync(t, e, c)
+
+	if w := do(t, e.h, http.MethodGet, "/api/v1/assets/"+asset.ID+"/cloud", "operator-token", ""); w.Code != http.StatusForbidden {
+		t.Fatalf("an operator must not see the cloud card: %d", w.Code)
+	}
+	w := do(t, e.h, http.MethodGet, "/api/v1/assets/"+asset.ID+"/cloud", "auditor-token", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("asset cloud: %d %s", w.Code, w.Body)
+	}
+	var out AssetCloud
+	_ = json.Unmarshal(w.Body.Bytes(), &out)
+	if out.Reported == nil || out.Reported.ID != id {
+		t.Fatalf("reported: %+v", out.Reported)
+	}
+	if out.Instance == nil || out.Instance.Resource.ID != id || out.Instance.Server == nil || out.Instance.Server.By != "agent" {
+		t.Fatalf("the agent's report must win over the address: %+v", out.Instance)
+	}
+	if out.Instance.ProviderAccount != e.account || out.Instance.Provider != "aws" {
+		t.Fatalf("provider account missing: %+v", out.Instance)
+	}
+	if w := do(t, e.h, http.MethodGet, "/api/v1/assets/00000000-0000-0000-0000-000000000000/cloud", "auditor-token", ""); w.Code != http.StatusNotFound {
+		t.Fatalf("missing asset: %d", w.Code)
+	}
+}
+
+// Termination protection is on unless a launch turns it off.
+func TestLaunchSpecProtectsByDefault(t *testing.T) {
+	var s cloudLaunchSpec
+	if err := json.Unmarshal([]byte(`{"name":"web-03","size":"t3.small"}`), &s); err != nil || !s.Protect {
+		t.Fatalf("left out: protect=%v err=%v", s.Protect, err)
+	}
+	if err := json.Unmarshal([]byte(`{"name":"web-03","protect":false}`), &s); err != nil || s.Protect {
+		t.Fatalf("turned off: protect=%v err=%v", s.Protect, err)
+	}
 }

@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"regexp"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -50,6 +51,55 @@ type HostSystem struct {
 	// "Install unknown apps" for it, which the person allows once. Nil from
 	// a server, or an app older than installing.
 	CanInstallApps *bool `json:"can_install_apps,omitempty"`
+	// Cloud is the cloud instance the agent says this machine is, from the
+	// cloud's metadata service. Nil off a cloud, or from an older agent.
+	Cloud *HostCloud `json:"cloud,omitempty"`
+}
+
+// HostCloud mirrors agent.CloudInstance.
+type HostCloud struct {
+	Provider string `json:"provider"`
+	Account  string `json:"account"`
+	Region   string `json:"region"`
+	Zone     string `json:"zone,omitempty"`
+	ID       string `json:"id"`
+	Type     string `json:"type,omitempty"`
+}
+
+var (
+	hostAWSInstanceRE = regexp.MustCompile(`^i-[0-9a-f]{8,17}$`)
+	hostAWSAccountRE  = regexp.MustCompile(`^[0-9]{12}$`)
+	hostGCPInstanceRE = regexp.MustCompile(`^[0-9]{1,20}$`)
+	hostGCPProjectRE  = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]$`)
+	hostCloudPlaceRE  = regexp.MustCompile(`^[a-z0-9-]{2,40}$`)
+	hostCloudTypeRE   = regexp.MustCompile(`^[a-z0-9.-]{1,60}$`)
+)
+
+// bounded keeps a cloud identity only when every part looks like one: it is
+// what links a server to an instance, so a malformed one is dropped whole
+// rather than half-kept.
+func (c *HostCloud) bounded() *HostCloud {
+	if c == nil {
+		return nil
+	}
+	if !hostCloudPlaceRE.MatchString(c.Region) || (c.Zone != "" && !hostCloudPlaceRE.MatchString(c.Zone)) ||
+		(c.Type != "" && !hostCloudTypeRE.MatchString(c.Type)) {
+		return nil
+	}
+	switch c.Provider {
+	case "aws":
+		if !hostAWSInstanceRE.MatchString(c.ID) || !hostAWSAccountRE.MatchString(c.Account) {
+			return nil
+		}
+	case "gcp":
+		if !hostGCPInstanceRE.MatchString(c.ID) || !hostGCPProjectRE.MatchString(c.Account) {
+			return nil
+		}
+	default:
+		return nil
+	}
+	out := *c
+	return &out
 }
 
 // HostInterface mirrors agent.NetInterface.
@@ -135,6 +185,7 @@ func (s *HostSystem) bounded() *HostSystem {
 		c.OffsetSeconds = 0
 	}
 	c.Interfaces = boundedInterfaces(c.Interfaces)
+	c.Cloud = c.Cloud.bounded()
 	return &c
 }
 
@@ -534,6 +585,45 @@ func flatAddresses(ifs []SystemInterface) []AssetAddress {
 		}
 	}
 	return out
+}
+
+// AgentInstances is the cloud instance each live asset's agent reported,
+// keyed by asset id, matched to its agent the way AgentAddresses matches.
+func (s *Store) AgentInstances(ctx context.Context) (map[string]HostCloud, error) {
+	rows, err := s.db(ctx).Query(ctx, `
+		SELECT a.id::text, ag.system->'cloud'
+		  FROM assets a
+		  JOIN LATERAL (
+		       SELECT system FROM agents g
+		        WHERE g.hostname = a.hostname OR g.hostname = a.agent_hostname
+		           OR g.hostname = split_part(a.hostname, '.', 1)
+		        ORDER BY g.last_seen_at DESC NULLS LAST
+		        LIMIT 1) ag ON TRUE
+		 WHERE a.archived_at IS NULL AND ag.system ? 'cloud'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]HostCloud{}
+	for rows.Next() {
+		var (
+			id  string
+			raw []byte
+		)
+		if err := rows.Scan(&id, &raw); err != nil {
+			return nil, err
+		}
+		var c HostCloud
+		if json.Unmarshal(raw, &c) != nil {
+			continue
+		}
+		// Checked again on the way out: rows written before the check, or by
+		// hand, are input too.
+		if b := c.bounded(); b != nil {
+			out[id] = *b
+		}
+	}
+	return out, rows.Err()
 }
 
 // AgentAddresses is every live asset's reported addresses, keyed by asset
