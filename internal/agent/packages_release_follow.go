@@ -90,6 +90,10 @@ func (t *tailer) remember(f string, st os.FileInfo) {
 	if t.seen == nil {
 		t.seen = map[string]os.FileInfo{}
 	}
+	// On Windows a FileInfo from os.Stat looks its file id up by path the
+	// first time SameFile needs it, which after a rename would be the new
+	// file's. Ask now, while the path still names this one.
+	os.SameFile(st, st)
 	t.seen[f] = st
 }
 
