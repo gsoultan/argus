@@ -298,8 +298,8 @@ function FindingDrawer({ f, onClose, admin, hasItem, onFix, onKeep }: {
 function KeepModal({ f, onClose }: { f: CloudFinding; onClose: () => void }) {
   const keep = useKeepFinding()
   const [reason, setReason] = useState('')
-  const [how, setHow] = useState<'30' | '90' | 'change'>(f.severity === 'high' ? '30' : '90')
-  const days: KeepInput['days'] = how === 'change' ? 0 : how === '30' ? 30 : 90
+  const [how, setHow] = useState<'7' | '30' | '90' | 'change'>(f.severity === 'high' ? '30' : '90')
+  const days: KeepInput['days'] = how === 'change' ? 0 : (Number(how) as 7 | 30 | 90)
   return (
     <Modal opened onClose={onClose} centered size="md" title={<Text fw={700}>Keep “{f.title}”?</Text>}>
       <Stack gap="md">
@@ -309,6 +309,7 @@ function KeepModal({ f, onClose }: { f: CloudFinding; onClose: () => void }) {
         <Textarea label="Why" autosize minRows={2} maxLength={300} value={reason} onChange={(e) => setReason(e.currentTarget.value)} data-autofocus />
         <Radio.Group label="For how long" value={how} onChange={(v) => setHow(v as typeof how)}>
           <Stack gap={SP.cozy} mt={6}>
+            <Radio value="7" label="7 days" />
             <Radio value="30" label="30 days" />
             <Radio value="90" label="90 days" />
             <Radio value="change" label="Until it changes" disabled={!keepAllowed(f, 0)}

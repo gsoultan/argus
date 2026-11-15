@@ -314,7 +314,7 @@ type cloudKeepIn struct {
 	AccountID string `json:"accountId"`
 	FindingID string `json:"findingId"`
 	Reason    string `json:"reason"`
-	// Days is 30 or 90; 0 with UntilChange keeps it until it changes.
+	// Days is 7, 30 or 90; 0 with UntilChange keeps it until it changes.
 	Days        int  `json:"days"`
 	UntilChange bool `json:"untilChange"`
 }
@@ -334,12 +334,12 @@ func (a *API) postCloudFindingKeep(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "say why you are keeping it, in at most 300 characters")
 		return
 	}
-	if in.Days != 0 && in.Days != 30 && in.Days != 90 {
-		writeErr(w, http.StatusBadRequest, "keep it for 30 or 90 days, or until it changes")
+	if in.Days != 0 && in.Days != 7 && in.Days != 30 && in.Days != 90 {
+		writeErr(w, http.StatusBadRequest, "keep it for 7, 30 or 90 days, or until it changes")
 		return
 	}
 	if in.Days == 0 && !in.UntilChange {
-		writeErr(w, http.StatusBadRequest, "keep it for 30 or 90 days, or until it changes")
+		writeErr(w, http.StatusBadRequest, "keep it for 7, 30 or 90 days, or until it changes")
 		return
 	}
 	c, err := a.store.CloudAccount(r.Context(), in.AccountID)

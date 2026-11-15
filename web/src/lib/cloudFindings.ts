@@ -80,8 +80,8 @@ export interface KeepInput {
   accountId: string
   findingId: string
   reason: string
-  /** 30 or 90; 0 with untilChange keeps it until it changes. */
-  days: 0 | 30 | 90
+  /** 7, 30 or 90; 0 with untilChange keeps it until it changes. */
+  days: 0 | 7 | 30 | 90
   untilChange: boolean
 }
 

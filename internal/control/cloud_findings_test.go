@@ -102,6 +102,12 @@ func TestCloudFindings(t *testing.T) {
 	if c := keep("admin-token", `{"accountId":"`+e.acct.ID+`","findingId":"`+open+`","reason":"","days":30}`); c != http.StatusBadRequest {
 		t.Fatalf("kept without a reason: %d", c)
 	}
+	if c := keep("admin-token", `{"accountId":"`+e.acct.ID+`","findingId":"`+open+`","reason":"x","days":45}`); c != http.StatusBadRequest {
+		t.Fatalf("kept for a length that is not offered: %d", c)
+	}
+	if c := keep("admin-token", `{"accountId":"`+e.acct.ID+`","findingId":"`+open+`","reason":"not now","days":7}`); c != http.StatusOK {
+		t.Fatalf("keep for 7 days (Not now): %d", c)
+	}
 	if c := keep("admin-token", `{"accountId":"`+e.acct.ID+`","findingId":"no-such","reason":"x","days":30}`); c != http.StatusNotFound {
 		t.Fatalf("kept a finding that is not there: %d", c)
 	}
