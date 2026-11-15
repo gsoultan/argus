@@ -37,7 +37,7 @@
   50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-verified) 0%, transparent); }
 }
 
-/* Six tiles: six across from 75em, three from 48em, two below. */
+/* Five tiles: five across from 75em, three from 48em, two below. */
 .argus-tiles {
   display: grid;
   gap: var(--mantine-spacing-sm);

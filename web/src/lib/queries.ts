@@ -74,11 +74,18 @@ export const groupsQuery = () => queryOptions({ queryKey: qk.groups, queryFn: ap
 export const statsQuery = () =>
   queryOptions({ queryKey: qk.stats, queryFn: api.stats, refetchInterval: 15_000 })
 
+/**
+ * How often a server's status is read again while its page is open: the
+ * agent checks in every 30 s, so Online / Not answering moves at that pace.
+ * Not read while the browser tab is hidden.
+ */
+export const ASSETS_EVERY = 30_000
+
 export const assetsQuery = (q: AssetQuery = {}) =>
-  queryOptions({ queryKey: qk.assets(q), queryFn: () => api.assets(q) })
+  queryOptions({ queryKey: qk.assets(q), queryFn: () => api.assets(q), refetchInterval: ASSETS_EVERY })
 
 export const assetQuery = (id: string) =>
-  queryOptions({ queryKey: qk.asset(id), queryFn: () => api.asset(id) })
+  queryOptions({ queryKey: qk.asset(id), queryFn: () => api.asset(id), refetchInterval: ASSETS_EVERY })
 
 /** Who can log in to a server directly; whoever sees the whole fleet. */
 export const loginAccountsQuery = (id: string) =>

@@ -5,9 +5,10 @@ import { createFileRoute } from '@tanstack/react-router'
 import { IconClipboardCheck, IconHourglassHigh, IconPlus, IconRefresh } from '@tabler/icons-react'
 import { PageBody, PageHeader } from '~/components/page'
 import { ButtonLink } from '~/components/links'
+import { Freshness } from '~/components/Freshness'
 import { ServerCards } from '~/components/myservers'
 import { relTime } from '~/components/primitives'
-import { agentFleetQuery, assetsQuery, discoveredQuery, meQuery } from '~/lib/queries'
+import { ASSETS_EVERY, agentFleetQuery, assetsQuery, discoveredQuery, meQuery } from '~/lib/queries'
 import { isConfigured } from '~/lib/live'
 import { kindOfHost, type Answer } from '~/lib/reach'
 import { canSee, seesWholeFleet } from '~/lib/roles'
@@ -55,9 +56,10 @@ const ANSWERS = ['online', 'down', 'noagent', 'blocked'] as const
 function Servers() {
   const { status } = Route.useSearch()
   const { data: me } = useQuery(meQuery())
-  const { data: assets } = useQuery(assetsQuery({}))
+  const { data: assets, dataUpdatedAt } = useQuery(assetsQuery({}))
   const whole = seesWholeFleet(me?.role)
   const admin = canSee(me?.role, 'admin')
+  const fresh = isConfigured() && <Freshness at={dataUpdatedAt} every={ASSETS_EVERY} what="Each server's status, as its agent last checked in." />
 
   return (
     <Box>
@@ -71,6 +73,7 @@ function Servers() {
         actions={
           admin ? (
             <>
+              {fresh}
               <ButtonLink to="/assets/updates" size="sm" variant="default" leftSection={<IconRefresh size={16} />}>
                 Updates
               </ButtonLink>
@@ -79,9 +82,12 @@ function Servers() {
               </ButtonLink>
             </>
           ) : whole ? (
-            <ButtonLink to="/assets/updates" size="sm" variant="default" leftSection={<IconRefresh size={16} />}>
-              Updates
-            </ButtonLink>
+            <>
+              {fresh}
+              <ButtonLink to="/assets/updates" size="sm" variant="default" leftSection={<IconRefresh size={16} />}>
+                Updates
+              </ButtonLink>
+            </>
           ) : (
             (assets?.length ?? 0) > 0 && (
               <ButtonLink to="/approvals" variant="default" leftSection={<IconClipboardCheck size={16} />}>

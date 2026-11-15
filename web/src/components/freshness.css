@@ -1,0 +1,20 @@
+/* "Live · updated 8 s ago" beside a page title. The same look as Home's pill. */
+.argus-fresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 15px;
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  color: var(--color-ink-soft);
+  white-space: nowrap;
+}
+.argus-fresh-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-verified);
+}
+.argus-fresh[data-stale] .argus-fresh-dot { background: var(--color-pending); }
