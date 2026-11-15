@@ -10,6 +10,7 @@ import {
 import { HostKeyUnpinned } from '~/components/server/hostKey'
 import { LoginAccounts } from '~/components/server/layout'
 import { SystemCard, systemQuery } from '~/components/server/SystemCard'
+import { CloudCard } from '~/components/server/CloudCard'
 import type { ServerTab } from '~/components/server/tabs'
 import { directSshLabel } from '~/lib/directSsh'
 import { agentUpdateQuery, assignmentsQuery, policyQuery, teamAssignmentsQuery } from '~/lib/queries'
@@ -90,6 +91,8 @@ export function OverviewTab({ asset, sessions, onTab, canFreeSpace = false }: {
       </SimpleGrid>
 
       <SystemCard asset={asset} onTab={onTab} canFreeSpace={canFreeSpace} />
+
+      <CloudCard asset={asset} />
 
       <Grid gap="md">
         <Grid.Col span={{ base: 12, lg: 8 }}>

@@ -267,12 +267,16 @@ func (s *Store) SetCloudSynced(ctx context.Context, id string, at time.Time, err
 
 // CloudItem is one present resource with the account it is in.
 type CloudItem struct {
-	AccountID   string         `json:"accountId"`
-	AccountName string         `json:"accountName"`
-	Environment string         `json:"environment"`
-	FirstSeen   time.Time      `json:"firstSeen"`
-	SeenAt      time.Time      `json:"seenAt"`
-	Resource    cloud.Resource `json:"resource"`
+	AccountID string `json:"accountId"`
+	// Provider and ProviderAccount are the cloud and its own id for the
+	// account (twelve digits on AWS), which an agent's report names.
+	Provider        string         `json:"provider"`
+	ProviderAccount string         `json:"providerAccount"`
+	AccountName     string         `json:"accountName"`
+	Environment     string         `json:"environment"`
+	FirstSeen       time.Time      `json:"firstSeen"`
+	SeenAt          time.Time      `json:"seenAt"`
+	Resource        cloud.Resource `json:"resource"`
 	// Server is the Argus server this instance appears to be.
 	Server *CloudServerMatch `json:"server,omitempty"`
 	// MadeByArgus is whether Argus launched or created it, by its own
@@ -280,20 +284,21 @@ type CloudItem struct {
 	MadeByArgus bool `json:"madeByArgus"`
 }
 
-// CloudServerMatch links an instance to a server, and says how. It is a
-// match by address or name, not a fact the agent reported, and the console
-// labels it so.
+// CloudServerMatch links an instance to a server, and says how: "agent"
+// when the server's agent read this instance's id from the cloud's metadata
+// service, or "address" and "name" for a match the console labels as a
+// match, not as something the agent said.
 type CloudServerMatch struct {
 	ID       string `json:"id"`
 	Hostname string `json:"hostname"`
-	By       string `json:"by"` // "address" or "name"
+	By       string `json:"by"` // "agent", "address" or "name"
 }
 
 // CloudResources lists the present resources of one kind across connected
 // accounts.
 func (s *Store) CloudResources(ctx context.Context, kind cloud.Kind) ([]CloudItem, error) {
 	rows, err := s.db(ctx).Query(ctx, `
-		SELECT a.id::text, a.name, a.environment, r.first_seen, r.seen_at, r.data, `+madeByArgusSQL+`
+		SELECT a.id::text, a.provider, a.account_id, a.name, a.environment, r.first_seen, r.seen_at, r.data, `+madeByArgusSQL+`
 		FROM cloud_resources r JOIN cloud_accounts a ON a.id = r.account_id
 		WHERE r.kind = $1 AND r.gone_at IS NULL AND a.archived_at IS NULL
 		ORDER BY lower(a.name), r.region, r.data->>'name'`, string(kind))
@@ -305,7 +310,7 @@ func (s *Store) CloudResources(ctx context.Context, kind cloud.Kind) ([]CloudIte
 	for rows.Next() {
 		var it CloudItem
 		var data []byte
-		if err := rows.Scan(&it.AccountID, &it.AccountName, &it.Environment, &it.FirstSeen, &it.SeenAt, &data, &it.MadeByArgus); err != nil {
+		if err := rows.Scan(&it.AccountID, &it.Provider, &it.ProviderAccount, &it.AccountName, &it.Environment, &it.FirstSeen, &it.SeenAt, &data, &it.MadeByArgus); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(data, &it.Resource); err != nil {

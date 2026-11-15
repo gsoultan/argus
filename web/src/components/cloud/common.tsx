@@ -78,7 +78,7 @@ export function ServerCell({ it }: { it: CloudItem }) {
     )
   }
   return (
-    <Tooltip label={`Matched by ${it.server.by === 'address' ? 'address' : 'name'}`}>
+    <Tooltip label={it.server.by === 'agent' ? "Its agent reported this instance's id" : `Matched by ${it.server.by === 'address' ? 'address' : 'name'}`}>
       <Box component="span" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
         <AnchorLink to="/assets/$assetId" params={{ assetId: it.server.id }} size={FS.meta} c={INK.brand} ff="monospace">
           <Group gap={4} wrap="nowrap" component="span"><IconServer2 size={13} />{it.server.hostname}</Group>

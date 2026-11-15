@@ -67,6 +67,7 @@ func (a *API) registerCloudRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/cloud/accounts/{id}/identity", a.putCloudIdentity)
 	mux.HandleFunc("DELETE /api/v1/cloud/accounts/{id}/manage", a.deleteCloudManage)
 	mux.HandleFunc("GET /api/v1/cloud/resources", a.getCloudResources)
+	mux.HandleFunc("GET /api/v1/assets/{id}/cloud", a.getAssetCloud)
 }
 
 var reAWSAccount = regexp.MustCompile(`^[0-9]{12}$`)
@@ -585,14 +586,25 @@ func (a *API) getCloudResources(w http.ResponseWriter, r *http.Request) {
 			a.fail(w, "cloud resources", err)
 			return
 		}
-		matchServers(items, assets, reported)
+		instances, err := a.store.AgentInstances(r.Context())
+		if err != nil {
+			a.fail(w, "cloud resources", err)
+			return
+		}
+		matchServers(items, assets, reported, instances)
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
-// matchServers links instances to servers by address, then by name. The
-// console labels it as a match, not as something the agent said.
+// matchServers links instances to servers: first by what each server's agent
+// read from the cloud's metadata service, then by address, then by name. The
+// console says which.
+//
+// A reported instance counts only in the account and region the agent named,
+// and only when one server reports it: two servers claiming one instance link
+// neither by report, since one of them is wrong. A server whose agent reports
+// an instance is never matched to a different instance by address or name.
 //
 // An address is the server's own (the one sessions go to) or any its agent
 // reports on its interfaces: a server added by its public name, or behind
@@ -601,10 +613,34 @@ func (a *API) getCloudResources(w http.ResponseWriter, r *http.Request) {
 // neither, rather than the wrong one. A
 // name is the server's hostname or its first label, so ip-10-0-0-5 and
 // web-01.example.com both match an instance named that.
-func matchServers(items []CloudItem, assets []Asset, reported map[string][]AssetAddress) {
+func matchServers(items []CloudItem, assets []Asset, reported map[string][]AssetAddress, instances map[string]HostCloud) {
+	byID := map[string]Asset{}
+	claimed := map[string]int{}
+	pinned := map[string]bool{} // assets whose agent named their instance
+	for _, s := range assets {
+		c, ok := instances[s.ID]
+		if !ok {
+			continue
+		}
+		k := c.Provider + "/" + c.Account + "/" + c.Region + "/" + c.ID
+		claimed[k]++
+		byID[k] = s
+		pinned[s.ID] = true
+	}
+	for i := range items {
+		it := items[i]
+		k := it.Provider + "/" + it.ProviderAccount + "/" + it.Resource.Region + "/" + it.Resource.ID
+		if s, ok := byID[k]; ok && claimed[k] == 1 {
+			items[i].Server = &CloudServerMatch{ID: s.ID, Hostname: s.Hostname, By: "agent"}
+		}
+	}
+
 	byAddr, byReport, byName := map[string]Asset{}, map[string]Asset{}, map[string]Asset{}
 	shared := map[string]bool{}
 	for _, s := range assets {
+		if pinned[s.ID] {
+			continue
+		}
 		if s.Address != "" {
 			byAddr[s.Address] = s
 		}
@@ -623,6 +659,9 @@ func matchServers(items []CloudItem, assets []Asset, reported map[string][]Asset
 		}
 	}
 	for i := range items {
+		if items[i].Server != nil {
+			continue
+		}
 		r := items[i].Resource
 		ips := append(append([]string{}, r.Addresses...), r.PublicIP)
 		for _, ip := range ips {

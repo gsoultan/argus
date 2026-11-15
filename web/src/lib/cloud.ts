@@ -96,13 +96,20 @@ export interface CloudResource {
 
 export interface CloudItem {
   accountId: string
+  /** The cloud, and its own id for the account (twelve digits on AWS). */
+  provider?: string
+  providerAccount?: string
   accountName: string
   environment: CloudEnvironment
   firstSeen: string
   seenAt: string
   resource: CloudResource
-  /** A match by address or name, not something the agent reported. */
-  server?: { id: string; hostname: string; by: 'address' | 'name' }
+  /**
+   * The Argus server this instance is. "agent": the server's agent read this
+   * instance's id from the cloud's metadata service. "address" and "name" are
+   * matches, not something the agent reported.
+   */
+  server?: { id: string; hostname: string; by: 'agent' | 'address' | 'name' }
   /** Argus launched or created it, by its own record. Only these can be removed or deleted from Argus. */
   madeByArgus?: boolean
 }
@@ -162,6 +169,35 @@ export interface CloudAccountInput {
 
 const accountsKey = ['cloud', 'accounts'] as const
 const itemsKey = (kind: CloudKind) => ['cloud', 'items', kind] as const
+
+/** The instance a server's agent says it is, from the cloud's metadata service. */
+export interface ReportedInstance {
+  provider: string
+  account: string
+  region: string
+  zone?: string
+  id: string
+  type?: string
+}
+
+/** A server's cloud side: what its agent reported, and the instance in a connected account. */
+export interface AssetCloud {
+  reported: ReportedInstance | null
+  instance: CloudItem | null
+}
+
+/**
+ * Only with a control plane: cloud accounts are never shown from sample
+ * data, so without one the card is not drawn at all.
+ */
+export const assetCloudQuery = (assetId: string, enabled = true) =>
+  queryOptions({
+    queryKey: ['asset', assetId, 'cloud'] as const,
+    queryFn: () => get<AssetCloud>(`/api/v1/assets/${encodeURIComponent(assetId)}/cloud`),
+    enabled: enabled && isConfigured(),
+    refetchInterval: 60_000,
+    retry: false,
+  })
 
 export const cloudAccountsQuery = () =>
   queryOptions({

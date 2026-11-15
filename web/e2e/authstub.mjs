@@ -459,6 +459,24 @@ const server = createServer(async (req, res) => {
       const body = /** @type {any} */ (await readBody(req))
       return json(res, 200, { ready: false, detail: `argus-read@${body.accountId}.iam.gserviceaccount.com does not let Argus in yet: Permission 'iam.serviceAccounts.getAccessToken' denied` })
     }
+    // A server whose agent read its instance from EC2's metadata service, and
+    // one whose agent names an instance in an account Argus does not read.
+    if (path === '/api/v1/assets/a-closed-healthy/cloud' && req.method === 'GET') {
+      return json(res, 200, { reported: { provider: 'aws', account: '412788931204', region: 'us-east-1', zone: 'us-east-1a',
+        id: 'i-0a41c27b9e3f1d27d', type: 'm6i.large' },
+      instance: { accountId: 'ca1', accountName: 'payments-prod', provider: 'aws', providerAccount: '412788931204',
+        environment: 'production', firstSeen: '2026-11-01T08:00:00Z', seenAt: new Date(Date.now() - 120_000).toISOString(),
+        resource: { kind: 'instance', id: 'i-0a41c27b9e3f1d27d', name: 'closed-healthy', region: 'us-east-1', zone: 'us-east-1a',
+          state: 'running', size: 'm6i.large', addresses: ['10.0.0.1'], publicIp: '44.201.17.9' },
+        server: { id: 'a-closed-healthy', hostname: 'closed-healthy', by: 'agent' }, madeByArgus: false } })
+    }
+    if (path === '/api/v1/assets/a-monitored-stale/cloud' && req.method === 'GET') {
+      return json(res, 200, { reported: { provider: 'aws', account: '999999999999', region: 'us-east-1', zone: 'us-east-1b',
+        id: 'i-0123456789abcdef0', type: 't3.small' }, instance: null })
+    }
+    // Everything else about one asset (logs, disks, packages…) is not stubbed:
+    // a 404 lets each card say so instead of drawing an empty list as data.
+    if (/^\/api\/v1\/assets\/[^/]+\/.+/.test(path)) return json(res, 404, { error: 'not stubbed' })
     if (path === '/api/v1/coverage') return json(res, 200, COVERAGE)
     if (path === '/api/v1/assets') return json(res, 200, ASSETS)
     // A window of a larger log, which is what a real control plane serves: the

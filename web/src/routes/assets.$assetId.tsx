@@ -34,6 +34,8 @@ import { AgentTab } from '~/components/server/AgentTab'
 import { assetQuery, meQuery, sessionsQuery } from '~/lib/queries'
 import { assetPackagesQuery } from '~/lib/packageQueries'
 import { isConfigured } from '~/lib/live'
+import { assetCloudQuery } from '~/lib/cloud'
+import { cloudHeaderLabel } from '~/components/server/CloudCard'
 import { guard } from '~/lib/guard'
 import { SP } from '~/theme'
 
@@ -71,6 +73,8 @@ function AssetDetail() {
   const seesUpdates = canEdit || me?.role === 'auditor'
   const { data: pkgs } = useQuery({ ...assetPackagesQuery(assetId), enabled: isConfigured() && seesUpdates && asset?.protocol !== 'rdp' })
   const waiting = pkgs?.report?.updates.length ?? 0
+  const { data: cloudSide } = useQuery(assetCloudQuery(assetId, seesUpdates))
+  const cloudLabel = cloudHeaderLabel(cloudSide)
   const securityWaiting = pkgs?.report?.updates.filter((u) => u.security).length ?? 0
   // Logs: read by the same people as updates, on Linux and Windows alike.
   const { data: logs } = useQuery({ ...assetLogsQuery(assetId), enabled: isConfigured() && seesUpdates })
@@ -133,6 +137,12 @@ function AssetDetail() {
           <Group gap={SP.snug} wrap="nowrap">
             <ReachBadge reach={reachOf(asset)} />
             {asset.controlHost && <ControlHostBadge />}
+            {cloudLabel && (
+              <Badge size="sm" variant="outline" color="slate" radius="sm" tt="none" data-testid="header-cloud"
+                title="The cloud instance this server runs as">
+                {cloudLabel}
+              </Badge>
+            )}
             {lowWarnings.length > 0 && (
               <Badge size="sm" variant="light" radius="sm" tt="none" data-testid="header-low"
                 color={lowWarnings.some((w) => w.level === 'critical') ? 'rose' : 'amber'}
