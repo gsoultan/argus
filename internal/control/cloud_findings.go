@@ -160,7 +160,11 @@ func (a *API) cloudServerFacts(ctx context.Context, instances []CloudItem, now t
 	if err != nil {
 		return nil, err
 	}
-	matchServers(instances, assets, reported)
+	agentInstances, err := a.store.AgentInstances(ctx)
+	if err != nil {
+		return nil, err
+	}
+	matchServers(instances, assets, reported, agentInstances)
 	var ids []string
 	for _, it := range instances {
 		if it.Server != nil {
