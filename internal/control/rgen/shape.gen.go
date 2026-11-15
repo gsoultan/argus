@@ -889,6 +889,7 @@ func _assertPackageRunShape(m m0.PackageRun) {
 		m.ScriptSecrets,
 		m.ScriptReport,
 		m.SoftwareFileID,
+		m.Detail,
 	}
 }
 
