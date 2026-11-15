@@ -139,12 +139,51 @@ func (aptManager) refresh(ctx context.Context, run cmdRunner, log io.Writer) err
 		return err
 	}
 	if code != 0 {
+		if why := aptLockHeld(b.Bytes(), procCmdline); why != "" {
+			return errors.New(why)
+		}
 		if why := aptMissingRelease(b.Bytes(), osRelease()); why != "" {
 			return errors.New(why)
 		}
 		return fmt.Errorf("apt-get update failed (exit %d): %s", code, tail(b.Bytes(), 400))
 	}
 	return aptFetchFailed(b.Bytes())
+}
+
+// reAptLock reads apt's refusal to run beside another apt:
+//
+//	E: Could not get lock /var/lib/apt/lists/lock. It is held by process 106866 (resolute)
+var reAptLock = regexp.MustCompile(`Could not get lock (\S+?)\.? It is held by process (\d+) \(([^)]*)\)`)
+
+// procCmdline is a process's command line, its arguments joined by spaces.
+var procCmdline = func(pid string) string {
+	b, err := os.ReadFile("/proc/" + pid + "/cmdline")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(strings.ReplaceAll(string(b), "\x00", " "))
+}
+
+// aptLockHeld says what holds apt's lock when that is why apt failed, and
+// says so plainly when it is a release upgrade: Ubuntu's upgrader runs as a
+// program named for the new release ("resolute"), unpacked from
+// do-release-upgrade's download. "" when apt's output is not that.
+func aptLockHeld(out []byte, cmdline func(pid string) string) string {
+	m := reAptLock.FindSubmatch(out)
+	if m == nil {
+		return ""
+	}
+	pid, name := string(m[2]), string(m[3])
+	cmd := cmdline(pid)
+	for _, s := range []string{"ubuntu-release-upgrader", "do-release-upgrade", "DistUpgrade", "dist-upgrade"} {
+		if strings.Contains(cmd, s) || strings.Contains(name, s) {
+			return fmt.Sprintf("an operating system upgrade is running on this server (process %s, %s), and it holds "+
+				"apt until it finishes; do not stop it or reboot. Its progress is in /var/log/dist-upgrade/main.log, "+
+				"and updates can be looked for again once it is done", pid, name)
+		}
+	}
+	return fmt.Sprintf("apt is busy: process %s (%s) holds its lock %s, so updates could not be looked for. "+
+		"Look again once it finishes", pid, name, m[1])
 }
 
 // reAptNoRelease reads apt's refusal of a source whose mirror no longer has
