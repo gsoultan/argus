@@ -1,6 +1,7 @@
 package cloud
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -42,6 +43,17 @@ var AccountKinds = []Kind{KindAccount, KindUser, KindBucket, KindDatabase}
 
 // GlobalRegion is the region account-wide resources are stored under.
 const GlobalRegion = "global"
+
+// AccountReader is a provider that reads what belongs to the whole account
+// rather than one region: its root user, people and keys, buckets, and
+// databases across the regions given. It is optional.
+//
+// The snapshot's Kinds are only the kinds read in full, so a part that
+// failed keeps its last read instead of being marked gone; the error says
+// what failed.
+type AccountReader interface {
+	AccountInventory(ctx context.Context, a Account, regions []string) (Snapshot, error)
+}
 
 // Finding groups, severities and sources.
 const (
