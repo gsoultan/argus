@@ -60,7 +60,7 @@ function ruleOf(d: Draft): CloudRule | null {
   return { inbound: d.inbound, protocol: svc.protocol, fromPort: from, toPort: to, source, description: d.description.trim() || undefined }
 }
 
-function ruleText(r: CloudRule, names: Map<string, string>): string {
+export function ruleText(r: CloudRule, names: Map<string, string>): string {
   const anywhere = r.source === '0.0.0.0/0' || r.source === '::/0'
   const src = anywhere ? 'anywhere' : names.get(r.source) ? `${names.get(r.source)} (${r.source})` : r.source
   return `${portText(r)} ${r.inbound ? 'from' : 'to'} ${src}`
@@ -158,14 +158,29 @@ export function FirewallActions({ it }: { it: CloudItem }) {
   )
 }
 
+/**
+ * The rules change that takes one rule away, opened from Risks & waste:
+ * the usual editor with that rule already struck through, so the person
+ * reviews, can change their mind, and submits through the normal path.
+ */
+export function RemoveRuleChange({ it, rule, onClose }: { it: CloudItem; rule: CloudRule; onClose: () => void }) {
+  const { account } = useChangeable(it)
+  const instances = useQuery(cloudItemsQuery('instance'))
+  const balancers = useQuery(cloudItemsQuery('load-balancer'))
+  const users = firewallUsers(it, instances.data, balancers.data)
+  return <RulesEditor it={it} env={firewallEnv(it, users)} users={users} account={account} onClose={onClose} strike={rule} />
+}
+
 /** A group's rules, edited as a diff: what is taken away and what is added. */
-function RulesEditor({ it, env, users, account, onClose }: {
+function RulesEditor({ it, env, users, account, onClose, strike }: {
   it: CloudItem; env: CloudEnvironment; users: CloudItem[]; account?: CloudAccount; onClose: () => void
+  /** A rule to start struck through. */
+  strike?: CloudRule
 }) {
   const r = it.resource
   const rules = r.rules ?? []
   const { options, names } = useSources(it.accountId, r.region)
-  const [removed, setRemoved] = useState<Set<number>>(new Set())
+  const [removed, setRemoved] = useState<Set<number>>(() => new Set(strike ? rules.flatMap((x, i) => (sameRule(x, strike) ? [i] : [])) : []))
   const [drafts, setDrafts] = useState<Draft[]>([])
   const [reason, setReason] = useState('')
   const { submit, busy } = useSubmit(onClose)

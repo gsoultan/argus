@@ -408,6 +408,9 @@ const server = createServer(async (req, res) => {
     if (path === '/api/v1/cloud/access' && req.method === 'GET') return json(res, 200, { grants: [], minutes: [30, 60] })
     if (path === '/api/v1/cloud/schedules' && req.method === 'GET') return json(res, 200, { schedules: [], keepRunning: [] })
     if (path === '/api/v1/cloud/idle' && req.method === 'GET') return json(res, 200, { items: [], monthly: 0 })
+    if (path === '/api/v1/cloud/findings' && req.method === 'GET') {
+      return json(res, 200, { items: [], kept: [], accounts: [{ id: 'ca1', name: 'payments-prod', accountChecks: true }], monthly: 0, checkedAt: new Date().toISOString() })
+    }
     if (path === '/api/v1/settings/cloud-identities/aws' && req.method === 'GET') {
       if (!orgOf(req).default) return json(res, 404, { error: 'not found' })
       return json(res, 200, IDENTITY_STATUS)

@@ -51,6 +51,8 @@ type Fake struct {
 	CostErr      error
 	// Stack is the argus-access stack DeployAccess makes.
 	Stack FakeStack
+	// AccountErr fails the account-wide read.
+	AccountErr error
 
 	reqs, launched, made int
 }
@@ -408,3 +410,22 @@ func (f *Fake) AccessStack(_ context.Context, accountID string) (StackState, err
 }
 
 var _ Deployer = (*Fake)(nil)
+
+// AccountInventory answers the account-wide kinds from Resources under
+// GlobalRegion, and AccountErr when set. It is not in Calls, so tests of
+// the regional read see only the calls they always did.
+func (f *Fake) AccountInventory(_ context.Context, a Account, _ []string) (Snapshot, error) {
+	if err := f.admit(a); err != nil {
+		return Snapshot{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.AccountErr != nil {
+		return Snapshot{Region: GlobalRegion}, f.AccountErr
+	}
+	now := time.Now()
+	if f.Now != nil {
+		now = f.Now()
+	}
+	return Snapshot{Region: GlobalRegion, Kinds: AccountKinds, Resources: append([]Resource(nil), f.Resources[GlobalRegion]...), ReadAt: now}, nil
+}

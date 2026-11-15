@@ -158,6 +158,7 @@ func (a *API) readCloudAccount(ctx context.Context, c CloudAccount, regions []st
 	if !full {
 		return true
 	}
+	a.syncCloudAccountWide(ctx, p, acct, c)
 	if len(errs) > 0 {
 		a.log.Warn("cloud sync: some regions were not read", "account", c.AccountID, "failed", strconv.Itoa(len(errs)))
 	}
@@ -213,6 +214,27 @@ func (a *API) settlingRegions(ctx context.Context, c CloudAccount) []string {
 		}
 	}
 	return out
+}
+
+// syncCloudAccountWide reads what belongs to the whole account (people
+// and keys, buckets, databases) for Risks & waste, when the provider can.
+// A part that fails keeps its last read; it is logged, not shown as a
+// region failure, and Risks & waste says which checks it could not make.
+func (a *API) syncCloudAccountWide(ctx context.Context, p cloud.Provider, acct cloud.Account, c CloudAccount) {
+	ar, ok := p.(cloud.AccountReader)
+	if !ok {
+		return
+	}
+	snap, err := ar.AccountInventory(ctx, acct, c.Regions)
+	if err != nil {
+		a.log.Warn("cloud sync: account-wide read incomplete", "account", c.AccountID, "error", err)
+	}
+	if len(snap.Kinds) == 0 {
+		return
+	}
+	if err := a.store.SaveCloudSnapshot(ctx, c.ID, snap); err != nil {
+		a.log.Error("cloud sync: cannot save the account-wide read", "account", c.AccountID, "error", err)
+	}
 }
 
 // checkCloudManageRole reads what the manage role may do from its own

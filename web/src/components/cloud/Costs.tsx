@@ -6,17 +6,17 @@ import { IconCoin, IconPencil, IconPlus, IconRefresh, IconTarget, IconTrash, Ico
 import { useState } from 'react'
 import { DataTable, EmptyState, SectionCard } from '~/components/page'
 import { Stat, relTime } from '~/components/primitives'
-import type { CloudAccount, CloudItem, CloudKind } from '~/lib/cloud'
-import { latestRead } from '~/lib/cloud'
+import type { CloudAccount } from '~/lib/cloud'
 import {
   budgetState, change, daysLeft, cloudCostsQuery, cloudIdleQuery, dollars, parseThresholds, totals, useDeleteBudget, useReadCosts, useSaveBudget,
-  type CloudBudget, type CloudCostRead, type CloudIdleItem, type DayCost,
+  type CloudBudget, type CloudCostRead, type DayCost,
 } from '~/lib/cloudCosts'
 import { notifyError, notifyOk } from '~/lib/notify'
 import { meQuery } from '~/lib/queries'
 import { canSee } from '~/lib/roles'
 import { FS, INK } from '~/theme'
-import { EnvBadge, ResourceDrawer } from './common'
+import { EnvBadge } from './common'
+import type { CloudTab } from './tabs'
 
 /*
  * What the connected accounts cost, what in them bills for nothing, and
@@ -25,26 +25,19 @@ import { EnvBadge, ResourceDrawer } from './common'
  * at list price.
  */
 
-const KIND_WORD: Partial<Record<CloudKind, string>> = {
-  volume: 'Disk', address: 'Elastic IP', instance: 'Instance', snapshot: 'Snapshot', 'load-balancer': 'Load balancer',
-}
-
-export function CostsPanel({ accounts, items, names }: {
+export function CostsPanel({ accounts, onTab }: {
   accounts: CloudAccount[]
-  /** The inventory, so an idle resource opens in its usual panel. */
-  items: Partial<Record<CloudKind, CloudItem[] | undefined>>
-  names: Map<string, string>
+  /** Moves to another Cloud tab; idle resources are listed under Risks & waste. */
+  onTab?: (t: CloudTab) => void
 }) {
   const { data: me } = useQuery(meQuery())
   const admin = canSee(me?.role, 'admin')
   const q = useQuery(cloudCostsQuery())
   const idle = useQuery(cloudIdleQuery())
-  const [open, setOpen] = useState<CloudItem | null>(null)
   const reads = q.data?.accounts ?? []
   const t = totals(reads)
   const vs = change(t.monthToDate, t.lastMonthToDate)
   const never = reads.length > 0 && reads.every((r) => !r.costs)
-  const openIdle = (x: CloudIdleItem) => setOpen(items[x.kind]?.find((it) => it.accountId === x.accountId && it.resource.id === x.id) ?? null)
 
   return (
     <Stack gap="lg">
@@ -85,27 +78,15 @@ export function CostsPanel({ accounts, items, names }: {
 
       <Budgets budgets={q.data?.budgets} accounts={accounts} admin={admin} loading={q.isPending} />
 
-      <SectionCard title="Idle resources" icon={IconZzz} iconColor="amber" flush
-        description="Worked out from the inventory, at us-east-1 list prices. Open one to delete or release it through the usual change path.">
-        <DataTable minWidth={760} loading={idle.isPending} isEmpty={(idle.data?.items.length ?? 0) === 0}
-          empty={<EmptyState icon={IconZzz} title="Nothing idle" description="Unattached disks and addresses, instances stopped for two weeks, old snapshots of deleted disks and load balancers with nothing behind them show here." />}
-          columns={['Resource', 'Account', 'Why', 'A month', '']}>
-          {idle.data?.items.map((x) => (
-            <Table.Tr key={x.accountId + x.id}>
-              <Table.Td>
-                <Text size={FS.meta} fw={500}>{x.name}</Text>
-                <Text size={FS.micro} c="dimmed">{KIND_WORD[x.kind] ?? x.kind} · {x.region}{x.name !== x.id && !x.id.startsWith('arn:') ? ` · ${x.id}` : ''}</Text>
-              </Table.Td>
-              <Table.Td><Group gap={6} wrap="nowrap"><Text size={FS.meta}>{x.accountName}</Text><EnvBadge env={x.environment} /></Group></Table.Td>
-              <Table.Td><Text size={FS.meta}>{x.why}</Text></Table.Td>
-              <Table.Td><Text size={FS.meta} fw={500}>{x.atMost ? 'up to ' : ''}{dollars(x.monthly)}</Text></Table.Td>
-              <Table.Td ta="right">
-                <Button size="compact-xs" variant="default" onClick={() => openIdle(x)}
-                  disabled={!items[x.kind]?.some((it) => it.resource.id === x.id)}>Open</Button>
-              </Table.Td>
-            </Table.Tr>
-          ))}
-        </DataTable>
+      <SectionCard title="Paid for, not in use" icon={IconZzz} iconColor="amber"
+        description="Unattached disks and addresses, long-stopped and barely used instances, old snapshots and images, empty load balancers."
+        action={onTab ? <Button size="xs" variant="light" onClick={() => onTab('risks')}>See them in Risks &amp; waste</Button> : undefined}>
+        <Text size={FS.body}>
+          {idle.data
+            ? idle.data.items.length === 0 ? 'Nothing is billing for nothing in what was last read.'
+              : `${idle.data.items.length} resource${idle.data.items.length === 1 ? '' : 's'} bill ${dollars(idle.data.monthly)} a month for nothing. They are listed, with how to clean them up, under Risks & waste.`
+            : 'Reading…'}
+        </Text>
       </SectionCard>
 
       {t.services.length > 0 && (
@@ -122,7 +103,6 @@ export function CostsPanel({ accounts, items, names }: {
         </SectionCard>
       )}
 
-      <ResourceDrawer it={latestRead(open, Object.values(items))} onClose={() => setOpen(null)} names={names} />
     </Stack>
   )
 }

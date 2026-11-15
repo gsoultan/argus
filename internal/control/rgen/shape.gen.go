@@ -336,6 +336,22 @@ func _assertCloudCostShape(m m0.CloudCost) {
 	}
 }
 
+// _assertCloudFindingKeepShape fails to compile if m0.CloudFindingKeep gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertCloudFindingKeepShape(m m0.CloudFindingKeep) {
+	type shape m0.CloudFindingKeep
+	_ = shape{
+		m.Account,
+		m.FindingID,
+		m.Basis,
+		m.Reason,
+		m.KeptBy,
+		m.KeptAt,
+		m.ExpiresAt,
+		m.UntilChange,
+	}
+}
+
 // _assertCloudKeepRunningShape fails to compile if m0.CloudKeepRunning gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertCloudKeepRunningShape(m m0.CloudKeepRunning) {

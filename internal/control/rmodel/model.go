@@ -1199,6 +1199,7 @@ func All() []any {
 		&CloudBudget{},
 		&CloudChange{},
 		&CloudCost{},
+		&CloudFindingKeep{},
 		&CloudKeepRunning{},
 		&CloudResource{},
 		&CloudSchedule{},
@@ -2020,6 +2021,28 @@ func (m *CloudScheduleRun) Schema(t *storm.Table) {
 	t.CheckNamed("cloud_schedule_runs_state_check", "state = ANY (ARRAY['running'::text, 'done'::text, 'partial'::text, 'failed'::text, 'skipped'::text])")
 	t.Index(&m.NextAt).Where("next_at IS NOT NULL").Named("cloud_schedule_runs_next")
 	t.Index(&m.Schedule, &m.DueAt, &m.Action).Unique().Named("cloud_schedule_runs_once")
+}
+
+// CloudFindingKeep is table cloud_finding_keeps: a Risks & waste finding a
+// person chose to keep, why, and until when (migration 079).
+type CloudFindingKeep struct {
+	Account     CloudAccount
+	FindingID   string
+	Basis       string
+	Reason      string
+	KeptBy      string
+	KeptAt      time.Time
+	ExpiresAt   *time.Time
+	UntilChange bool
+}
+
+func (m *CloudFindingKeep) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Account, &m.FindingID)
+	t.Col(&m.Account).ConstraintName("cloud_finding_keeps_account_id_fkey")
+	t.Col(&m.KeptAt).Default("now()")
+	t.Col(&m.UntilChange).Default("false")
+	t.CheckNamed("cloud_finding_keeps_finding_id_check", "(length(finding_id) >= 1) AND (length(finding_id) <= 300)")
+	t.CheckNamed("cloud_finding_keeps_reason_check", "(length(reason) >= 1) AND (length(reason) <= 300)")
 }
 
 // CloudKeepRunning is table cloud_keep_running: an instance every schedule
