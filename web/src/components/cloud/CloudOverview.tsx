@@ -1,6 +1,6 @@
 import { Alert, Badge, Box, Button, Card, Flex, Group, List, Modal, SimpleGrid, Stack, Text, TextInput, ThemeIcon, Tooltip } from '@mantine/core'
 import {
-  IconAlertTriangle, IconBrandAws, IconBrandGoogle, IconCheck, IconCircleCheck, IconMinus, IconCloud, IconDeviceDesktopOff, IconLockOpen, IconPencil, IconRefresh, IconServer2,
+  IconAlertTriangle, IconBrandAws, IconBrandGoogle, IconCheck, IconCircleCheck, IconCoin, IconMinus, IconCloud, IconDeviceDesktopOff, IconLockOpen, IconPencil, IconRefresh, IconServer2,
 } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
@@ -14,12 +14,16 @@ import {
 import { run } from '~/lib/notify'
 import { FS, INK, SP } from '~/theme'
 import { EnvBadge } from './common'
+import { dollars } from '~/lib/cloudCosts'
+import { findingCounts, type CloudFindingsView } from '~/lib/cloudFindings'
 import { ChangeIdentity } from './ChangeIdentity'
 import { RoleSetup } from './RoleSetup'
 import type { CloudTab } from './tabs'
 
-export function CloudOverview({ accounts, bases, instances, firewalls, volumes, addresses, admin, platform = true, onTab }: {
+export function CloudOverview({ accounts, bases, instances, firewalls, findings, admin, platform = true, onTab }: {
   accounts: CloudAccount[]
+  /** Risks & waste: the High risks are shown here, the rest there. */
+  findings?: CloudFindingsView
   bases: CloudBase[]
   instances?: CloudItem[]
   firewalls?: CloudItem[]
@@ -38,8 +42,8 @@ export function CloudOverview({ accounts, bases, instances, firewalls, volumes, 
   const running = instances?.filter((i) => i.resource.state === 'running').length
   const unmatched = instances?.filter((i) => !i.server)
   const open = firewalls?.filter((f) => openToInternet(f.resource).length > 0)
-  const looseDisks = volumes?.filter((v) => v.resource.state === 'available')
-  const looseIPs = addresses?.filter((a) => a.resource.state === 'unattached')
+  const counts = findings ? findingCounts(findings.items) : undefined
+  const high = findings?.items.filter((f) => f.group === 'risk' && f.severity === 'high') ?? []
   const failing = accounts.filter((a) => Object.keys(a.syncErrors).length > 0 || staleness(a) === 'late')
 
   return (
@@ -50,10 +54,12 @@ export function CloudOverview({ accounts, bases, instances, firewalls, volumes, 
         <Stat label="With an Argus server" value={instances ? `${instances.length - (unmatched?.length ?? 0)} of ${instances.length}` : undefined}
           icon={IconCircleCheck} tone={unmatched && unmatched.length > 0 ? 'warn' : 'ok'} color="amber"
           sub="Matched by address or name" onClick={() => onTab('instances')} />
-        <Stat label="Open to the internet" value={open?.length} icon={IconLockOpen} tone={open && open.length > 0 ? 'warn' : 'ok'} color="rose"
-          sub="Firewalls letting anyone reach SSH, RDP or a database" onClick={() => onTab('network')} />
-        <Stat label="Accounts" value={accounts.length} icon={IconCloud}
-          sub={`${accounts.reduce((n, a) => n + a.regions.filter((r) => r !== 'global').length, 0)} regions read every 5 minutes, and every 30 seconds while something changes`} />
+        <Stat label="Risks" value={counts ? (counts.high ? `${counts.high} high` : counts.risks) : undefined} icon={IconLockOpen}
+          tone={counts && counts.risks > 0 ? 'warn' : 'ok'} color="rose"
+          sub={counts ? `${counts.otherRisks} medium or low · see Risks & waste` : undefined} onClick={() => onTab('risks')} />
+        <Stat label="Not in use" value={findings ? dollars(findings.monthly) : undefined} icon={IconCoin}
+          tone={findings && findings.monthly > 0 ? 'warn' : 'ok'} color="amber"
+          sub={counts ? `a month, across ${counts.waste} resource${counts.waste === 1 ? '' : 's'}` : undefined} onClick={() => onTab('risks')} />
       </SimpleGrid>
 
       <Box style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))', gap: 16 }}>
@@ -72,20 +78,23 @@ export function CloudOverview({ accounts, bases, instances, firewalls, volumes, 
                 text={`Sessions on ${names(unmatched)} are not recorded. Add them as servers with the agent.`}
                 action={<Button size="xs" variant="default" onClick={() => onTab('instances')}>See them</Button>} />
             )}
-            {open && open.length > 0 && (
+            {high.slice(0, 3).map((f) => (
+              <Finding key={f.accountId + f.id} color="rose" icon={IconLockOpen} title={f.title} text={`${f.name} · ${f.accountName}. ${f.why}`}
+                action={<Button size="xs" variant="default" onClick={() => onTab('risks')}>Review</Button>} />
+            ))}
+            {findings && findings.items.length > high.slice(0, 3).length && (
+              <Box px="md" py="sm" style={{ borderTop: '1px solid var(--color-line)' }}>
+                <Button size="compact-sm" variant="subtle" onClick={() => onTab('risks')}>
+                  See all {findings.items.length} in Risks &amp; waste
+                </Button>
+              </Box>
+            )}
+            {!findings && open && open.length > 0 && (
               <Finding color="rose" icon={IconLockOpen}
                 title={`${open.length} ${open.length === 1 ? 'firewall is' : 'firewalls are'} open to the internet`}
                 text={open.slice(0, 3).map((f) => `${f.resource.name} (${openToInternet(f.resource).join(', ')})`).join(', ') +
                   (open.length > 3 ? ` and ${open.length - 3} more` : '') + '. Servers with the agent need no inbound SSH or RDP.'}
                 action={<Button size="xs" variant="default" onClick={() => onTab('network')}>Review</Button>} />
-            )}
-            {((looseDisks?.length ?? 0) + (looseIPs?.length ?? 0)) > 0 && (
-              <Finding color="amber" icon={IconAlertTriangle}
-                title="Paid for, not in use"
-                text={[looseDisks?.length ? `${looseDisks.length} disk${looseDisks.length === 1 ? '' : 's'} not attached to anything` : '',
-                  looseIPs?.length ? `${looseIPs.length} public address${looseIPs.length === 1 ? '' : 'es'} not attached` : '']
-                  .filter(Boolean).join(' and ') + `. ${[...providers].map((p) => PROVIDER_LABEL[p]).join(' and ')} charge${providers.size === 1 ? 's' : ''} for both while they sit there.`}
-                action={<Button size="xs" variant="default" onClick={() => onTab(looseDisks?.length ? 'disks' : 'network')}>See them</Button>} />
             )}
             {failing.map((a) => (
               <Finding key={a.id} color="amber" icon={IconRefresh}
@@ -94,9 +103,9 @@ export function CloudOverview({ accounts, bases, instances, firewalls, volumes, 
                   ? `${Object.keys(a.syncErrors).length} region${Object.keys(a.syncErrors).length === 1 ? '' : 's'} failed: ${Object.values(a.syncErrors)[0]}. What is shown there is from the last good read.`
                   : `Last read ${relTime(a.syncedAt)}. What is shown is from then.`} />
             ))}
-            {unmatched?.length === 0 && open?.length === 0 && !looseDisks?.length && !looseIPs?.length && failing.length === 0 && (
+            {unmatched?.length === 0 && (findings ? findings.items.length === 0 : open?.length === 0) && failing.length === 0 && (
               <Box p="md"><EmptyState compact icon={IconCircleCheck} title="Nothing needs a look"
-                description="Every instance has an Argus server, no firewall is open to the internet, and every account was read." /></Box>
+                description="Every instance has an Argus server, Risks & waste found nothing, and every account was read." /></Box>
             )}
           </Stack>
         </SectionCard>

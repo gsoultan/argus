@@ -11,6 +11,8 @@ import { SchedulesList } from '~/components/cloud/Schedules'
 import { InstancesTable, NetworkTables, StorageTables } from '~/components/cloud/CloudTables'
 import { NewFirewall } from '~/components/cloud/NetworkActions'
 import { NewAddress, NewDisk } from '~/components/cloud/StorageActions'
+import { FindingsPanel } from '~/components/cloud/Findings'
+import { cloudFindingsQuery } from '~/lib/cloudFindings'
 import { CLOUD_TABS, CLOUD_TAB_LABEL, parseCloudTab, type CloudTab } from '~/components/cloud/tabs'
 import { ButtonLink } from '~/components/links'
 import { PageBody, PageHeader, Toolbar } from '~/components/page'
@@ -49,6 +51,8 @@ function Cloud() {
   const schedules = useQuery(cloudSchedulesQuery({ enabled: tab === 'schedules' || tab === 'instances' }))
   const access = useQuery(cloudAccessQuery({ waiting: true }))
   const waitingAccess = access.data?.grants.length ?? 0
+  const findings = useQuery(cloudFindingsQuery())
+  const highRisks = findings.data?.items.filter((f) => f.group === 'risk' && f.severity === 'high').length ?? 0
   const waitingSchedules = schedules.data?.schedules.filter((s) => s.state === 'awaiting_approval' || s.pending).length ?? 0
   const q: Record<CloudKind, { data?: CloudItem[]; isPending: boolean }> = {
     instance: useQuery(cloudItemsQuery('instance')),
@@ -119,7 +123,7 @@ function Cloud() {
             {canChange && tab === 'disks' && <Button size="sm" leftSection={<IconCirclePlus size={16} />} onClick={() => setMaking('disk')}>New disk</Button>}
             {canChange && tab === 'network' && <Button size="sm" variant="default" leftSection={<IconCirclePlus size={16} />} onClick={() => setMaking('address')}>Allocate an Elastic IP</Button>}
             {canChange && tab === 'network' && <Button size="sm" leftSection={<IconShieldPlus size={16} />} onClick={() => setMaking('firewall')}>New security group</Button>}
-            {canChange && tab !== 'schedules' && tab !== 'disks' && tab !== 'network' && tab !== 'access' && tab !== 'costs' && <ButtonLink to="/cloud/launch" size="sm" leftSection={<IconCirclePlus size={16} />}>Launch an instance</ButtonLink>}
+            {canChange && tab !== 'schedules' && tab !== 'disks' && tab !== 'network' && tab !== 'access' && tab !== 'costs' && tab !== 'risks' && <ButtonLink to="/cloud/launch" size="sm" leftSection={<IconCirclePlus size={16} />}>Launch an instance</ButtonLink>}
           </Group>
         ) : undefined}
         tabs={hasAccounts ? (
@@ -129,6 +133,7 @@ function Cloud() {
                 <Tabs.Tab key={t} value={t} fz="sm" rightSection={
                   t === 'instances' ? badge(count('instance')) : t === 'disks' ? badge(count('volume')) : t === 'network' ? badge(count('firewall'))
                     : t === 'changes' && pending.data?.length ? <Badge size="xs" variant="filled" color="amber" circle={false}>{pending.data.length}</Badge>
+                    : t === 'risks' && highRisks ? <Badge size="xs" variant="filled" color="rose" circle={false}>{highRisks} high</Badge>
                     : t === 'access' && waitingAccess ? <Badge size="xs" variant="filled" color="amber" circle={false}>{waitingAccess}</Badge>
                     : t === 'schedules' && waitingSchedules ? <Badge size="xs" variant="filled" color="amber" circle={false}>{waitingSchedules}</Badge> : undefined
                 }>
@@ -142,7 +147,7 @@ function Cloud() {
       <PageBody>
         <Stack gap="md">
           {accounts.error && <Alert color="rose" variant="light">{(accounts.error as Error).message}</Alert>}
-          {tab !== 'overview' && tab !== 'changes' && tab !== 'schedules' && tab !== 'access' && tab !== 'costs' && hasAccounts && (
+          {tab !== 'overview' && tab !== 'changes' && tab !== 'schedules' && tab !== 'access' && tab !== 'costs' && tab !== 'risks' && hasAccounts && (
             <Toolbar right={<Text size={FS.meta} c="dimmed">{newest ? `Read ${relTime(newest)}` : null}</Text>}>
               <TextInput placeholder="Name, id, address or tag" leftSection={<IconSearch size={14} />} value={search}
                 onChange={(e) => setSearch(e.currentTarget.value)} w={{ base: '100%', sm: 300 }} aria-label="Search cloud resources" />
@@ -155,6 +160,7 @@ function Cloud() {
           {tab === 'overview' && (
             accounts.data ? (
               <CloudOverview accounts={list} bases={accounts.data.bases} admin={admin} platform={!me?.org || me.org.default} onTab={setTab}
+                findings={findings.data}
                 instances={q.instance.data} firewalls={q.firewall.data} volumes={q.volume.data} addresses={q.address.data} />
             ) : (
               <Group justify="center" p="xl"><Text c="dimmed" size={FS.body}>Loading…</Text></Group>
@@ -165,7 +171,8 @@ function Cloud() {
             <SchedulesList schedules={schedules.data?.schedules} keep={schedules.data?.keepRunning} loading={schedules.isPending} names={names} />
           )}
           {tab === 'access' && <AccessPanel accounts={list} />}
-          {tab === 'costs' && <CostsPanel accounts={list} names={names} items={{ volume: q.volume.data, address: q.address.data, instance: q.instance.data, snapshot: q.snapshot.data, 'load-balancer': q['load-balancer'].data }} />}
+          {tab === 'risks' && <FindingsPanel names={names} admin={admin} />}
+          {tab === 'costs' && <CostsPanel accounts={list} onTab={setTab} />}
           {tab === 'changes' && (
             <ChangesList changes={changes.data} loading={changes.isPending}
               empty={{ title: 'No changes yet', text: 'Launching, stopping, resizing and removing instances from Argus shows up here, with who asked, who approved and what AWS said.' }} />
