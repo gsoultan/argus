@@ -36,7 +36,8 @@ test('a huge recording is downloaded only when asked, then plays', async ({ page
  * recording goes, and the page says who removed it and why instead of
  * offering a replay or saying it is missing.
  */
-test('an admin removes a recording, and the session says so', async ({ page }) => {
+test('an admin removes a recording, and the session says so', async ({ page, request }) => {
+  await request.post('/__stub/restore-removable')
   await page.goto('/')
   await page.getByLabel(/^email$/i).fill('dev@northwind.id')
   await page.getByLabel(/^password$/i).fill('stub-password')

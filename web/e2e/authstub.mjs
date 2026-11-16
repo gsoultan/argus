@@ -361,6 +361,16 @@ const server = createServer(async (req, res) => {
   }
   // For the large-recording test: whether the player downloaded unasked.
   if (path === '/__stub/huge-fetches') return json(res, 200, { count: HUGE_FETCHES })
+  // Each browser project removes s-removable once against this one stub, so
+  // the test puts its recording back before it starts.
+  if (path === '/__stub/restore-removable' && req.method === 'POST') {
+    const target = /** @type {any} */ (SESSIONS.find((/** @type {any} */ v) => v.id === 's-removable'))
+    Object.assign(target, {
+      recordingKey: 'recordings/2026-11-16/removable.cast', recordingRemovedAt: undefined,
+      recordingRemovedBy: undefined, recordingRemovedReason: undefined,
+    })
+    return json(res, 200, { restored: true })
+  }
   if (path.startsWith('/api/')) {
     if (!signedIn(req)) return json(res, 401, { error: 'unauthorized' })
     if (orgOf(req).slug !== 'default') {
