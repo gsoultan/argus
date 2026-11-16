@@ -11,6 +11,7 @@ import { HostKeyUnpinned } from '~/components/server/hostKey'
 import { LoginAccounts } from '~/components/server/layout'
 import { SystemCard, systemQuery } from '~/components/server/SystemCard'
 import { CloudCard } from '~/components/server/CloudCard'
+import { SuggestionBanner } from '~/components/cloud/Suggestion'
 import type { ServerTab } from '~/components/server/tabs'
 import { directSshLabel } from '~/lib/directSsh'
 import { agentUpdateQuery, assignmentsQuery, policyQuery, teamAssignmentsQuery } from '~/lib/queries'
@@ -54,6 +55,7 @@ export function OverviewTab({ asset, sessions, onTab, canFreeSpace = false }: {
   return (
     <Stack gap="md">
       <HostKeyUnpinned asset={asset} />
+      <SuggestionBanner assetId={asset.id} />
 
       <SimpleGrid cols={{ base: 2, md: 4 }} spacing={{ base: 'xs', sm: 'sm' }}>
         <Stat

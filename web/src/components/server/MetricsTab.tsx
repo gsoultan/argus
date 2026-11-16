@@ -6,6 +6,7 @@ import { absTime, now as clockNow } from '~/components/primitives'
 import { span as spanWords, useTicker } from '~/components/server/RunPanel'
 import { LiveBadge, LowStrip, bitRate, diskFull, systemQuery } from '~/components/server/SystemCard'
 import { get, live } from '~/lib/live'
+import { SuggestionBanner } from '~/components/cloud/Suggestion'
 import { LIVE_WINDOW_MS, useLiveUsage, type LiveUsage } from '~/lib/liveUsage'
 import { bytes, warningTone } from '~/lib/resourcesLow'
 import { FS } from '~/theme'
@@ -172,6 +173,7 @@ export function MetricsTab({ asset }: { asset: Asset }) {
       {sys?.usage && fresh && (sys.warnings?.length ?? 0) > 0 && (
         <Box mx={-16} mt={-16}><LowStrip warnings={sys.warnings!} faded={false} /></Box>
       )}
+      <SuggestionBanner assetId={asset.id} />
       {sys && <NowTiles sys={sys} fresh={fresh} live={liveU} />}
       {isLive && liveU.samples.length >= 2 && <LiveCharts live={liveU} cpus={sys?.system?.cpus ?? 0} />}
       <Card padding={0}>

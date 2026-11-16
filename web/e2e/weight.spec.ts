@@ -140,8 +140,11 @@ const BUDGET_KB = {
    * 312.4 kB with the console noticing a new build: the check that brings a
    * tab left open across an update onto the new console, which has to be in
    * the shell that tab is running.
+   * 313.0 kB on main after the Cloud Scaling tab and its names joined the
+   * shell's route table (load balancers, Auto Scaling groups): over by a few
+   * bytes, so the budget moves to 314.
    */
-  overview: 313,
+  overview: 314,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most
