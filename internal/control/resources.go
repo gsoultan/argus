@@ -244,6 +244,8 @@ func (a *API) RunResourceWatch(ctx context.Context, interval time.Duration) {
 		err := a.store.ForEachTenant(ctx, func(tctx context.Context, _ *Tenant) {
 			a.watchResources(tctx, now)
 			if prune {
+				// Hourly is often enough for reservations a month from ending.
+				a.watchReservations(tctx, now)
 				if err := a.store.pruneUsageHistory(tctx, now); err != nil {
 					a.log.Error("usage history prune", "error", err)
 				}

@@ -28,6 +28,9 @@ export const ALERT_KINDS: { kind: AlertKind; label: string; description: string;
   { kind: 'resources', label: 'Running low',
     description: 'An asset is running low on disk (90% full, critical at 95%) or memory (10% left, critical at 5%). Once a day per asset and resource.',
     who: 'Admins, auditors' },
+  { kind: 'cloud', label: 'Cloud',
+    description: 'A Reserved Instance, Savings Plan or capacity reservation ends in 30 days, and again at 7. None renews by itself.',
+    who: 'Admins, auditors' },
 ]
 
 /* ── Fixture ─────────────────────────────────────────────────────────────── */
