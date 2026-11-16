@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -53,6 +54,13 @@ func (p *Provider) Inventory(ctx context.Context, a cloud.Account, region string
 			got = lbs
 			if k == cloud.KindTargetGroup {
 				got = tgs
+			}
+		case cloud.KindScalingGroup:
+			// Groups only add to what is shown: a read that fails keeps the
+			// last one rather than failing the region's inventory.
+			if got, err = scalingGroups(ctx, cfg, region); err != nil {
+				snap.Kinds = slices.DeleteFunc(slices.Clone(snap.Kinds), func(x cloud.Kind) bool { return x == cloud.KindScalingGroup })
+				got, err = nil, nil
 			}
 		default:
 			err = fmt.Errorf("AWS has no inventory of %q yet", k)

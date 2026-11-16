@@ -29,7 +29,8 @@ var ReadPolicy = []string{
 
 // ManagePolicy is what the manage role may do: the changes Argus makes to
 // instances, disks, snapshots, images, Elastic IPs, security groups and
-// load balancer targets and capacity reservations, buying Reserved
+// load balancer targets, target groups and load balancers (made, never
+// deleted), Auto Scaling group sizes, capacity reservations, buying Reserved
 // Instances and Savings Plans (which Argus only does with a second person's
 // approval, every time), and nothing else. No
 // IAM, so a change cannot grant itself more; no iam:PassRole, so an
@@ -55,6 +56,9 @@ var ManagePolicy = []string{
 	"ec2:CreateCapacityReservation", "ec2:CancelCapacityReservation",
 	"ec2:PurchaseReservedInstancesOffering",
 	"savingsplans:DescribeSavingsPlansOfferings", "savingsplans:CreateSavingsPlan",
+	"elasticloadbalancing:CreateTargetGroup", "elasticloadbalancing:ModifyTargetGroup",
+	"elasticloadbalancing:CreateLoadBalancer", "elasticloadbalancing:CreateListener", "elasticloadbalancing:AddTags",
+	"autoscaling:UpdateAutoScalingGroup",
 }
 
 // ReadRoleName and ManageRoleName are the roles the template makes.

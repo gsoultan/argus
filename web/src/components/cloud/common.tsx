@@ -11,6 +11,7 @@ import { FS, INK, SP } from '~/theme'
 import { InstanceActions, InstanceHealth } from './InstanceActions'
 import { InstanceSchedule } from './Schedules'
 import { FirewallActions, TargetActions } from './NetworkActions'
+import { HealthCheckPanel, ScalingGroupActions } from './BalancerActions'
 import { StorageActions } from './StorageActions'
 
 export function EnvBadge({ env }: { env: CloudEnvironment }) {
@@ -113,7 +114,9 @@ export function ResourceDrawer({ it, onClose, names }: {
           {r.kind === 'instance' && <InstanceSchedule it={it} />}
           {(r.kind === 'volume' || r.kind === 'snapshot' || r.kind === 'image' || r.kind === 'address') && <StorageActions it={it} />}
           {r.kind === 'firewall' && <FirewallActions it={it} />}
+          {r.kind === 'target-group' && <HealthCheckPanel it={it} />}
           {r.kind === 'target-group' && <TargetActions it={it} />}
+          {r.kind === 'scaling-group' && <ScalingGroupActions it={it} />}
           <Box style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
             <Field label="Id"><Text size={FS.meta} ff="monospace" style={{ overflowWrap: 'anywhere' }}>{r.id}</Text></Field>
             <Field label="Account"><Text size={FS.meta}>{it.accountName}</Text></Field>
@@ -155,7 +158,7 @@ export function ResourceDrawer({ it, onClose, names }: {
 
 const LINK_LABEL: Record<string, string> = {
   firewall: 'Firewall', subnet: 'Subnet', volume: 'Disk', instance: 'Instance', network: 'Network', snapshot: 'Snapshot', image: 'Image',
-  'load-balancer': 'Load balancer', 'target-group': 'Target group',
+  'load-balancer': 'Load balancer', 'target-group': 'Target group', 'scaling-group': 'Auto Scaling group',
 }
 
 function KeyValues({ m }: { m: Record<string, string> }) {

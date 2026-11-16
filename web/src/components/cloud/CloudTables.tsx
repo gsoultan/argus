@@ -1,9 +1,9 @@
-import { Badge, Group, SegmentedControl, Stack, Table, Text, Tooltip } from '@mantine/core'
-import { IconArrowsSplit, IconCamera, IconDeviceFloppy, IconNetwork, IconPhoto, IconServer2 } from '@tabler/icons-react'
+import { Badge, Button, Group, SegmentedControl, Stack, Table, Text, Tooltip } from '@mantine/core'
+import { IconArrowsSplit, IconCamera, IconCirclePlus, IconDeviceFloppy, IconNetwork, IconPhoto, IconServer2, IconStack2 } from '@tabler/icons-react'
 import { useState } from 'react'
 import { DataTable, EmptyState } from '~/components/page'
 import { relTime, rowNav } from '~/components/primitives'
-import { latestRead, openToInternet, scheduleOf, type CloudItem } from '~/lib/cloud'
+import { groupSizeOf, latestRead, openToInternet, scheduleOf, type CloudItem } from '~/lib/cloud'
 import { FS, INK } from '~/theme'
 import { NameCell, OriginBadge, ResourceDrawer, ServerCell, StateBadge, WhereCell } from './common'
 import { SecurityGroupMap } from './SecurityMap'
@@ -181,7 +181,7 @@ type NetView = 'firewalls' | 'networks' | 'addresses' | 'balancers' | 'targets'
 
 const TG_COLOR: Record<string, string> = { healthy: 'teal', degraded: 'rose', empty: 'amber', unused: 'slate' }
 
-export function NetworkTables({ firewalls, instances, networks, subnets, addresses, balancers, targetGroups, loading, names, filtered }: {
+export function NetworkTables({ firewalls, instances, networks, subnets, addresses, balancers, targetGroups, loading, names, filtered, onMake }: {
   firewalls?: CloudItem[]
   /** For the map: which instances use which groups. */
   instances?: CloudItem[]
@@ -193,6 +193,8 @@ export function NetworkTables({ firewalls, instances, networks, subnets, address
   loading: boolean
   names: Map<string, string>
   filtered: boolean
+  /** Opens a new load balancer or target group; absent when the person may not make one. */
+  onMake?: (what: 'balancer' | 'target-group') => void
 }) {
   const [view, setView] = useState<NetView>('firewalls')
   const [drawn, setDrawn] = useState<'list' | 'map'>('list')
@@ -211,6 +213,12 @@ export function NetworkTables({ firewalls, instances, networks, subnets, address
       {view === 'firewalls' && (
         <SegmentedControl size="xs" value={drawn} onChange={(v) => setDrawn(v as 'list' | 'map')} aria-label="Show firewalls as"
           data={[{ value: 'list', label: 'List' }, { value: 'map', label: 'Map' }]} />
+      )}
+      {view === 'balancers' && onMake && (
+        <Button size="xs" variant="default" leftSection={<IconCirclePlus size={14} />} onClick={() => onMake('balancer')}>New load balancer</Button>
+      )}
+      {view === 'targets' && onMake && (
+        <Button size="xs" variant="default" leftSection={<IconCirclePlus size={14} />} onClick={() => onMake('target-group')}>New target group</Button>
       )}
       </Group>
       {view === 'firewalls' && drawn === 'map' && (
@@ -344,5 +352,48 @@ export function NetworkTables({ firewalls, instances, networks, subnets, address
       )}
       {drawer}
     </Stack>
+  )
+}
+
+/** AWS Auto Scaling groups: how many each wants, between what, and what it runs. */
+export function ScalingGroupsTable({ items, loading, names, filtered, targetGroups }: TableProps & { targetGroups?: CloudItem[] }) {
+  const { show, drawer } = useDrawer(names, [items])
+  return (
+    <>
+      <DataTable minWidth={860} loading={loading} isEmpty={(items?.length ?? 0) === 0}
+        empty={<EmptyState icon={IconStack2} title="No Auto Scaling groups" description={emptyText(filtered, 'Auto Scaling groups')} />}
+        columns={['Auto Scaling group', 'Account and region', 'Servers', 'Launches from', 'Target groups', 'State']}>
+        {items?.map((it) => {
+          const r = it.resource
+          const s = groupSizeOf(r)
+          const tgs = (r.links ?? []).filter((l) => l.kind === 'target-group')
+          const tgName = (id: string) => targetGroups?.find((t) => t.accountId === it.accountId && t.resource.id === id)?.resource.name ?? names.get(id) ?? id.split('/').at(-2) ?? id
+          const stack = r.tags?.['aws:cloudformation:stack-name']
+          return (
+            <Table.Tr key={it.accountId + r.id} {...rowNav(() => show(it))}>
+              <Table.Td maw={260}>
+                <Text fw={600} size={FS.body} truncate>{r.name}</Text>
+                {stack && <Text size={FS.micro} c="dimmed" truncate>CloudFormation · {stack}</Text>}
+              </Table.Td>
+              <Table.Td><WhereCell it={it} /></Table.Td>
+              <Table.Td>
+                <Text size={FS.meta}><b>{s.running}</b> of {s.min === s.max ? s.min : `${s.min}–${s.max}`}</Text>
+                {s.running !== s.desired && <Text size={FS.micro} c="dimmed">wants {s.desired}</Text>}
+              </Table.Td>
+              <Table.Td><Text size={FS.meta} ff="monospace" c={r.details?.launchTemplate || r.details?.launchConfiguration ? undefined : 'dimmed'}>
+                {r.details?.launchTemplate || r.details?.launchConfiguration || '—'}
+              </Text></Table.Td>
+              <Table.Td><Text size={FS.meta} c={tgs.length ? undefined : 'dimmed'}>{tgs.length ? tgs.map((l) => tgName(l.id)).join(', ') : 'None'}</Text></Table.Td>
+              <Table.Td>
+                {r.details?.suspended
+                  ? <Tooltip label="Some of its processes are suspended in AWS"><Badge variant="light" color="amber" radius="sm">Partly suspended</Badge></Tooltip>
+                  : <StateBadge state={r.state} />}
+              </Table.Td>
+            </Table.Tr>
+          )
+        })}
+      </DataTable>
+      {drawer}
+    </>
   )
 }

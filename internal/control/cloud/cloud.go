@@ -33,7 +33,7 @@ const (
 // Kinds is every kind the inventory reads, in the order the console lists
 // them.
 var Kinds = []Kind{KindInstance, KindVolume, KindFirewall, KindNetwork, KindSubnet, KindAddress, KindSnapshot, KindImage,
-	KindLoadBalancer, KindTargetGroup}
+	KindLoadBalancer, KindTargetGroup, KindScalingGroup}
 
 // ValidKind reports whether k is one the inventory knows.
 func ValidKind(k Kind) bool {

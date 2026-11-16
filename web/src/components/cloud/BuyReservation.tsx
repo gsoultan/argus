@@ -182,7 +182,7 @@ export function BuyReservation({ onClose, preset }: { onClose: () => void; prese
         <Alert color="amber" variant="light" icon={<IconUserCheck size={16} />} p="sm">
           <Text size={FS.meta} fw={600}>Needs a second person</Text>
           <Text size={FS.meta}>
-            Buying is always approved by someone else, in every environment, and never by the person who asked. Argus checks AWS's price
+            Buying is always approved by someone else, in every environment. If nobody else in the organization can approve, you approve it yourself, and the audit log says so. Argus checks AWS's price
             again just before it buys; if it changed, nothing is bought and you are asked again.
           </Text>
         </Alert>

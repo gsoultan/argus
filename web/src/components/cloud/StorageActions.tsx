@@ -23,7 +23,7 @@ import { ChangeModal, TagsChange, useSubmit } from './ChangeModal'
  */
 
 const KIND_WORD: Record<string, string> = {
-  volume: 'disk', snapshot: 'snapshot', image: 'image', address: 'Elastic IP', firewall: 'security group', 'target-group': 'target group',
+  volume: 'disk', snapshot: 'snapshot', image: 'image', address: 'Elastic IP', firewall: 'security group', 'target-group': 'target group', 'scaling-group': 'Auto Scaling group',
 }
 
 /** The account an item is in, when the person may change it there. */

@@ -25,7 +25,7 @@ export function accountIdText(provider: CloudProvider, id: string): string {
 /** A Google Cloud project id: 6 to 30 lower case letters, digits and dashes, starting with a letter. */
 export const GCP_PROJECT = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/
 export type CloudKind = 'instance' | 'volume' | 'firewall' | 'network' | 'subnet' | 'address' | 'snapshot' | 'image'
-  | 'load-balancer' | 'target-group'
+  | 'load-balancer' | 'target-group' | 'scaling-group'
 
 export interface CloudAccount {
   id: string
@@ -350,11 +350,12 @@ export type CloudStorageAction =
 export type CloudNetworkAction =
   | 'firewall-create' | 'firewall-rules' | 'firewall-delete' | 'instance-firewalls' | 'target-register' | 'target-deregister'
 export type CloudCapacityAction = 'capacity-create' | 'capacity-cancel' | 'ri-buy' | 'sp-buy'
+export type CloudBalancingAction = 'target-group-create' | 'health-check' | 'balancer-create' | 'group-size'
 
 /** Whether an action buys a one- or three-year commitment, which always needs someone else. */
 export const isBuy = (a: CloudAction) => a === 'ri-buy' || a === 'sp-buy'
 export type CloudAction = 'launch' | 'start' | 'stop' | 'hibernate' | 'reboot' | 'resize' | 'tags' | 'protect' | 'unprotect' | 'settings' | 'remove'
-  | CloudStorageAction | CloudNetworkAction | CloudCapacityAction
+  | CloudStorageAction | CloudNetworkAction | CloudCapacityAction | CloudBalancingAction
 export type CloudChangeState = 'awaiting_approval' | 'applying' | 'applied' | 'failed' | 'declined' | 'cancelled'
 
 export interface CloudChange {
@@ -853,6 +854,7 @@ export const ACTION_LEVEL: Record<CloudAction, CloudChange['level']> = {
   'firewall-create': 'change', 'firewall-rules': 'change', 'firewall-delete': 'remove', 'instance-firewalls': 'change',
   'target-register': 'change', 'target-deregister': 'change',
   'capacity-create': 'change', 'capacity-cancel': 'change', 'ri-buy': 'remove', 'sp-buy': 'remove',
+  'target-group-create': 'change', 'health-check': 'change', 'balancer-create': 'change', 'group-size': 'change',
 }
 
 /** The permissions each storage change takes, as the manage role must grant them. */
@@ -869,6 +871,10 @@ export const ACTION_NEEDS: Partial<Record<CloudAction, string[]>> = {
   'target-register': ['elasticloadbalancing:RegisterTargets'], 'target-deregister': ['elasticloadbalancing:DeregisterTargets'],
   'capacity-create': ['ec2:CreateCapacityReservation', 'ec2:CreateTags'], 'capacity-cancel': ['ec2:CancelCapacityReservation'],
   'ri-buy': ['ec2:PurchaseReservedInstancesOffering'], 'sp-buy': ['savingsplans:DescribeSavingsPlansOfferings', 'savingsplans:CreateSavingsPlan'],
+  'target-group-create': ['elasticloadbalancing:CreateTargetGroup', 'elasticloadbalancing:AddTags'],
+  'health-check': ['elasticloadbalancing:ModifyTargetGroup'],
+  'balancer-create': ['elasticloadbalancing:CreateLoadBalancer', 'elasticloadbalancing:CreateListener', 'elasticloadbalancing:AddTags'],
+  'group-size': ['autoscaling:UpdateAutoScalingGroup'],
 }
 
 /** Whether an account's manage role lacks what an action takes. */
@@ -992,3 +998,72 @@ export const AWS_IDENTITY_POLICY = `{
     "Resource": "arn:aws:iam::*:role/Argus*"
   }]
 }`
+
+/* ── Load balancers, target groups and Auto Scaling groups ─────────────── */
+
+/** How a target group tells a target is well. */
+export interface CloudHealthCheck {
+  protocol: 'HTTP' | 'HTTPS' | 'TCP'
+  path?: string
+  /** "traffic-port", the target's own, or a number. */
+  port?: string
+  intervalSeconds: number
+  healthy: number
+  unhealthy: number
+  /** HTTP codes that mean well, like 200 or 200-399. */
+  matcher?: string
+}
+
+/** A load balancer, before traffic, a month: AWS's hourly charge in the cheaper regions. */
+export const BALANCER_MONTHLY = 0.0225 * 730
+
+/** A target group or load balancer name: 1 to 32 letters, digits and hyphens, not starting or ending with one. */
+export const LB_NAME = /^[A-Za-z0-9]([A-Za-z0-9-]{0,30}[A-Za-z0-9])?$/
+
+/** AWS's defaults for a new target group of a protocol. */
+export function defaultHealthCheck(protocol: CloudHealthCheck['protocol']): CloudHealthCheck {
+  return protocol === 'TCP'
+    ? { protocol, port: 'traffic-port', intervalSeconds: 30, healthy: 5, unhealthy: 2 }
+    : { protocol, path: '/', port: 'traffic-port', intervalSeconds: 30, healthy: 5, unhealthy: 2, matcher: '200' }
+}
+
+/** A target group's health check as read, or its protocol's defaults. */
+export function healthCheckOf(r: CloudResource): CloudHealthCheck {
+  const d = r.details ?? {}
+  const p = (d.healthCheckProtocol || d.protocol || 'HTTP') as CloudHealthCheck['protocol']
+  const def = defaultHealthCheck(p === 'TCP' ? 'TCP' : p)
+  const n = (s: string | undefined, or: number) => (s && Number.isFinite(Number(s)) ? Number(s) : or)
+  return {
+    protocol: p, path: p === 'TCP' ? undefined : d.healthCheckPath || def.path, port: d.healthCheckPort || 'traffic-port',
+    intervalSeconds: n(d.healthCheckInterval, def.intervalSeconds), healthy: n(d.healthyThreshold, def.healthy),
+    unhealthy: n(d.unhealthyThreshold, def.unhealthy), matcher: p === 'TCP' ? undefined : d.matcher || def.matcher,
+  }
+}
+
+/** What is wrong with a health check, or null; the control plane checks the same. */
+export function healthProblem(h: CloudHealthCheck): string | null {
+  if (h.protocol !== 'TCP') {
+    if (!/^\/[A-Za-z0-9._~!$&'()*+,;=:@%/?-]*$/.test(h.path ?? '')) return 'A path starts with /, like /health'
+    if (h.matcher && !/^[1-5][0-9]{2}(-[1-5][0-9]{2})?(,[1-5][0-9]{2}(-[1-5][0-9]{2})?)*$/.test(h.matcher)) return 'Healthy codes are like 200, 200-299 or 200,301'
+  }
+  if (h.port && h.port !== 'traffic-port' && !(/^\d{1,5}$/.test(h.port) && Number(h.port) >= 1 && Number(h.port) <= 65535)) return 'A port is 1 to 65535'
+  if (h.intervalSeconds < 5 || h.intervalSeconds > 300) return 'Check every 5 to 300 seconds'
+  if ([h.healthy, h.unhealthy].some((x) => x < 2 || x > 10)) return '2 to 10 checks in a row'
+  return null
+}
+
+/** The health check in a sentence, as the control plane says it. */
+export function healthWords(h: CloudHealthCheck): string {
+  let what = h.protocol
+  if (h.protocol !== 'TCP' && h.path) what += ` ${h.path}`
+  if (h.port && h.port !== 'traffic-port') what += ` on port ${h.port}`
+  if (h.protocol !== 'TCP') what += ` answering ${h.matcher || '200'}`
+  return `${what}, every ${h.intervalSeconds}s, healthy after ${h.healthy}, unhealthy after ${h.unhealthy}`
+}
+
+/** An Auto Scaling group's size as read. */
+export function groupSizeOf(r: CloudResource): { min: number; max: number; desired: number; running: number } {
+  const n = (s?: string) => Number(s ?? 0) || 0
+  const d = r.details ?? {}
+  return { min: n(d.min), max: n(d.max), desired: n(d.desired), running: n(d.running) }
+}

@@ -357,6 +357,10 @@ var actionNeeds = map[cloud.Action][]string{
 	cloud.ActionCapacityCancel:    {"ec2:CancelCapacityReservation"},
 	cloud.ActionRIBuy:             {"ec2:PurchaseReservedInstancesOffering"},
 	cloud.ActionSPBuy:             {"savingsplans:DescribeSavingsPlansOfferings", "savingsplans:CreateSavingsPlan"},
+	cloud.ActionTargetGroupCreate: {"elasticloadbalancing:CreateTargetGroup", "elasticloadbalancing:AddTags"},
+	cloud.ActionHealthCheck:       {"elasticloadbalancing:ModifyTargetGroup"},
+	cloud.ActionBalancerCreate:    {"elasticloadbalancing:CreateLoadBalancer", "elasticloadbalancing:CreateListener", "elasticloadbalancing:AddTags"},
+	cloud.ActionGroupSize:         {"autoscaling:UpdateAutoScalingGroup"},
 }
 
 // Needs is the permissions an action takes.

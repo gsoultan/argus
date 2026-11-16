@@ -144,6 +144,19 @@ func TargetGroup(g elbtypes.TargetGroup, region string, tags map[string]string, 
 	set(r.Details, "targetType", string(g.TargetType))
 	set(r.Details, "healthCheckPath", awssdk.ToString(g.HealthCheckPath))
 	set(r.Details, "healthCheckProtocol", string(g.HealthCheckProtocol))
+	set(r.Details, "healthCheckPort", awssdk.ToString(g.HealthCheckPort))
+	if g.HealthCheckIntervalSeconds != nil {
+		set(r.Details, "healthCheckInterval", strconv.Itoa(int(*g.HealthCheckIntervalSeconds)))
+	}
+	if g.HealthyThresholdCount != nil {
+		set(r.Details, "healthyThreshold", strconv.Itoa(int(*g.HealthyThresholdCount)))
+	}
+	if g.UnhealthyThresholdCount != nil {
+		set(r.Details, "unhealthyThreshold", strconv.Itoa(int(*g.UnhealthyThresholdCount)))
+	}
+	if g.Matcher != nil {
+		set(r.Details, "matcher", awssdk.ToString(g.Matcher.HttpCode))
+	}
 	for _, l := range g.LoadBalancerArns {
 		r.Links = append(r.Links, cloud.Ref{Kind: cloud.KindLoadBalancer, ID: l, Name: lbName[l]})
 	}
