@@ -20,6 +20,7 @@ that one answer: the System card, the asset list's Running low filter and
 badges, and the bell. A rule repeated in the console would drift.
 
 	GET /api/v1/resources-low    admins, owners, auditors
+	GET /api/v1/assets-usage     everyone, for the assets they see (assets_usage.go)
 
 Only usage reported in the last resourcesFresh counts for the list and the
 bell, so an agent that went quiet neither raises nor keeps a warning. The
@@ -193,6 +194,7 @@ func (s *Store) ResourcesLow(ctx context.Context, now time.Time) (ResourcesLow, 
 func (a *API) registerResourcesRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/resources-low", a.getResourcesLow)
 	mux.HandleFunc("GET /api/v1/assets/{id}/metrics", a.getMetrics)
+	mux.HandleFunc("GET /api/v1/assets-usage", a.getAssetsUsage)
 }
 
 // getResourcesLow serves the fleet's warnings. Fleet roles only, like the

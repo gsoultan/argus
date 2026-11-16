@@ -1,7 +1,7 @@
 import './ssh/ssh.css'
 import { useMemo, useState, type ReactNode } from 'react'
 import {
-  ActionIcon, Badge, Box, Button, Card, Group, Menu, SegmentedControl, Skeleton, Stack, Text, TextInput,
+  ActionIcon, Badge, Box, Button, Card, Group, Menu, Progress, SegmentedControl, SimpleGrid, Skeleton, Stack, Text, TextInput,
   ThemeIcon, Tooltip,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
@@ -24,7 +24,8 @@ import type { Asset, MyServer } from '~/types/domain'
 import { ANSWER_LABEL, answerOf, isUp, kindOf, reachOf, shortName, type Answer, type Reach } from '~/lib/reach'
 import { ASSET_TYPES, ASSET_TYPE_LABEL, assetHostnameAside, assetShortName, assetTypeOf, type AssetType } from '~/lib/assetType'
 import { needsUpdates, updatesWaitingQuery, type UpdatesWaitingRow } from '~/lib/updatesWaiting'
-import { resourcesLowQuery, warningBadge, warningText, warningTone, type ResourcesLowRow } from '~/lib/resourcesLow'
+import { warningBadge, warningText, warningTone } from '~/lib/resourcesLow'
+import { assetsUsageQuery, usageTone, type AssetUsageRow } from '~/lib/assetsUsage'
 import { isConfigured } from '~/lib/live'
 
 // Re-exported: every page that shows a server's status imports them from here.
@@ -93,6 +94,46 @@ function Dot({ color }: { color: string }) {
 }
 
 /**
+ * The card's usage row: processor, memory and the fullest disk from the
+ * agent's last report, each a number and a bar coloured at the thresholds
+ * the running-low badges use. A figure the agent did not send is left out
+ * rather than drawn as zero.
+ */
+export function UsageRow({ usage }: { usage: AssetUsageRow }) {
+  const cells: { key: string; label: string; aside?: string; value: number | null }[] = [
+    { key: 'cpu', label: 'Processor', value: usage.cpu },
+    { key: 'memory', label: 'Memory', value: usage.memory },
+    { key: 'disk', label: 'Disk', aside: usage.disk?.mount, value: usage.disk?.percent ?? null },
+  ]
+  const shown = cells.filter((c) => c.value !== null)
+  if (shown.length === 0) return null
+  return (
+    <Box
+      pt={SP.snug}
+      style={{ borderTop: '1px solid var(--mantine-color-default-border)' }}
+      data-testid="usage-row"
+      title={`Reported ${relTime(usage.usageAt)}`}
+    >
+      <SimpleGrid cols={3} spacing="sm">
+        {shown.map((c) => (
+          <Box key={c.key} style={{ minWidth: 0 }} data-testid={`usage-${c.key}`}>
+            <Text size={FS.micro} c="dimmed" truncate title={c.aside}>
+              {c.label}
+              {c.aside && <Text span ff="monospace" size={FS.micro}> {c.aside}</Text>}
+            </Text>
+            <Text size="sm" fw={600} c={usageTone(c.value!) === 'azure' ? undefined : `${usageTone(c.value!)}.7`}>
+              {c.value}%
+            </Text>
+            <Progress value={c.value!} color={usageTone(c.value!)} size={5} radius="xl" mt={4}
+              aria-label={`${c.label} ${c.value}%${c.key === 'disk' ? ' full' : c.key === 'cpu' ? ' busy' : ' used'}`} />
+          </Box>
+        ))}
+      </SimpleGrid>
+    </Box>
+  )
+}
+
+/**
  * One server someone can use, and the shortest way onto it.
  *
  * Everything an administrator needs to judge a host -- pins, credential mode,
@@ -100,12 +141,16 @@ function Dot({ color }: { color: string }) {
  * one question, "can I get on it, and how", and the answer is the status, the
  * accounts they were given, and a button.
  */
-export function ServerCard({ asset: a, admin = false, mine, waiting, low }: {
+export function ServerCard({ asset: a, admin = false, mine, waiting, usage }: {
   asset: Asset; admin?: boolean; mine?: MyServer
   /** What is waiting to be updated on it, for those who see the fleet. */
   waiting?: UpdatesWaitingRow
-  /** What it is running low on, for those who see the fleet. */
-  low?: ResourcesLowRow
+  /**
+   * Its processor, memory and fullest disk now, and what it is running low
+   * on. Everyone gets it for the servers they see; absent when the agent
+   * has not reported in the last few minutes.
+   */
+  usage?: AssetUsageRow
 }) {
   const navigate = useNavigate()
   const { ask } = useSessions()
@@ -153,7 +198,7 @@ export function ServerCard({ asset: a, admin = false, mine, waiting, low }: {
           <ReachBadge reach={reach} />
         </Group>
 
-        {((tag && reach !== 'blocked' && !noAccount) || needsUpdates(waiting) || !!low?.warnings.length) && (
+        {((tag && reach !== 'blocked' && !noAccount) || needsUpdates(waiting) || !!usage?.warnings.length) && (
           <Group gap={SP.snug}>
             {tag && reach !== 'blocked' && !noAccount && (
               <Badge color={tag.color} variant="light" size="sm" radius="sm" tt="none" fw={600}>{tag.label}</Badge>
@@ -162,7 +207,7 @@ export function ServerCard({ asset: a, admin = false, mine, waiting, low }: {
             {!waiting?.security && !!waiting?.updates && <Badge color="slate" variant="light" size="sm" radius="sm" tt="none">{waiting.updates} updates</Badge>}
             {waiting?.agent === 'behind' && <Badge color="azure" variant="light" size="sm" radius="sm" tt="none">agent behind</Badge>}
             {waiting?.rebootRequired && <Badge color="amber" variant="light" size="sm" radius="sm" tt="none">restart</Badge>}
-            {low?.warnings.map((w) => (
+            {usage?.warnings.map((w) => (
               <Badge key={w.resource + (w.mount ?? '')} color={warningTone(w)} variant="light" size="sm" radius="sm" tt="none"
                 title={warningText(w)} data-testid="low-badge">
                 {warningBadge(w)}
@@ -224,6 +269,8 @@ export function ServerCard({ asset: a, admin = false, mine, waiting, low }: {
             </Group>
           </Box>
         )}
+
+        {usage && <UsageRow usage={usage} />}
 
         <Group justify="space-between" align="center" mt="auto" wrap="nowrap" gap="sm">
           {admin ? (
@@ -410,8 +457,11 @@ export function ServerCards({ initialShow = 'all' }: { initialShow?: Show } = {}
   const waitingBy = useMemo(() => new Map((waiting?.assets ?? []).map((w) => [w.assetId, w])), [waiting])
   const needCount = (assets ?? []).filter((a) => needsUpdates(waitingBy.get(a.id))).length
   const [lowOnly, setLowOnly] = useState(false)
-  const { data: low } = useQuery({ ...resourcesLowQuery(), enabled: whole && isConfigured() })
-  const lowBy = useMemo(() => new Map((low?.assets ?? []).map((r) => [r.assetId, r])), [low])
+  // Everyone's own servers, or the whole fleet for those who see it: the
+  // control plane decides which, by the same rule as the list above.
+  const { data: usage } = useQuery(assetsUsageQuery())
+  const usageBy = useMemo(() => new Map((usage?.assets ?? []).map((r) => [r.assetId, r])), [usage])
+  const lowBy = useMemo(() => new Map((usage?.assets ?? []).filter((r) => r.warnings.length > 0).map((r) => [r.assetId, r])), [usage])
   const lowCount = (assets ?? []).filter((a) => lowBy.has(a.id)).length
 
   // Approved and not yet expired, for this person only: an approver is sent the
@@ -555,7 +605,7 @@ export function ServerCards({ initialShow = 'all' }: { initialShow?: Show } = {}
         )}
         {(lowCount > 0 || lowOnly) && (
           <Button size="xs" variant={lowOnly ? 'filled' : 'default'} aria-pressed={lowOnly} onClick={() => setLowOnly(!lowOnly)}
-            color={(low?.assets ?? []).some((r) => r.warnings[0]?.level === 'critical') ? 'rose' : 'amber'}>
+            color={[...lowBy.values()].some((r) => r.warnings[0]?.level === 'critical') ? 'rose' : 'amber'}>
             Running low ({lowCount})
           </Button>
         )}
@@ -608,7 +658,7 @@ export function ServerCards({ initialShow = 'all' }: { initialShow?: Show } = {}
         <CardGrid>
           {visible.map((a) => (
             <ServerCard key={a.id} asset={a} admin={canAdmin} mine={mineBy.get(a.hostname)}
-              waiting={waitingBy.get(a.id)} low={lowBy.get(a.id)} />
+              waiting={waitingBy.get(a.id)} usage={usageBy.get(a.id)} />
           ))}
         </CardGrid>
       )}

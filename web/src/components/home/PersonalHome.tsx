@@ -12,6 +12,7 @@ import { Mono, duration, relTime } from '~/components/primitives'
 import { ServerCard, ServerCardSkeleton } from '~/components/myservers'
 import { Label } from '~/components/home/parts'
 import { assetsQuery, databasesQuery, requestsQuery, sessionsQuery } from '~/lib/queries'
+import { assetsUsageQuery } from '~/lib/assetsUsage'
 import { FS, SP } from '~/theme'
 import type { AccessRequest, User } from '~/types/domain'
 import { isBroker } from '~/lib/engines'
@@ -30,6 +31,7 @@ const SERVERS_SHOWN = 6
 
 export default function PersonalHome({ me }: { me: User | undefined }) {
   const { data: assets, isPending } = useQuery(assetsQuery({}))
+  const { data: usage } = useQuery(assetsUsageQuery())
   const { data: dbList } = useQuery(databasesQuery())
   const dbs = dbList?.databases
   // Other people's changes this person may decide, by database.
@@ -65,7 +67,7 @@ export default function PersonalHome({ me }: { me: User | undefined }) {
           </Card>
         ) : (
           <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="sm" data-testid="your-servers">
-            {shown.map((a) => <ServerCard key={a.id} asset={a} />)}
+            {shown.map((a) => <ServerCard key={a.id} asset={a} usage={usage?.assets.find((u) => u.assetId === a.id)} />)}
           </SimpleGrid>
         )}
       </Box>
