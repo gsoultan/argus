@@ -287,6 +287,7 @@ func desktopService(cfg DesktopConfig, service string) TunnelService {
 			// The device's activity -- app in front, lock, secure content --
 			// is chained into the same recording as its screen.
 			ac.note = d.Note
+			ac.screen.note = d.Note
 			ac.startNotes()
 		}
 		// Recorded as it is read, before it is decoded or sent anywhere.

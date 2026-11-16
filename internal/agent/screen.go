@@ -486,6 +486,9 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 		started := time.Now()
 		shot, changed, err := c.Capture(wait)
 		captured := time.Now()
+		if errors.Is(err, errScreenGone) {
+			return err
+		}
 		if err != nil {
 			// The input desktop switching (a sign-in, a UAC prompt) fails
 			// a capture; the next one is on the new desktop.
@@ -616,6 +619,10 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 		idle = pace.minGap
 	}
 }
+
+// errScreenGone is a capture that will not work again: the screen has gone
+// (a device that ended the session), so the loop ends rather than retrying.
+var errScreenGone = errors.New("the screen has gone")
 
 // motion sends the frames where much of the screen changed as H.264.
 type motion struct {
@@ -842,6 +849,9 @@ type screenClient struct {
 	// failed counts helpers that stopped on their own; after one has, the
 	// next are kept to GDI capture, the path with nothing new in it.
 	failed int
+	// oneShot is a screen with no helper to start again (a device's): the
+	// loop stopping ends the session, with its reason.
+	oneShot bool
 
 	// ctrl and alt held, so Ctrl+Alt+Del can become the secure attention
 	// sequence it means.
@@ -991,6 +1001,12 @@ func (c *screenClient) NextBitmaps() ([]rdp.Bitmap, error) {
 			}
 			if !current {
 				continue
+			}
+			if c.oneShot && (m.err != nil || m.typ == scrFail) {
+				if m.err != nil {
+					return nil, m.err
+				}
+				return nil, errors.New(string(m.p))
 			}
 			if m.err != nil {
 				if err := c.restart("the screen helper stopped: " + m.err.Error()); err != nil {

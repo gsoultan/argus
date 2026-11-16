@@ -2,7 +2,10 @@ package agent
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"sync"
 	"time"
 
@@ -183,20 +186,26 @@ type androidInputer interface {
 	Play(AndroidInput) error
 }
 
+/*
+A device's screen goes the way a shared console's does (screen.go), with
+the device as the capturer and serveScreen run in the agent itself rather
+than in a helper process: a frame is sent only when the browser has drawn
+enough of the last ones (the marks it acknowledges), what the link carries
+is measured from those acknowledgements, and a whole screen is sharpened
+as the link allows. Before, every frame the device produced was sent as it
+came, and behind a slow link they queued in the tunnel: the picture ran
+seconds behind the finger.
+*/
+
 // androidClient is an AndroidDevice as a DesktopClient: the screen as
 // bitmaps of the tiles that changed, recorded as the Fast-Path updates a
 // Remote Desktop server would have sent.
 type androidClient struct {
-	dev   AndroidDevice
-	diff  screenDiffer
-	view  bool
-	force bool
-	// last is the screen as it was last taken, for a forced repaint.
-	last       []byte
-	lastStride int
+	dev    AndroidDevice
+	screen *screenClient
+	view   bool
 
 	mu     sync.Mutex
-	tap    func([]byte)
 	closed bool
 	// note writes a Meta event into the recording's chain; the desktop
 	// service sets it. nil until then, and nil on a device with no activity.
@@ -226,8 +235,8 @@ type AndroidOpen struct {
 // the console.
 func Android(cfg AndroidConfig) TunnelService {
 	open := cfg.Device
-	cfg.Connect = func(_ DesktopConfig, g tunnel.Grant, _ tunnel.DesktopOpen,
-		_ *slog.Logger) (DesktopClient, DesktopInfo, error) {
+	cfg.Connect = func(_ DesktopConfig, g tunnel.Grant, o tunnel.DesktopOpen,
+		log *slog.Logger) (DesktopClient, DesktopInfo, error) {
 		if open == nil {
 			return nil, DesktopInfo{}, errors.New("this agent has no device to share")
 		}
@@ -235,64 +244,96 @@ func Android(cfg AndroidConfig) TunnelService {
 		if err != nil {
 			return nil, DesktopInfo{}, err
 		}
-		c, info := connectAndroid(dev, g.Principal)
+		c, info, err := connectAndroid(dev, g.Principal, o.SlowLink, log)
+		if err != nil {
+			_ = dev.Close()
+			return nil, DesktopInfo{}, err
+		}
 		return c, info, nil
 	}
 	return desktopService(cfg.DesktopConfig, AndroidService)
 }
 
-// connectAndroid opens the device for one session. "view" opens it with
-// input refused here, whatever the console sends.
-func connectAndroid(dev AndroidDevice, principal string) (*androidClient, DesktopInfo) {
-	return &androidClient{dev: dev, view: principal == DeviceViewPrincipal, force: true},
-		DesktopInfo{Android: true}
+// connectAndroid opens the device for one session and waits for its first
+// picture. "view" opens it with input refused here, whatever the console
+// sends. slow is the browser having said its link is slow.
+func connectAndroid(dev AndroidDevice, principal string, slow bool,
+	log *slog.Logger) (*androidClient, DesktopInfo, error) {
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	sc, err := openScreenOn(&androidHost{dev: dev}, false, slow, log)
+	if err != nil {
+		return nil, DesktopInfo{}, fmt.Errorf("the device did not show its screen: %w", err)
+	}
+	// The device is the screen: when it stops, the session has ended, and
+	// there is no helper to start again.
+	sc.oneShot = true
+	return &androidClient{dev: dev, screen: sc, view: principal == DeviceViewPrincipal},
+		DesktopInfo{Android: true}, nil
 }
 
-func (c *androidClient) NextBitmaps() ([]rdp.Bitmap, error) {
-	c.mu.Lock()
-	closed, force := c.closed, c.force
-	c.force = false
-	c.mu.Unlock()
-	if closed {
-		return nil, errors.New("closed")
-	}
-	fb, stride, changed, err := c.dev.Frame(androidFrameWait)
-	if err != nil {
-		return nil, err
-	}
-	if changed {
-		// Kept for a repaint of a still screen, which a viewer arriving
-		// late asks for.
-		c.last, c.lastStride = append(c.last[:0], fb...), stride
-	} else if !force {
-		return nil, nil
-	} else {
-		fb, stride = c.last, c.lastStride
-	}
-	w, h := c.dev.Size()
-	if len(fb) < stride*h || stride < w*4 {
-		return nil, errors.New("the device returned a frame smaller than its screen")
-	}
-	shot := screenShot{fb: fb, stride: stride, width: w, height: h}
-	jobs := c.diff.find(shot, force)
-	if len(jobs) == 0 {
-		return nil, nil
-	}
-	out := make([]rdp.Bitmap, 0, len(jobs))
-	for _, j := range jobs {
-		// A buffer per tile: the bitmaps are handed on together.
-		out = append(out, rdp.CompressRect(nil, fb, stride, j.x, j.y, j.w, j.h))
-	}
-	c.mu.Lock()
-	tap := c.tap
-	c.mu.Unlock()
-	if tap != nil {
-		for _, pdu := range rdp.FastPathBitmaps(out) {
-			tap(pdu)
-		}
-	}
-	return out, nil
+// androidHost runs the screen loop in the agent, against the device, for
+// the one session it was made for.
+type androidHost struct {
+	dev AndroidDevice
 }
+
+func (h *androidHost) ConsoleSession() (uint32, bool) { return 1, true }
+func (h *androidHost) ConsoleAccount(uint32) string   { return "" }
+func (h *androidHost) SecureAttention() error         { return errNoSecureAttention }
+func (h *androidHost) StartHelper(_ uint32, mode helperMode) (io.ReadWriteCloser, error) {
+	agentEnd, loopEnd := net.Pipe()
+	pace := defaultScreenPace
+	if mode.slow {
+		pace.linkRate = linkRateSlowStart
+	}
+	go func() {
+		// The device's own input goes through Play, never through here.
+		err := serveScreen(androidCapturer{dev: h.dev}, func() screenInputer { return noScreenInput{} },
+			loopEnd, loopEnd, pace, nil)
+		if err != nil {
+			_ = writeScreenMsg(loopEnd, scrFail, []byte(err.Error()))
+		}
+		_ = loopEnd.Close()
+	}()
+	return agentEnd, nil
+}
+
+// androidCapturer is the device as the screen loop's capturer.
+type androidCapturer struct{ dev AndroidDevice }
+
+func (a androidCapturer) Capture(wait time.Duration) (screenShot, bool, error) {
+	fb, stride, changed, err := a.dev.Frame(wait)
+	if err != nil {
+		return screenShot{}, false, fmt.Errorf("%w: %v", errScreenGone, err)
+	}
+	if !changed {
+		return screenShot{}, false, nil
+	}
+	w, h := a.dev.Size()
+	if w <= 0 || h <= 0 || len(fb) < stride*h || stride < w*4 {
+		return screenShot{}, false, fmt.Errorf("%w: the device returned a frame smaller than its screen",
+			errScreenGone)
+	}
+	return screenShot{fb: fb, stride: stride, width: w, height: h}, true, nil
+}
+
+// Close leaves the device to the client, which closes it with the session.
+func (androidCapturer) Close() {}
+
+// noScreenInput plays nothing: a device's input goes through Play.
+type noScreenInput struct{}
+
+func (noScreenInput) Input(rdp.InputEvent) error { return nil }
+func (noScreenInput) Close()                     {}
+
+func (c *androidClient) NextBitmaps() ([]rdp.Bitmap, error) { return c.screen.NextBitmaps() }
+
+// TakeMark and Ack make a device's frames paced by the browser, as a shared
+// console's are.
+func (c *androidClient) TakeMark() (uint32, time.Duration, bool) { return c.screen.TakeMark() }
+func (c *androidClient) Ack(id uint32)                           { c.screen.Ack(id) }
 
 // Send takes Remote Desktop events; the console sends the android client
 // its input as it was typed instead (Play), so nothing arrives here.
@@ -306,20 +347,11 @@ func (c *androidClient) Play(in AndroidInput) error {
 	return c.dev.Play(in)
 }
 
-func (c *androidClient) Refresh() error {
-	c.mu.Lock()
-	c.force = true
-	c.mu.Unlock()
-	return nil
-}
+func (c *androidClient) Refresh() error { return c.screen.Refresh() }
 
-func (c *androidClient) Size() (int, int) { return c.dev.Size() }
+func (c *androidClient) Size() (int, int) { return c.screen.Size() }
 
-func (c *androidClient) SetTap(fn func([]byte)) {
-	c.mu.Lock()
-	c.tap = fn
-	c.mu.Unlock()
-}
+func (c *androidClient) SetTap(fn func([]byte)) { c.screen.SetTap(fn) }
 
 // startNotes drains the device's activity into the recording. The desktop
 // service calls it once it has set note, so every timeline event is in the
@@ -373,5 +405,6 @@ func (c *androidClient) Close() error {
 	if stop != nil {
 		close(stop)
 	}
+	_ = c.screen.Close()
 	return c.dev.Close()
 }

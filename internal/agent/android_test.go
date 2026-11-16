@@ -2,9 +2,12 @@ package agent
 
 import (
 	"encoding/binary"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/gsoultan/argus/internal/rdp"
 )
 
 /*
@@ -13,24 +16,63 @@ is recorded as Fast-Path updates before it is handed on; a tap changes what
 the next look sees; "view" plays nothing on the device.
 */
 
+// openDevice connects the fake for a test, failing it if the screen does not
+// come up.
+func openDevice(t *testing.T, dev AndroidDevice, principal string) (*androidClient, DesktopInfo) {
+	t.Helper()
+	c, info, err := connectAndroid(dev, principal, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c, info
+}
+
+// nextFrame reads one whole frame: every tile up to its mark.
+func nextFrame(t *testing.T, c *androidClient) []rdp.Bitmap {
+	t.Helper()
+	var all []rdp.Bitmap
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		b, err := c.NextBitmaps()
+		if err != nil {
+			t.Fatal(err)
+		}
+		all = append(all, b...)
+		if id, _, ok := c.TakeMark(); ok {
+			c.Ack(id)
+			if len(all) > 0 {
+				return all
+			}
+		}
+	}
+	t.Fatal("no frame arrived")
+	return nil
+}
+
 func TestADeviceScreenArrivesAsTilesAndIsRecordedFirst(t *testing.T) {
 	dev := NewFakeAndroid(256, 512)
-	c, info := connectAndroid(dev, DeviceControlPrincipal)
+	c, info := openDevice(t, dev, DeviceControlPrincipal)
 	defer c.Close()
 	if !info.Android || info.Screen {
 		t.Fatalf("info %+v; want a device, not a shared console", info)
 	}
-	var recorded [][]byte
-	c.SetTap(func(pdu []byte) { recorded = append(recorded, append([]byte(nil), pdu...)) })
-
-	first, err := c.NextBitmaps()
-	if err != nil {
-		t.Fatal(err)
+	if w, h := c.Size(); w != 256 || h != 512 {
+		t.Fatalf("size %dx%d; want the device's", w, h)
 	}
+	var mu sync.Mutex
+	var recorded [][]byte
+	c.SetTap(func(pdu []byte) {
+		mu.Lock()
+		recorded = append(recorded, append([]byte(nil), pdu...))
+		mu.Unlock()
+	})
+
+	first := nextFrame(t, c)
 	cols, rows := (256+screenTile-1)/screenTile, (512+screenTile-1)/screenTile
 	if len(first) != cols*rows {
-		t.Fatalf("the first look sent %d tiles; want the whole screen, %d", len(first), cols*rows)
+		t.Fatalf("the first frame sent %d tiles; want the whole screen, %d", len(first), cols*rows)
 	}
+	mu.Lock()
 	if len(recorded) == 0 {
 		t.Fatal("nothing was recorded before the tiles were handed on")
 	}
@@ -39,27 +81,30 @@ func TestADeviceScreenArrivesAsTilesAndIsRecordedFirst(t *testing.T) {
 	if recorded[0][0]&3 != 0 {
 		t.Errorf("recorded %x; want a Fast-Path update", recorded[0][:4])
 	}
+	mu.Unlock()
 
 	// A tap on the first row changes that row, and only tiles there are
 	// sent next. The clock bar may tick meanwhile, which is the status bar.
 	if err := c.Play(AndroidInput{Type: "button", Down: true, X: 100, Y: fakeRowsTop + 10}); err != nil {
 		t.Fatal(err)
 	}
-	next, err := c.NextBitmaps()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(next) == 0 || len(next) >= cols*rows {
-		t.Fatalf("after a tap %d tiles were sent; want the changed row only", len(next))
-	}
 	inRow := 0
-	for _, b := range next {
-		if b.Y >= fakeRowsTop-screenTile && b.Y < fakeRowsTop+fakeRowHeight {
-			inRow++
+	for range 5 {
+		next := nextFrame(t, c)
+		if len(next) >= cols*rows {
+			t.Fatalf("after a tap %d tiles were sent; want the changed row only", len(next))
+		}
+		for _, b := range next {
+			if b.Y >= fakeRowsTop-screenTile && b.Y < fakeRowsTop+fakeRowHeight {
+				inRow++
+			}
+		}
+		if inRow > 0 {
+			break
 		}
 	}
 	if inRow == 0 {
-		t.Errorf("none of the %d tiles sent after the tap is on the tapped row", len(next))
+		t.Error("none of the tiles sent after the tap is on the tapped row")
 	}
 	plays := dev.Plays()
 	if len(plays) != 1 || plays[0].Type != "button" {
@@ -68,15 +113,80 @@ func TestADeviceScreenArrivesAsTilesAndIsRecordedFirst(t *testing.T) {
 
 	// Refresh sends the whole screen again.
 	_ = c.Refresh()
-	all, err := c.NextBitmaps()
-	if err != nil || len(all) != cols*rows {
-		t.Fatalf("after a refresh %d tiles, %v; want the whole screen", len(all), err)
+	for range 5 {
+		if all := nextFrame(t, c); len(all) == cols*rows {
+			return
+		}
 	}
+	t.Fatal("a refresh did not send the whole screen")
+}
+
+// A device's frames are paced by the browser: with a frame sent and not yet
+// drawn, the device's next pictures wait rather than queue in the tunnel.
+func TestADeviceWaitsForTheBrowserToDrawBeforeTheNextFrame(t *testing.T) {
+	dev := NewFakeAndroid(256, 512)
+	c, _ := openDevice(t, dev, DeviceControlPrincipal)
+	defer c.Close()
+	nextFrame(t, c) // acknowledged: the browser acknowledges frames
+
+	// Frames until the window is full, none acknowledged.
+	marks := 0
+	tap := 0
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && marks < 20 {
+		tap++
+		_ = dev.Play(AndroidInput{Type: "text", Text: "x"})
+		got := make(chan struct{})
+		go func() {
+			_, _ = c.NextBitmaps()
+			close(got)
+		}()
+		select {
+		case <-got:
+		case <-time.After(400 * time.Millisecond):
+			// Nothing more comes while the browser is behind.
+			if marks == 0 {
+				t.Fatal("not one frame was sent after the first")
+			}
+			// Drawing one lets the next through.
+			if _, _, ok := c.TakeMark(); ok {
+				t.Fatal("a mark was waiting while the device was held")
+			}
+			return
+		}
+		if _, _, ok := c.TakeMark(); ok {
+			marks++
+		}
+	}
+	t.Fatalf("%d frames were sent without one being drawn; want them held", marks)
+}
+
+// The device going away ends the session with its reason, rather than
+// being started again.
+func TestADeviceThatStopsEndsTheSession(t *testing.T) {
+	dev := NewFakeAndroid(128, 256)
+	c, _ := openDevice(t, dev, DeviceControlPrincipal)
+	defer c.Close()
+	nextFrame(t, c)
+	_ = dev.Close()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := c.NextBitmaps(); err != nil {
+			if !strings.Contains(err.Error(), "closed") {
+				t.Errorf("ended with %q; want the device's reason", err)
+			}
+			return
+		}
+		if id, _, ok := c.TakeMark(); ok {
+			c.Ack(id)
+		}
+	}
+	t.Fatal("the session went on after the device stopped")
 }
 
 func TestViewPlaysNothingOnTheDevice(t *testing.T) {
 	dev := NewFakeAndroid(128, 256)
-	c, _ := connectAndroid(dev, DeviceViewPrincipal)
+	c, _ := openDevice(t, dev, DeviceViewPrincipal)
 	defer c.Close()
 	for _, in := range []AndroidInput{
 		{Type: "button", Down: true, X: 10, Y: fakeRowsTop + 10},
@@ -143,7 +253,7 @@ func (s *scriptedActivity) Activity(wait time.Duration) (AndroidActivity, bool) 
 
 func TestTheDeviceActivityIsChainedIntoTheRecording(t *testing.T) {
 	dev := NewFakeAndroid(256, 512)
-	c, _ := connectAndroid(dev, DeviceControlPrincipal)
+	c, _ := openDevice(t, dev, DeviceControlPrincipal)
 	defer c.Close()
 
 	var mu sync.Mutex
@@ -199,7 +309,7 @@ func TestTheDeviceActivityIsChainedIntoTheRecording(t *testing.T) {
 func TestAPasswordIsNeverTypedIntoTheRecording(t *testing.T) {
 	dev := &scriptedActivity{FakeAndroid: NewFakeAndroid(256, 512),
 		ev: AndroidActivity{Kind: "typed", Password: true, Text: "hunter2"}}
-	c, _ := connectAndroid(dev, DeviceControlPrincipal)
+	c, _ := openDevice(t, dev, DeviceControlPrincipal)
 	defer c.Close()
 
 	var mu sync.Mutex
