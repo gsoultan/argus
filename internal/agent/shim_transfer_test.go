@@ -5,6 +5,7 @@ package agent
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
@@ -147,10 +148,13 @@ func TestTextInASessionWithoutATerminalIsKept(t *testing.T) {
 	if string(out) != "one\ntwo ✓\n" {
 		t.Fatalf("output %q", out)
 	}
-	for _, want := range []string{`echo one\necho two ✓\n`, `one\ntwo ✓\n`} {
-		if !strings.Contains(body, want) {
-			t.Errorf("the recording lost %q:\n%s", want, body)
-		}
+	// The shell may print its two lines in one write or two; what matters is
+	// that every byte of each direction is in the recording, in order.
+	if got := castText(t, body, "i"); !strings.Contains(got, "echo one\necho two ✓\n") {
+		t.Errorf("the recording lost the script: %q\n%s", got, body)
+	}
+	if got := castText(t, body, "o"); got != "one\ntwo ✓\n" {
+		t.Errorf("the recording lost the output: %q\n%s", got, body)
 	}
 	if strings.Contains(body, "counted, not kept") {
 		t.Errorf("text was treated as a transfer:\n%s", body)
@@ -166,6 +170,26 @@ func TestTheTextBeforeABinaryTransferIsKept(t *testing.T) {
 	if !strings.Contains(body, "binary data sent back by the server") {
 		t.Errorf("the binary part was not marked:\n%s", body)
 	}
+}
+
+// castText joins the data of every event of one kind in a recording.
+func castText(t *testing.T, body, kind string) string {
+	t.Helper()
+	var b strings.Builder
+	for i, line := range strings.Split(body, "\n") {
+		if i == 0 || line == "" {
+			continue
+		}
+		var ev []any
+		if err := json.Unmarshal([]byte(line), &ev); err != nil || len(ev) != 3 {
+			continue
+		}
+		if k, _ := ev[1].(string); k == kind {
+			s, _ := ev[2].(string)
+			b.WriteString(s)
+		}
+	}
+	return b.String()
 }
 
 func TestSplitTextWaitsForACharacterAReadCutInTwo(t *testing.T) {
