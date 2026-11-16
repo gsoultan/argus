@@ -3,9 +3,11 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gsoultan/argus/internal/control/cloud"
 )
@@ -253,4 +255,58 @@ func TestCloudLaunchEnrollsTheAgent(t *testing.T) {
 func TestCloudResizeNeedsAStoppedInstance(t *testing.T) {
 	e := changeAPI(t)
 	e.ask(t, "admin-token", e.body("resize", `,"spec":{"size":"m6i.2xlarge"}`), http.StatusConflict)
+}
+
+// Several alike in one change: names number on, each gets its own token,
+// extra disks and Spot reach the launch, and a failure part way says which
+// were made.
+func TestCloudLaunchSeveral(t *testing.T) {
+	e := changeAPI(t)
+	began := time.Now().Add(-time.Second)
+	launch := func(extra string, want int) CloudChange {
+		spec := `{"name":"api-07","image":"ami-ubuntu","size":"t3.small","diskGb":20,"subnet":"` + e.account +
+			`-subnet-1","firewalls":["` + e.account + `-sg-1"],"agent":true,"tags":{"Environment":"development"}` + extra + `}`
+		return e.ask(t, "admin-token", `{"accountId":"`+e.acct.ID+`","region":"ap-southeast-3","action":"launch","spec":`+spec+`}`, want)
+	}
+	c := launch(`,"count":3,"extraDisks":[100,50],"spot":true,"protect":false`, http.StatusOK)
+	if c.State != "applied" || !strings.Contains(c.Summary, "3 instances, api-07 to api-09") ||
+		!strings.Contains(c.Summary, "2 extra disks") || !strings.Contains(c.Summary, "as Spot") {
+		t.Fatalf("launch several: %+v", c)
+	}
+	l := e.fake.LastLaunch
+	if l.Name != "api-09" || !l.Spot || l.Protect || len(l.ExtraDisks) != 2 || l.ExtraDisks[0] != 100 {
+		t.Fatalf("last launch spec: %+v", l)
+	}
+	var tokens int
+	_ = e.s.pool.QueryRow(context.Background(), `SELECT count(*) FROM agent_enrollment_tokens
+		WHERE hostname IN ('api-07','api-08','api-09') AND created_at >= $1`, began).Scan(&tokens)
+	if tokens != 3 {
+		t.Fatalf("each instance needs its own token, got %d", tokens)
+	}
+	// Spot with termination protection is refused, not quietly changed.
+	launch(`,"spot":true`, http.StatusBadRequest)
+	launch(`,"count":11`, http.StatusBadRequest)
+	launch(`,"extraDisks":[1,1,1,1,1]`, http.StatusBadRequest)
+
+	e.fake.LaunchErr = map[string]error{"api-12": errors.New("InsufficientInstanceCapacity")}
+	spec := `{"name":"api-11","image":"ami-ubuntu","size":"t3.small","subnet":"` + e.account +
+		`-subnet-1","firewalls":["` + e.account + `-sg-1"],"count":3,"tags":{"Environment":"development"}}`
+	f := e.ask(t, "admin-token", `{"accountId":"`+e.acct.ID+`","region":"ap-southeast-3","action":"launch","spec":`+spec+`}`, http.StatusOK)
+	if f.State != "failed" || !strings.Contains(f.Error, "launched api-11 (i-fake") || !strings.Contains(f.Error, "then api-12 failed") {
+		t.Fatalf("partial failure must say what was made: %+v", f)
+	}
+}
+
+func TestLaunchNames(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		n     int
+		first string
+		last  string
+	}{{"web", 1, "web", "web"}, {"web", 3, "web-01", "web-03"}, {"web-09", 2, "web-09", "web-10"}, {"db-007", 2, "db-007", "db-008"}} {
+		got, err := launchNames(c.name, c.n)
+		if err != nil || len(got) != c.n || got[0] != c.first || got[len(got)-1] != c.last {
+			t.Fatalf("%s x%d: %v %v", c.name, c.n, got, err)
+		}
+	}
 }

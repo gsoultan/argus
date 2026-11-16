@@ -1,7 +1,8 @@
 import { ActionIcon, Alert, Badge, Box, Button, Checkbox, Code, Group, Menu, Modal, ScrollArea, SegmentedControl, Select, Skeleton, Stack, Switch, Table, Text, TextInput } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
+import { useNavigate } from '@tanstack/react-router'
 import {
-  IconAlertTriangle, IconDots, IconFileText, IconLock, IconLockOpen, IconMoon, IconPhoto, IconSettings, IconShield, IconPlayerPlay, IconPlayerStop, IconRefresh, IconResize, IconTag, IconTrash, IconUserCheck,
+  IconAlertTriangle, IconCopy, IconDots, IconFileText, IconLock, IconLockOpen, IconMoon, IconPhoto, IconSettings, IconShield, IconPlayerPlay, IconPlayerStop, IconRefresh, IconResize, IconTag, IconTrash, IconUserCheck,
 } from '@tabler/icons-react'
 import { useState } from 'react'
 import { Field, absTime, relTime } from '~/components/primitives'
@@ -27,6 +28,7 @@ export { reportChange }
 
 
 export function InstanceActions({ it }: { it: CloudItem }) {
+  const navigate = useNavigate()
   const { data: me } = useQuery(meQuery())
   const accounts = useQuery(cloudAccountsQuery())
   const pending = useQuery(cloudChangesQuery({ pending: true }))
@@ -71,6 +73,8 @@ export function InstanceActions({ it }: { it: CloudItem }) {
               <ActionIcon variant="default" size={30} aria-label="More actions" disabled={!!waiting}><IconDots size={15} /></ActionIcon>
             </Menu.Target>
             <Menu.Dropdown>
+              <Menu.Item leftSection={<IconCopy size={14} />}
+                onClick={() => void navigate({ to: '/cloud/launch', search: { like: it.resource.id, account: it.accountId } })}>Launch another like this…</Menu.Item>
               <Menu.Item leftSection={<IconSettings size={14} />} onClick={() => setOpen('settings')}>Instance settings…</Menu.Item>
               <Menu.Item leftSection={<IconLock size={14} />} onClick={() => setOpen('protect')}>Turn on termination protection</Menu.Item>
               <Menu.Item leftSection={<IconLockOpen size={14} />} onClick={() => setOpen('unprotect')}>Turn off termination protection</Menu.Item>

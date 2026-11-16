@@ -1,18 +1,18 @@
 import {
-  Alert, Badge, Box, Button, Card, Checkbox, Group, NumberInput, Radio, Select, SimpleGrid, Stack, Switch, Text, TextInput, Textarea, ThemeIcon,
+  ActionIcon, Alert, Badge, Box, Button, Card, Checkbox, Group, NumberInput, Radio, Select, SimpleGrid, Stack, Switch, Text, TextInput, Textarea, ThemeIcon,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
-  IconAlertTriangle, IconBrandDebian, IconBrandUbuntu, IconBrandWindows, IconCirclePlus, IconCloud, IconServer2, IconUserCheck,
+  IconAlertTriangle, IconBrandDebian, IconBrandUbuntu, IconBrandWindows, IconCirclePlus, IconCloud, IconCopy, IconPlus, IconServer2, IconUserCheck, IconX,
 } from '@tabler/icons-react'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { reportChange } from '~/components/cloud/InstanceActions'
 import { EnvBadge } from '~/components/cloud/common'
 import { ButtonLink } from '~/components/links'
 import { PageBody, PageHeader } from '~/components/page'
 import {
-  SCHEDULE_TAG, cloudAccountsQuery, cloudLaunchOptionsQuery, cloudSchedulesQuery, openToInternet, useAskCloudChange, windowWords, type CloudImage,
+  SCHEDULE_TAG, cloudAccountsQuery, cloudItemsQuery, cloudLaunchOptionsQuery, cloudSchedulesQuery, openToInternet, useAskCloudChange, windowWords, type CloudImage,
 } from '~/lib/cloud'
 import { guard } from '~/lib/guard'
 import { notifyError } from '~/lib/notify'
@@ -26,11 +26,36 @@ import { FS, INK, SP } from '~/theme'
  */
 export const Route = createFileRoute('/cloud/launch')({
   beforeLoad: ({ context }) => guard(context.queryClient, 'admin'),
+  validateSearch: (s: Record<string, unknown>): { like?: string; account?: string } => ({
+    like: typeof s.like === 'string' ? s.like : undefined,
+    account: typeof s.account === 'string' ? s.account : undefined,
+  }),
   component: Launch,
 })
 
 const COMMON_SIZES = ['t3.micro', 't3.small', 't3.medium', 't3.large', 'm7i.large', 'c7i.large']
 const HOSTNAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
+const MAX_COUNT = 10
+const MAX_EXTRA_DISKS = 4
+
+/**
+ * The hostnames a launch makes, as the control plane works them out: one is
+ * the name; several number on from a name ending in -NN, or add -01 onwards.
+ */
+function launchNames(name: string, count: number): string[] {
+  if (count <= 1) return [name]
+  const m = /^(.*?)-(\d{1,4})$/.exec(name)
+  const base = m?.[1] ?? name
+  const width = m?.[2]?.length ?? 2
+  const first = m?.[2] ? Number(m[2]) : 1
+  return Array.from({ length: count }, (_, i) => `${base}-${String(first + i).padStart(width, '0')}`)
+}
+
+/** web-04 after web-03; web-01 after web. */
+function nextName(name: string): string {
+  const m = /^(.*?)-(\d{1,4})$/.exec(name)
+  return m?.[2] ? `${m[1]}-${String(Number(m[2]) + 1).padStart(m[2].length, '0')}` : `${name}-02`
+}
 
 function imageIcon(img: CloudImage) {
   if (!img.linux) return IconBrandWindows
@@ -41,12 +66,20 @@ function imageIcon(img: CloudImage) {
 
 function Launch() {
   const navigate = useNavigate()
+  const { like, account: likeAccount } = Route.useSearch()
+  const instances = useQuery({ ...cloudItemsQuery('instance'), enabled: Boolean(like) })
+  const source = like ? instances.data?.find((i) => i.resource.id === like && (!likeAccount || i.accountId === likeAccount)) : undefined
   const accounts = useQuery(cloudAccountsQuery())
   const managed = (accounts.data?.accounts ?? []).filter((a) => a.access === 'manage')
   const [accountId, setAccountId] = useState<string | null>(null)
   const account = managed.find((a) => a.id === accountId)
   const [region, setRegion] = useState<string | null>(null)
-  useEffect(() => { if (!accountId && managed[0]) setAccountId(managed[0].id) }, [managed.length])
+  useEffect(() => {
+    if (accountId) return
+    if (like && !source) return
+    const want = source && managed.find((a) => a.id === source.accountId)
+    if (want) { setAccountId(want.id); setRegion(source.resource.region) } else if (managed[0]) setAccountId(managed[0].id)
+  }, [managed.length, source?.resource.id, instances.isFetched])
   useEffect(() => { if (account && (!region || !account.regions.includes(region))) setRegion(account.regions[0] ?? null) }, [account?.id])
   const opts = useQuery(cloudLaunchOptionsQuery(accountId, region))
   const o = opts.data
@@ -59,6 +92,9 @@ function Launch() {
   const [firewalls, setFirewalls] = useState<string[]>([])
   const [publicIp, setPublicIp] = useState(false)
   const [protect, setProtect] = useState(true)
+  const [count, setCount] = useState<number>(1)
+  const [extraDisks, setExtraDisks] = useState<number[]>([])
+  const [spot, setSpot] = useState(false)
   const [agent, setAgent] = useState(true)
   const [reason, setReason] = useState('')
   const [schedule, setSchedule] = useState<string | null>(null)
@@ -66,7 +102,21 @@ function Launch() {
   const ask = useAskCloudChange()
 
   // A new region has other images, subnets and groups.
+  // Launching another like an instance takes its size, subnet, groups and,
+  // when it is one Argus offers, its image, once its region's options load.
+  const prefilled = useRef(false)
   useEffect(() => {
+    const ln = (kind: string) => (source?.resource.links ?? []).filter((l) => l.kind === kind).map((l) => l.id)
+    if (source && o && !prefilled.current && source.accountId === accountId && source.resource.region === region) {
+      prefilled.current = true
+      const subnets = ln('subnet')
+      setImage(o.images.find((i) => i.id === source.resource.details?.image)?.id ?? o.images[0]?.id ?? null)
+      setSubnet(o.subnets.find((s) => subnets.includes(s.resource.id))?.resource.id ?? o.subnets[0]?.resource.id ?? null)
+      setFirewalls(ln('firewall').filter((f) => o.firewalls.some((g) => g.resource.id === f)).slice(0, 5))
+      if (source.resource.size) setSize(source.resource.size)
+      setName(nextName(source.resource.name))
+      return
+    }
     setImage(o?.images[0]?.id ?? null)
     setSubnet(o?.subnets[0]?.resource.id ?? null)
     setFirewalls([])
@@ -76,11 +126,14 @@ function Launch() {
   const sub = o?.subnets.find((s) => s.resource.id === subnet)
   const groups = useMemo(() => (o?.firewalls ?? []).filter((f) => !sub || f.resource.network === sub.resource.network), [o, sub])
   useEffect(() => { setFirewalls((fs) => fs.filter((f) => groups.some((g) => g.resource.id === f))) }, [groups])
+  const imageMissing = Boolean(source && o && prefilled.current && source.resource.details?.image && !o.images.some((i) => i.id === source.resource.details?.image))
 
   const host = name.trim().toLowerCase()
-  const nameOk = HOSTNAME.test(host)
+  const names = launchNames(host, count)
+  const nameOk = HOSTNAME.test(host) && names.every((n) => HOSTNAME.test(n))
+  const disksOk = extraDisks.every((g) => g >= 1 && g <= 16384)
   const approval = o?.needsApproval ?? false
-  const ready = account && region && nameOk && img && size && disk >= 8 && sub && firewalls.length > 0 &&
+  const ready = account && region && nameOk && img && size && disk >= 8 && disksOk && count >= 1 && count <= MAX_COUNT && sub && firewalls.length > 0 &&
     (!agent || !o?.agentProblem) && (!approval || reason.trim().length >= 5)
   const exposed = groups.filter((g) => firewalls.includes(g.resource.id) && openToInternet(g.resource).length > 0)
 
@@ -88,7 +141,11 @@ function Launch() {
     try {
       const c = await ask.mutateAsync({
         accountId: accountId!, region: region!, action: 'launch', reason,
-        spec: { name: host, image, size, diskGb: disk, subnet, firewalls, publicIp, protect, agent, ...(schedule ? { tags: { [SCHEDULE_TAG]: schedule } } : {}) },
+        spec: {
+          name: host, image, size, diskGb: disk, subnet, firewalls, publicIp, protect: protect && !spot, agent,
+          ...(count > 1 ? { count } : {}), ...(extraDisks.length ? { extraDisks } : {}), ...(spot ? { spot } : {}),
+          ...(schedule ? { tags: { [SCHEDULE_TAG]: schedule } } : {}),
+        },
       })
       reportChange(c, 'Launching')
       void navigate({ to: '/cloud', search: { tab: 'changes' } })
@@ -116,6 +173,18 @@ function Launch() {
       <PageHeader crumbs={[{ label: 'Cloud', to: '/cloud' }, { label: 'Launch an instance' }]} title="Launch an instance"
         description="A new EC2 instance with an encrypted disk and instance metadata v2, made as you. With the agent on, it comes up as an Argus server by itself." />
       <PageBody>
+        {like && (
+          <Alert color="azure" variant="light" mb="md" icon={<IconCopy size={16} />} data-testid="launch-like">
+            <Text size={FS.meta}>
+              {source
+                ? <>Like <b>{source.resource.name}</b>: its account, region, size, subnet and security groups{imageMissing ? '' : ' and image'}. Change anything before launching.</>
+                : instances.isPending ? 'Reading the instance to copy…' : 'Argus no longer has that instance; fill in the form instead.'}
+            </Text>
+            {imageMissing && (
+              <Text size={FS.meta} mt={4}>Its image ({source?.resource.details?.image}) is not one Argus launches, so pick the closest below.</Text>
+            )}
+          </Alert>
+        )}
         <Box style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 340px), 1fr))', gap: 20, alignItems: 'start' }}>
           <Stack gap="md" style={{ gridColumn: 'span 2', minWidth: 0 }} className="argus-launch-form">
             <Section n={1} title="Where">
@@ -130,9 +199,18 @@ function Launch() {
             </Section>
 
             <Section n={2} title="Name and image">
-              <TextInput label="Name" description="Also the server's hostname: lowercase letters, digits and dashes." placeholder="web-3"
-                value={name} onChange={(e) => setName(e.currentTarget.value)} maxLength={63} data-autofocus
-                error={name && !nameOk ? 'Lowercase letters, digits and dashes, not starting or ending with a dash' : undefined} />
+              <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="sm">
+                <TextInput style={{ gridColumn: 'span 2' }} label="Name" description="Also the server's hostname: lowercase letters, digits and dashes." placeholder="web-3"
+                  value={name} onChange={(e) => setName(e.currentTarget.value)} maxLength={63} data-autofocus
+                  error={name && !nameOk ? (HOSTNAME.test(host) ? 'Too long once numbered; shorten it' : 'Lowercase letters, digits and dashes, not starting or ending with a dash') : undefined} />
+                <NumberInput label="How many" description={`1 to ${MAX_COUNT}, all alike`} min={1} max={MAX_COUNT} value={count}
+                  onChange={(v) => setCount(Math.max(1, Math.min(MAX_COUNT, Number(v) || 1)))} />
+              </SimpleGrid>
+              {count > 1 && HOSTNAME.test(host) && (
+                <Text size={FS.meta} c="dimmed" mt={6} data-testid="launch-names">
+                  Named {names.length > 4 ? `${names.slice(0, 3).join(', ')} … ${names[names.length - 1]}` : names.join(', ')}. Each gets its own one-hour agent token.
+                </Text>
+              )}
               <Text size="sm" fw={500} mt="md" mb={6}>Image</Text>
               {opts.isPending && <Text size={FS.meta} c="dimmed">Asking AWS for the newest images…</Text>}
               <Radio.Group value={image} onChange={setImage}>
@@ -169,6 +247,23 @@ function Launch() {
                 <NumberInput hideControls label="Disk" suffix=" GB" min={8} max={2048} value={disk} onChange={(v) => setDisk(Number(v) || 0)}
                   description="gp3, encrypted, deleted with the instance" />
               </SimpleGrid>
+              <Text size="sm" fw={500} mt="md">More disks</Text>
+              <Text size={FS.meta} c="dimmed" mb={6}>Each is a separate encrypted gp3 disk, attached as /dev/sdf onwards and deleted with the instance. Format and mount it on the server.</Text>
+              <Stack gap={6}>
+                {extraDisks.map((gb, i) => (
+                  <Group key={i} gap="xs" wrap="nowrap">
+                    <Text size={FS.meta} ff="monospace" c="dimmed" w={72}>/dev/sd{String.fromCharCode(102 + i)}</Text>
+                    <NumberInput hideControls size="xs" w={140} suffix=" GB" min={1} max={16384} value={gb} aria-label={`Disk ${i + 2} size`}
+                      onChange={(v) => setExtraDisks((ds) => ds.map((d, j) => j === i ? Number(v) || 0 : d))} />
+                    <ActionIcon variant="subtle" color="gray" aria-label="Remove this disk" onClick={() => setExtraDisks((ds) => ds.filter((_, j) => j !== i))}><IconX size={14} /></ActionIcon>
+                  </Group>
+                ))}
+                {extraDisks.length < MAX_EXTRA_DISKS && (
+                  <Button size="xs" variant="default" w="fit-content" leftSection={<IconPlus size={14} />} onClick={() => setExtraDisks((ds) => [...ds, 100])}>Add a disk</Button>
+                )}
+              </Stack>
+              <Switch mt="md" checked={spot} onChange={(e) => setSpot(e.currentTarget.checked)} label="Use Spot capacity"
+                description="AWS's spare capacity, often far cheaper, but AWS can take it back with two minutes' notice and the instance is then terminated. Suits work that can stop and start again; not a database." />
             </Section>
 
             <Section n={4} title="Network">
@@ -212,8 +307,8 @@ function Launch() {
                   <Text size={FS.meta}>{o.agentProblem}</Text>
                 </Alert>
               )}
-              <Switch mt="md" checked={protect} onChange={(e) => setProtect(e.currentTarget.checked)} label="Termination protection"
-                description="Nobody can remove it, from Argus or AWS, until this is turned off." />
+              <Switch mt="md" checked={protect && !spot} disabled={spot} onChange={(e) => setProtect(e.currentTarget.checked)} label="Termination protection"
+                description={spot ? 'AWS does not allow it on Spot instances, so it is off.' : 'Nobody can remove it, from Argus or AWS, until this is turned off.'} />
               {(schedules.data?.schedules.length ?? 0) > 0 && (
                 <Select mt="md" label="Schedule" placeholder="None: it runs until someone stops it" clearable value={schedule} onChange={setSchedule}
                   description={`Tags it ${SCHEDULE_TAG}=<name>, so the schedule starts and stops it.`}
@@ -226,7 +321,7 @@ function Launch() {
             <Group gap="sm" mb="md">
               <ThemeIcon variant="light" color="azure" size={32} radius="md"><IconCloud size={18} /></ThemeIcon>
               <Box>
-                <Text fw={700}>{nameOk ? host : 'New instance'}</Text>
+                <Text fw={700}>{!nameOk ? 'New instance' : count > 1 ? `${count} instances, ${names[0]} to ${names[names.length - 1]}` : host}</Text>
                 <Text size={FS.micro} c="dimmed">{account?.name ?? '—'} · {region ?? '—'}</Text>
               </Box>
             </Group>
@@ -234,11 +329,13 @@ function Launch() {
               <Row k="Image" v={img?.label} />
               <Row k="Type" v={size} mono />
               <Row k="Disk" v={`${disk} GB gp3, encrypted`} />
+              {extraDisks.length > 0 && <Row k="More disks" v={extraDisks.map((g) => `${g} GB`).join(', ')} />}
+              {spot && <Row k="Capacity" v="Spot" />}
               <Row k="Subnet" v={sub ? `${sub.resource.name} (${sub.resource.zone ?? ''})` : undefined} />
               <Row k="Security groups" v={firewalls.length ? groups.filter((g) => firewalls.includes(g.resource.id)).map((g) => g.resource.name).join(', ') : undefined} />
               <Row k="Public address" v={publicIp ? 'Yes' : 'No'} />
               <Row k="Argus agent" v={agent ? 'Installs and enrolls' : 'No'} />
-              <Row k="Protection" v={protect ? 'On' : 'Off'} />
+              <Row k="Protection" v={protect && !spot ? 'On' : 'Off'} />
               {schedule && <Row k="Schedule" v={schedule} mono />}
             </Stack>
             {exposed.length > 0 && (
@@ -255,7 +352,7 @@ function Launch() {
               disabled={!ready} loading={ask.isPending} onClick={() => void launch()}>
               {approval ? 'Ask for approval' : 'Launch'}
             </Button>
-            <Text size={FS.micro} c="dimmed" mt="xs" ta="center">AWS bills the instance from the moment it starts.</Text>
+            <Text size={FS.micro} c="dimmed" mt="xs" ta="center">AWS bills {count > 1 ? 'each instance' : 'the instance'} from the moment it starts.</Text>
           </Card>
         </Box>
       </PageBody>

@@ -130,6 +130,19 @@ func (p *Provider) Launch(ctx context.Context, a cloud.Account, actor cloud.Acto
 			{ResourceType: types.ResourceTypeVolume, Tags: tags},
 		},
 	}
+	for i, gb := range s.ExtraDisks {
+		in.BlockDeviceMappings = append(in.BlockDeviceMappings, types.BlockDeviceMapping{
+			DeviceName: awssdk.String(cloud.ExtraDiskDevice(i)),
+			Ebs: &types.EbsBlockDevice{VolumeSize: awssdk.Int32(gb), VolumeType: types.VolumeTypeGp3,
+				Encrypted: awssdk.Bool(true), DeleteOnTermination: awssdk.Bool(true)},
+		})
+	}
+	if s.Spot {
+		in.InstanceMarketOptions = &types.InstanceMarketOptionsRequest{MarketType: types.MarketTypeSpot,
+			SpotOptions: &types.SpotMarketOptions{SpotInstanceType: types.SpotInstanceTypeOneTime,
+				InstanceInterruptionBehavior: types.InstanceInterruptionBehaviorTerminate}}
+		in.DisableApiTermination = awssdk.Bool(false)
+	}
 	if s.UserData != "" {
 		in.UserData = awssdk.String(base64.StdEncoding.EncodeToString([]byte(s.UserData)))
 	}

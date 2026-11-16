@@ -59,7 +59,8 @@ const item = (kind: string, id: string, name: string, extra: object = {}) => ({
 const RESOURCES: Record<string, object[]> = {
   firewall: [item('firewall', 'sg-web', 'sg-web-public', { network: 'vpc-1', rules: [SSH, { inbound: true, protocol: 'tcp', fromPort: 443, toPort: 443, source: '0.0.0.0/0' },
     { inbound: false, protocol: 'all', fromPort: 0, toPort: 65535, source: '0.0.0.0/0' }] })],
-  instance: [item('instance', 'i-2', 'web-02', { state: 'running', size: 't3.medium', details: { metadataTokens: 'optional', hibernation: 'yes', systemStatus: 'ok', instanceStatus: 'impaired',
+  instance: [item('instance', 'i-2', 'web-02', { state: 'running', size: 't3.medium', network: 'vpc-1',
+    links: [{ kind: 'subnet', id: 'subnet-b' }, { kind: 'firewall', id: 'sg-web', name: 'sg-web-public' }], details: { image: 'ami-ubuntu24', metadataTokens: 'optional', hibernation: 'yes', systemStatus: 'ok', instanceStatus: 'impaired',
     eventCode: 'system-reboot', eventDescription: 'Scheduled reboot for host maintenance', eventNotBefore: new Date(now + 4 * 86_400_000).toISOString() } })],
   snapshot: [item('snapshot', 'snap-0a14f1', 'db-primary nightly', { size: '80 GiB' }), item('snapshot', 'snap-03caa1', 'before resize', { size: '200 GiB' })],
 }
@@ -214,4 +215,43 @@ test('an instance failing its checks shows its boot log', async ({ page }) => {
   await expect(page.getByTestId('boot-log')).toContainText('You are in emergency mode.')
   expect(reads).toBe(1)
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/09-boot-log.png` })
+})
+
+// Launching another like an instance copies where and how it runs; three at
+// once number on from its name, with extra disks and Spot.
+test('launch three more like an instance', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1100 })
+  await stub(page)
+  const subnet = (id: string, name: string) => ({ ...item('subnet', id, name, { network: 'vpc-1', size: '10.0.1.0/24', zone: 'us-east-1a' }) })
+  await page.route('**/api/v1/cloud/launch-options?*', (r) => r.fulfill({ json: {
+    images: [{ family: 'ubuntu-22', label: 'Ubuntu 22.04', id: 'ami-ubuntu22', name: 'u22', linux: true },
+      { family: 'ubuntu-24', label: 'Ubuntu 24.04', id: 'ami-ubuntu24', name: 'u24', linux: true }],
+    sizes: ['t3.small', 't3.medium', 'm7i.large'], subnets: [subnet('subnet-a', 'private-a'), subnet('subnet-b', 'private-b')],
+    firewalls: RESOURCES.firewall, environment: 'production', needsApproval: true } }))
+  let asked: Record<string, unknown> | null = null
+  await page.route('**/api/v1/cloud/changes', async (r) => {
+    if (r.request().method() !== 'POST') return r.fallback()
+    asked = r.request().postDataJSON()
+    return r.fulfill({ status: 202, json: { id: 'c2', state: 'awaiting_approval', summary: 'Launch 3 instances, web-03 to web-05' } })
+  })
+  await signIn(page)
+  await page.goto('/cloud?tab=instances')
+  await page.getByText('web-02').first().click()
+  await page.getByRole('button', { name: 'More actions' }).click()
+  await page.getByRole('menuitem', { name: /Launch another like this/ }).click()
+  await expect(page.getByTestId('launch-like')).toContainText('Like web-02')
+  await expect(page.getByRole('textbox', { name: 'Name' })).toHaveValue('web-03')
+  await page.getByRole('textbox', { name: 'How many' }).fill('3')
+  await expect(page.getByTestId('launch-names')).toContainText('web-03, web-04, web-05')
+  await page.getByRole('button', { name: 'Add a disk' }).click()
+  await page.getByRole('switch', { name: 'Use Spot capacity' }).click()
+  await expect(page.getByRole('switch', { name: 'Termination protection' })).toBeDisabled()
+  await page.getByLabel('Why').fill('Three more web nodes for the sale')
+  if (SHOTS) {
+    await page.evaluate(() => window.scrollTo(0, 0))
+    await page.screenshot({ path: `${SHOTS}/10-launch-like.png` })
+  }
+  await page.getByRole('button', { name: 'Ask for approval' }).click()
+  await expect.poll(() => asked).toMatchObject({ action: 'launch', spec: {
+    name: 'web-03', count: 3, extraDisks: [100], spot: true, protect: false, size: 't3.medium', image: 'ami-ubuntu24', subnet: 'subnet-b', firewalls: ['sg-web'] } })
 })

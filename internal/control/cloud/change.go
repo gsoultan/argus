@@ -91,10 +91,23 @@ type LaunchSpec struct {
 	Protect   bool              `json:"protect"`
 	PublicIP  bool              `json:"publicIp"`
 	Tags      map[string]string `json:"tags,omitempty"`
+	// ExtraDisks are more encrypted gp3 disks, in GB, attached as /dev/sdf
+	// onwards and deleted with the instance.
+	ExtraDisks []int32 `json:"extraDisks,omitempty"`
+	// Spot asks for spare capacity at the Spot price: one-time, and AWS
+	// terminates it when it needs the capacity back. AWS does not allow
+	// termination protection on it.
+	Spot bool `json:"spot,omitempty"`
 	// UserData runs at first boot. It holds the agent's one-time enrollment
 	// token, so it is never stored or logged.
 	UserData string `json:"-"`
 }
+
+// MaxExtraDisks is the most extra disks a launch adds.
+const MaxExtraDisks = 4
+
+// ExtraDiskDevice is the device name of the i-th extra disk.
+func ExtraDiskDevice(i int) string { return "/dev/sd" + string(rune('f'+i)) }
 
 // Result is what a change did.
 type Result struct {

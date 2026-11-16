@@ -42,6 +42,10 @@ type Fake struct {
 	Configs map[string]InstanceConfig
 	// LastUserData is what the last launch would have run at first boot.
 	LastUserData string
+	// LastLaunch is the last launch's spec, and LaunchErr fails launching
+	// an instance of that name.
+	LastLaunch LaunchSpec
+	LaunchErr  map[string]error
 	// PowerErr fails starting or stopping one instance, by id, in Power
 	// and in any PowerMany that names it.
 	PowerErr map[string]error
@@ -185,6 +189,9 @@ func (f *Fake) Launch(_ context.Context, a Account, actor Actor, s LaunchSpec) (
 	if f.Resources == nil {
 		f.Resources = map[string][]Resource{}
 	}
+	if e := f.LaunchErr[s.Name]; e != nil {
+		return Result{}, e
+	}
 	f.launched++
 	id := fmt.Sprintf("i-fake%04d", f.launched)
 	tags := map[string]string{"Name": s.Name}
@@ -200,6 +207,7 @@ func (f *Fake) Launch(_ context.Context, a Account, actor Actor, s LaunchSpec) (
 		f.Protected[id] = true
 	}
 	f.LastUserData = s.UserData
+	f.LastLaunch = s
 	return Result{ResourceID: id, RequestID: f.request()}, nil
 }
 
