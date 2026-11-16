@@ -527,6 +527,10 @@ export interface ServerUsage {
   disks: ServerDisk[]
   /** Each interface's traffic over the last sample. Missing from an older control plane. */
   net?: ServerNetRate[]
+  /** Percent of processor time the hypervisor took; null where not reported (Windows, older agents). */
+  steal?: number | null
+  /** TCP connections open now; null where not reported. */
+  tcpConns?: number | null
 }
 
 /** One interface's traffic, averaged over the agent's last sample (about a minute). */

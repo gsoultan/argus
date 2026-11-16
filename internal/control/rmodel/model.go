@@ -1241,6 +1241,7 @@ func All() []any {
 		&Team{},
 		&TeamMember{},
 		&UsageHistory{},
+		&UsageHourly{},
 		&User{},
 	}
 }
@@ -2085,7 +2086,8 @@ func (m *CloudResource) Schema(t *storm.Table) {
 }
 
 // UsageHistory is table usage_history: one agent's resource usage folded
-// into 5-minute buckets, kept 30 days, for the Metrics tab (migration 075).
+// into 5-minute buckets, kept 30 days, for the Metrics tab (migrations 075
+// and 082).
 type UsageHistory struct {
 	Hostname string
 	Bucket   time.Time
@@ -2101,16 +2103,70 @@ type UsageHistory struct {
 	NetN     int32
 	RxMax    *float64
 	TxMax    *float64
+	LoadMax  *float32
+	StealSum float64
+	StealN   int32
+	StealMax *float32
+	TcpMax   *int32
+	RopsSum  float64
+	WopsSum  float64
+	RbpsSum  float64
+	WbpsSum  float64
+	IoN      int32
+	IopsMax  *float64
+	IoBpsMax *float64
 }
 
 func (m *UsageHistory) Schema(t *storm.Table) {
 	t.PrimaryKey(&m.Hostname, &m.Bucket)
 	t.Name("usage_history")
-	t.Col(&m.Samples).Default("0")
-	t.Col(&m.CpuSum).Default("0")
-	t.Col(&m.CpuN).Default("0")
-	t.Col(&m.RxSum).Default("0")
-	t.Col(&m.TxSum).Default("0")
-	t.Col(&m.NetN).Default("0")
+	usageDefaults(t, &m.Samples, &m.CpuSum, &m.CpuN, &m.RxSum, &m.TxSum, &m.NetN,
+		&m.StealSum, &m.StealN, &m.RopsSum, &m.WopsSum, &m.RbpsSum, &m.WbpsSum, &m.IoN)
 	t.Index(&m.Bucket).Named("usage_history_bucket")
+}
+
+// UsageHourly is table usage_hourly: usage_history rolled up by the hour
+// and kept 13 months, for the long ranges (migration 082). The same columns.
+type UsageHourly struct {
+	Hostname string
+	Bucket   time.Time
+	Samples  int32
+	CpuSum   float64
+	CpuN     int32
+	CpuMax   *float32
+	MemPct   *float32
+	SwapPct  *float32
+	Disks    *storm.JSON
+	RxSum    float64
+	TxSum    float64
+	NetN     int32
+	RxMax    *float64
+	TxMax    *float64
+	LoadMax  *float32
+	StealSum float64
+	StealN   int32
+	StealMax *float32
+	TcpMax   *int32
+	RopsSum  float64
+	WopsSum  float64
+	RbpsSum  float64
+	WbpsSum  float64
+	IoN      int32
+	IopsMax  *float64
+	IoBpsMax *float64
+}
+
+func (m *UsageHourly) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Hostname, &m.Bucket)
+	t.Name("usage_hourly")
+	usageDefaults(t, &m.Samples, &m.CpuSum, &m.CpuN, &m.RxSum, &m.TxSum, &m.NetN,
+		&m.StealSum, &m.StealN, &m.RopsSum, &m.WopsSum, &m.RbpsSum, &m.WbpsSum, &m.IoN)
+	t.Index(&m.Bucket).Named("usage_hourly_bucket")
+}
+
+// usageDefaults marks the sums and counts both history tables default to 0.
+func usageDefaults(t *storm.Table, cols ...any) {
+	for _, c := range cols {
+		t.Col(c).Default("0")
+	}
 }

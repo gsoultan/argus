@@ -67,4 +67,25 @@ describe('MetricsHistory', () => {
     expect(screen.queryByTestId('chart-cpu-hover')).toBeNull()
     expect(cpu.textContent).toContain('last 6 h:')
   })
+
+  // An older agent sends none of the newer figures, and Windows keeps no
+  // load average or steal: no chart is drawn empty for them.
+  it('draws load, steal, connections and disk activity only once reported', () => {
+    const { unmount } = renderWithProviders(<MetricsHistory m={metrics(Array.from({ length: 72 }, (_, i) => point(i)))} />)
+    for (const id of ['chart-load', 'chart-steal', 'chart-tcp', 'chart-iops', 'chart-disk-bytes']) {
+      expect(screen.queryByTestId(id)).toBeNull()
+    }
+    unmount()
+    const pts = Array.from({ length: 72 }, (_, i) => point(i, {
+      loadPerCore: i === 10 ? 1.8 : 0.4, steal: null, stealMax: null, tcp: 120 + i,
+      readOps: 300, writeOps: 100, readBps: 2e6, writeBps: 1e6, iopsMax: 900, ioBpsMax: 5e6,
+    }))
+    renderWithProviders(<MetricsHistory m={metrics(pts)} />)
+    expect(screen.getByTestId('chart-load').textContent).toContain('busiest 1.80 per processor')
+    expect(screen.getByTestId('chart-load').textContent).toContain('waiting above 1')
+    expect(screen.queryByTestId('chart-steal')).toBeNull()
+    expect(screen.getByTestId('chart-tcp').textContent).toContain('most open at once 191')
+    expect(screen.getByTestId('chart-iops').textContent).toContain('busiest 900 a second')
+    expect(screen.getByTestId('chart-disk-bytes').textContent).toMatch(/busiest 4\.8 MB\/s|busiest 5(\.0)? MB\/s/)
+  })
 })

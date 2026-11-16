@@ -123,6 +123,23 @@ type HostUsage struct {
 	// Net is each interface's traffic since the agent's previous sample;
 	// nil from an agent older than traffic reporting.
 	Net []HostNetRate `json:"net,omitempty"`
+	// Steal, TCPConns and DiskIO are nil from an agent older than them, and
+	// where the platform keeps no such figure (steal on Windows).
+	// TCPConns is a count, read as a number so a figure that cannot be one
+	// is dropped by bounded rather than failing the heartbeat it rides.
+	Steal    *float64     `json:"steal,omitempty"`
+	TCPConns *float64     `json:"tcp_conns,omitempty"`
+	DiskIO   []HostDiskIO `json:"disk_io,omitempty"`
+}
+
+// HostDiskIO mirrors agent.DiskIO: one physical disk's operations and bytes
+// per second since the agent's previous sample.
+type HostDiskIO struct {
+	Name     string   `json:"name"`
+	ReadOps  *float64 `json:"read_ops,omitempty"`
+	WriteOps *float64 `json:"write_ops,omitempty"`
+	ReadBps  *float64 `json:"read_bps,omitempty"`
+	WriteBps *float64 `json:"write_bps,omitempty"`
 }
 
 // HostNetRate mirrors agent.NetRate.
@@ -149,6 +166,12 @@ const (
 	maxInterfaces  = 32
 	maxIfaceAddrs  = 16
 	maxNetRates    = 32
+	maxDiskIO      = 16
+	// maxDiskOps is ten million operations a second, past any one disk
+	// made; more is a broken counter.
+	maxDiskOps = 1e7
+	// maxTCPConns is past what any one kernel will hold open.
+	maxTCPConns = 1 << 26
 	// maxRateBps is 1 Tbit/s in bytes: no interface carries more, so a
 	// larger rate is a broken counter, not traffic.
 	maxRateBps = 125e9
@@ -262,7 +285,48 @@ func (u *HostUsage) bounded() *HostUsage {
 	}
 	c.Disks = disks
 	c.Net = boundedNetRates(c.Net)
+	if c.Steal != nil && (math.IsNaN(*c.Steal) || *c.Steal < 0 || *c.Steal > 100) {
+		c.Steal = nil
+	}
+	if c.TCPConns != nil {
+		if v := *c.TCPConns; math.IsNaN(v) || v < 0 || v > maxTCPConns {
+			c.TCPConns = nil
+		} else {
+			v = math.Round(v)
+			c.TCPConns = &v
+		}
+	}
+	c.DiskIO = boundedDiskIO(c.DiskIO)
 	return &c
+}
+
+// boundedDiskIO keeps at most maxDiskIO named disks, dropping a rate no
+// disk does.
+func boundedDiskIO(in []HostDiskIO) []HostDiskIO {
+	if in == nil {
+		return nil
+	}
+	within := func(p *float64, limit float64) *float64 {
+		if p == nil || math.IsNaN(*p) || math.IsInf(*p, 0) || *p < 0 || *p > limit {
+			return nil
+		}
+		v := *p
+		return &v
+	}
+	out := make([]HostDiskIO, 0, min(len(in), maxDiskIO))
+	for _, d := range in {
+		if len(out) == maxDiskIO {
+			break
+		}
+		name := clipText(d.Name, 64)
+		if name == "" {
+			continue
+		}
+		out = append(out, HostDiskIO{Name: name,
+			ReadOps: within(d.ReadOps, maxDiskOps), WriteOps: within(d.WriteOps, maxDiskOps),
+			ReadBps: within(d.ReadBps, maxRateBps), WriteBps: within(d.WriteBps, maxRateBps)})
+	}
+	return out
 }
 
 // boundedNetRates keeps at most maxNetRates named interfaces, dropping a
@@ -459,6 +523,9 @@ type SystemUsage struct {
 	// Net is each interface's traffic over the last sample; empty from an
 	// agent that does not report it.
 	Net []SystemNetRate `json:"net"`
+	// Steal and TCPConns are null where the agent does not report them.
+	Steal    *float64 `json:"steal"`
+	TCPConns *float64 `json:"tcpConns"`
 }
 
 // SystemNetRate is one interface's traffic on the System card.
@@ -534,6 +601,7 @@ func (s *Store) SystemFor(ctx context.Context, id string) (ServerSystem, error) 
 		out.Usage = &SystemUsage{
 			Load: hu.Load, CPUBusy: hu.CPUBusy, MemTotal: hu.MemTotal, MemAvailable: hu.MemAvailable,
 			SwapTotal: hu.SwapTotal, SwapFree: hu.SwapFree, Disks: disks, Net: net,
+			Steal: hu.Steal, TCPConns: hu.TCPConns,
 		}
 		out.UsageAt = usageAt
 		out.Warnings = LowResources(hu)

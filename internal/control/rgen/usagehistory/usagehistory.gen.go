@@ -34,6 +34,18 @@ type Row struct {
 	NetN     int32
 	RxMax    runtime.Null[float64]
 	TxMax    runtime.Null[float64]
+	LoadMax  runtime.Null[float32]
+	StealSum float64
+	StealN   int32
+	StealMax runtime.Null[float32]
+	TcpMax   runtime.Null[int32]
+	RopsSum  float64
+	WopsSum  float64
+	RbpsSum  float64
+	WbpsSum  float64
+	IoN      int32
+	IopsMax  runtime.Null[float64]
+	IoBpsMax runtime.Null[float64]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -72,7 +84,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 14
+const nCols = 26
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -277,6 +289,90 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.f64s[q.nf] = float64(r.TxMax.V)
 		q.nf++
+	case 14:
+		if int(q.nf) >= len(q.f64s) {
+			q.over = true
+			return
+		}
+		q.f64s[q.nf] = float64(r.LoadMax.V)
+		q.nf++
+	case 15:
+		if int(q.nf) >= len(q.f64s) {
+			q.over = true
+			return
+		}
+		q.f64s[q.nf] = float64(r.StealSum)
+		q.nf++
+	case 16:
+		if int(q.nn) >= len(q.nums) {
+			q.over = true
+			return
+		}
+		q.nums[q.nn] = int64(r.StealN)
+		q.nn++
+	case 17:
+		if int(q.nf) >= len(q.f64s) {
+			q.over = true
+			return
+		}
+		q.f64s[q.nf] = float64(r.StealMax.V)
+		q.nf++
+	case 18:
+		if int(q.nn) >= len(q.nums) {
+			q.over = true
+			return
+		}
+		q.nums[q.nn] = int64(r.TcpMax.V)
+		q.nn++
+	case 19:
+		if int(q.nf) >= len(q.f64s) {
+			q.over = true
+			return
+		}
+		q.f64s[q.nf] = float64(r.RopsSum)
+		q.nf++
+	case 20:
+		if int(q.nf) >= len(q.f64s) {
+			q.over = true
+			return
+		}
+		q.f64s[q.nf] = float64(r.WopsSum)
+		q.nf++
+	case 21:
+		if int(q.nf) >= len(q.f64s) {
+			q.over = true
+			return
+		}
+		q.f64s[q.nf] = float64(r.RbpsSum)
+		q.nf++
+	case 22:
+		if int(q.nf) >= len(q.f64s) {
+			q.over = true
+			return
+		}
+		q.f64s[q.nf] = float64(r.WbpsSum)
+		q.nf++
+	case 23:
+		if int(q.nn) >= len(q.nums) {
+			q.over = true
+			return
+		}
+		q.nums[q.nn] = int64(r.IoN)
+		q.nn++
+	case 24:
+		if int(q.nf) >= len(q.f64s) {
+			q.over = true
+			return
+		}
+		q.f64s[q.nf] = float64(r.IopsMax.V)
+		q.nf++
+	case 25:
+		if int(q.nf) >= len(q.f64s) {
+			q.over = true
+			return
+		}
+		q.f64s[q.nf] = float64(r.IoBpsMax.V)
+		q.nf++
 	}
 }
 
@@ -450,6 +546,18 @@ var (
 	NetN     = Int32Col{11}
 	RxMax    = NullFloat64Col{12}
 	TxMax    = NullFloat64Col{13}
+	LoadMax  = NullFloat32Col{14}
+	StealSum = Float64Col{15}
+	StealN   = Int32Col{16}
+	StealMax = NullFloat32Col{17}
+	TcpMax   = NullInt32Col{18}
+	RopsSum  = Float64Col{19}
+	WopsSum  = Float64Col{20}
+	RbpsSum  = Float64Col{21}
+	WbpsSum  = Float64Col{22}
+	IoN      = Int32Col{23}
+	IopsMax  = NullFloat64Col{24}
+	IoBpsMax = NullFloat64Col{25}
 )
 
 // TextCol addresses a text column.
@@ -605,6 +713,33 @@ func (h NullFloat64Col) Lt(v float64) Pred    { return Pred{col: h.c, op: opLt, 
 func (h NullFloat64Col) Lte(v float64) Pred   { return Pred{col: h.c, op: opLte, f64: float64(v)} }
 func (h NullFloat64Col) IsNull() Pred         { return Pred{col: h.c, op: opIsNull} }
 func (h NullFloat64Col) IsNotNull() Pred      { return Pred{col: h.c, op: opIsNotNull} }
+
+// NullInt32Col addresses a int4 column.
+type NullInt32Col struct{ c uint8 }
+
+func (h NullInt32Col) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
+func (h NullInt32Col) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
+func (h NullInt32Col) AscNullsFirst() Sort {
+	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
+}
+func (h NullInt32Col) DescNullsLast() Sort {
+	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
+}
+
+func (h NullInt32Col) Eq(v int32) Pred    { return Pred{col: h.c, op: opEq, num: int64(v)} }
+func (h NullInt32Col) NotEq(v int32) Pred { return Pred{col: h.c, op: opNotEq, num: int64(v)} }
+func (h NullInt32Col) Gt(v int32) Pred    { return Pred{col: h.c, op: opGt, num: int64(v)} }
+func (h NullInt32Col) Gte(v int32) Pred   { return Pred{col: h.c, op: opGte, num: int64(v)} }
+func (h NullInt32Col) Lt(v int32) Pred    { return Pred{col: h.c, op: opLt, num: int64(v)} }
+func (h NullInt32Col) Lte(v int32) Pred   { return Pred{col: h.c, op: opLte, num: int64(v)} }
+func (h NullInt32Col) In(v ...int32) Pred { return Pred{col: h.c, op: opIn, anyI32: v} }
+
+// NotIn is `<> ALL($1)`. A NULL anywhere in v makes the
+// comparison NULL for every row and the result empty —
+// PostgreSQL's rule for NOT IN, not storm's.
+func (h NullInt32Col) NotIn(v ...int32) Pred { return Pred{col: h.c, op: opNotIn, anyI32: v} }
+func (h NullInt32Col) IsNull() Pred          { return Pred{col: h.c, op: opIsNull} }
+func (h NullInt32Col) IsNotNull() Pred       { return Pred{col: h.c, op: opIsNotNull} }
 
 // Where applies predicates, ANDed together.
 func (q Query) Where(ps ...Pred) Query {
@@ -782,6 +917,27 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyI32[q.nai32] = p.anyI32
 			q.nai32++
+		case 16:
+			if int(q.nai32) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyI32[q.nai32] = p.anyI32
+			q.nai32++
+		case 18:
+			if int(q.nai32) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyI32[q.nai32] = p.anyI32
+			q.nai32++
+		case 23:
+			if int(q.nai32) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyI32[q.nai32] = p.anyI32
+			q.nai32++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -883,6 +1039,90 @@ func (q *Query) leaf(p Pred) {
 		q.f64s[q.nf] = p.f64
 		q.nf++
 	case 13:
+		if int(q.nf) >= 4 {
+			q.over = true
+			return
+		}
+		q.f64s[q.nf] = p.f64
+		q.nf++
+	case 14:
+		if int(q.nf) >= 4 {
+			q.over = true
+			return
+		}
+		q.f64s[q.nf] = p.f64
+		q.nf++
+	case 15:
+		if int(q.nf) >= 4 {
+			q.over = true
+			return
+		}
+		q.f64s[q.nf] = p.f64
+		q.nf++
+	case 16:
+		if int(q.nn) >= 6 {
+			q.over = true
+			return
+		}
+		q.nums[q.nn] = p.num
+		q.nn++
+	case 17:
+		if int(q.nf) >= 4 {
+			q.over = true
+			return
+		}
+		q.f64s[q.nf] = p.f64
+		q.nf++
+	case 18:
+		if int(q.nn) >= 6 {
+			q.over = true
+			return
+		}
+		q.nums[q.nn] = p.num
+		q.nn++
+	case 19:
+		if int(q.nf) >= 4 {
+			q.over = true
+			return
+		}
+		q.f64s[q.nf] = p.f64
+		q.nf++
+	case 20:
+		if int(q.nf) >= 4 {
+			q.over = true
+			return
+		}
+		q.f64s[q.nf] = p.f64
+		q.nf++
+	case 21:
+		if int(q.nf) >= 4 {
+			q.over = true
+			return
+		}
+		q.f64s[q.nf] = p.f64
+		q.nf++
+	case 22:
+		if int(q.nf) >= 4 {
+			q.over = true
+			return
+		}
+		q.f64s[q.nf] = p.f64
+		q.nf++
+	case 23:
+		if int(q.nn) >= 6 {
+			q.over = true
+			return
+		}
+		q.nums[q.nn] = p.num
+		q.nn++
+	case 24:
+		if int(q.nf) >= 4 {
+			q.over = true
+			return
+		}
+		q.f64s[q.nf] = p.f64
+		q.nf++
+	case 25:
 		if int(q.nf) >= 4 {
 			q.over = true
 			return
@@ -999,8 +1239,96 @@ func (q Query) TxMaxLt(v float64) Query               { return q.Where(TxMax.Lt(
 func (q Query) TxMaxLte(v float64) Query              { return q.Where(TxMax.Lte(v)) }
 func (q Query) TxMaxIsNull() Query                    { return q.Where(TxMax.IsNull()) }
 func (q Query) TxMaxIsNotNull() Query                 { return q.Where(TxMax.IsNotNull()) }
+func (q Query) LoadMaxEq(v float32) Query             { return q.Where(LoadMax.Eq(v)) }
+func (q Query) LoadMaxNotEq(v float32) Query          { return q.Where(LoadMax.NotEq(v)) }
+func (q Query) LoadMaxGt(v float32) Query             { return q.Where(LoadMax.Gt(v)) }
+func (q Query) LoadMaxGte(v float32) Query            { return q.Where(LoadMax.Gte(v)) }
+func (q Query) LoadMaxLt(v float32) Query             { return q.Where(LoadMax.Lt(v)) }
+func (q Query) LoadMaxLte(v float32) Query            { return q.Where(LoadMax.Lte(v)) }
+func (q Query) LoadMaxIsNull() Query                  { return q.Where(LoadMax.IsNull()) }
+func (q Query) LoadMaxIsNotNull() Query               { return q.Where(LoadMax.IsNotNull()) }
+func (q Query) StealSumEq(v float64) Query            { return q.Where(StealSum.Eq(v)) }
+func (q Query) StealSumNotEq(v float64) Query         { return q.Where(StealSum.NotEq(v)) }
+func (q Query) StealSumGt(v float64) Query            { return q.Where(StealSum.Gt(v)) }
+func (q Query) StealSumGte(v float64) Query           { return q.Where(StealSum.Gte(v)) }
+func (q Query) StealSumLt(v float64) Query            { return q.Where(StealSum.Lt(v)) }
+func (q Query) StealSumLte(v float64) Query           { return q.Where(StealSum.Lte(v)) }
+func (q Query) StealNEq(v int32) Query                { return q.Where(StealN.Eq(v)) }
+func (q Query) StealNNotEq(v int32) Query             { return q.Where(StealN.NotEq(v)) }
+func (q Query) StealNGt(v int32) Query                { return q.Where(StealN.Gt(v)) }
+func (q Query) StealNGte(v int32) Query               { return q.Where(StealN.Gte(v)) }
+func (q Query) StealNLt(v int32) Query                { return q.Where(StealN.Lt(v)) }
+func (q Query) StealNLte(v int32) Query               { return q.Where(StealN.Lte(v)) }
+func (q Query) StealNIn(v ...int32) Query             { return q.Where(StealN.In(v...)) }
+func (q Query) StealNNotIn(v ...int32) Query          { return q.Where(StealN.NotIn(v...)) }
+func (q Query) StealMaxEq(v float32) Query            { return q.Where(StealMax.Eq(v)) }
+func (q Query) StealMaxNotEq(v float32) Query         { return q.Where(StealMax.NotEq(v)) }
+func (q Query) StealMaxGt(v float32) Query            { return q.Where(StealMax.Gt(v)) }
+func (q Query) StealMaxGte(v float32) Query           { return q.Where(StealMax.Gte(v)) }
+func (q Query) StealMaxLt(v float32) Query            { return q.Where(StealMax.Lt(v)) }
+func (q Query) StealMaxLte(v float32) Query           { return q.Where(StealMax.Lte(v)) }
+func (q Query) StealMaxIsNull() Query                 { return q.Where(StealMax.IsNull()) }
+func (q Query) StealMaxIsNotNull() Query              { return q.Where(StealMax.IsNotNull()) }
+func (q Query) TcpMaxEq(v int32) Query                { return q.Where(TcpMax.Eq(v)) }
+func (q Query) TcpMaxNotEq(v int32) Query             { return q.Where(TcpMax.NotEq(v)) }
+func (q Query) TcpMaxGt(v int32) Query                { return q.Where(TcpMax.Gt(v)) }
+func (q Query) TcpMaxGte(v int32) Query               { return q.Where(TcpMax.Gte(v)) }
+func (q Query) TcpMaxLt(v int32) Query                { return q.Where(TcpMax.Lt(v)) }
+func (q Query) TcpMaxLte(v int32) Query               { return q.Where(TcpMax.Lte(v)) }
+func (q Query) TcpMaxIn(v ...int32) Query             { return q.Where(TcpMax.In(v...)) }
+func (q Query) TcpMaxNotIn(v ...int32) Query          { return q.Where(TcpMax.NotIn(v...)) }
+func (q Query) TcpMaxIsNull() Query                   { return q.Where(TcpMax.IsNull()) }
+func (q Query) TcpMaxIsNotNull() Query                { return q.Where(TcpMax.IsNotNull()) }
+func (q Query) RopsSumEq(v float64) Query             { return q.Where(RopsSum.Eq(v)) }
+func (q Query) RopsSumNotEq(v float64) Query          { return q.Where(RopsSum.NotEq(v)) }
+func (q Query) RopsSumGt(v float64) Query             { return q.Where(RopsSum.Gt(v)) }
+func (q Query) RopsSumGte(v float64) Query            { return q.Where(RopsSum.Gte(v)) }
+func (q Query) RopsSumLt(v float64) Query             { return q.Where(RopsSum.Lt(v)) }
+func (q Query) RopsSumLte(v float64) Query            { return q.Where(RopsSum.Lte(v)) }
+func (q Query) WopsSumEq(v float64) Query             { return q.Where(WopsSum.Eq(v)) }
+func (q Query) WopsSumNotEq(v float64) Query          { return q.Where(WopsSum.NotEq(v)) }
+func (q Query) WopsSumGt(v float64) Query             { return q.Where(WopsSum.Gt(v)) }
+func (q Query) WopsSumGte(v float64) Query            { return q.Where(WopsSum.Gte(v)) }
+func (q Query) WopsSumLt(v float64) Query             { return q.Where(WopsSum.Lt(v)) }
+func (q Query) WopsSumLte(v float64) Query            { return q.Where(WopsSum.Lte(v)) }
+func (q Query) RbpsSumEq(v float64) Query             { return q.Where(RbpsSum.Eq(v)) }
+func (q Query) RbpsSumNotEq(v float64) Query          { return q.Where(RbpsSum.NotEq(v)) }
+func (q Query) RbpsSumGt(v float64) Query             { return q.Where(RbpsSum.Gt(v)) }
+func (q Query) RbpsSumGte(v float64) Query            { return q.Where(RbpsSum.Gte(v)) }
+func (q Query) RbpsSumLt(v float64) Query             { return q.Where(RbpsSum.Lt(v)) }
+func (q Query) RbpsSumLte(v float64) Query            { return q.Where(RbpsSum.Lte(v)) }
+func (q Query) WbpsSumEq(v float64) Query             { return q.Where(WbpsSum.Eq(v)) }
+func (q Query) WbpsSumNotEq(v float64) Query          { return q.Where(WbpsSum.NotEq(v)) }
+func (q Query) WbpsSumGt(v float64) Query             { return q.Where(WbpsSum.Gt(v)) }
+func (q Query) WbpsSumGte(v float64) Query            { return q.Where(WbpsSum.Gte(v)) }
+func (q Query) WbpsSumLt(v float64) Query             { return q.Where(WbpsSum.Lt(v)) }
+func (q Query) WbpsSumLte(v float64) Query            { return q.Where(WbpsSum.Lte(v)) }
+func (q Query) IoNEq(v int32) Query                   { return q.Where(IoN.Eq(v)) }
+func (q Query) IoNNotEq(v int32) Query                { return q.Where(IoN.NotEq(v)) }
+func (q Query) IoNGt(v int32) Query                   { return q.Where(IoN.Gt(v)) }
+func (q Query) IoNGte(v int32) Query                  { return q.Where(IoN.Gte(v)) }
+func (q Query) IoNLt(v int32) Query                   { return q.Where(IoN.Lt(v)) }
+func (q Query) IoNLte(v int32) Query                  { return q.Where(IoN.Lte(v)) }
+func (q Query) IoNIn(v ...int32) Query                { return q.Where(IoN.In(v...)) }
+func (q Query) IoNNotIn(v ...int32) Query             { return q.Where(IoN.NotIn(v...)) }
+func (q Query) IopsMaxEq(v float64) Query             { return q.Where(IopsMax.Eq(v)) }
+func (q Query) IopsMaxNotEq(v float64) Query          { return q.Where(IopsMax.NotEq(v)) }
+func (q Query) IopsMaxGt(v float64) Query             { return q.Where(IopsMax.Gt(v)) }
+func (q Query) IopsMaxGte(v float64) Query            { return q.Where(IopsMax.Gte(v)) }
+func (q Query) IopsMaxLt(v float64) Query             { return q.Where(IopsMax.Lt(v)) }
+func (q Query) IopsMaxLte(v float64) Query            { return q.Where(IopsMax.Lte(v)) }
+func (q Query) IopsMaxIsNull() Query                  { return q.Where(IopsMax.IsNull()) }
+func (q Query) IopsMaxIsNotNull() Query               { return q.Where(IopsMax.IsNotNull()) }
+func (q Query) IoBpsMaxEq(v float64) Query            { return q.Where(IoBpsMax.Eq(v)) }
+func (q Query) IoBpsMaxNotEq(v float64) Query         { return q.Where(IoBpsMax.NotEq(v)) }
+func (q Query) IoBpsMaxGt(v float64) Query            { return q.Where(IoBpsMax.Gt(v)) }
+func (q Query) IoBpsMaxGte(v float64) Query           { return q.Where(IoBpsMax.Gte(v)) }
+func (q Query) IoBpsMaxLt(v float64) Query            { return q.Where(IoBpsMax.Lt(v)) }
+func (q Query) IoBpsMaxLte(v float64) Query           { return q.Where(IoBpsMax.Lte(v)) }
+func (q Query) IoBpsMaxIsNull() Query                 { return q.Where(IoBpsMax.IsNull()) }
+func (q Query) IoBpsMaxIsNotNull() Query              { return q.Where(IoBpsMax.IsNotNull()) }
 
-const selectPrefix = `SELECT "hostname", "bucket", "samples", "cpu_sum", "cpu_n", "cpu_max", "mem_pct", "swap_pct", "disks", "rx_sum", "tx_sum", "net_n", "rx_max", "tx_max" FROM "usage_history"`
+const selectPrefix = `SELECT "hostname", "bucket", "samples", "cpu_sum", "cpu_n", "cpu_max", "mem_pct", "swap_pct", "disks", "rx_sum", "tx_sum", "net_n", "rx_max", "tx_max", "load_max", "steal_sum", "steal_n", "steal_max", "tcp_max", "rops_sum", "wops_sum", "rbps_sum", "wbps_sum", "io_n", "iops_max", "io_bps_max" FROM "usage_history"`
 const countPrefix = `SELECT count(*) FROM "usage_history"`
 const existsPrefix = `SELECT 1 FROM "usage_history"`
 const existsSuffix = ` LIMIT 1`
@@ -1121,6 +1449,78 @@ var orderTable = [nCols][4]string{
 		"\"tx_max\" ASC NULLS FIRST",
 		"\"tx_max\" DESC NULLS LAST",
 	},
+	{ // load_max
+		"\"load_max\"",
+		"\"load_max\" DESC",
+		"\"load_max\" ASC NULLS FIRST",
+		"\"load_max\" DESC NULLS LAST",
+	},
+	{ // steal_sum
+		"\"steal_sum\"",
+		"\"steal_sum\" DESC",
+		"\"steal_sum\" ASC NULLS FIRST",
+		"\"steal_sum\" DESC NULLS LAST",
+	},
+	{ // steal_n
+		"\"steal_n\"",
+		"\"steal_n\" DESC",
+		"\"steal_n\" ASC NULLS FIRST",
+		"\"steal_n\" DESC NULLS LAST",
+	},
+	{ // steal_max
+		"\"steal_max\"",
+		"\"steal_max\" DESC",
+		"\"steal_max\" ASC NULLS FIRST",
+		"\"steal_max\" DESC NULLS LAST",
+	},
+	{ // tcp_max
+		"\"tcp_max\"",
+		"\"tcp_max\" DESC",
+		"\"tcp_max\" ASC NULLS FIRST",
+		"\"tcp_max\" DESC NULLS LAST",
+	},
+	{ // rops_sum
+		"\"rops_sum\"",
+		"\"rops_sum\" DESC",
+		"\"rops_sum\" ASC NULLS FIRST",
+		"\"rops_sum\" DESC NULLS LAST",
+	},
+	{ // wops_sum
+		"\"wops_sum\"",
+		"\"wops_sum\" DESC",
+		"\"wops_sum\" ASC NULLS FIRST",
+		"\"wops_sum\" DESC NULLS LAST",
+	},
+	{ // rbps_sum
+		"\"rbps_sum\"",
+		"\"rbps_sum\" DESC",
+		"\"rbps_sum\" ASC NULLS FIRST",
+		"\"rbps_sum\" DESC NULLS LAST",
+	},
+	{ // wbps_sum
+		"\"wbps_sum\"",
+		"\"wbps_sum\" DESC",
+		"\"wbps_sum\" ASC NULLS FIRST",
+		"\"wbps_sum\" DESC NULLS LAST",
+	},
+	{ // io_n
+		"\"io_n\"",
+		"\"io_n\" DESC",
+		"\"io_n\" ASC NULLS FIRST",
+		"\"io_n\" DESC NULLS LAST",
+	},
+	{ // iops_max
+		"\"iops_max\"",
+		"\"iops_max\" DESC",
+		"\"iops_max\" ASC NULLS FIRST",
+		"\"iops_max\" DESC NULLS LAST",
+	},
+	{ // io_bps_max
+		"\"io_bps_max\"",
+		"\"io_bps_max\" DESC",
+		"\"io_bps_max\" ASC NULLS FIRST",
+		"\"io_bps_max\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1140,6 +1540,18 @@ var identTable = [nCols]string{
 	"\"net_n\"",
 	"\"rx_max\"",
 	"\"tx_max\"",
+	"\"load_max\"",
+	"\"steal_sum\"",
+	"\"steal_n\"",
+	"\"steal_max\"",
+	"\"tcp_max\"",
+	"\"rops_sum\"",
+	"\"wops_sum\"",
+	"\"rbps_sum\"",
+	"\"wbps_sum\"",
+	"\"io_n\"",
+	"\"iops_max\"",
+	"\"io_bps_max\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1172,7 +1584,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [14][28]runtime.Frag{
+var fragTable = [26][28]runtime.Frag{
 	{ // hostname
 		{}, // opNone
 		{A: "\"hostname\" = $", B: ""},
@@ -1593,6 +2005,366 @@ var fragTable = [14][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // load_max
+		{}, // opNone
+		{A: "\"load_max\" = $", B: ""},
+		{A: "\"load_max\" <> $", B: ""},
+		{A: "\"load_max\" > $", B: ""},
+		{A: "\"load_max\" >= $", B: ""},
+		{A: "\"load_max\" < $", B: ""},
+		{A: "\"load_max\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"load_max\" IS NULL", B: ""},
+		{A: "\"load_max\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // steal_sum
+		{}, // opNone
+		{A: "\"steal_sum\" = $", B: ""},
+		{A: "\"steal_sum\" <> $", B: ""},
+		{A: "\"steal_sum\" > $", B: ""},
+		{A: "\"steal_sum\" >= $", B: ""},
+		{A: "\"steal_sum\" < $", B: ""},
+		{A: "\"steal_sum\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // steal_n
+		{}, // opNone
+		{A: "\"steal_n\" = $", B: ""},
+		{A: "\"steal_n\" <> $", B: ""},
+		{A: "\"steal_n\" > $", B: ""},
+		{A: "\"steal_n\" >= $", B: ""},
+		{A: "\"steal_n\" < $", B: ""},
+		{A: "\"steal_n\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"steal_n\" = ANY($", B: ")"},
+		{A: "\"steal_n\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // steal_max
+		{}, // opNone
+		{A: "\"steal_max\" = $", B: ""},
+		{A: "\"steal_max\" <> $", B: ""},
+		{A: "\"steal_max\" > $", B: ""},
+		{A: "\"steal_max\" >= $", B: ""},
+		{A: "\"steal_max\" < $", B: ""},
+		{A: "\"steal_max\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"steal_max\" IS NULL", B: ""},
+		{A: "\"steal_max\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // tcp_max
+		{}, // opNone
+		{A: "\"tcp_max\" = $", B: ""},
+		{A: "\"tcp_max\" <> $", B: ""},
+		{A: "\"tcp_max\" > $", B: ""},
+		{A: "\"tcp_max\" >= $", B: ""},
+		{A: "\"tcp_max\" < $", B: ""},
+		{A: "\"tcp_max\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"tcp_max\" = ANY($", B: ")"},
+		{A: "\"tcp_max\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"tcp_max\" IS NULL", B: ""},
+		{A: "\"tcp_max\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // rops_sum
+		{}, // opNone
+		{A: "\"rops_sum\" = $", B: ""},
+		{A: "\"rops_sum\" <> $", B: ""},
+		{A: "\"rops_sum\" > $", B: ""},
+		{A: "\"rops_sum\" >= $", B: ""},
+		{A: "\"rops_sum\" < $", B: ""},
+		{A: "\"rops_sum\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // wops_sum
+		{}, // opNone
+		{A: "\"wops_sum\" = $", B: ""},
+		{A: "\"wops_sum\" <> $", B: ""},
+		{A: "\"wops_sum\" > $", B: ""},
+		{A: "\"wops_sum\" >= $", B: ""},
+		{A: "\"wops_sum\" < $", B: ""},
+		{A: "\"wops_sum\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // rbps_sum
+		{}, // opNone
+		{A: "\"rbps_sum\" = $", B: ""},
+		{A: "\"rbps_sum\" <> $", B: ""},
+		{A: "\"rbps_sum\" > $", B: ""},
+		{A: "\"rbps_sum\" >= $", B: ""},
+		{A: "\"rbps_sum\" < $", B: ""},
+		{A: "\"rbps_sum\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // wbps_sum
+		{}, // opNone
+		{A: "\"wbps_sum\" = $", B: ""},
+		{A: "\"wbps_sum\" <> $", B: ""},
+		{A: "\"wbps_sum\" > $", B: ""},
+		{A: "\"wbps_sum\" >= $", B: ""},
+		{A: "\"wbps_sum\" < $", B: ""},
+		{A: "\"wbps_sum\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // io_n
+		{}, // opNone
+		{A: "\"io_n\" = $", B: ""},
+		{A: "\"io_n\" <> $", B: ""},
+		{A: "\"io_n\" > $", B: ""},
+		{A: "\"io_n\" >= $", B: ""},
+		{A: "\"io_n\" < $", B: ""},
+		{A: "\"io_n\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"io_n\" = ANY($", B: ")"},
+		{A: "\"io_n\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // iops_max
+		{}, // opNone
+		{A: "\"iops_max\" = $", B: ""},
+		{A: "\"iops_max\" <> $", B: ""},
+		{A: "\"iops_max\" > $", B: ""},
+		{A: "\"iops_max\" >= $", B: ""},
+		{A: "\"iops_max\" < $", B: ""},
+		{A: "\"iops_max\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"iops_max\" IS NULL", B: ""},
+		{A: "\"iops_max\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // io_bps_max
+		{}, // opNone
+		{A: "\"io_bps_max\" = $", B: ""},
+		{A: "\"io_bps_max\" <> $", B: ""},
+		{A: "\"io_bps_max\" > $", B: ""},
+		{A: "\"io_bps_max\" >= $", B: ""},
+		{A: "\"io_bps_max\" < $", B: ""},
+		{A: "\"io_bps_max\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"io_bps_max\" IS NULL", B: ""},
+		{A: "\"io_bps_max\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -1764,6 +2536,18 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.NetN = runtime.Int4(rv[11])
 	r.RxMax = runtime.Nullable(rv[12], runtime.Float8)
 	r.TxMax = runtime.Nullable(rv[13], runtime.Float8)
+	r.LoadMax = runtime.Nullable(rv[14], runtime.Float4)
+	r.StealSum = runtime.Float8(rv[15])
+	r.StealN = runtime.Int4(rv[16])
+	r.StealMax = runtime.Nullable(rv[17], runtime.Float4)
+	r.TcpMax = runtime.Nullable(rv[18], runtime.Int4)
+	r.RopsSum = runtime.Float8(rv[19])
+	r.WopsSum = runtime.Float8(rv[20])
+	r.RbpsSum = runtime.Float8(rv[21])
+	r.WbpsSum = runtime.Float8(rv[22])
+	r.IoN = runtime.Int4(rv[23])
+	r.IopsMax = runtime.Nullable(rv[24], runtime.Float8)
+	r.IoBpsMax = runtime.Nullable(rv[25], runtime.Float8)
 	return nil
 }
 
@@ -1850,6 +2634,18 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyI32[nai32] = q.anyI32[nai32]
 				v = append(v, &b.anyI32[nai32])
 				nai32++
+			case 16:
+				b.anyI32[nai32] = q.anyI32[nai32]
+				v = append(v, &b.anyI32[nai32])
+				nai32++
+			case 18:
+				b.anyI32[nai32] = q.anyI32[nai32]
+				v = append(v, &b.anyI32[nai32])
+				nai32++
+			case 23:
+				b.anyI32[nai32] = q.anyI32[nai32]
+				v = append(v, &b.anyI32[nai32])
+				nai32++
 			}
 			continue
 		}
@@ -1907,6 +2703,54 @@ func (q Query) bindPreds(b *binder) []any {
 			v = append(v, &b.f64s[nf])
 			nf++
 		case 13:
+			b.f64s[nf] = q.f64s[nf]
+			v = append(v, &b.f64s[nf])
+			nf++
+		case 14:
+			b.f64s[nf] = q.f64s[nf]
+			v = append(v, &b.f64s[nf])
+			nf++
+		case 15:
+			b.f64s[nf] = q.f64s[nf]
+			v = append(v, &b.f64s[nf])
+			nf++
+		case 16:
+			b.nums[nn] = q.nums[nn]
+			v = append(v, &b.nums[nn])
+			nn++
+		case 17:
+			b.f64s[nf] = q.f64s[nf]
+			v = append(v, &b.f64s[nf])
+			nf++
+		case 18:
+			b.nums[nn] = q.nums[nn]
+			v = append(v, &b.nums[nn])
+			nn++
+		case 19:
+			b.f64s[nf] = q.f64s[nf]
+			v = append(v, &b.f64s[nf])
+			nf++
+		case 20:
+			b.f64s[nf] = q.f64s[nf]
+			v = append(v, &b.f64s[nf])
+			nf++
+		case 21:
+			b.f64s[nf] = q.f64s[nf]
+			v = append(v, &b.f64s[nf])
+			nf++
+		case 22:
+			b.f64s[nf] = q.f64s[nf]
+			v = append(v, &b.f64s[nf])
+			nf++
+		case 23:
+			b.nums[nn] = q.nums[nn]
+			v = append(v, &b.nums[nn])
+			nn++
+		case 24:
+			b.f64s[nf] = q.f64s[nf]
+			v = append(v, &b.f64s[nf])
+			nf++
+		case 25:
 			b.f64s[nf] = q.f64s[nf]
 			v = append(v, &b.f64s[nf])
 			nf++
@@ -2047,7 +2891,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "usage_history" ("hostname", "bucket", "samples", "cpu_sum", "cpu_n", "cpu_max", "mem_pct", "swap_pct", "disks", "rx_sum", "tx_sum", "net_n", "rx_max", "tx_max") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING "hostname", "bucket", "samples", "cpu_sum", "cpu_n", "cpu_max", "mem_pct", "swap_pct", "disks", "rx_sum", "tx_sum", "net_n", "rx_max", "tx_max"`
+const insertSQL = `INSERT INTO "usage_history" ("hostname", "bucket", "samples", "cpu_sum", "cpu_n", "cpu_max", "mem_pct", "swap_pct", "disks", "rx_sum", "tx_sum", "net_n", "rx_max", "tx_max", "load_max", "steal_sum", "steal_n", "steal_max", "tcp_max", "rops_sum", "wops_sum", "rbps_sum", "wbps_sum", "io_n", "iops_max", "io_bps_max") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26) RETURNING "hostname", "bucket", "samples", "cpu_sum", "cpu_n", "cpu_max", "mem_pct", "swap_pct", "disks", "rx_sum", "tx_sum", "net_n", "rx_max", "tx_max", "load_max", "steal_sum", "steal_n", "steal_max", "tcp_max", "rops_sum", "wops_sum", "rbps_sum", "wbps_sum", "io_n", "iops_max", "io_bps_max"`
 
 const updatePrefix = `UPDATE "usage_history" SET `
 const deletePrefix = `DELETE FROM "usage_history"`
@@ -2055,36 +2899,60 @@ const deletePrefix = `DELETE FROM "usage_history"`
 // Dirty bits. One per updatable column; the set of them is an UPDATE's
 // identity, exactly as a token stream is a SELECT's.
 const (
-	dSamples uint64 = 1 << 0
-	dCpuSum  uint64 = 1 << 1
-	dCpuN    uint64 = 1 << 2
-	dCpuMax  uint64 = 1 << 3
-	dMemPct  uint64 = 1 << 4
-	dSwapPct uint64 = 1 << 5
-	dDisks   uint64 = 1 << 6
-	dRxSum   uint64 = 1 << 7
-	dTxSum   uint64 = 1 << 8
-	dNetN    uint64 = 1 << 9
-	dRxMax   uint64 = 1 << 10
-	dTxMax   uint64 = 1 << 11
+	dSamples  uint64 = 1 << 0
+	dCpuSum   uint64 = 1 << 1
+	dCpuN     uint64 = 1 << 2
+	dCpuMax   uint64 = 1 << 3
+	dMemPct   uint64 = 1 << 4
+	dSwapPct  uint64 = 1 << 5
+	dDisks    uint64 = 1 << 6
+	dRxSum    uint64 = 1 << 7
+	dTxSum    uint64 = 1 << 8
+	dNetN     uint64 = 1 << 9
+	dRxMax    uint64 = 1 << 10
+	dTxMax    uint64 = 1 << 11
+	dLoadMax  uint64 = 1 << 12
+	dStealSum uint64 = 1 << 13
+	dStealN   uint64 = 1 << 14
+	dStealMax uint64 = 1 << 15
+	dTcpMax   uint64 = 1 << 16
+	dRopsSum  uint64 = 1 << 17
+	dWopsSum  uint64 = 1 << 18
+	dRbpsSum  uint64 = 1 << 19
+	dWbpsSum  uint64 = 1 << 20
+	dIoN      uint64 = 1 << 21
+	dIopsMax  uint64 = 1 << 22
+	dIoBpsMax uint64 = 1 << 23
 )
 
-const nUpdatable = 12
+const nUpdatable = 24
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
-	{A: "\"samples\" = $", B: ""},  // samples
-	{A: "\"cpu_sum\" = $", B: ""},  // cpu_sum
-	{A: "\"cpu_n\" = $", B: ""},    // cpu_n
-	{A: "\"cpu_max\" = $", B: ""},  // cpu_max
-	{A: "\"mem_pct\" = $", B: ""},  // mem_pct
-	{A: "\"swap_pct\" = $", B: ""}, // swap_pct
-	{A: "\"disks\" = $", B: ""},    // disks
-	{A: "\"rx_sum\" = $", B: ""},   // rx_sum
-	{A: "\"tx_sum\" = $", B: ""},   // tx_sum
-	{A: "\"net_n\" = $", B: ""},    // net_n
-	{A: "\"rx_max\" = $", B: ""},   // rx_max
-	{A: "\"tx_max\" = $", B: ""},   // tx_max
+	{A: "\"samples\" = $", B: ""},    // samples
+	{A: "\"cpu_sum\" = $", B: ""},    // cpu_sum
+	{A: "\"cpu_n\" = $", B: ""},      // cpu_n
+	{A: "\"cpu_max\" = $", B: ""},    // cpu_max
+	{A: "\"mem_pct\" = $", B: ""},    // mem_pct
+	{A: "\"swap_pct\" = $", B: ""},   // swap_pct
+	{A: "\"disks\" = $", B: ""},      // disks
+	{A: "\"rx_sum\" = $", B: ""},     // rx_sum
+	{A: "\"tx_sum\" = $", B: ""},     // tx_sum
+	{A: "\"net_n\" = $", B: ""},      // net_n
+	{A: "\"rx_max\" = $", B: ""},     // rx_max
+	{A: "\"tx_max\" = $", B: ""},     // tx_max
+	{A: "\"load_max\" = $", B: ""},   // load_max
+	{A: "\"steal_sum\" = $", B: ""},  // steal_sum
+	{A: "\"steal_n\" = $", B: ""},    // steal_n
+	{A: "\"steal_max\" = $", B: ""},  // steal_max
+	{A: "\"tcp_max\" = $", B: ""},    // tcp_max
+	{A: "\"rops_sum\" = $", B: ""},   // rops_sum
+	{A: "\"wops_sum\" = $", B: ""},   // wops_sum
+	{A: "\"rbps_sum\" = $", B: ""},   // rbps_sum
+	{A: "\"wbps_sum\" = $", B: ""},   // wbps_sum
+	{A: "\"io_n\" = $", B: ""},       // io_n
+	{A: "\"iops_max\" = $", B: ""},   // iops_max
+	{A: "\"io_bps_max\" = $", B: ""}, // io_bps_max
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -2103,6 +2971,18 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{A: "\"net_n\" = \"net_n\" + 1", B: ""}, // net_n = its own value plus one
 	{},                                      // rx_max has no server-side form
 	{},                                      // tx_max has no server-side form
+	{},                                      // load_max has no server-side form
+	{},                                      // steal_sum has no server-side form
+	{A: "\"steal_n\" = \"steal_n\" + 1", B: ""}, // steal_n = its own value plus one
+	{}, // steal_max has no server-side form
+	{A: "\"tcp_max\" = \"tcp_max\" + 1", B: ""}, // tcp_max = its own value plus one
+	{},                                    // rops_sum has no server-side form
+	{},                                    // wops_sum has no server-side form
+	{},                                    // rbps_sum has no server-side form
+	{},                                    // wbps_sum has no server-side form
+	{A: "\"io_n\" = \"io_n\" + 1", B: ""}, // io_n = its own value plus one
+	{},                                    // iops_max has no server-side form
+	{},                                    // io_bps_max has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -2129,9 +3009,21 @@ const (
 	iNetN     uint64 = 1 << 11
 	iRxMax    uint64 = 1 << 12
 	iTxMax    uint64 = 1 << 13
+	iLoadMax  uint64 = 1 << 14
+	iStealSum uint64 = 1 << 15
+	iStealN   uint64 = 1 << 16
+	iStealMax uint64 = 1 << 17
+	iTcpMax   uint64 = 1 << 18
+	iRopsSum  uint64 = 1 << 19
+	iWopsSum  uint64 = 1 << 20
+	iRbpsSum  uint64 = 1 << 21
+	iWbpsSum  uint64 = 1 << 22
+	iIoN      uint64 = 1 << 23
+	iIopsMax  uint64 = 1 << 24
+	iIoBpsMax uint64 = 1 << 25
 )
 
-const nInsertable = 14
+const nInsertable = 26
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -2149,6 +3041,18 @@ var insCols = [nInsertable]string{
 	"\"net_n\"",
 	"\"rx_max\"",
 	"\"tx_max\"",
+	"\"load_max\"",
+	"\"steal_sum\"",
+	"\"steal_n\"",
+	"\"steal_max\"",
+	"\"tcp_max\"",
+	"\"rops_sum\"",
+	"\"wops_sum\"",
+	"\"rbps_sum\"",
+	"\"wbps_sum\"",
+	"\"io_n\"",
+	"\"iops_max\"",
+	"\"io_bps_max\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -2157,7 +3061,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"usage_history\""
-const insReturning = " RETURNING \"hostname\", \"bucket\", \"samples\", \"cpu_sum\", \"cpu_n\", \"cpu_max\", \"mem_pct\", \"swap_pct\", \"disks\", \"rx_sum\", \"tx_sum\", \"net_n\", \"rx_max\", \"tx_max\""
+const insReturning = " RETURNING \"hostname\", \"bucket\", \"samples\", \"cpu_sum\", \"cpu_n\", \"cpu_max\", \"mem_pct\", \"swap_pct\", \"disks\", \"rx_sum\", \"tx_sum\", \"net_n\", \"rx_max\", \"tx_max\", \"load_max\", \"steal_sum\", \"steal_n\", \"steal_max\", \"tcp_max\", \"rops_sum\", \"wops_sum\", \"rbps_sum\", \"wbps_sum\", \"io_n\", \"iops_max\", \"io_bps_max\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -2176,7 +3080,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"hostname\", \"bucket\", \"samples\", \"cpu_sum\", \"cpu_n\", \"cpu_max\", \"mem_pct\", \"swap_pct\", \"disks\", \"rx_sum\", \"tx_sum\", \"net_n\", \"rx_max\", \"tx_max\""
+const updReturning = " RETURNING \"hostname\", \"bucket\", \"samples\", \"cpu_sum\", \"cpu_n\", \"cpu_max\", \"mem_pct\", \"swap_pct\", \"disks\", \"rx_sum\", \"tx_sum\", \"net_n\", \"rx_max\", \"tx_max\", \"load_max\", \"steal_sum\", \"steal_n\", \"steal_max\", \"tcp_max\", \"rops_sum\", \"wops_sum\", \"rbps_sum\", \"wbps_sum\", \"io_n\", \"iops_max\", \"io_bps_max\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -2373,6 +3277,148 @@ func (m *Mut) SetTxMaxNull() {
 	m.row.TxMax = runtime.Null[float64]{}
 	m.dirty |= dTxMax
 	m.expr &^= dTxMax
+}
+
+func (m *Mut) SetLoadMax(v float32) {
+	m.row.LoadMax = runtime.Null[float32]{V: v, Valid: true}
+	m.dirty |= dLoadMax
+	m.expr &^= dLoadMax
+}
+
+// SetLoadMaxNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetLoadMaxNull() {
+	m.row.LoadMax = runtime.Null[float32]{}
+	m.dirty |= dLoadMax
+	m.expr &^= dLoadMax
+}
+
+func (m *Mut) SetStealSum(v float64) {
+	m.row.StealSum = v
+	m.dirty |= dStealSum
+	m.expr &^= dStealSum
+}
+
+func (m *Mut) SetStealN(v int32) {
+	m.row.StealN = v
+	m.dirty |= dStealN
+	m.expr &^= dStealN
+}
+
+// IncStealN adds one to the column's OWN value, in the database.
+//
+// Computing it in Go makes it a read-modify-write: two callers
+// who both read N both write N+1, and one increment is lost
+// with nothing to show that it happened.
+func (m *Mut) IncStealN() {
+	m.expr |= dStealN
+	m.dirty &^= dStealN
+}
+
+func (m *Mut) SetStealMax(v float32) {
+	m.row.StealMax = runtime.Null[float32]{V: v, Valid: true}
+	m.dirty |= dStealMax
+	m.expr &^= dStealMax
+}
+
+// SetStealMaxNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetStealMaxNull() {
+	m.row.StealMax = runtime.Null[float32]{}
+	m.dirty |= dStealMax
+	m.expr &^= dStealMax
+}
+
+func (m *Mut) SetTcpMax(v int32) {
+	m.row.TcpMax = runtime.Null[int32]{V: v, Valid: true}
+	m.dirty |= dTcpMax
+	m.expr &^= dTcpMax
+}
+
+// IncTcpMax adds one to the column's OWN value, in the database.
+//
+// Computing it in Go makes it a read-modify-write: two callers
+// who both read N both write N+1, and one increment is lost
+// with nothing to show that it happened.
+func (m *Mut) IncTcpMax() {
+	m.expr |= dTcpMax
+	m.dirty &^= dTcpMax
+}
+
+// SetTcpMaxNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetTcpMaxNull() {
+	m.row.TcpMax = runtime.Null[int32]{}
+	m.dirty |= dTcpMax
+	m.expr &^= dTcpMax
+}
+
+func (m *Mut) SetRopsSum(v float64) {
+	m.row.RopsSum = v
+	m.dirty |= dRopsSum
+	m.expr &^= dRopsSum
+}
+
+func (m *Mut) SetWopsSum(v float64) {
+	m.row.WopsSum = v
+	m.dirty |= dWopsSum
+	m.expr &^= dWopsSum
+}
+
+func (m *Mut) SetRbpsSum(v float64) {
+	m.row.RbpsSum = v
+	m.dirty |= dRbpsSum
+	m.expr &^= dRbpsSum
+}
+
+func (m *Mut) SetWbpsSum(v float64) {
+	m.row.WbpsSum = v
+	m.dirty |= dWbpsSum
+	m.expr &^= dWbpsSum
+}
+
+func (m *Mut) SetIoN(v int32) {
+	m.row.IoN = v
+	m.dirty |= dIoN
+	m.expr &^= dIoN
+}
+
+// IncIoN adds one to the column's OWN value, in the database.
+//
+// Computing it in Go makes it a read-modify-write: two callers
+// who both read N both write N+1, and one increment is lost
+// with nothing to show that it happened.
+func (m *Mut) IncIoN() {
+	m.expr |= dIoN
+	m.dirty &^= dIoN
+}
+
+func (m *Mut) SetIopsMax(v float64) {
+	m.row.IopsMax = runtime.Null[float64]{V: v, Valid: true}
+	m.dirty |= dIopsMax
+	m.expr &^= dIopsMax
+}
+
+// SetIopsMaxNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetIopsMaxNull() {
+	m.row.IopsMax = runtime.Null[float64]{}
+	m.dirty |= dIopsMax
+	m.expr &^= dIopsMax
+}
+
+func (m *Mut) SetIoBpsMax(v float64) {
+	m.row.IoBpsMax = runtime.Null[float64]{V: v, Valid: true}
+	m.dirty |= dIoBpsMax
+	m.expr &^= dIoBpsMax
+}
+
+// SetIoBpsMaxNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetIoBpsMaxNull() {
+	m.row.IoBpsMax = runtime.Null[float64]{}
+	m.dirty |= dIoBpsMax
+	m.expr &^= dIoBpsMax
 }
 
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
@@ -2612,6 +3658,213 @@ func (n *Ins) SetTxMaxNull() {
 	n.set |= iTxMax
 }
 
+func (n *Ins) SetLoadMax(v float32) {
+	n.row.LoadMax = runtime.Null[float32]{V: v, Valid: true}
+	n.set |= iLoadMax
+}
+
+// SetLoadMaxNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetLoadMaxNull() {
+	n.row.LoadMax = runtime.Null[float32]{}
+	n.set |= iLoadMax
+}
+
+func (n *Ins) SetStealSum(v float64) {
+	n.row.StealSum = v
+	n.set |= iStealSum
+	n.add &^= iStealSum
+}
+
+// AddStealSumOnConflict inserts v, or — when the insert conflicts and an
+// OnConflict… target updates the row already there — ADDS v to it:
+//
+//	"steal_sum" = "usage_history"."steal_sum" + EXCLUDED."steal_sum"
+//
+// The sum is the database's, in the same statement, so two writers
+// counting into one row both land. Reading the row, adding in Go and
+// upserting the total loses one of them, with nothing to show it.
+// Without an OnConflict target, or with DoNothing, it is SetStealSum.
+func (n *Ins) AddStealSumOnConflict(v float64) {
+	n.row.StealSum = v
+	n.set |= iStealSum
+	n.add |= iStealSum
+}
+
+func (n *Ins) SetStealN(v int32) {
+	n.row.StealN = v
+	n.set |= iStealN
+	n.add &^= iStealN
+}
+
+// AddStealNOnConflict inserts v, or — when the insert conflicts and an
+// OnConflict… target updates the row already there — ADDS v to it:
+//
+//	"steal_n" = "usage_history"."steal_n" + EXCLUDED."steal_n"
+//
+// The sum is the database's, in the same statement, so two writers
+// counting into one row both land. Reading the row, adding in Go and
+// upserting the total loses one of them, with nothing to show it.
+// Without an OnConflict target, or with DoNothing, it is SetStealN.
+func (n *Ins) AddStealNOnConflict(v int32) {
+	n.row.StealN = v
+	n.set |= iStealN
+	n.add |= iStealN
+}
+
+func (n *Ins) SetStealMax(v float32) {
+	n.row.StealMax = runtime.Null[float32]{V: v, Valid: true}
+	n.set |= iStealMax
+}
+
+// SetStealMaxNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetStealMaxNull() {
+	n.row.StealMax = runtime.Null[float32]{}
+	n.set |= iStealMax
+}
+
+func (n *Ins) SetTcpMax(v int32) {
+	n.row.TcpMax = runtime.Null[int32]{V: v, Valid: true}
+	n.set |= iTcpMax
+}
+
+// SetTcpMaxNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetTcpMaxNull() {
+	n.row.TcpMax = runtime.Null[int32]{}
+	n.set |= iTcpMax
+}
+
+func (n *Ins) SetRopsSum(v float64) {
+	n.row.RopsSum = v
+	n.set |= iRopsSum
+	n.add &^= iRopsSum
+}
+
+// AddRopsSumOnConflict inserts v, or — when the insert conflicts and an
+// OnConflict… target updates the row already there — ADDS v to it:
+//
+//	"rops_sum" = "usage_history"."rops_sum" + EXCLUDED."rops_sum"
+//
+// The sum is the database's, in the same statement, so two writers
+// counting into one row both land. Reading the row, adding in Go and
+// upserting the total loses one of them, with nothing to show it.
+// Without an OnConflict target, or with DoNothing, it is SetRopsSum.
+func (n *Ins) AddRopsSumOnConflict(v float64) {
+	n.row.RopsSum = v
+	n.set |= iRopsSum
+	n.add |= iRopsSum
+}
+
+func (n *Ins) SetWopsSum(v float64) {
+	n.row.WopsSum = v
+	n.set |= iWopsSum
+	n.add &^= iWopsSum
+}
+
+// AddWopsSumOnConflict inserts v, or — when the insert conflicts and an
+// OnConflict… target updates the row already there — ADDS v to it:
+//
+//	"wops_sum" = "usage_history"."wops_sum" + EXCLUDED."wops_sum"
+//
+// The sum is the database's, in the same statement, so two writers
+// counting into one row both land. Reading the row, adding in Go and
+// upserting the total loses one of them, with nothing to show it.
+// Without an OnConflict target, or with DoNothing, it is SetWopsSum.
+func (n *Ins) AddWopsSumOnConflict(v float64) {
+	n.row.WopsSum = v
+	n.set |= iWopsSum
+	n.add |= iWopsSum
+}
+
+func (n *Ins) SetRbpsSum(v float64) {
+	n.row.RbpsSum = v
+	n.set |= iRbpsSum
+	n.add &^= iRbpsSum
+}
+
+// AddRbpsSumOnConflict inserts v, or — when the insert conflicts and an
+// OnConflict… target updates the row already there — ADDS v to it:
+//
+//	"rbps_sum" = "usage_history"."rbps_sum" + EXCLUDED."rbps_sum"
+//
+// The sum is the database's, in the same statement, so two writers
+// counting into one row both land. Reading the row, adding in Go and
+// upserting the total loses one of them, with nothing to show it.
+// Without an OnConflict target, or with DoNothing, it is SetRbpsSum.
+func (n *Ins) AddRbpsSumOnConflict(v float64) {
+	n.row.RbpsSum = v
+	n.set |= iRbpsSum
+	n.add |= iRbpsSum
+}
+
+func (n *Ins) SetWbpsSum(v float64) {
+	n.row.WbpsSum = v
+	n.set |= iWbpsSum
+	n.add &^= iWbpsSum
+}
+
+// AddWbpsSumOnConflict inserts v, or — when the insert conflicts and an
+// OnConflict… target updates the row already there — ADDS v to it:
+//
+//	"wbps_sum" = "usage_history"."wbps_sum" + EXCLUDED."wbps_sum"
+//
+// The sum is the database's, in the same statement, so two writers
+// counting into one row both land. Reading the row, adding in Go and
+// upserting the total loses one of them, with nothing to show it.
+// Without an OnConflict target, or with DoNothing, it is SetWbpsSum.
+func (n *Ins) AddWbpsSumOnConflict(v float64) {
+	n.row.WbpsSum = v
+	n.set |= iWbpsSum
+	n.add |= iWbpsSum
+}
+
+func (n *Ins) SetIoN(v int32) {
+	n.row.IoN = v
+	n.set |= iIoN
+	n.add &^= iIoN
+}
+
+// AddIoNOnConflict inserts v, or — when the insert conflicts and an
+// OnConflict… target updates the row already there — ADDS v to it:
+//
+//	"io_n" = "usage_history"."io_n" + EXCLUDED."io_n"
+//
+// The sum is the database's, in the same statement, so two writers
+// counting into one row both land. Reading the row, adding in Go and
+// upserting the total loses one of them, with nothing to show it.
+// Without an OnConflict target, or with DoNothing, it is SetIoN.
+func (n *Ins) AddIoNOnConflict(v int32) {
+	n.row.IoN = v
+	n.set |= iIoN
+	n.add |= iIoN
+}
+
+func (n *Ins) SetIopsMax(v float64) {
+	n.row.IopsMax = runtime.Null[float64]{V: v, Valid: true}
+	n.set |= iIopsMax
+}
+
+// SetIopsMaxNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetIopsMaxNull() {
+	n.row.IopsMax = runtime.Null[float64]{}
+	n.set |= iIopsMax
+}
+
+func (n *Ins) SetIoBpsMax(v float64) {
+	n.row.IoBpsMax = runtime.Null[float64]{V: v, Valid: true}
+	n.set |= iIoBpsMax
+}
+
+// SetIoBpsMaxNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetIoBpsMaxNull() {
+	n.row.IoBpsMax = runtime.Null[float64]{}
+	n.set |= iIoBpsMax
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -2661,7 +3914,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 12)
+	set := make([]string, 0, 24)
 	switch i {
 	case 0:
 		if mask&(1<<2) != 0 {
@@ -2699,6 +3952,42 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<13) != 0 {
 			set = append(set, "tx_max")
+		}
+		if mask&(1<<14) != 0 {
+			set = append(set, "load_max")
+		}
+		if mask&(1<<15) != 0 {
+			set = append(set, "steal_sum")
+		}
+		if mask&(1<<16) != 0 {
+			set = append(set, "steal_n")
+		}
+		if mask&(1<<17) != 0 {
+			set = append(set, "steal_max")
+		}
+		if mask&(1<<18) != 0 {
+			set = append(set, "tcp_max")
+		}
+		if mask&(1<<19) != 0 {
+			set = append(set, "rops_sum")
+		}
+		if mask&(1<<20) != 0 {
+			set = append(set, "wops_sum")
+		}
+		if mask&(1<<21) != 0 {
+			set = append(set, "rbps_sum")
+		}
+		if mask&(1<<22) != 0 {
+			set = append(set, "wbps_sum")
+		}
+		if mask&(1<<23) != 0 {
+			set = append(set, "io_n")
+		}
+		if mask&(1<<24) != 0 {
+			set = append(set, "iops_max")
+		}
+		if mask&(1<<25) != 0 {
+			set = append(set, "io_bps_max")
 		}
 	}
 	return set
@@ -2769,23 +4058,49 @@ func assignAdded(c string, add uint64) (string, bool) {
 		return "\"tx_sum\" = \"usage_history\".\"tx_sum\" + EXCLUDED.\"tx_sum\"", add&iTxSum != 0
 	case "net_n":
 		return "\"net_n\" = \"usage_history\".\"net_n\" + EXCLUDED.\"net_n\"", add&iNetN != 0
+	case "steal_sum":
+		return "\"steal_sum\" = \"usage_history\".\"steal_sum\" + EXCLUDED.\"steal_sum\"", add&iStealSum != 0
+	case "steal_n":
+		return "\"steal_n\" = \"usage_history\".\"steal_n\" + EXCLUDED.\"steal_n\"", add&iStealN != 0
+	case "rops_sum":
+		return "\"rops_sum\" = \"usage_history\".\"rops_sum\" + EXCLUDED.\"rops_sum\"", add&iRopsSum != 0
+	case "wops_sum":
+		return "\"wops_sum\" = \"usage_history\".\"wops_sum\" + EXCLUDED.\"wops_sum\"", add&iWopsSum != 0
+	case "rbps_sum":
+		return "\"rbps_sum\" = \"usage_history\".\"rbps_sum\" + EXCLUDED.\"rbps_sum\"", add&iRbpsSum != 0
+	case "wbps_sum":
+		return "\"wbps_sum\" = \"usage_history\".\"wbps_sum\" + EXCLUDED.\"wbps_sum\"", add&iWbpsSum != 0
+	case "io_n":
+		return "\"io_n\" = \"usage_history\".\"io_n\" + EXCLUDED.\"io_n\"", add&iIoN != 0
 	}
 	return "", false
 }
 
 var assignFor = map[string]string{
-	"samples":  "\"samples\" = EXCLUDED.\"samples\"",
-	"cpu_sum":  "\"cpu_sum\" = EXCLUDED.\"cpu_sum\"",
-	"cpu_n":    "\"cpu_n\" = EXCLUDED.\"cpu_n\"",
-	"cpu_max":  "\"cpu_max\" = EXCLUDED.\"cpu_max\"",
-	"mem_pct":  "\"mem_pct\" = EXCLUDED.\"mem_pct\"",
-	"swap_pct": "\"swap_pct\" = EXCLUDED.\"swap_pct\"",
-	"disks":    "\"disks\" = EXCLUDED.\"disks\"",
-	"rx_sum":   "\"rx_sum\" = EXCLUDED.\"rx_sum\"",
-	"tx_sum":   "\"tx_sum\" = EXCLUDED.\"tx_sum\"",
-	"net_n":    "\"net_n\" = EXCLUDED.\"net_n\"",
-	"rx_max":   "\"rx_max\" = EXCLUDED.\"rx_max\"",
-	"tx_max":   "\"tx_max\" = EXCLUDED.\"tx_max\"",
+	"samples":    "\"samples\" = EXCLUDED.\"samples\"",
+	"cpu_sum":    "\"cpu_sum\" = EXCLUDED.\"cpu_sum\"",
+	"cpu_n":      "\"cpu_n\" = EXCLUDED.\"cpu_n\"",
+	"cpu_max":    "\"cpu_max\" = EXCLUDED.\"cpu_max\"",
+	"mem_pct":    "\"mem_pct\" = EXCLUDED.\"mem_pct\"",
+	"swap_pct":   "\"swap_pct\" = EXCLUDED.\"swap_pct\"",
+	"disks":      "\"disks\" = EXCLUDED.\"disks\"",
+	"rx_sum":     "\"rx_sum\" = EXCLUDED.\"rx_sum\"",
+	"tx_sum":     "\"tx_sum\" = EXCLUDED.\"tx_sum\"",
+	"net_n":      "\"net_n\" = EXCLUDED.\"net_n\"",
+	"rx_max":     "\"rx_max\" = EXCLUDED.\"rx_max\"",
+	"tx_max":     "\"tx_max\" = EXCLUDED.\"tx_max\"",
+	"load_max":   "\"load_max\" = EXCLUDED.\"load_max\"",
+	"steal_sum":  "\"steal_sum\" = EXCLUDED.\"steal_sum\"",
+	"steal_n":    "\"steal_n\" = EXCLUDED.\"steal_n\"",
+	"steal_max":  "\"steal_max\" = EXCLUDED.\"steal_max\"",
+	"tcp_max":    "\"tcp_max\" = EXCLUDED.\"tcp_max\"",
+	"rops_sum":   "\"rops_sum\" = EXCLUDED.\"rops_sum\"",
+	"wops_sum":   "\"wops_sum\" = EXCLUDED.\"wops_sum\"",
+	"rbps_sum":   "\"rbps_sum\" = EXCLUDED.\"rbps_sum\"",
+	"wbps_sum":   "\"wbps_sum\" = EXCLUDED.\"wbps_sum\"",
+	"io_n":       "\"io_n\" = EXCLUDED.\"io_n\"",
+	"iops_max":   "\"iops_max\" = EXCLUDED.\"iops_max\"",
+	"io_bps_max": "\"io_bps_max\" = EXCLUDED.\"io_bps_max\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -2864,6 +4179,30 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.RxMax.Arg())
 		case 13:
 			args = append(args, n.row.TxMax.Arg())
+		case 14:
+			args = append(args, n.row.LoadMax.Arg())
+		case 15:
+			args = append(args, n.row.StealSum)
+		case 16:
+			args = append(args, n.row.StealN)
+		case 17:
+			args = append(args, n.row.StealMax.Arg())
+		case 18:
+			args = append(args, n.row.TcpMax.Arg())
+		case 19:
+			args = append(args, n.row.RopsSum)
+		case 20:
+			args = append(args, n.row.WopsSum)
+		case 21:
+			args = append(args, n.row.RbpsSum)
+		case 22:
+			args = append(args, n.row.WbpsSum)
+		case 23:
+			args = append(args, n.row.IoN)
+		case 24:
+			args = append(args, n.row.IopsMax.Arg())
+		case 25:
+			args = append(args, n.row.IoBpsMax.Arg())
 		}
 	}
 	var out Row
@@ -2901,7 +4240,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 14)
+	args := make([]any, 0, 26)
 	args = append(args, r.Hostname)
 	args = append(args, r.Bucket)
 	args = append(args, r.Samples)
@@ -2916,6 +4255,18 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.NetN)
 	args = append(args, r.RxMax.Arg())
 	args = append(args, r.TxMax.Arg())
+	args = append(args, r.LoadMax.Arg())
+	args = append(args, r.StealSum)
+	args = append(args, r.StealN)
+	args = append(args, r.StealMax.Arg())
+	args = append(args, r.TcpMax.Arg())
+	args = append(args, r.RopsSum)
+	args = append(args, r.WopsSum)
+	args = append(args, r.RbpsSum)
+	args = append(args, r.WbpsSum)
+	args = append(args, r.IoN)
+	args = append(args, r.IopsMax.Arg())
+	args = append(args, r.IoBpsMax.Arg())
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -2956,13 +4307,25 @@ var copyCols = []string{
 	"net_n",
 	"rx_max",
 	"tx_max",
+	"load_max",
+	"steal_sum",
+	"steal_n",
+	"steal_max",
+	"tcp_max",
+	"rops_sum",
+	"wops_sum",
+	"rbps_sum",
+	"wbps_sum",
+	"io_n",
+	"iops_max",
+	"io_bps_max",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [14]any
+	buf  [26]any
 }
 
 func (s *rowSource) Next() bool {
@@ -2994,6 +4357,18 @@ func (s *rowSource) Values() []any {
 	s.buf[11] = &r.NetN
 	s.buf[12] = r.RxMax.Ptr()
 	s.buf[13] = r.TxMax.Ptr()
+	s.buf[14] = r.LoadMax.Ptr()
+	s.buf[15] = &r.StealSum
+	s.buf[16] = &r.StealN
+	s.buf[17] = r.StealMax.Ptr()
+	s.buf[18] = r.TcpMax.Ptr()
+	s.buf[19] = &r.RopsSum
+	s.buf[20] = &r.WopsSum
+	s.buf[21] = &r.RbpsSum
+	s.buf[22] = &r.WbpsSum
+	s.buf[23] = &r.IoN
+	s.buf[24] = r.IopsMax.Ptr()
+	s.buf[25] = r.IoBpsMax.Ptr()
 	return s.buf[:]
 }
 
@@ -3038,8 +4413,20 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 11
 	mask |= 1 << 12
 	mask |= 1 << 13
+	mask |= 1 << 14
+	mask |= 1 << 15
+	mask |= 1 << 16
+	mask |= 1 << 17
+	mask |= 1 << 18
+	mask |= 1 << 19
+	mask |= 1 << 20
+	mask |= 1 << 21
+	mask |= 1 << 22
+	mask |= 1 << 23
+	mask |= 1 << 24
+	mask |= 1 << 25
 	st := stmtForInsertNoReturn(mask, 0, 0)
-	args := make([]any, 0, 14)
+	args := make([]any, 0, 26)
 	args = append(args, r.Hostname)
 	args = append(args, r.Bucket)
 	args = append(args, r.Samples)
@@ -3054,6 +4441,18 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.NetN)
 	args = append(args, r.RxMax.Arg())
 	args = append(args, r.TxMax.Arg())
+	args = append(args, r.LoadMax.Arg())
+	args = append(args, r.StealSum)
+	args = append(args, r.StealN)
+	args = append(args, r.StealMax.Arg())
+	args = append(args, r.TcpMax.Arg())
+	args = append(args, r.RopsSum)
+	args = append(args, r.WopsSum)
+	args = append(args, r.RbpsSum)
+	args = append(args, r.WbpsSum)
+	args = append(args, r.IoN)
+	args = append(args, r.IopsMax.Arg())
+	args = append(args, r.IoBpsMax.Arg())
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -3115,6 +4514,30 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.RxMax.Arg())
 		case 13:
 			args = append(args, n.row.TxMax.Arg())
+		case 14:
+			args = append(args, n.row.LoadMax.Arg())
+		case 15:
+			args = append(args, n.row.StealSum)
+		case 16:
+			args = append(args, n.row.StealN)
+		case 17:
+			args = append(args, n.row.StealMax.Arg())
+		case 18:
+			args = append(args, n.row.TcpMax.Arg())
+		case 19:
+			args = append(args, n.row.RopsSum)
+		case 20:
+			args = append(args, n.row.WopsSum)
+		case 21:
+			args = append(args, n.row.RbpsSum)
+		case 22:
+			args = append(args, n.row.WbpsSum)
+		case 23:
+			args = append(args, n.row.IoN)
+		case 24:
+			args = append(args, n.row.IopsMax.Arg())
+		case 25:
+			args = append(args, n.row.IoBpsMax.Arg())
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -3194,6 +4617,30 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.RxMax.Arg())
 		case 11:
 			args = append(args, m.row.TxMax.Arg())
+		case 12:
+			args = append(args, m.row.LoadMax.Arg())
+		case 13:
+			args = append(args, m.row.StealSum)
+		case 14:
+			args = append(args, m.row.StealN)
+		case 15:
+			args = append(args, m.row.StealMax.Arg())
+		case 16:
+			args = append(args, m.row.TcpMax.Arg())
+		case 17:
+			args = append(args, m.row.RopsSum)
+		case 18:
+			args = append(args, m.row.WopsSum)
+		case 19:
+			args = append(args, m.row.RbpsSum)
+		case 20:
+			args = append(args, m.row.WbpsSum)
+		case 21:
+			args = append(args, m.row.IoN)
+		case 22:
+			args = append(args, m.row.IopsMax.Arg())
+		case 23:
+			args = append(args, m.row.IoBpsMax.Arg())
 		}
 	}
 	args = append(args, m.row.Hostname)
@@ -3301,6 +4748,30 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.RxMax.Arg())
 		case 11:
 			args = append(args, m.row.TxMax.Arg())
+		case 12:
+			args = append(args, m.row.LoadMax.Arg())
+		case 13:
+			args = append(args, m.row.StealSum)
+		case 14:
+			args = append(args, m.row.StealN)
+		case 15:
+			args = append(args, m.row.StealMax.Arg())
+		case 16:
+			args = append(args, m.row.TcpMax.Arg())
+		case 17:
+			args = append(args, m.row.RopsSum)
+		case 18:
+			args = append(args, m.row.WopsSum)
+		case 19:
+			args = append(args, m.row.RbpsSum)
+		case 20:
+			args = append(args, m.row.WbpsSum)
+		case 21:
+			args = append(args, m.row.IoN)
+		case 22:
+			args = append(args, m.row.IopsMax.Arg())
+		case 23:
+			args = append(args, m.row.IoBpsMax.Arg())
 		}
 	}
 	args = append(args, m.row.Hostname)
@@ -3474,6 +4945,30 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.RxMax.Arg())
 		case 11:
 			args = append(args, m.row.TxMax.Arg())
+		case 12:
+			args = append(args, m.row.LoadMax.Arg())
+		case 13:
+			args = append(args, m.row.StealSum)
+		case 14:
+			args = append(args, m.row.StealN)
+		case 15:
+			args = append(args, m.row.StealMax.Arg())
+		case 16:
+			args = append(args, m.row.TcpMax.Arg())
+		case 17:
+			args = append(args, m.row.RopsSum)
+		case 18:
+			args = append(args, m.row.WopsSum)
+		case 19:
+			args = append(args, m.row.RbpsSum)
+		case 20:
+			args = append(args, m.row.WbpsSum)
+		case 21:
+			args = append(args, m.row.IoN)
+		case 22:
+			args = append(args, m.row.IopsMax.Arg())
+		case 23:
+			args = append(args, m.row.IoBpsMax.Arg())
 		}
 	}
 	args = append(args, q.bindPreds(b)...)
