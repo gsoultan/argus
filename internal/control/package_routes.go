@@ -196,6 +196,10 @@ func (a *API) packageRunEnded(ctx context.Context, r PackageRun) {
 		detail = fmt.Sprintf("The release upgrade of %s to %s (%s) %s", r.AssetHostname, r.Release, who,
 			strings.ReplaceAll(r.State, "_", " "))
 	}
+	if r.Mode == PackagesPrepareRabbitMQ {
+		detail = fmt.Sprintf("Preparing RabbitMQ on %s (%s) %s", r.AssetHostname, who,
+			strings.ReplaceAll(r.State, "_", " "))
+	}
 	if len(r.Started) > 0 {
 		detail += ", started " + strings.Join(r.Started, ", ")
 	}
@@ -219,7 +223,7 @@ func (a *API) packageRunEnded(ctx context.Context, r PackageRun) {
 	case r.State == RunFailed || r.State == RunInterrupted:
 		verb := map[string]string{PackagesInstall: "Installing on ", PackagesRemove: "Removing from ",
 			PackagesScript: "A script on ", PackagesFileInstall: "Installing on ", PackagesReboot: "Rebooting ",
-			PackagesRelease: "Upgrading the release of "}[r.Mode]
+			PackagesRelease: "Upgrading the release of ", PackagesPrepareRabbitMQ: "Preparing RabbitMQ on "}[r.Mode]
 		if verb == "" {
 			verb = "Updating "
 		}
@@ -258,6 +262,8 @@ func describeMode(r PackageRun) string {
 		return "a reboot"
 	case PackagesRelease:
 		return "release " + r.Release
+	case PackagesPrepareRabbitMQ:
+		return "RabbitMQ preparation"
 	case PackagesInstall, PackagesRemove:
 		return describeSoftware(r.Mode, r.Items, r.Purge)
 	case PackagesScript:
@@ -300,6 +306,8 @@ func runPhrase(r PackageRun) string {
 		return "rebooting the server"
 	case PackagesRelease:
 		return "upgrading the server to release " + r.Release
+	case PackagesPrepareRabbitMQ:
+		return "preparing RabbitMQ for the next Ubuntu release"
 	}
 	return "installing " + describeMode(r)
 }
@@ -325,6 +333,8 @@ func runNoun(r PackageRun) string {
 		return "reboot"
 	case PackagesRelease:
 		return "release upgrade"
+	case PackagesPrepareRabbitMQ:
+		return "RabbitMQ preparation"
 	}
 	return "update run"
 }
@@ -465,6 +475,20 @@ func releaseReady(w http.ResponseWriter, t packageTarget, in runRequest) bool {
 	return false
 }
 
+// rabbitMQReady refuses preparing RabbitMQ where the agent did not say it
+// can: an older agent, another release, or RabbitMQ already ready.
+func rabbitMQReady(w http.ResponseWriter, t packageTarget, in runRequest) bool {
+	if in.Mode != PackagesPrepareRabbitMQ {
+		return true
+	}
+	if t.view.Report == nil || t.view.Report.Release == nil || !t.view.Report.Release.PrepareRabbitMQ {
+		writeErr(w, http.StatusConflict, "this server does not offer to prepare RabbitMQ: it is ready already, "+
+			"is not on Ubuntu 24.04, or its agent is too old; press Check for updates and look at the release card")
+		return false
+	}
+	return true
+}
+
 // packagesReady says whether a run can be asked of t now, answering the
 // request itself when not.
 func packagesReady(w http.ResponseWriter, t packageTarget) bool {
@@ -567,6 +591,9 @@ func (in *runRequest) validate() error {
 		// A reboot is the whole run: whatever was said about rebooting.
 		in.Packages, in.Reboot, in.Release = nil, "if_needed", ""
 		return nil
+	case PackagesPrepareRabbitMQ:
+		in.Packages, in.Reboot, in.Release = nil, "never", ""
+		return nil
 	case PackagesRelease:
 		// A new release always ends in a reboot into it.
 		if !reRelease.MatchString(in.Release) {
@@ -588,7 +615,7 @@ func (in *runRequest) validate() error {
 		}
 		in.Packages = dedupe(in.Packages)
 	default:
-		return errors.New("say what to do: all, security, selected, reboot or release_upgrade")
+		return errors.New("say what to do: all, security, selected, reboot, release_upgrade or prepare_rabbitmq")
 	}
 	in.Release = ""
 	switch in.Reboot {
@@ -615,6 +642,9 @@ func (a *API) newManualRun(t packageTarget, in runRequest, by string) newRun {
 	// and the console says so before anyone asks.
 	if in.Mode == PackagesRelease {
 		n.Holds, n.Expect = []string{}, in.Release
+	}
+	if in.Mode == PackagesPrepareRabbitMQ {
+		n.Holds = []string{}
 	}
 	if t.view.Rule.NeedsApproval {
 		n.State = RunAwaitingApproval
@@ -650,7 +680,7 @@ func (a *API) postAssetPackageRun(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "package updates", err)
 		return
 	}
-	if !packagesReady(w, t) || !rebootReady(w, t, in) || !releaseReady(w, t, in) {
+	if !packagesReady(w, t) || !rebootReady(w, t, in) || !releaseReady(w, t, in) || !rabbitMQReady(w, t, in) {
 		return
 	}
 	runs, err := a.store.CreatePackageRuns(r.Context(), []newRun{a.newManualRun(t, in, sess.Email)})
@@ -690,7 +720,7 @@ func (a *API) postPackageRuns(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "pick packages on one server at a time; for several, install all or security updates")
 		return
 	}
-	if in.Mode == PackagesRelease {
+	if in.Mode == PackagesRelease || in.Mode == PackagesPrepareRabbitMQ {
 		writeErr(w, http.StatusBadRequest, "upgrade the release of one server at a time, from its Updates tab")
 		return
 	}
@@ -784,6 +814,12 @@ func (a *API) packageRunsAsked(r *http.Request, by string, runs []PackageRun, li
 				run.Release, waits)
 			title = by + " asks to upgrade " + run.AssetHostname + " to release " + run.Release
 			ask = "Upgrade the operating system to release " + run.Release + " and reboot"
+		}
+		if run.Mode == PackagesPrepareRabbitMQ {
+			detail = fmt.Sprintf("Asked to prepare RabbitMQ on %s for the next Ubuntu release (3.13 from "+
+				"Canonical's PPA, its feature flags on)%s.", run.AssetHostname, waits)
+			title = by + " asks to prepare RabbitMQ on " + run.AssetHostname
+			ask = "Upgrade RabbitMQ to 3.13 and enable its feature flags"
 		}
 		a.auditAsset(r, AuditEvent{
 			Action: "packages.run_requested", Severity: "notice", ActorEmail: by, Target: run.AssetHostname,

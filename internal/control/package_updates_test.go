@@ -1210,3 +1210,45 @@ func TestPackageRunOutcome(t *testing.T) {
 		t.Fatalf("older agent's run = %+v", got)
 	}
 }
+
+// Preparing RabbitMQ: asked for only where the agent offers it, one server
+// at a time, never rebooting, and audited as what it is.
+func TestPackagePrepareRabbitMQ(t *testing.T) {
+	e := packagesAPI(t)
+	asset, cred := e.server(t)
+	now := time.Now().UTC()
+	noble := func(prepare bool) *PackageReport {
+		r := pkgReport(now)
+		r.Release = &ReleaseInfo{Distro: "ubuntu", Current: "Ubuntu 24.04.1 LTS", Version: "24.04", Next: "26.04",
+			NextName: "Ubuntu 26.04.1 LTS", Tool: "do-release-upgrade", PrepareRabbitMQ: prepare,
+			Blockers: []string{"RabbitMQ 3.12.1 is installed, and Ubuntu's upgrader stops unless it is 3.13"}}
+		return r
+	}
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, Reboot: true, ReleaseUpgrade: true, Report: noble(false)})
+	w := do(t, e.h, http.MethodPost, "/api/v1/assets/"+asset.ID+"/packages/runs", "admin-token",
+		`{"mode":"prepare_rabbitmq"}`)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "does not offer to prepare RabbitMQ") {
+		t.Fatalf("not offered: %d %s", w.Code, w.Body)
+	}
+	now = now.Add(time.Second)
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, Reboot: true, ReleaseUpgrade: true, Report: noble(true)})
+	w = do(t, e.h, http.MethodPost, "/api/v1/package-runs", "admin-token",
+		`{"assetIds":["`+asset.ID+`"],"mode":"prepare_rabbitmq"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("fleet: %d %s", w.Code, w.Body)
+	}
+	e.ask(t, asset, "operator-token", `{"mode":"prepare_rabbitmq"}`, http.StatusForbidden)
+	run := e.ask(t, asset, "admin-token", `{"mode":"prepare_rabbitmq","reboot":"if_needed","packages":["vim"]}`,
+		http.StatusAccepted)
+	if run.Mode != PackagesPrepareRabbitMQ || run.Reboot != "never" || len(run.Packages) != 0 {
+		t.Fatalf("run = %+v", run)
+	}
+	if a := lastAuditOn(t, e.s, asset.Hostname); a.Action != "packages.run_requested" ||
+		!strings.Contains(a.Detail, "Asked to prepare RabbitMQ on "+asset.Hostname) {
+		t.Errorf("audit = %s: %s", a.Action, a.Detail)
+	}
+	_, o := e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, Reboot: true, ReleaseUpgrade: true})
+	if o == nil || o.Run == nil || o.Run.ID != run.ID || o.Run.Mode != PackagesPrepareRabbitMQ {
+		t.Fatalf("orders = %+v", o)
+	}
+}

@@ -2334,6 +2334,8 @@ export interface ReleaseInfo {
   blockers?: string[]
   /** What is installed that no apt source offers, which the upgrade cannot carry over. */
   stranded?: StrandedPackages
+  /** RabbitMQ stands in the way, and a prepare_rabbitmq run can clear it. */
+  prepare_rabbitmq?: boolean
 }
 
 /** Installed packages no apt source offers: the ones the agent showed nothing uses, and why it keeps the rest. */
@@ -2384,6 +2386,7 @@ export interface PackageRun {
   assetId?: string
   mode: 'all' | 'security' | 'selected' | 'reboot' | 'install' | 'remove' | 'script'
     | 'file_install' | 'app_install' | 'app_uninstall' | 'app_disable' | 'app_restore' | 'release_upgrade'
+    | 'prepare_rabbitmq'
   /** A release upgrade: the version it goes to, as it was approved. */
   release?: string
   packages: string[]

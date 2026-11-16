@@ -266,6 +266,7 @@ function ReleaseUpgrade({ view: v, release: rel, asset, assetId, name, canEdit, 
 }) {
   const [asking, setAsking] = useState(false)
   const [installing, setInstalling] = useState(false)
+  const [preparing, setPreparing] = useState(false)
   // A distribution Argus does not upgrade says nothing here; one it does,
   // without its tool or with upgrades turned off, says what to change.
   if (!rel.next) {
@@ -304,6 +305,17 @@ function ReleaseUpgrade({ view: v, release: rel, asset, assetId, name, canEdit, 
               <List size="sm" spacing={4}>
                 {blockers.map((b) => <List.Item key={b}>{b[0]?.toUpperCase() + b.slice(1)}.</List.Item>)}
               </List>
+              {canEdit && v.canUpgradeRelease && rel.prepare_rabbitmq && (
+                <Group gap={SP.cozy} wrap="wrap">
+                  <Button size="compact-sm" variant="white" color="amber" leftSection={<IconPackage size={14} />}
+                    disabled={busy} onClick={() => setPreparing(true)}>
+                    Prepare RabbitMQ…
+                  </Button>
+                  <Text size={FS.meta} c="dimmed">
+                    Argus takes the steps above for you, and the agent looks again when it is done.
+                  </Text>
+                </Group>
+              )}
               {canEdit && waiting.length > 0 && (
                 <Group gap={SP.cozy} wrap="wrap">
                   <Button size="compact-sm" variant="white" color="amber" leftSection={<IconPackage size={14} />}
@@ -328,6 +340,7 @@ function ReleaseUpgrade({ view: v, release: rel, asset, assetId, name, canEdit, 
         )}
         {why && <Text size={FS.meta} c="dimmed">{why}</Text>}
       </Stack>
+      {preparing && <ConfirmRabbitMQ assetId={assetId} name={name} view={v} release={rel} onClose={() => setPreparing(false)} />}
       {asking && <ConfirmRelease assetId={assetId} name={name} view={v} release={rel} onClose={() => setAsking(false)} />}
       {installing && (
         <ConfirmRun assetId={assetId} name={name} mode={anyHeld ? 'selected' : 'all'} names={waiting} view={v}
@@ -398,6 +411,68 @@ function Stranded({ stranded: st, release: rel, asset, canEdit, busy }: {
       </Stack>
       {preview && <ConfirmPreview asset={asset} preview={preview} apps={[]} onClose={() => setPreview(null)} />}
     </Alert>
+  )
+}
+
+/**
+ * Preparing RabbitMQ for the next Ubuntu release, as Ubuntu's upgrader
+ * requires: what the agent does, what it cannot take back, and the server's
+ * name typed to confirm.
+ */
+function ConfirmRabbitMQ({ assetId, name, view: v, release: rel, onClose }: {
+  assetId: string
+  name: string
+  view: PackagesView
+  release: ReleaseInfo
+  onClose: () => void
+}) {
+  const start = useStartPackageRun(assetId)
+  const [typed, setTyped] = useState('')
+  const short = v.hostname.split('.')[0] ?? v.hostname
+  const confirmed = typed.trim() === short || typed.trim() === v.hostname
+  return (
+    <Modal opened onClose={onClose} title={<AssetDialogTitle text={`Prepare RabbitMQ on ${name}?`} name={name} hostname={v.hostname} />} size="lg">
+      <Stack gap="sm">
+        <Text size={FS.body} lh={1.5}>
+          Ubuntu&apos;s upgrader will not move this server to {rel.next_name} until RabbitMQ is on 3.13 with all its
+          feature flags enabled. The agent does what Ubuntu&apos;s guide says, on this server only:
+        </Text>
+        <List size="sm" spacing={4} type="ordered">
+          <List.Item>Checks this node is not part of a cluster. A cluster is upgraded one node at a time, by hand.</List.Item>
+          <List.Item>Keeps RabbitMQ&apos;s definitions (users, vhosts, queues, policies) in a file on the server.</List.Item>
+          <List.Item>Adds Canonical&apos;s RabbitMQ 3.13 PPA and upgrades RabbitMQ from it. The broker restarts, so clients reconnect.</List.Item>
+          <List.Item>Enables every stable feature flag, then checks the upgrader would now let the server by.</List.Item>
+        </List>
+        <Alert color="amber" p="xs">
+          <Text size={FS.body} lh={1.5}>
+            Feature flags cannot be turned off again, and RabbitMQ cannot go back to 3.12 afterwards. Take a backup or
+            snapshot of the server first. The definitions file holds no messages.
+          </Text>
+        </Alert>
+        {v.rule.needsApproval && (
+          <Alert color="azure" p="xs">
+            <Text size={FS.body}><AloneOr kind="runs" what="this">This server's rule asks for a second admin: it waits until another admin approves it.</AloneOr></Text>
+          </Alert>
+        )}
+        <TextInput label="Type the server name to confirm" placeholder={short} value={typed}
+          onChange={(e) => setTyped(e.currentTarget.value)} autoComplete="off" />
+        <Group justify="flex-end" gap="sm">
+          <Button variant="default" onClick={onClose}>Cancel</Button>
+          <Button color="rose" leftSection={<IconPackage size={16} />} disabled={!confirmed}
+            loading={start.isPending} onClick={() => void notifyRun(
+              () => start.mutateAsync({ mode: 'prepare_rabbitmq', reboot: 'never' }),
+              {
+                failure: 'RabbitMQ not prepared',
+                success: v.rule.needsApproval
+                  ? ['Waiting for approval', 'Another admin approves it before it starts.']
+                  : ['Preparing RabbitMQ', 'The server starts at its next check-in, within 30 seconds.'],
+              },
+            ).then((ok) => ok && onClose())}>
+            Prepare RabbitMQ
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
   )
 }
 
@@ -705,6 +780,7 @@ const STEPS: { key: string; label: string; detail: string }[] = [
 export function runTitle(r: PackageRun): string {
   if (r.mode === 'reboot') return 'Reboot'
   if (r.mode === 'release_upgrade') return `Release upgrade · to ${r.release ?? 'the next release'}`
+  if (r.mode === 'prepare_rabbitmq') return 'Prepare RabbitMQ for the next release'
   if (r.mode === 'script') return `Script · ${r.scriptName ?? ''}`
   if (r.mode === 'install' || r.mode === 'remove') {
     const names = (r.items ?? []).map((i) => i.name)
