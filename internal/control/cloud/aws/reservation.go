@@ -2,6 +2,7 @@ package aws
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -251,4 +252,61 @@ func money(v float64) string {
 		return ""
 	}
 	return strconv.FormatFloat(v, 'f', -1, 64)
+}
+
+// CreateCapacity makes a Capacity Reservation as the person who asked.
+// AWS bills its room from the moment it is active.
+func (p *Provider) CreateCapacity(ctx context.Context, a cloud.Account, actor cloud.Actor, s cloud.CapacitySpec) (cloud.Result, error) {
+	c, err := p.client(ctx, a, actor, s.Region)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	platform := s.Platform
+	if platform == "" {
+		platform = "Linux/UNIX"
+	}
+	in := &ec2.CreateCapacityReservationInput{
+		AvailabilityZone: awssdk.String(s.Zone), InstanceType: awssdk.String(s.Size), InstanceCount: awssdk.Int32(s.Count),
+		InstancePlatform: types.CapacityReservationInstancePlatform(platform), EndDateType: types.EndDateTypeUnlimited,
+		InstanceMatchCriteria: types.InstanceMatchCriteriaOpen,
+	}
+	if s.Targeted {
+		in.InstanceMatchCriteria = types.InstanceMatchCriteriaTargeted
+	}
+	if s.EndAt != nil {
+		in.EndDateType, in.EndDate = types.EndDateTypeLimited, s.EndAt
+	}
+	var tags []types.Tag
+	if s.Name != "" {
+		tags = append(tags, types.Tag{Key: awssdk.String("Name"), Value: awssdk.String(s.Name)})
+	}
+	for k, v := range s.Tags {
+		tags = append(tags, types.Tag{Key: awssdk.String(k), Value: awssdk.String(v)})
+	}
+	if len(tags) > 0 {
+		in.TagSpecifications = []types.TagSpecification{{ResourceType: types.ResourceTypeCapacityReservation, Tags: tags}}
+	}
+	out, err := c.CreateCapacityReservation(ctx, in)
+	if err != nil {
+		return cloud.Result{}, errors.New(plain(err))
+	}
+	id := ""
+	if out.CapacityReservation != nil {
+		id = awssdk.ToString(out.CapacityReservation.CapacityReservationId)
+	}
+	return cloud.Result{ResourceID: id, RequestID: requestID(out.ResultMetadata)}, nil
+}
+
+// CancelCapacity cancels a Capacity Reservation. Instances running in it
+// keep running, billed at their usual rate.
+func (p *Provider) CancelCapacity(ctx context.Context, a cloud.Account, actor cloud.Actor, region, id string) (cloud.Result, error) {
+	c, err := p.client(ctx, a, actor, region)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	out, err := c.CancelCapacityReservation(ctx, &ec2.CancelCapacityReservationInput{CapacityReservationId: awssdk.String(id)})
+	if err != nil {
+		return cloud.Result{}, errors.New(plain(err))
+	}
+	return cloud.Result{ResourceID: id, RequestID: requestID(out.ResultMetadata)}, nil
 }

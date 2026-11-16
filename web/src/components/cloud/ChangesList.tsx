@@ -1,7 +1,7 @@
 import { Badge, Box, Button, Card, Flex, Group, Stack, Text, ThemeIcon, Tooltip } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import {
-  IconCamera, IconCirclePlus, IconDeviceFloppy, IconHistory, IconLink, IconLinkOff, IconLock, IconLockOpen, IconMoon, IconPhoto, IconPlayerPlay,
+  IconBox, IconBoxOff, IconCamera, IconCirclePlus, IconDeviceFloppy, IconHistory, IconLink, IconLinkOff, IconLock, IconLockOpen, IconMoon, IconPhoto, IconPlayerPlay,
   IconPlayerStop, IconPlugConnected, IconPlugConnectedX, IconRefresh, IconResize, IconSettings, IconShield, IconShieldPlus, IconTag, IconTrash, IconWorld,
 } from '@tabler/icons-react'
 import { EmptyState } from '~/components/page'
@@ -22,11 +22,13 @@ const ICON: Record<CloudAction, typeof IconTrash> = {
   'image-delete': IconTrash, 'address-allocate': IconWorld, 'address-associate': IconLink, 'address-disassociate': IconLinkOff,
   'address-release': IconTrash, 'firewall-create': IconShieldPlus, 'firewall-rules': IconShield, 'firewall-delete': IconTrash,
   'instance-firewalls': IconShield, 'target-register': IconPlugConnected, 'target-deregister': IconPlugConnectedX,
+  'capacity-create': IconBox, 'capacity-cancel': IconBoxOff,
 }
 const ICON_COLOR: Partial<Record<CloudAction, string>> = {
   launch: 'teal', remove: 'rose', stop: 'amber', hibernate: 'amber', 'volume-create': 'teal', 'address-allocate': 'teal',
   'volume-delete': 'rose', 'snapshot-delete': 'rose', 'image-delete': 'rose', 'address-release': 'rose',
   'firewall-create': 'teal', 'firewall-delete': 'rose', 'target-deregister': 'amber',
+  'capacity-create': 'teal', 'capacity-cancel': 'amber',
 }
 
 /**

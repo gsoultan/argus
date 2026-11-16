@@ -18,6 +18,8 @@ import { notifyError, notifyOk } from '~/lib/notify'
 import { FS, INK, SP } from '~/theme'
 import { EnvBadge, ResourceDrawer } from './common'
 import { SettingsChange } from './InstanceActions'
+import { CancelCapacity } from './CapacityActions'
+import { cloudReservationsQuery, type ReservationItem } from '~/lib/cloudReservations'
 import { RemoveRuleChange, ruleText } from './NetworkActions'
 
 /*
@@ -32,6 +34,7 @@ const INVENTORY: CloudKind[] = ['instance', 'volume', 'firewall', 'address', 'sn
 const FIX_LABEL: Record<string, string> = {
   'firewall-rules': 'Remove the rule', 'firewall-delete': 'Delete group', 'volume-delete': 'Delete disk', 'address-release': 'Release',
   'snapshot-delete': 'Delete', 'image-delete': 'Delete image', stop: 'Stop', settings: 'Require tokens',
+  'capacity-cancel': 'Cancel it',
 }
 
 type Filter = 'all' | FindingGroup
@@ -49,6 +52,8 @@ export function FindingsPanel({ names, admin }: { names: Map<string, string>; ad
   const [resource, setResource] = useState<CloudItem | null>(null)
   const [rule, setRule] = useState<{ it: CloudItem; f: CloudFinding } | null>(null)
   const [settings, setSettings] = useState<CloudItem | null>(null)
+  const [capacity, setCapacity] = useState<ReservationItem | null>(null)
+  const reservations = useQuery({ ...cloudReservationsQuery(), enabled: cloudReservationsQuery().enabled && admin })
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [bulk, setBulk] = useState(false)
 
@@ -58,6 +63,9 @@ export function FindingsPanel({ names, admin }: { names: Map<string, string>; ad
     return m
   }, [inv])
   const itemOf = (f: CloudFinding) => items.get(f.accountId + '/' + f.resourceId)
+  const capacityOf = (f: CloudFinding) => f.fix === 'capacity-cancel'
+    ? reservations.data?.capacityReservations.find((c) => c.accountId === f.accountId && c.resource.id === f.resourceId)
+    : undefined
 
   const all = q.data?.items ?? []
   const counts = findingCounts(all)
@@ -68,12 +76,15 @@ export function FindingsPanel({ names, admin }: { names: Map<string, string>; ad
 
   const fix = (f: CloudFinding) => {
     const it = itemOf(f)
-    if (f.fix === 'firewall-rules' && f.rule && it) setRule({ it, f })
+    const cr = capacityOf(f)
+    if (cr) setCapacity(cr)
+    else if (f.fix === 'firewall-rules' && f.rule && it) setRule({ it, f })
     else if (f.fix === 'settings' && it) setSettings(it)
     else if (it) setResource(it)
     else setOpen(f)
   }
   const fixLabel = (f: CloudFinding) => {
+    if (capacityOf(f)) return FIX_LABEL['capacity-cancel']!
     if (!itemOf(f)) return f.howToFix ? 'How to fix' : 'Details'
     return (f.fix && FIX_LABEL[f.fix]) || 'Open'
   }
@@ -216,7 +227,7 @@ export function FindingsPanel({ names, admin }: { names: Map<string, string>; ad
         </Box>
       )}
 
-      <FindingDrawer f={open} onClose={() => setOpen(null)} admin={admin} hasItem={Boolean(open && itemOf(open))}
+      <FindingDrawer f={open} onClose={() => setOpen(null)} admin={admin} hasItem={Boolean(open && (itemOf(open) || capacityOf(open)))}
         onFix={(f) => { setOpen(null); fix(f) }} onKeep={(f) => { setOpen(null); setKeeping(f) }} />
       {keeping && <KeepModal f={keeping} onClose={() => setKeeping(null)} />}
       <ResourceDrawer it={resource} onClose={() => setResource(null)} names={names} />
@@ -225,6 +236,7 @@ export function FindingsPanel({ names, admin }: { names: Map<string, string>; ad
         <SettingsChange it={settings} env={envOf(settings.resource.tags, settings.environment)} preset={{ requireTokens: true }}
           onClose={() => setSettings(null)} />
       )}
+      {capacity && <CancelCapacity it={capacity} onClose={() => setCapacity(null)} />}
       {bulk && <BulkSnapshotDelete findings={pickedFindings} items={pickedFindings.map(itemOf)} onClose={(done) => { setBulk(false); if (done) setPicked(new Set()) }} />}
     </Stack>
   )

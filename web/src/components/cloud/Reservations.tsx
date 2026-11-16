@@ -1,12 +1,17 @@
-import { Alert, Badge, Box, Group, Progress, SimpleGrid, Stack, Table, Text } from '@mantine/core'
+import { Alert, Badge, Box, Button, Group, Progress, SimpleGrid, Stack, Table, Text } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
-import { IconCalendarDue, IconCoin, IconReceipt, IconShieldCheck } from '@tabler/icons-react'
+import { useState } from 'react'
+import { IconBox, IconCalendarDue, IconCoin, IconReceipt, IconShieldCheck } from '@tabler/icons-react'
 import { DataTable, EmptyState, SectionCard } from '~/components/page'
 import { Stat } from '~/components/primitives'
 import { dollars } from '~/lib/cloudCosts'
 import {
-  HOURS_A_MONTH, cloudReservationsQuery, daysUntil, held, type Held, type HeldKind, type ReservationsView,
+  HOURS_A_MONTH, cloudReservationsQuery, daysUntil, held, type Held, type HeldKind, type ReservationItem, type ReservationsView,
 } from '~/lib/cloudReservations'
+import { cloudAccountsQuery, cloudChangesQuery } from '~/lib/cloud'
+import { meQuery } from '~/lib/queries'
+import { canSee } from '~/lib/roles'
+import { CancelCapacity, NewCapacity } from './CapacityActions'
 import { FS, INK } from '~/theme'
 import type { CloudTab } from './tabs'
 
@@ -36,6 +41,16 @@ export function ReservationsPanel({ onTab }: { onTab?: (t: CloudTab) => void }) 
   const ending = rows.filter((r) => { const d = daysUntil(r.ends); return d !== null && d >= 0 && d <= 30 })
     .sort((a, b) => Date.parse(a.ends!) - Date.parse(b.ends!))
   const unusedCount = rows.filter((r) => r.unused > 0).length
+  const { data: me } = useQuery(meQuery())
+  const accounts = useQuery(cloudAccountsQuery())
+  const pending = useQuery(cloudChangesQuery({ pending: true }))
+  const manage = new Set((accounts.data?.accounts ?? []).filter((a) => a.access === 'manage').map((a) => a.id))
+  const admin = canSee(me?.role, 'admin')
+  const [reserving, setReserving] = useState(false)
+  const [cancelling, setCancelling] = useState<ReservationItem | null>(null)
+  const canCancel = (r: Held) => admin && r.kind === 'cr' && manage.has(r.item.accountId) &&
+    ['active', 'pending', 'scheduled'].includes(r.item.resource.state ?? '') &&
+    !pending.data?.some((c) => c.accountId === r.item.accountId && c.resourceId === r.item.resource.id)
 
   return (
     <Stack gap="lg" data-testid="reservations">
@@ -88,18 +103,23 @@ export function ReservationsPanel({ onTab }: { onTab?: (t: CloudTab) => void }) 
       </SectionCard>
 
       <SectionCard title="What you have" flush
-        description="Read from AWS with each account's inventory. Use is matched against the instances running at the last read; a Capacity Reservation's use is AWS's own count.">
+        description="Read from AWS with each account's inventory. Use is matched against the instances running at the last read; a Capacity Reservation's use is AWS's own count."
+        action={admin && manage.size > 0 ? (
+          <Button size="xs" variant="light" leftSection={<IconBox size={14} />} onClick={() => setReserving(true)}>Reserve capacity</Button>
+        ) : undefined}>
         <DataTable minWidth={860} loading={q.isPending} isEmpty={rows.length === 0}
           empty={<EmptyState icon={IconReceipt} title="No reservations" description="No Reserved Instances, Savings Plans or Capacity Reservations in the accounts read." />}
           columns={['Kind', 'Covers', 'Where', 'Term', 'Ends', 'Use']}>
-          {rows.map((r) => <HeldRow key={r.key} r={r} />)}
+          {rows.map((r) => <HeldRow key={r.key} r={r} onCancel={canCancel(r) ? () => setCancelling(r.item) : undefined} />)}
         </DataTable>
       </SectionCard>
+      {reserving && <NewCapacity onClose={() => setReserving(false)} />}
+      {cancelling && <CancelCapacity it={cancelling} onClose={() => setCancelling(null)} />}
     </Stack>
   )
 }
 
-function HeldRow({ r }: { r: Held }) {
+function HeldRow({ r, onCancel }: { r: Held; onCancel?: () => void }) {
   const k = KIND[r.kind]
   const left = daysUntil(r.ends)
   const pct = r.use === null ? null : Math.round(r.use * 100)
@@ -127,6 +147,7 @@ function HeldRow({ r }: { r: Held }) {
         )}
         <Text size={FS.micro} c="dimmed" lineClamp={3}>{r.useNote}</Text>
         {r.unused > 0 && <Text size={FS.micro} c={INK.denied} mt={4}>{dollars(r.unused)} a month unused</Text>}
+        {onCancel && <Button size="compact-xs" variant="subtle" color="amber" mt={4} px={0} onClick={onCancel}>Cancel reservation</Button>}
       </Table.Td>
     </Table.Tr>
   )

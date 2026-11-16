@@ -29,7 +29,7 @@ var ReadPolicy = []string{
 
 // ManagePolicy is what the manage role may do: the changes Argus makes to
 // instances, disks, snapshots, images, Elastic IPs, security groups and
-// load balancer targets, and nothing else. No
+// load balancer targets and capacity reservations, and nothing else. No
 // IAM, so a change cannot grant itself more; no iam:PassRole, so an
 // instance cannot be launched with a role. New disks use the account's
 // default EBS key, whose key policy already lets EBS use it for anyone in
@@ -50,6 +50,7 @@ var ManagePolicy = []string{
 	"ec2:AuthorizeSecurityGroupIngress", "ec2:AuthorizeSecurityGroupEgress",
 	"ec2:RevokeSecurityGroupIngress", "ec2:RevokeSecurityGroupEgress",
 	"elasticloadbalancing:RegisterTargets", "elasticloadbalancing:DeregisterTargets",
+	"ec2:CreateCapacityReservation", "ec2:CancelCapacityReservation",
 }
 
 // ReadRoleName and ManageRoleName are the roles the template makes.

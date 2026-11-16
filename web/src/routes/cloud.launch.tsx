@@ -14,6 +14,7 @@ import { PageBody, PageHeader } from '~/components/page'
 import {
   SCHEDULE_TAG, cloudAccountsQuery, cloudItemsQuery, cloudLaunchOptionsQuery, cloudSchedulesQuery, openToInternet, useAskCloudChange, windowWords, type CloudImage,
 } from '~/lib/cloud'
+import { cloudReservationsQuery } from '~/lib/cloudReservations'
 import { guard } from '~/lib/guard'
 import { notifyError } from '~/lib/notify'
 import { FS, INK, SP } from '~/theme'
@@ -95,6 +96,8 @@ function Launch() {
   const [count, setCount] = useState<number>(1)
   const [extraDisks, setExtraDisks] = useState<number[]>([])
   const [spot, setSpot] = useState(false)
+  const [capacity, setCapacity] = useState<string | null>(null)
+  const reservations = useQuery(cloudReservationsQuery())
   const [agent, setAgent] = useState(true)
   const [reason, setReason] = useState('')
   const [schedule, setSchedule] = useState<string | null>(null)
@@ -126,6 +129,14 @@ function Launch() {
   const sub = o?.subnets.find((s) => s.resource.id === subnet)
   const groups = useMemo(() => (o?.firewalls ?? []).filter((f) => !sub || f.resource.network === sub.resource.network), [o, sub])
   useEffect(() => { setFirewalls((fs) => fs.filter((f) => groups.some((g) => g.resource.id === f))) }, [groups])
+  // Capacity reservations this launch fits in whole: same account, region,
+  // zone and type, active, with room for every instance.
+  const rooms = (reservations.data?.capacityReservations ?? []).filter((c) => c.accountId === accountId && c.resource.region === region &&
+    c.resource.state === 'active' && c.resource.zone === sub?.resource.zone && c.resource.size === size &&
+    Number(c.resource.details?.available ?? 0) >= count)
+  const room = spot ? undefined : rooms.find((c) => c.resource.id === capacity)
+  // A pick that no longer fits is dropped, not kept to come back silently.
+  useEffect(() => { if (capacity && !room) setCapacity(null) }, [capacity, room])
   const imageMissing = Boolean(source && o && prefilled.current && source.resource.details?.image && !o.images.some((i) => i.id === source.resource.details?.image))
 
   const host = name.trim().toLowerCase()
@@ -144,6 +155,7 @@ function Launch() {
         spec: {
           name: host, image, size, diskGb: disk, subnet, firewalls, publicIp, protect: protect && !spot, agent,
           ...(count > 1 ? { count } : {}), ...(extraDisks.length ? { extraDisks } : {}), ...(spot ? { spot } : {}),
+          ...(room ? { capacityReservation: room.resource.id } : {}),
           ...(schedule ? { tags: { [SCHEDULE_TAG]: schedule } } : {}),
         },
       })
@@ -264,6 +276,13 @@ function Launch() {
               </Stack>
               <Switch mt="md" checked={spot} onChange={(e) => setSpot(e.currentTarget.checked)} label="Use Spot capacity"
                 description="AWS's spare capacity, often far cheaper, but AWS can take it back with two minutes' notice and the instance is then terminated. Suits work that can stop and start again; not a database." />
+              {rooms.length > 0 && (
+                <Select mt="md" label="Capacity reservation" placeholder="None, wherever AWS has room" clearable disabled={spot}
+                  value={room ? capacity : null} onChange={setCapacity} data-testid="launch-capacity"
+                  description={spot ? 'Spot instances cannot use a capacity reservation.' : 'Room already reserved for this type in the subnet\'s zone. A reservation only for launches that name it is used only when picked here.'}
+                  data={rooms.map((c) => ({ value: c.resource.id,
+                    label: `${c.resource.name} · ${c.resource.details?.available} of ${c.resource.details?.total} free${c.resource.details?.match === 'targeted' ? ' · named launches only' : ''}` }))} />
+              )}
             </Section>
 
             <Section n={4} title="Network">
@@ -331,6 +350,7 @@ function Launch() {
               <Row k="Disk" v={`${disk} GB gp3, encrypted`} />
               {extraDisks.length > 0 && <Row k="More disks" v={extraDisks.map((g) => `${g} GB`).join(', ')} />}
               {spot && <Row k="Capacity" v="Spot" />}
+              {room && <Row k="Capacity" v={`Reserved, ${room.resource.name}`} />}
               <Row k="Subnet" v={sub ? `${sub.resource.name} (${sub.resource.zone ?? ''})` : undefined} />
               <Row k="Security groups" v={firewalls.length ? groups.filter((g) => firewalls.includes(g.resource.id)).map((g) => g.resource.name).join(', ') : undefined} />
               <Row k="Public address" v={publicIp ? 'Yes' : 'No'} />

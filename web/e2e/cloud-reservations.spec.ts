@@ -88,3 +88,93 @@ test('reservations on a phone', async ({ page }) => {
   expect(overflow).toBeLessThanOrEqual(0)
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/12-reservations-phone.png`, fullPage: true })
 })
+
+const subnet = (id: string, zone: string) => item('subnet', id, `private-${zone.slice(-1)}`, { network: 'vpc-1', size: '10.0.1.0/24', zone })
+
+/** The AWS account allows changes, in the region the reservations are in. */
+async function manage(page: Page) {
+  await page.route('**/api/v1/cloud/accounts', async (r) => {
+    const res = await r.fetch()
+    const body = await res.json()
+    body.accounts = body.accounts.map((a: { id: string }) => (a.id === 'ca1'
+      ? { ...a, access: 'manage', regions: ['ap-southeast-3'], manageRoleArn: 'arn:aws:iam::412788931204:role/ArgusManage' } : a))
+    return r.fulfill({ response: res, json: body })
+  })
+  await page.route('**/api/v1/cloud/resources?*', (r) => {
+    const kind = new URL(r.request().url()).searchParams.get('kind')
+    return r.fulfill({ json: { items: kind === 'subnet' ? [subnet('subnet-a', 'ap-southeast-3a'), subnet('subnet-b', 'ap-southeast-3b')] : [] } })
+  })
+  await page.route('**/api/v1/cloud/launch-options?*', (r) => r.fulfill({ json: {
+    images: [{ family: 'ubuntu-24', label: 'Ubuntu 24.04', id: 'ami-ubuntu24', name: 'u24', linux: true }],
+    sizes: ['t3.small', 'c7i.xlarge', 'm6i.large'], subnets: [subnet('subnet-a', 'ap-southeast-3a'), subnet('subnet-b', 'ap-southeast-3b')],
+    firewalls: [item('firewall', 'sg-web', 'sg-web', { network: 'vpc-1', rules: [] })], environment: 'production', needsApproval: true } }))
+}
+
+async function asks(page: Page) {
+  const got: { body: Record<string, unknown> | null } = { body: null }
+  await page.route('**/api/v1/cloud/changes', async (r) => {
+    if (r.request().method() !== 'POST') return r.fallback()
+    got.body = r.request().postDataJSON()
+    return r.fulfill({ status: 202, json: { id: 'c9', state: 'awaiting_approval', summary: 'Capacity change' } })
+  })
+  return got
+}
+
+test('reserve capacity and cancel it, through the usual change', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1100 })
+  await manage(page)
+  const got = await asks(page)
+  await signIn(page)
+  await page.goto('/cloud?tab=reservations')
+  await page.getByRole('button', { name: 'Reserve capacity' }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog).toContainText('bills the room from the moment it has it')
+  await dialog.getByRole('combobox', { name: 'Zone' }).click()
+  await page.getByRole('option', { name: 'ap-southeast-3b' }).click()
+  await dialog.getByRole('combobox', { name: 'Instance type' }).click()
+  await page.getByRole('option', { name: 'c7i.xlarge' }).click()
+  await dialog.getByRole('textbox', { name: 'Instances' }).fill('4')
+  await dialog.getByRole('switch', { name: 'Only for launches that name it' }).click()
+  await dialog.getByText('After a number of days').click()
+  await dialog.getByRole('textbox', { name: 'Days' }).fill('14')
+  await dialog.getByRole('textbox', { name: /^Name/ }).fill('sale-week')
+  await dialog.getByLabel('Why').fill('Room for the year-end sale')
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/13-reserve-capacity.png` })
+  await dialog.getByRole('button', { name: 'Ask for approval' }).click()
+  await expect.poll(() => got.body).toMatchObject({ accountId: 'ca1', region: 'ap-southeast-3', action: 'capacity-create',
+    spec: { zone: 'ap-southeast-3b', size: 'c7i.xlarge', count: 4, targeted: true, name: 'sale-week' } })
+  const end = Date.parse(String((got.body!.spec as Record<string, unknown>).endAt))
+  expect(Math.abs(end - (Date.now() + 14 * 86_400_000))).toBeLessThan(120_000)
+
+  await page.getByTestId('held-cr-1').getByRole('button', { name: 'Cancel reservation' }).click()
+  await expect(page.getByRole('dialog')).toContainText('The 2 instances in it keep running')
+  await page.getByRole('dialog').getByLabel('Why').fill('The burst is over')
+  await page.getByRole('dialog').getByRole('button', { name: 'Ask for approval' }).click()
+  await expect.poll(() => got.body).toMatchObject({ action: 'capacity-cancel', resourceId: 'cr-1', region: 'ap-southeast-3' })
+})
+
+test('launch into a capacity reservation', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1100 })
+  await page.route('**/api/v1/cloud/reservations', (r) => r.fulfill({ json: VIEW }))
+  await manage(page)
+  const got = await asks(page)
+  await signIn(page)
+  await page.goto('/cloud/launch')
+  await page.getByRole('textbox', { name: 'Name' }).fill('checkout-07')
+  // Only a reservation in the subnet's zone, for the type, shows.
+  await expect(page.getByTestId('launch-capacity')).toHaveCount(0)
+  await page.getByRole('combobox', { name: 'Instance type' }).click()
+  await page.getByRole('option', { name: 'c7i.xlarge' }).click()
+  await page.getByTestId('launch-capacity').click()
+  await page.getByRole('option', { name: /checkout-burst · 1 of 3 free · named launches only/ }).click()
+  await page.getByRole('checkbox', { name: /sg-web/ }).click()
+  await page.getByLabel('Why').fill('One more checkout node')
+  await expect(page.getByText('Reserved, checkout-burst')).toBeVisible()
+  await page.getByRole('textbox', { name: 'How many' }).fill('2')
+  await expect(page.getByTestId('launch-capacity')).toHaveCount(0)
+  await page.getByRole('textbox', { name: 'How many' }).fill('1')
+  await page.getByTestId('launch-capacity').click()
+  await page.getByRole('option', { name: /checkout-burst/ }).click()
+  await page.getByRole('button', { name: 'Ask for approval' }).click()
+  await expect.poll(() => got.body).toMatchObject({ action: 'launch', spec: { size: 'c7i.xlarge', subnet: 'subnet-a', capacityReservation: 'cr-1' } })
+})

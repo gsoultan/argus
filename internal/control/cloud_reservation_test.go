@@ -3,6 +3,7 @@ package control
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,4 +77,63 @@ func TestCloudReservations(t *testing.T) {
 	if _, ok := got["reservation-unused:"+e.account+"-ri-used"]; ok {
 		t.Fatal("a used RI is not waste")
 	}
+}
+
+// Reserving capacity and cancelling it go through the usual change path;
+// a launch can land in it only where it keeps room.
+func TestCloudCapacityReservations(t *testing.T) {
+	e := changeAPI(t)
+	region := "ap-southeast-3"
+	body := func(action, extra string) string {
+		return `{"accountId":"` + e.acct.ID + `","region":"` + region + `","action":"` + action + `"` + extra + `}`
+	}
+	e.ask(t, "admin-token", body("capacity-create", `,"spec":{"zone":"us-east-1a","size":"m6i.large","count":2}`), http.StatusBadRequest)
+	e.ask(t, "admin-token", body("capacity-create", `,"spec":{"zone":"ap-southeast-3a","size":"m6i.large","count":0}`), http.StatusBadRequest)
+	// Production: it waits for a second person, then runs as the one who asked.
+	c := e.ask(t, "admin-token", body("capacity-create", `,"reason":"sale","spec":{"zone":"ap-southeast-3a","size":"m6i.large","count":2,"targeted":true,"name":"sale-room"}`), http.StatusAccepted)
+	if c.State != "awaiting_approval" || !strings.Contains(c.Summary, "Reserve room for 2 m6i.large in ap-southeast-3a for launches that name it, until cancelled") {
+		t.Fatalf("create: %+v", c)
+	}
+	done := e.decide(t, "approver-token", c.ID, true)
+	if done.State != "applied" || !strings.HasPrefix(done.ResourceID, "cr-fake") {
+		t.Fatalf("applied: %+v", done)
+	}
+	e.resync(t)
+	cr := done.ResourceID
+
+	launch := func(subnet, size string, want int) CloudChange {
+		spec := `{"name":"sale-01","image":"ami-ubuntu","size":"` + size + `","subnet":"` + subnet + `","firewalls":["` + e.account +
+			`-sg-1"],"capacityReservation":"` + cr + `","count":2,"tags":{"Environment":"development"}}`
+		return e.ask(t, "admin-token", body("launch", `,"spec":`+spec), want)
+	}
+	launch(e.account+"-subnet-1", "m6i.xlarge", http.StatusConflict)
+	l := launch(e.account+"-subnet-1", "m6i.large", http.StatusOK)
+	if l.State != "applied" || !strings.Contains(l.Summary, "into capacity reservation sale-room") || e.fake.LastLaunch.CapacityReservation != cr {
+		t.Fatalf("launch into it: %+v %+v", l, e.fake.LastLaunch)
+	}
+
+	x := e.ask(t, "admin-token", body("capacity-cancel", `,"resourceId":"`+cr+`","reason":"sale over"`), http.StatusAccepted)
+	if !strings.Contains(x.Summary, "Cancel sale-room (room for 2 m6i.large in ap-southeast-3a)") {
+		t.Fatalf("cancel: %+v", x)
+	}
+	if d := e.decide(t, "approver-token", x.ID, true); d.State != "applied" {
+		t.Fatalf("cancelled: %+v", d)
+	}
+}
+
+func (e changeEnv) decide(t *testing.T, token, id string, approve bool) CloudChange {
+	t.Helper()
+	verb := "decline"
+	if approve {
+		verb = "approve"
+	}
+	w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes/"+id+"/"+verb, token, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("%s: %d %s", verb, w.Code, w.Body)
+	}
+	var c CloudChange
+	if err := json.Unmarshal(w.Body.Bytes(), &c); err != nil {
+		t.Fatal(err)
+	}
+	return c
 }

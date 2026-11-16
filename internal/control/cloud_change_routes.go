@@ -259,6 +259,8 @@ type cloudLaunchSpec struct {
 	Count      int     `json:"count,omitempty"`
 	ExtraDisks []int32 `json:"extraDisks,omitempty"`
 	Spot       bool    `json:"spot,omitempty"`
+	// CapacityReservation is one to launch into.
+	CapacityReservation string `json:"capacityReservation,omitempty"`
 	// Names are the hostnames the launch makes, worked out when planned.
 	Names []string `json:"names,omitempty"`
 }
@@ -419,6 +421,9 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 	}
 	if in.Action == cloud.ActionLaunch {
 		return a.planLaunch(r, m, actor, in, ch)
+	}
+	if isCapacity(in.Action) {
+		return a.planCapacity(r, m, in, ch)
 	}
 	if cloud.IsStorage(in.Action) {
 		return a.planStorage(r, m, in, ch)
@@ -611,6 +616,17 @@ func (a *API) planLaunch(r *http.Request, m cloudManaged, actor string, in *clou
 			return ch, http.StatusBadRequest, errors.New(fw.Name + " is in another network than the subnet")
 		}
 	}
+	var into string
+	if s.CapacityReservation != "" {
+		if s.Spot {
+			return ch, http.StatusBadRequest, errors.New("a Spot instance cannot launch into a capacity reservation; turn one of them off")
+		}
+		cr, err := a.launchCapacity(r.Context(), m, in.Region, s.CapacityReservation, subnet.Zone, s.Size, len(names))
+		if err != nil {
+			return ch, http.StatusConflict, err
+		}
+		into = cr.Name
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	images, err := m.manager.Images(ctx, m.target, cloud.Actor(actor), in.Region)
 	cancel()
@@ -652,6 +668,9 @@ func (a *API) planLaunch(r *http.Request, m cloudManaged, actor string, in *clou
 	}
 	if s.Spot {
 		ch.Summary += ", as Spot"
+	}
+	if into != "" {
+		ch.Summary += ", into capacity reservation " + into
 	}
 	if s.Agent {
 		ch.Summary += ", with the Argus agent"
@@ -806,7 +825,9 @@ func (a *API) applyCloudChange(r *http.Request, m cloudManaged, ch CloudChange) 
 			return a.mustReread(r, ch)
 		}
 	default:
-		if cloud.IsStorage(ch.Action) {
+		if isCapacity(ch.Action) {
+			res, err = a.applyCapacity(ctx, m, ch)
+		} else if cloud.IsStorage(ch.Action) {
 			res, err = a.applyStorage(ctx, m, ch)
 		} else if cloud.IsNetwork(ch.Action) {
 			res, err = a.applyNetwork(ctx, m, ch)
@@ -938,7 +959,7 @@ func (a *API) applyLaunch(ctx context.Context, r *http.Request, m cloudManaged, 
 func (a *API) launchOne(ctx context.Context, r *http.Request, m cloudManaged, ch CloudChange, s cloudLaunchSpec, name string) (cloud.Result, error) {
 	spec := cloud.LaunchSpec{Region: ch.Region, Name: name, Image: s.Image, Size: s.Size, DiskGB: s.DiskGB,
 		Subnet: s.Subnet, Firewalls: s.Firewalls, Protect: s.Protect && !s.Spot, PublicIP: s.PublicIP,
-		ExtraDisks: s.ExtraDisks, Spot: s.Spot,
+		ExtraDisks: s.ExtraDisks, Spot: s.Spot, CapacityReservation: s.CapacityReservation,
 		Tags: map[string]string{"argus:launched-by": ch.RequestedBy, "argus:change": ch.ID}}
 	for k, v := range s.Tags {
 		spec.Tags[k] = v

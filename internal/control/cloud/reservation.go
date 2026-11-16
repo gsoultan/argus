@@ -1,6 +1,7 @@
 package cloud
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"slices"
@@ -38,6 +39,38 @@ const (
 	// read worked, so "none" is not confused with "could not look".
 	KindReservationsRead Kind = "reservations-read"
 )
+
+// Capacity Reservation changes. Creating one starts billing for its room
+// at once; cancelling stops it. Both are Change level: cancelling is
+// undone in money terms by creating another.
+const (
+	ActionCapacityCreate Action = "capacity-create"
+	ActionCapacityCancel Action = "capacity-cancel"
+)
+
+// CapacitySpec is a Capacity Reservation to create.
+type CapacitySpec struct {
+	Region string `json:"region"`
+	Zone   string `json:"zone"`
+	Size   string `json:"size"`
+	Count  int32  `json:"count"`
+	// Platform is AWS's platform name; Linux/UNIX when empty.
+	Platform string `json:"platform,omitempty"`
+	// Targeted keeps it for launches that name it; otherwise any matching
+	// instance in the zone lands in it.
+	Targeted bool `json:"targeted"`
+	// EndAt ends it on its own; nil keeps it until cancelled.
+	EndAt *time.Time        `json:"endAt,omitempty"`
+	Name  string            `json:"name,omitempty"`
+	Tags  map[string]string `json:"tags,omitempty"`
+}
+
+// Capacitor is a provider that creates and cancels Capacity Reservations.
+// It is optional.
+type Capacitor interface {
+	CreateCapacity(ctx context.Context, a Account, actor Actor, s CapacitySpec) (Result, error)
+	CancelCapacity(ctx context.Context, a Account, actor Actor, region, id string) (Result, error)
+}
 
 // ReservationKinds are the kinds the reservations read stores.
 var ReservationKinds = []Kind{KindReservedInstance, KindSavingsPlan, KindCapacityReservation, KindReservationsRead}
@@ -374,7 +407,7 @@ func (f *finder) reservations(rs []Resource) {
 				Why:      fmt.Sprintf("Keeps room for %d %s in %s; %d of it %s empty.", total, r.Size, r.Zone, free, isAre(free)),
 				Matters:  "Empty room in a capacity reservation is billed the same as a running instance.",
 				HowToFix: "Launch into it, lower its count, or cancel it.",
-				Monthly:  float64(free) * p * HoursPerMonth, Since: startOf(r)}, r, strconv.Itoa(free))
+				Monthly:  float64(free) * p * HoursPerMonth, Since: startOf(r), Fix: ActionCapacityCancel}, r, strconv.Itoa(free))
 		case KindSavingsPlan:
 			u, ok := sp[r.ID]
 			if !ok || r.Details["type"] != "EC2Instance" || u.Eligible > 0 {
