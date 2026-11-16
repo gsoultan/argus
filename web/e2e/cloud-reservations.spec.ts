@@ -178,3 +178,46 @@ test('launch into a capacity reservation', async ({ page }) => {
   await page.getByRole('button', { name: 'Ask for approval' }).click()
   await expect.poll(() => got.body).toMatchObject({ action: 'launch', spec: { size: 'c7i.xlarge', subnet: 'subnet-a', capacityReservation: 'cr-1' } })
 })
+
+const QUOTE = {
+  offer: { id: 'ri-offer-1', upfront: 0, hourly: 0.41, total: 3592, monthly: 299.3 }, totalText: '$3,592', onDemand: 4744, saves: 1152,
+  paysOffMonth: 1, covers: ['pay-api-01', 'web-01', 'web-02'], alwaysApproval: true,
+}
+
+test('buy a Reserved Instance: priced, total typed, always a second person', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1100 })
+  await page.route('**/api/v1/cloud/reservations', (r) => r.fulfill({ json: VIEW }))
+  await manage(page)
+  const quoted: Record<string, unknown>[] = []
+  await page.route('**/api/v1/cloud/reservations/quote', (r) => {
+    quoted.push(r.request().postDataJSON())
+    return r.fulfill({ json: QUOTE })
+  })
+  const got = await asks(page)
+  await signIn(page)
+  await page.goto('/cloud?tab=reservations')
+
+  // Buying again what ends in 18 days starts from it.
+  await page.getByTestId('held-ri-2').getByRole('button', { name: 'Buy again…' }).click()
+  const dialog = page.getByTestId('buy-reservation')
+  await expect(dialog.getByRole('combobox', { name: 'Instance type' })).toHaveValue('m6i.large')
+  await expect(dialog.getByRole('textbox', { name: 'Instances' })).toHaveValue('2')
+  await dialog.getByRole('textbox', { name: 'Instances' }).fill('3')
+  await expect(dialog.getByTestId('buy-totals')).toContainText('$3,592')
+  await expect(dialog.getByTestId('buy-totals')).toContainText('pays off from month 1')
+  await expect(dialog).toContainText('pay-api-01, web-01, web-02')
+  await expect.poll(() => quoted.at(-1)).toMatchObject({ accountId: 'ca1',
+    query: { kind: 'ri', size: 'm6i.large', count: 3, termMonths: 12, payment: 'Partial Upfront', region: 'ap-southeast-3' } })
+  await dialog.getByText('No upfront').click()
+  await dialog.getByRole('textbox', { name: 'Type the total to confirm' }).fill('3500')
+  await expect(dialog).toContainText('Type $3,592')
+  await dialog.getByRole('textbox', { name: 'Type the total to confirm' }).fill('$3,592')
+  await dialog.getByRole('textbox', { name: 'Why' }).fill('Web tier has been steady since July; replaces the RI ending soon')
+  if (SHOTS) {
+    await page.waitForTimeout(300)
+    await page.screenshot({ path: `${SHOTS}/14-buy-reservation.png` })
+  }
+  await dialog.getByRole('button', { name: 'Ask to buy' }).click()
+  await expect.poll(() => got.body).toMatchObject({ accountId: 'ca1', region: 'ap-southeast-3', action: 'ri-buy', confirm: '$3,592',
+    spec: { kind: 'ri', size: 'm6i.large', count: 3, termMonths: 12, payment: 'No Upfront' } })
+})

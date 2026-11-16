@@ -425,6 +425,9 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 	if isCapacity(in.Action) {
 		return a.planCapacity(r, m, in, ch)
 	}
+	if cloud.IsBuy(in.Action) {
+		return a.planBuy(r, m, actor, in, ch)
+	}
 	if cloud.IsStorage(in.Action) {
 		return a.planStorage(r, m, in, ch)
 	}
@@ -746,7 +749,8 @@ func (a *API) postCloudChange(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, code, err.Error())
 		return
 	}
-	waits := cloudNeedsApproval(ch.Environment, ch.Level)
+	// A commitment always waits for someone else, in every environment.
+	waits := cloudNeedsApproval(ch.Environment, ch.Level) || cloud.IsBuy(ch.Action)
 	ch.State = "applying"
 	if waits {
 		ch.State = "awaiting_approval"
@@ -827,6 +831,8 @@ func (a *API) applyCloudChange(r *http.Request, m cloudManaged, ch CloudChange) 
 	default:
 		if isCapacity(ch.Action) {
 			res, err = a.applyCapacity(ctx, m, ch)
+		} else if cloud.IsBuy(ch.Action) {
+			res, err = a.applyBuy(ctx, m, ch)
 		} else if cloud.IsStorage(ch.Action) {
 			res, err = a.applyStorage(ctx, m, ch)
 		} else if cloud.IsNetwork(ch.Action) {
@@ -1057,6 +1063,12 @@ func (a *API) postCloudChangeDecision(approve bool) http.HandlerFunc {
 		}
 		if err != nil {
 			a.fail(w, "cloud change", err)
+			return
+		}
+		if strings.EqualFold(ch.RequestedBy, sess.Email) && cloud.IsBuy(ch.Action) && approve {
+			// A commitment is never approved by the person who asked, even
+			// alone in the organization.
+			writeErr(w, http.StatusForbidden, "buying a reservation always needs someone other than the person who asked")
 			return
 		}
 		if strings.EqualFold(ch.RequestedBy, sess.Email) {

@@ -52,6 +52,10 @@ type Fake struct {
 	PowerErr map[string]error
 	// StorageErr fails the next storage call of an action.
 	StorageErr map[Action]error
+	// PriceBump is added to every quote's hourly price, as AWS changing it.
+	PriceBump float64
+	// Bought is every commitment bought, as its offer id.
+	Bought []string
 	// Missing is what ManageMissing answers.
 	Missing []string
 	// CostRows is what the account is billed, CostForecast its month-end

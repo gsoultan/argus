@@ -63,7 +63,7 @@ func LevelOf(a Action) Level {
 		ActionCapacityCreate, ActionCapacityCancel:
 		return LevelChange
 	case ActionRemove, ActionVolumeDelete, ActionSnapshotDelete, ActionImageDelete, ActionAddressRelease,
-		ActionFirewallDelete:
+		ActionFirewallDelete, ActionRIBuy, ActionSPBuy:
 		return LevelRemove
 	}
 	return ""

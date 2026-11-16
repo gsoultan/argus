@@ -1,5 +1,5 @@
 import { queryOptions } from '@tanstack/react-query'
-import { get, isConfigured } from '~/lib/live'
+import { get, isConfigured, post } from '~/lib/live'
 import type { CloudEnvironment, CloudItem } from '~/lib/cloud'
 
 /*
@@ -151,3 +151,56 @@ export function held(v: ReservationsView): Held[] {
   }
   return out
 }
+
+/* ── Buying a Reserved Instance or Savings Plan ─────────────────────────── */
+
+export type Payment = 'No Upfront' | 'Partial Upfront' | 'All Upfront'
+
+/** What to buy, as the control plane takes it. */
+export interface OfferQuery {
+  kind: 'ri' | 'sp'
+  region: string
+  termMonths: 12 | 36
+  payment: Payment
+  size?: string
+  count?: number
+  planType?: 'Compute' | 'EC2Instance'
+  family?: string
+  /** Dollars an hour. */
+  commitment?: number
+}
+
+export interface Offer { id: string; upfront: number; hourly: number; total: number; monthly: number }
+
+export interface Quote {
+  offer: Offer
+  /** The total as it is typed to confirm. */
+  totalText: string
+  /** List price of the same hours over the term; 0 for a Savings Plan. */
+  onDemand: number
+  saves: number
+  /** The month it costs less than on demand would have; 0 when it never does. */
+  paysOffMonth: number
+  covers: string[]
+  alwaysApproval: boolean
+}
+
+export const cloudQuoteQuery = (accountId: string | null, q: OfferQuery | null) =>
+  queryOptions({
+    queryKey: ['cloud', 'quote', accountId, q],
+    queryFn: () => post<Quote>('/api/v1/cloud/reservations/quote', { accountId, query: q }),
+    enabled: isConfigured() && Boolean(accountId && q),
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
+  })
+
+/** Whether a typed total is the quoted one, as the control plane checks it. */
+export function sameTotal(typed: string, total: number): boolean {
+  const f = Number(typed.replace(/[$,\s]|usd/gi, ''))
+  if (!typed.trim() || Number.isNaN(f) || f < 0) return false
+  return total >= 100 ? Math.round(f) === Math.round(total) : Math.abs(f - total) < 0.005
+}
+
+/** The family of a size: m6i of m6i.large. */
+export const familyOf = (size: string) => size.split('.')[0] ?? ''

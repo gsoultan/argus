@@ -412,6 +412,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	a.registerCloudAccessRoutes(mux)
 	a.registerCloudCostRoutes(mux)
 	a.registerCloudReservationRoutes(mux)
+	a.registerCloudBuyRoutes(mux)
 	mux.HandleFunc("GET /api/v1/assets/{id}/agent/update", a.getAssetAgentUpdate)
 	mux.HandleFunc("POST /api/v1/assets/{id}/agent/update", a.postAssetAgentUpdate)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}/agent/update", a.deleteAssetAgentUpdate)

@@ -1,7 +1,7 @@
 import { Alert, Badge, Box, Button, Group, Progress, SimpleGrid, Stack, Table, Text } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { IconBox, IconCalendarDue, IconCoin, IconReceipt, IconShieldCheck } from '@tabler/icons-react'
+import { IconBox, IconCalendarDue, IconShoppingCart, IconCoin, IconReceipt, IconShieldCheck } from '@tabler/icons-react'
 import { DataTable, EmptyState, SectionCard } from '~/components/page'
 import { Stat } from '~/components/primitives'
 import { dollars } from '~/lib/cloudCosts'
@@ -12,6 +12,8 @@ import { cloudAccountsQuery, cloudChangesQuery } from '~/lib/cloud'
 import { meQuery } from '~/lib/queries'
 import { canSee } from '~/lib/roles'
 import { CancelCapacity, NewCapacity } from './CapacityActions'
+import { BuyReservation, type BuyPreset } from './BuyReservation'
+import type { OfferQuery, Payment } from '~/lib/cloudReservations'
 import { FS, INK } from '~/theme'
 import type { CloudTab } from './tabs'
 
@@ -48,6 +50,7 @@ export function ReservationsPanel({ onTab }: { onTab?: (t: CloudTab) => void }) 
   const admin = canSee(me?.role, 'admin')
   const [reserving, setReserving] = useState(false)
   const [cancelling, setCancelling] = useState<ReservationItem | null>(null)
+  const [buying, setBuying] = useState<BuyPreset | null>(null)
   const canCancel = (r: Held) => admin && r.kind === 'cr' && manage.has(r.item.accountId) &&
     ['active', 'pending', 'scheduled'].includes(r.item.resource.state ?? '') &&
     !pending.data?.some((c) => c.accountId === r.item.accountId && c.resourceId === r.item.resource.id)
@@ -105,21 +108,42 @@ export function ReservationsPanel({ onTab }: { onTab?: (t: CloudTab) => void }) 
       <SectionCard title="What you have" flush
         description="Read from AWS with each account's inventory. Use is matched against the instances running at the last read; a Capacity Reservation's use is AWS's own count."
         action={admin && manage.size > 0 ? (
-          <Button size="xs" variant="light" leftSection={<IconBox size={14} />} onClick={() => setReserving(true)}>Reserve capacity</Button>
+          <Group gap="xs">
+            <Button size="xs" variant="light" leftSection={<IconBox size={14} />} onClick={() => setReserving(true)}>Reserve capacity</Button>
+            <Button size="xs" variant="default" leftSection={<IconShoppingCart size={14} />} onClick={() => setBuying({})}>Buy…</Button>
+          </Group>
         ) : undefined}>
         <DataTable minWidth={860} loading={q.isPending} isEmpty={rows.length === 0}
           empty={<EmptyState icon={IconReceipt} title="No reservations" description="No Reserved Instances, Savings Plans or Capacity Reservations in the accounts read." />}
           columns={['Kind', 'Covers', 'Where', 'Term', 'Ends', 'Use']}>
-          {rows.map((r) => <HeldRow key={r.key} r={r} onCancel={canCancel(r) ? () => setCancelling(r.item) : undefined} />)}
+          {rows.map((r) => <HeldRow key={r.key} r={r} onCancel={canCancel(r) ? () => setCancelling(r.item) : undefined}
+            onRenew={admin && manage.has(r.item.accountId) && r.kind !== 'cr' && endsSoon(r) ? () => setBuying(renewal(r)) : undefined} />)}
         </DataTable>
       </SectionCard>
       {reserving && <NewCapacity onClose={() => setReserving(false)} />}
+      {buying && <BuyReservation preset={buying} onClose={() => setBuying(null)} />}
       {cancelling && <CancelCapacity it={cancelling} onClose={() => setCancelling(null)} />}
     </Stack>
   )
 }
 
-function HeldRow({ r, onCancel }: { r: Held; onCancel?: () => void }) {
+const endsSoon = (r: Held) => { const d = daysUntil(r.ends); return d !== null && d >= 0 && d <= 30 }
+
+const PAY: Record<string, Payment> = { 'no upfront': 'No Upfront', 'partial upfront': 'Partial Upfront', 'all upfront': 'All Upfront' }
+
+/** The same commitment again, to buy before this one ends. */
+function renewal(r: Held): BuyPreset {
+  const d = r.item.resource.details ?? {}
+  const base: Partial<OfferQuery> = { termMonths: d.termMonths === '36' ? 36 : 12, payment: PAY[(d.payment ?? '').toLowerCase()] ?? 'No Upfront' }
+  if (r.kind === 'ri') {
+    return { accountId: r.item.accountId, query: { ...base, kind: 'ri', region: r.item.resource.region, size: r.item.resource.size, count: Number(d.count ?? 1) } }
+  }
+  const ec2 = d.type === 'EC2Instance'
+  return { accountId: r.item.accountId, query: { ...base, kind: 'sp', planType: ec2 ? 'EC2Instance' : 'Compute', family: ec2 ? d.family : undefined,
+    region: ec2 ? d.planRegion : undefined, commitment: Number(d.commitment ?? 1) } }
+}
+
+function HeldRow({ r, onCancel, onRenew }: { r: Held; onCancel?: () => void; onRenew?: () => void }) {
   const k = KIND[r.kind]
   const left = daysUntil(r.ends)
   const pct = r.use === null ? null : Math.round(r.use * 100)
@@ -147,6 +171,7 @@ function HeldRow({ r, onCancel }: { r: Held; onCancel?: () => void }) {
         )}
         <Text size={FS.micro} c="dimmed" lineClamp={3}>{r.useNote}</Text>
         {r.unused > 0 && <Text size={FS.micro} c={INK.denied} mt={4}>{dollars(r.unused)} a month unused</Text>}
+        {onRenew && <Button size="compact-xs" variant="subtle" mt={4} px={0} onClick={onRenew}>Buy again…</Button>}
         {onCancel && <Button size="compact-xs" variant="subtle" color="amber" mt={4} px={0} onClick={onCancel}>Cancel reservation</Button>}
       </Table.Td>
     </Table.Tr>

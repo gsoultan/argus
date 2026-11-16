@@ -349,7 +349,10 @@ export type CloudStorageAction =
   | 'address-allocate' | 'address-associate' | 'address-disassociate' | 'address-release'
 export type CloudNetworkAction =
   | 'firewall-create' | 'firewall-rules' | 'firewall-delete' | 'instance-firewalls' | 'target-register' | 'target-deregister'
-export type CloudCapacityAction = 'capacity-create' | 'capacity-cancel'
+export type CloudCapacityAction = 'capacity-create' | 'capacity-cancel' | 'ri-buy' | 'sp-buy'
+
+/** Whether an action buys a one- or three-year commitment, which always needs someone else. */
+export const isBuy = (a: CloudAction) => a === 'ri-buy' || a === 'sp-buy'
 export type CloudAction = 'launch' | 'start' | 'stop' | 'hibernate' | 'reboot' | 'resize' | 'tags' | 'protect' | 'unprotect' | 'settings' | 'remove'
   | CloudStorageAction | CloudNetworkAction | CloudCapacityAction
 export type CloudChangeState = 'awaiting_approval' | 'applying' | 'applied' | 'failed' | 'declined' | 'cancelled'
@@ -849,7 +852,7 @@ export const ACTION_LEVEL: Record<CloudAction, CloudChange['level']> = {
   'address-allocate': 'change', 'address-associate': 'change', 'address-disassociate': 'change', 'address-release': 'remove',
   'firewall-create': 'change', 'firewall-rules': 'change', 'firewall-delete': 'remove', 'instance-firewalls': 'change',
   'target-register': 'change', 'target-deregister': 'change',
-  'capacity-create': 'change', 'capacity-cancel': 'change',
+  'capacity-create': 'change', 'capacity-cancel': 'change', 'ri-buy': 'remove', 'sp-buy': 'remove',
 }
 
 /** The permissions each storage change takes, as the manage role must grant them. */
@@ -865,6 +868,7 @@ export const ACTION_NEEDS: Partial<Record<CloudAction, string[]>> = {
   'firewall-delete': ['ec2:DeleteSecurityGroup'], 'instance-firewalls': ['ec2:ModifyInstanceAttribute'],
   'target-register': ['elasticloadbalancing:RegisterTargets'], 'target-deregister': ['elasticloadbalancing:DeregisterTargets'],
   'capacity-create': ['ec2:CreateCapacityReservation', 'ec2:CreateTags'], 'capacity-cancel': ['ec2:CancelCapacityReservation'],
+  'ri-buy': ['ec2:PurchaseReservedInstancesOffering'], 'sp-buy': ['savingsplans:DescribeSavingsPlansOfferings', 'savingsplans:CreateSavingsPlan'],
 }
 
 /** Whether an account's manage role lacks what an action takes. */

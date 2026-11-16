@@ -355,6 +355,8 @@ var actionNeeds = map[cloud.Action][]string{
 	cloud.ActionTargetDeregister:  {"elasticloadbalancing:DeregisterTargets"},
 	cloud.ActionCapacityCreate:    {"ec2:CreateCapacityReservation", "ec2:CreateTags"},
 	cloud.ActionCapacityCancel:    {"ec2:CancelCapacityReservation"},
+	cloud.ActionRIBuy:             {"ec2:PurchaseReservedInstancesOffering"},
+	cloud.ActionSPBuy:             {"savingsplans:DescribeSavingsPlansOfferings", "savingsplans:CreateSavingsPlan"},
 }
 
 // Needs is the permissions an action takes.
