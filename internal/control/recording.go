@@ -58,6 +58,11 @@ func (a *API) getRecording(w http.ResponseWriter, r *http.Request, actor string)
 		writeErr(w, http.StatusNotFound, "session not found")
 		return
 	}
+	if sess.RecordingRemovedAt != nil {
+		// Said as a removal, by whom and why, not as a file that went missing.
+		writeErr(w, http.StatusGone, removedWords(sess))
+		return
+	}
 	if sess.RecordingKey == nil || *sess.RecordingKey == "" {
 		if sess.State == "active" {
 			// Not missing: still being written. Saying it exists only on the
@@ -251,3 +256,18 @@ func (s *Store) StoreRecordingKey(ctx context.Context, id, chainHead, key string
 
 // ErrNoSuchSession is returned when a report names a session that is not here.
 var ErrNoSuchSession = errors.New("no such session")
+
+// removedWords says who removed a session's recording, when and why.
+func removedWords(sess *Session) string {
+	msg := "this recording was removed"
+	if sess.RecordingRemovedBy != nil && *sess.RecordingRemovedBy != "" {
+		msg += " by " + *sess.RecordingRemovedBy
+	}
+	if sess.RecordingRemovedAt != nil {
+		msg += " on " + sess.RecordingRemovedAt.UTC().Format("2 Jan 2006 15:04 UTC")
+	}
+	if sess.RecordingRemovedReason != nil && *sess.RecordingRemovedReason != "" {
+		msg += ": " + *sess.RecordingRemovedReason
+	}
+	return msg
+}

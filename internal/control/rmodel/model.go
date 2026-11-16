@@ -748,6 +748,12 @@ type Session struct {
 	// (migration 026).
 	Kind     string
 	Database *Database
+
+	// RecordingRemoved* say that an admin removed the stored recording, when
+	// and why (migration 087). RecordingKey is cleared at the same moment.
+	RecordingRemovedAt     *time.Time
+	RecordingRemovedBy     *string
+	RecordingRemovedReason *string
 }
 
 func (m *Session) Schema(t *storm.Table) {

@@ -1034,6 +1034,9 @@ func _assertSessionShape(m m0.Session) {
 		m.LastReportedAt,
 		m.Kind,
 		m.Database,
+		m.RecordingRemovedAt,
+		m.RecordingRemovedBy,
+		m.RecordingRemovedReason,
 	}
 }
 

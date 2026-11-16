@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import {
   Alert, Badge, Box, Button, Card, Grid, Group, Modal, ScrollArea, Stack, Text,
-  Textarea,
+  Textarea, TextInput,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
@@ -9,7 +9,7 @@ import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import {
   IconAlertTriangle, IconDownload, IconEye, IconFileOff, IconInfoCircle, IconLink,
-  IconListDetails, IconPlayerStop, IconShieldCheck, IconTerminal2,
+  IconListDetails, IconPlayerStop, IconShieldCheck, IconTerminal2, IconTrash,
 } from '@tabler/icons-react'
 import { EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page'
 import { ButtonLink } from '~/components/links'
@@ -53,7 +53,7 @@ import { isStatementProtocol } from '~/lib/engines'
 import { notifyOk } from '~/lib/notify'
 import type { ReplayActivity, Session } from '~/types/domain'
 import type { KernelExec } from '~/lib/castDecode'
-import { sessionQuery, useTerminateSession } from '~/lib/queries'
+import { meQuery, sessionQuery, useRemoveRecording, useTerminateSession } from '~/lib/queries'
 import { isConfigured, live, shadowTicket, watchEndpoint } from '~/lib/live'
 import { useCastDecoder } from '~/lib/useWorkers'
 
@@ -76,10 +76,16 @@ function SessionDetail() {
     refetchInterval: (q) => {
       const s = q.state.data
       if (s?.state === 'active') return 5_000
-      return s && !s.recordingKey ? 10_000 : false
+      // A removed recording is not on its way.
+      return s && !s.recordingKey && !s.recordingRemovedAt ? 10_000 : false
     },
   })
   const terminate = useTerminateSession()
+  const removeRec = useRemoveRecording()
+  const { data: me } = useQuery(meQuery())
+  const [removeOpen, removeDialog] = useDisclosure(false)
+  const [removeHost, setRemoveHost] = useState('')
+  const [removeWhy, setRemoveWhy] = useState('')
   const [confirmOpen, confirm] = useDisclosure(false)
   const [shadowOpen, shadow] = useDisclosure(false)
   const [shadowError, setShadowError] = useState<string>()
@@ -179,6 +185,8 @@ function SessionDetail() {
       return () => { cancelled = true }
     }
     if (!session) return
+    // Nothing to fetch: the page says who removed it and why.
+    if (session.recordingRemovedAt) { setRealCast(undefined); setFetched(true); return }
     if (tooLargeToAutoload(session) && !loadLarge) return
     setCastReceived(0)
     void live
@@ -197,7 +205,7 @@ function SessionDetail() {
     // hands back a new object every few seconds, and each one refetched the
     // recording.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [castUrl, session?.id, session?.state, session?.recordingKey, loadLarge])
+  }, [castUrl, session?.id, session?.state, session?.recordingKey, session?.recordingRemovedAt, loadLarge])
 
   // A database session's recording is statements, not a cast; the terminal
   // decoder never sees it.
@@ -219,6 +227,7 @@ function SessionDetail() {
     // a fiction with nothing on the page saying so. The RDP path on this same
     // page has always refused to do this; the terminal path was the outlier.
     if (castError) return undefined
+    if (session?.recordingRemovedAt) return undefined
     return session
       ? buildCast(session.assetHostname, session.principal, session.startedAt,
           session.fidelity === 'ebpf' ? 'ebpf' : 'pty')
@@ -252,6 +261,13 @@ function SessionDetail() {
   }, [decoded.execs, decoded.heuristicCommands])
 
   const kernelObserved = decoded.execs.length > 0
+
+  // Admins and owners, for an ended session whose recording is stored here.
+  // The control plane checks all of it again; this only keeps the button off
+  // pages where it would be refused.
+  const canRemoveRecording =
+    isConfigured() && (me?.role === 'admin' || me?.role === 'owner') &&
+    !!session && session.state !== 'active' && !!session.recordingKey && !session.recordingRemovedAt
 
   if (!session) {
     return (
@@ -295,6 +311,32 @@ function SessionDetail() {
       'Recording exported',
       'asciicast v2. Play it with `asciinema play`, or re-hash it to check it against the chain head.',
     )
+  }
+
+  const onRemoveRecording = async () => {
+    let out: { fileNotDeleted?: string }
+    try {
+      out = await removeRec.mutateAsync({ id: session.id, confirm: removeHost.trim(), reason: removeWhy.trim() })
+    } catch (err) {
+      // The dialog stays open: closing it would read as done.
+      notifications.show({
+        color: 'rose',
+        title: 'Recording not removed',
+        message: err instanceof Error ? err.message : 'the control plane refused',
+      })
+      return
+    }
+    removeDialog.close()
+    setRemoveHost('')
+    setRemoveWhy('')
+    setRealCast(undefined)
+    notifications.show({
+      color: out.fileNotDeleted ? 'amber' : 'teal',
+      title: 'Recording removed',
+      message: out.fileNotDeleted
+        ? `Argus no longer holds it, but ${out.fileNotDeleted}.`
+        : 'The file is deleted. The session stays, and the removal is in the audit log.',
+    })
   }
 
   const onTerminate = async () => {
@@ -377,6 +419,16 @@ function SessionDetail() {
                 onClick={shadow.open}
               >
                 Watch live
+              </Button>
+            )}
+            {canRemoveRecording && (
+              <Button
+                color="rose"
+                variant="light"
+                leftSection={<IconTrash size={14} />}
+                onClick={removeDialog.open}
+              >
+                Remove recording
               </Button>
             )}
             {session.state === 'active' && (
@@ -507,6 +559,14 @@ function SessionDetail() {
                     </Text>
                   </Box>
                 )
+              ) : session.recordingRemovedAt ? (
+                <Box p="lg">
+                  <EmptyState
+                    icon={IconTrash}
+                    title="This recording was removed"
+                    description={removedWords(session)}
+                  />
+                </Box>
               ) : castError ? (
                 // In the control plane's own words. It knows which of several
                 // things went wrong -- an artefact still on the gateway, a
@@ -782,6 +842,52 @@ function SessionDetail() {
         )}
       </Modal>
 
+      <Modal opened={removeOpen} onClose={removeDialog.close} title="Remove recording" size="md">
+        <Alert color="rose" icon={<IconAlertTriangle size={16} />} mb="md">
+          <Text size={FS.body} lh={1.5}>
+            The recording of this session ({bytes(session.recordingBytes)}) is deleted from
+            storage and cannot be replayed again. The session stays in Activity with who
+            opened it, from where, its chain head and its size, and the removal is recorded in
+            the audit log against your account.
+          </Text>
+        </Alert>
+        <Stack gap="sm">
+          <TextInput
+            size="sm"
+            label={`Type ${session.assetHostname} to confirm`}
+            value={removeHost}
+            onChange={(e) => setRemoveHost(e.currentTarget.value)}
+            autoComplete="off"
+          />
+          <Textarea
+            size="sm"
+            label="Reason"
+            description="Kept with the session and in the audit log."
+            placeholder="e.g. A CI deploy copied a build through this session; nothing else ran."
+            minRows={2}
+            autosize
+            value={removeWhy}
+            onChange={(e) => setRemoveWhy(e.currentTarget.value)}
+          />
+        </Stack>
+        <Group justify="flex-end" mt="md">
+          <Button variant="subtle" color="slate" onClick={removeDialog.close}>
+            Cancel
+          </Button>
+          <Button
+            color="rose"
+            loading={removeRec.isPending}
+            disabled={
+              removeHost.trim().toLowerCase() !== session.assetHostname.toLowerCase() ||
+              removeWhy.trim().length < 4
+            }
+            onClick={onRemoveRecording}
+          >
+            Remove recording
+          </Button>
+        </Group>
+      </Modal>
+
       <Modal opened={confirmOpen} onClose={confirm.close} title="Terminate session" size="md">
         <Alert color="rose" icon={<IconAlertTriangle size={16} />} mb="md">
           <Text size={FS.body} lh={1.5}>
@@ -843,6 +949,16 @@ function renderExec(e: KernelExec): string {
   return e.truncated ? `${rendered} …[truncated]` : rendered
 }
 
+/** Who removed a session's recording, when and why. */
+function removedWords(s: Pick<Session, 'recordingRemovedAt' | 'recordingRemovedBy' | 'recordingRemovedReason'>): string {
+  let out = 'Removed'
+  if (s.recordingRemovedBy) out += ` by ${s.recordingRemovedBy}`
+  if (s.recordingRemovedAt) out += ` on ${absTime(s.recordingRemovedAt)}`
+  out += '. The session record, its chain head and the audit log entry remain.'
+  if (s.recordingRemovedReason) out += ` Reason: ${s.recordingRemovedReason}`
+  return out
+}
+
 /**
  * Above this a terminal recording is downloaded only when someone asks.
  *
@@ -851,7 +967,8 @@ function renderExec(e: KernelExec): string {
  */
 const REPLAY_ASK_ABOVE = 32 * 1024 ** 2
 
-function tooLargeToAutoload(session: Pick<Session, 'recordingBytes' | 'protocol'>): boolean {
+function tooLargeToAutoload(session: Pick<Session, 'recordingBytes' | 'protocol' | 'recordingRemovedAt'>): boolean {
+  if (session.recordingRemovedAt) return false
   // Only a real recording: the demo build's is generated here, not downloaded.
   return isConfigured() && session.protocol !== 'rdp' && !isStatementProtocol(session.protocol) &&
     (session.recordingBytes ?? 0) > REPLAY_ASK_ABOVE

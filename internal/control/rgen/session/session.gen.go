@@ -20,34 +20,37 @@ var (
 // Row is what a full read returns: the model struct with relations
 // replaced by their scalar foreign keys and *T rewritten to Null[T].
 type Row struct {
-	ID                [16]byte
-	UserEmail         string
-	AssetID           runtime.Null[[16]byte]
-	AssetHostname     string
-	Principal         string
-	Protocol          string
-	Origin            string
-	OriginReason      runtime.Null[string]
-	State             string
-	StartedAt         time.Time
-	EndedAt           runtime.Null[time.Time]
-	ClientIP          string
-	Fidelity          string
-	RecordingBytes    int64
-	RecordingPath     runtime.Null[string]
-	CommandCount      runtime.Null[int32]
-	ExitCode          runtime.Null[int32]
-	ChainHead         runtime.Null[string]
-	RiskFlags         []string
-	ReportedBy        string
-	CreatedAt         time.Time
-	RecordingKey      runtime.Null[string]
-	TerminatedBy      runtime.Null[string]
-	TerminationReason runtime.Null[string]
-	EndInferred       bool
-	LastReportedAt    time.Time
-	Kind              string
-	DatabaseID        runtime.Null[[16]byte]
+	ID                     [16]byte
+	UserEmail              string
+	AssetID                runtime.Null[[16]byte]
+	AssetHostname          string
+	Principal              string
+	Protocol               string
+	Origin                 string
+	OriginReason           runtime.Null[string]
+	State                  string
+	StartedAt              time.Time
+	EndedAt                runtime.Null[time.Time]
+	ClientIP               string
+	Fidelity               string
+	RecordingBytes         int64
+	RecordingPath          runtime.Null[string]
+	CommandCount           runtime.Null[int32]
+	ExitCode               runtime.Null[int32]
+	ChainHead              runtime.Null[string]
+	RiskFlags              []string
+	ReportedBy             string
+	CreatedAt              time.Time
+	RecordingKey           runtime.Null[string]
+	TerminatedBy           runtime.Null[string]
+	TerminationReason      runtime.Null[string]
+	EndInferred            bool
+	LastReportedAt         time.Time
+	Kind                   string
+	DatabaseID             runtime.Null[[16]byte]
+	RecordingRemovedAt     runtime.Null[time.Time]
+	RecordingRemovedBy     runtime.Null[string]
+	RecordingRemovedReason runtime.Null[string]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -86,7 +89,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 28
+const nCols = 31
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -391,6 +394,27 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.raws[q.nr] = r.DatabaseID.V
 		q.nr++
+	case 28:
+		if int(q.ntm) >= len(q.tims) {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = r.RecordingRemovedAt.V
+		q.ntm++
+	case 29:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.RecordingRemovedBy.V
+		q.ns++
+	case 30:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.RecordingRemovedReason.V
+		q.ns++
 	}
 }
 
@@ -560,34 +584,37 @@ func b2i(b bool) int64 {
 // Typed column handles. The type of the handle is what makes
 // Age.Like(...) fail to compile.
 var (
-	ID                = UUIDCol{0}
-	UserEmail         = TextCol{1}
-	AssetID           = NullUUIDCol{2}
-	AssetHostname     = TextCol{3}
-	Principal         = TextCol{4}
-	Protocol          = TextCol{5}
-	Origin            = TextCol{6}
-	OriginReason      = NullTextCol{7}
-	State             = TextCol{8}
-	StartedAt         = TimeCol{9}
-	EndedAt           = NullTimeCol{10}
-	ClientIP          = TextCol{11}
-	Fidelity          = TextCol{12}
-	RecordingBytes    = Int64Col{13}
-	RecordingPath     = NullTextCol{14}
-	CommandCount      = NullInt32Col{15}
-	ExitCode          = NullInt32Col{16}
-	ChainHead         = NullTextCol{17}
-	RiskFlags         = TextArrayCol{18}
-	ReportedBy        = TextCol{19}
-	CreatedAt         = TimeCol{20}
-	RecordingKey      = NullTextCol{21}
-	TerminatedBy      = NullTextCol{22}
-	TerminationReason = NullTextCol{23}
-	EndInferred       = BoolCol{24}
-	LastReportedAt    = TimeCol{25}
-	Kind              = TextCol{26}
-	DatabaseID        = NullUUIDCol{27}
+	ID                     = UUIDCol{0}
+	UserEmail              = TextCol{1}
+	AssetID                = NullUUIDCol{2}
+	AssetHostname          = TextCol{3}
+	Principal              = TextCol{4}
+	Protocol               = TextCol{5}
+	Origin                 = TextCol{6}
+	OriginReason           = NullTextCol{7}
+	State                  = TextCol{8}
+	StartedAt              = TimeCol{9}
+	EndedAt                = NullTimeCol{10}
+	ClientIP               = TextCol{11}
+	Fidelity               = TextCol{12}
+	RecordingBytes         = Int64Col{13}
+	RecordingPath          = NullTextCol{14}
+	CommandCount           = NullInt32Col{15}
+	ExitCode               = NullInt32Col{16}
+	ChainHead              = NullTextCol{17}
+	RiskFlags              = TextArrayCol{18}
+	ReportedBy             = TextCol{19}
+	CreatedAt              = TimeCol{20}
+	RecordingKey           = NullTextCol{21}
+	TerminatedBy           = NullTextCol{22}
+	TerminationReason      = NullTextCol{23}
+	EndInferred            = BoolCol{24}
+	LastReportedAt         = TimeCol{25}
+	Kind                   = TextCol{26}
+	DatabaseID             = NullUUIDCol{27}
+	RecordingRemovedAt     = NullTimeCol{28}
+	RecordingRemovedBy     = NullTextCol{29}
+	RecordingRemovedReason = NullTextCol{30}
 )
 
 // UUIDCol addresses a uuid column.
@@ -1130,6 +1157,20 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyRaw[q.nar] = p.anyRaw
 			q.nar++
+		case 29:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 30:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1328,6 +1369,27 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.raws[q.nr] = p.raw
 		q.nr++
+	case 28:
+		if int(q.ntm) >= 4 {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = p.tim
+		q.ntm++
+	case 29:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 30:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1571,35 +1633,93 @@ func (q Query) TerminationReasonIn(v ...string) Query   { return q.Where(Termina
 func (q Query) TerminationReasonNotIn(v ...string) Query {
 	return q.Where(TerminationReason.NotIn(v...))
 }
-func (q Query) TerminationReasonIsNull() Query        { return q.Where(TerminationReason.IsNull()) }
-func (q Query) TerminationReasonIsNotNull() Query     { return q.Where(TerminationReason.IsNotNull()) }
-func (q Query) EndInferredEq(v bool) Query            { return q.Where(EndInferred.Eq(v)) }
-func (q Query) EndInferredNotEq(v bool) Query         { return q.Where(EndInferred.NotEq(v)) }
-func (q Query) LastReportedAtEq(v time.Time) Query    { return q.Where(LastReportedAt.Eq(v)) }
-func (q Query) LastReportedAtNotEq(v time.Time) Query { return q.Where(LastReportedAt.NotEq(v)) }
-func (q Query) LastReportedAtGt(v time.Time) Query    { return q.Where(LastReportedAt.Gt(v)) }
-func (q Query) LastReportedAtGte(v time.Time) Query   { return q.Where(LastReportedAt.Gte(v)) }
-func (q Query) LastReportedAtLt(v time.Time) Query    { return q.Where(LastReportedAt.Lt(v)) }
-func (q Query) LastReportedAtLte(v time.Time) Query   { return q.Where(LastReportedAt.Lte(v)) }
-func (q Query) KindEq(v string) Query                 { return q.Where(Kind.Eq(v)) }
-func (q Query) KindNotEq(v string) Query              { return q.Where(Kind.NotEq(v)) }
-func (q Query) KindGt(v string) Query                 { return q.Where(Kind.Gt(v)) }
-func (q Query) KindGte(v string) Query                { return q.Where(Kind.Gte(v)) }
-func (q Query) KindLt(v string) Query                 { return q.Where(Kind.Lt(v)) }
-func (q Query) KindLte(v string) Query                { return q.Where(Kind.Lte(v)) }
-func (q Query) KindEqLower(v string) Query            { return q.Where(Kind.EqLower(v)) }
-func (q Query) KindLike(v string) Query               { return q.Where(Kind.Like(v)) }
-func (q Query) KindILike(v string) Query              { return q.Where(Kind.ILike(v)) }
-func (q Query) KindIn(v ...string) Query              { return q.Where(Kind.In(v...)) }
-func (q Query) KindNotIn(v ...string) Query           { return q.Where(Kind.NotIn(v...)) }
-func (q Query) DatabaseIDEq(v [16]byte) Query         { return q.Where(DatabaseID.Eq(v)) }
-func (q Query) DatabaseIDNotEq(v [16]byte) Query      { return q.Where(DatabaseID.NotEq(v)) }
-func (q Query) DatabaseIDIn(v ...[16]byte) Query      { return q.Where(DatabaseID.In(v...)) }
-func (q Query) DatabaseIDNotIn(v ...[16]byte) Query   { return q.Where(DatabaseID.NotIn(v...)) }
-func (q Query) DatabaseIDIsNull() Query               { return q.Where(DatabaseID.IsNull()) }
-func (q Query) DatabaseIDIsNotNull() Query            { return q.Where(DatabaseID.IsNotNull()) }
+func (q Query) TerminationReasonIsNull() Query         { return q.Where(TerminationReason.IsNull()) }
+func (q Query) TerminationReasonIsNotNull() Query      { return q.Where(TerminationReason.IsNotNull()) }
+func (q Query) EndInferredEq(v bool) Query             { return q.Where(EndInferred.Eq(v)) }
+func (q Query) EndInferredNotEq(v bool) Query          { return q.Where(EndInferred.NotEq(v)) }
+func (q Query) LastReportedAtEq(v time.Time) Query     { return q.Where(LastReportedAt.Eq(v)) }
+func (q Query) LastReportedAtNotEq(v time.Time) Query  { return q.Where(LastReportedAt.NotEq(v)) }
+func (q Query) LastReportedAtGt(v time.Time) Query     { return q.Where(LastReportedAt.Gt(v)) }
+func (q Query) LastReportedAtGte(v time.Time) Query    { return q.Where(LastReportedAt.Gte(v)) }
+func (q Query) LastReportedAtLt(v time.Time) Query     { return q.Where(LastReportedAt.Lt(v)) }
+func (q Query) LastReportedAtLte(v time.Time) Query    { return q.Where(LastReportedAt.Lte(v)) }
+func (q Query) KindEq(v string) Query                  { return q.Where(Kind.Eq(v)) }
+func (q Query) KindNotEq(v string) Query               { return q.Where(Kind.NotEq(v)) }
+func (q Query) KindGt(v string) Query                  { return q.Where(Kind.Gt(v)) }
+func (q Query) KindGte(v string) Query                 { return q.Where(Kind.Gte(v)) }
+func (q Query) KindLt(v string) Query                  { return q.Where(Kind.Lt(v)) }
+func (q Query) KindLte(v string) Query                 { return q.Where(Kind.Lte(v)) }
+func (q Query) KindEqLower(v string) Query             { return q.Where(Kind.EqLower(v)) }
+func (q Query) KindLike(v string) Query                { return q.Where(Kind.Like(v)) }
+func (q Query) KindILike(v string) Query               { return q.Where(Kind.ILike(v)) }
+func (q Query) KindIn(v ...string) Query               { return q.Where(Kind.In(v...)) }
+func (q Query) KindNotIn(v ...string) Query            { return q.Where(Kind.NotIn(v...)) }
+func (q Query) DatabaseIDEq(v [16]byte) Query          { return q.Where(DatabaseID.Eq(v)) }
+func (q Query) DatabaseIDNotEq(v [16]byte) Query       { return q.Where(DatabaseID.NotEq(v)) }
+func (q Query) DatabaseIDIn(v ...[16]byte) Query       { return q.Where(DatabaseID.In(v...)) }
+func (q Query) DatabaseIDNotIn(v ...[16]byte) Query    { return q.Where(DatabaseID.NotIn(v...)) }
+func (q Query) DatabaseIDIsNull() Query                { return q.Where(DatabaseID.IsNull()) }
+func (q Query) DatabaseIDIsNotNull() Query             { return q.Where(DatabaseID.IsNotNull()) }
+func (q Query) RecordingRemovedAtEq(v time.Time) Query { return q.Where(RecordingRemovedAt.Eq(v)) }
+func (q Query) RecordingRemovedAtNotEq(v time.Time) Query {
+	return q.Where(RecordingRemovedAt.NotEq(v))
+}
+func (q Query) RecordingRemovedAtGt(v time.Time) Query  { return q.Where(RecordingRemovedAt.Gt(v)) }
+func (q Query) RecordingRemovedAtGte(v time.Time) Query { return q.Where(RecordingRemovedAt.Gte(v)) }
+func (q Query) RecordingRemovedAtLt(v time.Time) Query  { return q.Where(RecordingRemovedAt.Lt(v)) }
+func (q Query) RecordingRemovedAtLte(v time.Time) Query { return q.Where(RecordingRemovedAt.Lte(v)) }
+func (q Query) RecordingRemovedAtIsNull() Query         { return q.Where(RecordingRemovedAt.IsNull()) }
+func (q Query) RecordingRemovedAtIsNotNull() Query      { return q.Where(RecordingRemovedAt.IsNotNull()) }
+func (q Query) RecordingRemovedByEq(v string) Query     { return q.Where(RecordingRemovedBy.Eq(v)) }
+func (q Query) RecordingRemovedByNotEq(v string) Query  { return q.Where(RecordingRemovedBy.NotEq(v)) }
+func (q Query) RecordingRemovedByGt(v string) Query     { return q.Where(RecordingRemovedBy.Gt(v)) }
+func (q Query) RecordingRemovedByGte(v string) Query    { return q.Where(RecordingRemovedBy.Gte(v)) }
+func (q Query) RecordingRemovedByLt(v string) Query     { return q.Where(RecordingRemovedBy.Lt(v)) }
+func (q Query) RecordingRemovedByLte(v string) Query    { return q.Where(RecordingRemovedBy.Lte(v)) }
+func (q Query) RecordingRemovedByEqLower(v string) Query {
+	return q.Where(RecordingRemovedBy.EqLower(v))
+}
+func (q Query) RecordingRemovedByLike(v string) Query  { return q.Where(RecordingRemovedBy.Like(v)) }
+func (q Query) RecordingRemovedByILike(v string) Query { return q.Where(RecordingRemovedBy.ILike(v)) }
+func (q Query) RecordingRemovedByIn(v ...string) Query { return q.Where(RecordingRemovedBy.In(v...)) }
+func (q Query) RecordingRemovedByNotIn(v ...string) Query {
+	return q.Where(RecordingRemovedBy.NotIn(v...))
+}
+func (q Query) RecordingRemovedByIsNull() Query         { return q.Where(RecordingRemovedBy.IsNull()) }
+func (q Query) RecordingRemovedByIsNotNull() Query      { return q.Where(RecordingRemovedBy.IsNotNull()) }
+func (q Query) RecordingRemovedReasonEq(v string) Query { return q.Where(RecordingRemovedReason.Eq(v)) }
+func (q Query) RecordingRemovedReasonNotEq(v string) Query {
+	return q.Where(RecordingRemovedReason.NotEq(v))
+}
+func (q Query) RecordingRemovedReasonGt(v string) Query { return q.Where(RecordingRemovedReason.Gt(v)) }
+func (q Query) RecordingRemovedReasonGte(v string) Query {
+	return q.Where(RecordingRemovedReason.Gte(v))
+}
+func (q Query) RecordingRemovedReasonLt(v string) Query { return q.Where(RecordingRemovedReason.Lt(v)) }
+func (q Query) RecordingRemovedReasonLte(v string) Query {
+	return q.Where(RecordingRemovedReason.Lte(v))
+}
+func (q Query) RecordingRemovedReasonEqLower(v string) Query {
+	return q.Where(RecordingRemovedReason.EqLower(v))
+}
+func (q Query) RecordingRemovedReasonLike(v string) Query {
+	return q.Where(RecordingRemovedReason.Like(v))
+}
+func (q Query) RecordingRemovedReasonILike(v string) Query {
+	return q.Where(RecordingRemovedReason.ILike(v))
+}
+func (q Query) RecordingRemovedReasonIn(v ...string) Query {
+	return q.Where(RecordingRemovedReason.In(v...))
+}
+func (q Query) RecordingRemovedReasonNotIn(v ...string) Query {
+	return q.Where(RecordingRemovedReason.NotIn(v...))
+}
+func (q Query) RecordingRemovedReasonIsNull() Query { return q.Where(RecordingRemovedReason.IsNull()) }
+func (q Query) RecordingRemovedReasonIsNotNull() Query {
+	return q.Where(RecordingRemovedReason.IsNotNull())
+}
 
-const selectPrefix = `SELECT "id", "user_email", "asset_id", "asset_hostname", "principal", "protocol", "origin", "origin_reason", "state", "started_at", "ended_at", "client_ip", "fidelity", "recording_bytes", "recording_path", "command_count", "exit_code", "chain_head", "risk_flags", "reported_by", "created_at", "recording_key", "terminated_by", "termination_reason", "end_inferred", "last_reported_at", "kind", "database_id" FROM "sessions"`
+const selectPrefix = `SELECT "id", "user_email", "asset_id", "asset_hostname", "principal", "protocol", "origin", "origin_reason", "state", "started_at", "ended_at", "client_ip", "fidelity", "recording_bytes", "recording_path", "command_count", "exit_code", "chain_head", "risk_flags", "reported_by", "created_at", "recording_key", "terminated_by", "termination_reason", "end_inferred", "last_reported_at", "kind", "database_id", "recording_removed_at", "recording_removed_by", "recording_removed_reason" FROM "sessions"`
 const countPrefix = `SELECT count(*) FROM "sessions"`
 const existsPrefix = `SELECT 1 FROM "sessions"`
 const existsSuffix = ` LIMIT 1`
@@ -1804,6 +1924,24 @@ var orderTable = [nCols][4]string{
 		"\"database_id\" ASC NULLS FIRST",
 		"\"database_id\" DESC NULLS LAST",
 	},
+	{ // recording_removed_at
+		"\"recording_removed_at\"",
+		"\"recording_removed_at\" DESC",
+		"\"recording_removed_at\" ASC NULLS FIRST",
+		"\"recording_removed_at\" DESC NULLS LAST",
+	},
+	{ // recording_removed_by
+		"\"recording_removed_by\"",
+		"\"recording_removed_by\" DESC",
+		"\"recording_removed_by\" ASC NULLS FIRST",
+		"\"recording_removed_by\" DESC NULLS LAST",
+	},
+	{ // recording_removed_reason
+		"\"recording_removed_reason\"",
+		"\"recording_removed_reason\" DESC",
+		"\"recording_removed_reason\" ASC NULLS FIRST",
+		"\"recording_removed_reason\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1837,6 +1975,9 @@ var identTable = [nCols]string{
 	"\"last_reported_at\"",
 	"\"kind\"",
 	"\"database_id\"",
+	"\"recording_removed_at\"",
+	"\"recording_removed_by\"",
+	"\"recording_removed_reason\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1869,7 +2010,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [28][28]runtime.Frag{
+var fragTable = [31][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -2710,6 +2851,96 @@ var fragTable = [28][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // recording_removed_at
+		{}, // opNone
+		{A: "\"recording_removed_at\" = $", B: ""},
+		{A: "\"recording_removed_at\" <> $", B: ""},
+		{A: "\"recording_removed_at\" > $", B: ""},
+		{A: "\"recording_removed_at\" >= $", B: ""},
+		{A: "\"recording_removed_at\" < $", B: ""},
+		{A: "\"recording_removed_at\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"recording_removed_at\" IS NULL", B: ""},
+		{A: "\"recording_removed_at\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // recording_removed_by
+		{}, // opNone
+		{A: "\"recording_removed_by\" = $", B: ""},
+		{A: "\"recording_removed_by\" <> $", B: ""},
+		{A: "\"recording_removed_by\" > $", B: ""},
+		{A: "\"recording_removed_by\" >= $", B: ""},
+		{A: "\"recording_removed_by\" < $", B: ""},
+		{A: "\"recording_removed_by\" <= $", B: ""},
+		{A: "lower(\"recording_removed_by\") = lower($", B: ")"},
+		{A: "\"recording_removed_by\" LIKE $", B: ""},
+		{A: "\"recording_removed_by\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"recording_removed_by\" = ANY($", B: ")"},
+		{A: "\"recording_removed_by\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"recording_removed_by\" IS NULL", B: ""},
+		{A: "\"recording_removed_by\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // recording_removed_reason
+		{}, // opNone
+		{A: "\"recording_removed_reason\" = $", B: ""},
+		{A: "\"recording_removed_reason\" <> $", B: ""},
+		{A: "\"recording_removed_reason\" > $", B: ""},
+		{A: "\"recording_removed_reason\" >= $", B: ""},
+		{A: "\"recording_removed_reason\" < $", B: ""},
+		{A: "\"recording_removed_reason\" <= $", B: ""},
+		{A: "lower(\"recording_removed_reason\") = lower($", B: ")"},
+		{A: "\"recording_removed_reason\" LIKE $", B: ""},
+		{A: "\"recording_removed_reason\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"recording_removed_reason\" = ANY($", B: ")"},
+		{A: "\"recording_removed_reason\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"recording_removed_reason\" IS NULL", B: ""},
+		{A: "\"recording_removed_reason\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -2898,6 +3129,9 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.LastReportedAt = runtime.Timestamptz(rv[25])
 	r.Kind = sl.Str(rv[26])
 	r.DatabaseID = runtime.Nullable(rv[27], runtime.UUID)
+	r.RecordingRemovedAt = runtime.Nullable(rv[28], runtime.Timestamptz)
+	r.RecordingRemovedBy = runtime.NullText(rv[29], sl)
+	r.RecordingRemovedReason = runtime.NullText(rv[30], sl)
 	return decErr
 }
 
@@ -3064,6 +3298,14 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyRaw[nar] = q.anyRaw[nar]
 				v = append(v, &b.anyRaw[nar])
 				nar++
+			case 29:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 30:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -3176,6 +3418,18 @@ func (q Query) bindPreds(b *binder) []any {
 			b.raws[nr] = q.raws[nr]
 			v = append(v, &b.raws[nr])
 			nr++
+		case 28:
+			b.tims[ntm] = q.tims[ntm]
+			v = append(v, &b.tims[ntm])
+			ntm++
+		case 29:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 30:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
 		}
 	}
 	b.vals = v
@@ -3313,7 +3567,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "sessions" ("id", "user_email", "asset_id", "asset_hostname", "principal", "protocol", "origin", "origin_reason", "state", "started_at", "ended_at", "client_ip", "fidelity", "recording_bytes", "recording_path", "command_count", "exit_code", "chain_head", "risk_flags", "reported_by", "created_at", "recording_key", "terminated_by", "termination_reason", "end_inferred", "last_reported_at", "kind", "database_id") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28) RETURNING "id", "user_email", "asset_id", "asset_hostname", "principal", "protocol", "origin", "origin_reason", "state", "started_at", "ended_at", "client_ip", "fidelity", "recording_bytes", "recording_path", "command_count", "exit_code", "chain_head", "risk_flags", "reported_by", "created_at", "recording_key", "terminated_by", "termination_reason", "end_inferred", "last_reported_at", "kind", "database_id"`
+const insertSQL = `INSERT INTO "sessions" ("id", "user_email", "asset_id", "asset_hostname", "principal", "protocol", "origin", "origin_reason", "state", "started_at", "ended_at", "client_ip", "fidelity", "recording_bytes", "recording_path", "command_count", "exit_code", "chain_head", "risk_flags", "reported_by", "created_at", "recording_key", "terminated_by", "termination_reason", "end_inferred", "last_reported_at", "kind", "database_id", "recording_removed_at", "recording_removed_by", "recording_removed_reason") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31) RETURNING "id", "user_email", "asset_id", "asset_hostname", "principal", "protocol", "origin", "origin_reason", "state", "started_at", "ended_at", "client_ip", "fidelity", "recording_bytes", "recording_path", "command_count", "exit_code", "chain_head", "risk_flags", "reported_by", "created_at", "recording_key", "terminated_by", "termination_reason", "end_inferred", "last_reported_at", "kind", "database_id", "recording_removed_at", "recording_removed_by", "recording_removed_reason"`
 
 const updatePrefix = `UPDATE "sessions" SET `
 const deletePrefix = `DELETE FROM "sessions"`
@@ -3321,66 +3575,72 @@ const deletePrefix = `DELETE FROM "sessions"`
 // Dirty bits. One per updatable column; the set of them is an UPDATE's
 // identity, exactly as a token stream is a SELECT's.
 const (
-	dUserEmail         uint64 = 1 << 0
-	dAssetID           uint64 = 1 << 1
-	dAssetHostname     uint64 = 1 << 2
-	dPrincipal         uint64 = 1 << 3
-	dProtocol          uint64 = 1 << 4
-	dOrigin            uint64 = 1 << 5
-	dOriginReason      uint64 = 1 << 6
-	dState             uint64 = 1 << 7
-	dStartedAt         uint64 = 1 << 8
-	dEndedAt           uint64 = 1 << 9
-	dClientIP          uint64 = 1 << 10
-	dFidelity          uint64 = 1 << 11
-	dRecordingBytes    uint64 = 1 << 12
-	dRecordingPath     uint64 = 1 << 13
-	dCommandCount      uint64 = 1 << 14
-	dExitCode          uint64 = 1 << 15
-	dChainHead         uint64 = 1 << 16
-	dRiskFlags         uint64 = 1 << 17
-	dReportedBy        uint64 = 1 << 18
-	dCreatedAt         uint64 = 1 << 19
-	dRecordingKey      uint64 = 1 << 20
-	dTerminatedBy      uint64 = 1 << 21
-	dTerminationReason uint64 = 1 << 22
-	dEndInferred       uint64 = 1 << 23
-	dLastReportedAt    uint64 = 1 << 24
-	dKind              uint64 = 1 << 25
-	dDatabaseID        uint64 = 1 << 26
+	dUserEmail              uint64 = 1 << 0
+	dAssetID                uint64 = 1 << 1
+	dAssetHostname          uint64 = 1 << 2
+	dPrincipal              uint64 = 1 << 3
+	dProtocol               uint64 = 1 << 4
+	dOrigin                 uint64 = 1 << 5
+	dOriginReason           uint64 = 1 << 6
+	dState                  uint64 = 1 << 7
+	dStartedAt              uint64 = 1 << 8
+	dEndedAt                uint64 = 1 << 9
+	dClientIP               uint64 = 1 << 10
+	dFidelity               uint64 = 1 << 11
+	dRecordingBytes         uint64 = 1 << 12
+	dRecordingPath          uint64 = 1 << 13
+	dCommandCount           uint64 = 1 << 14
+	dExitCode               uint64 = 1 << 15
+	dChainHead              uint64 = 1 << 16
+	dRiskFlags              uint64 = 1 << 17
+	dReportedBy             uint64 = 1 << 18
+	dCreatedAt              uint64 = 1 << 19
+	dRecordingKey           uint64 = 1 << 20
+	dTerminatedBy           uint64 = 1 << 21
+	dTerminationReason      uint64 = 1 << 22
+	dEndInferred            uint64 = 1 << 23
+	dLastReportedAt         uint64 = 1 << 24
+	dKind                   uint64 = 1 << 25
+	dDatabaseID             uint64 = 1 << 26
+	dRecordingRemovedAt     uint64 = 1 << 27
+	dRecordingRemovedBy     uint64 = 1 << 28
+	dRecordingRemovedReason uint64 = 1 << 29
 )
 
-const nUpdatable = 27
+const nUpdatable = 30
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
-	{A: "\"user_email\" = $", B: ""},         // user_email
-	{A: "\"asset_id\" = $", B: ""},           // asset_id
-	{A: "\"asset_hostname\" = $", B: ""},     // asset_hostname
-	{A: "\"principal\" = $", B: ""},          // principal
-	{A: "\"protocol\" = $", B: ""},           // protocol
-	{A: "\"origin\" = $", B: ""},             // origin
-	{A: "\"origin_reason\" = $", B: ""},      // origin_reason
-	{A: "\"state\" = $", B: ""},              // state
-	{A: "\"started_at\" = $", B: ""},         // started_at
-	{A: "\"ended_at\" = $", B: ""},           // ended_at
-	{A: "\"client_ip\" = $", B: ""},          // client_ip
-	{A: "\"fidelity\" = $", B: ""},           // fidelity
-	{A: "\"recording_bytes\" = $", B: ""},    // recording_bytes
-	{A: "\"recording_path\" = $", B: ""},     // recording_path
-	{A: "\"command_count\" = $", B: ""},      // command_count
-	{A: "\"exit_code\" = $", B: ""},          // exit_code
-	{A: "\"chain_head\" = $", B: ""},         // chain_head
-	{A: "\"risk_flags\" = $", B: ""},         // risk_flags
-	{A: "\"reported_by\" = $", B: ""},        // reported_by
-	{A: "\"created_at\" = $", B: ""},         // created_at
-	{A: "\"recording_key\" = $", B: ""},      // recording_key
-	{A: "\"terminated_by\" = $", B: ""},      // terminated_by
-	{A: "\"termination_reason\" = $", B: ""}, // termination_reason
-	{A: "\"end_inferred\" = $", B: ""},       // end_inferred
-	{A: "\"last_reported_at\" = $", B: ""},   // last_reported_at
-	{A: "\"kind\" = $", B: ""},               // kind
-	{A: "\"database_id\" = $", B: ""},        // database_id
+	{A: "\"user_email\" = $", B: ""},               // user_email
+	{A: "\"asset_id\" = $", B: ""},                 // asset_id
+	{A: "\"asset_hostname\" = $", B: ""},           // asset_hostname
+	{A: "\"principal\" = $", B: ""},                // principal
+	{A: "\"protocol\" = $", B: ""},                 // protocol
+	{A: "\"origin\" = $", B: ""},                   // origin
+	{A: "\"origin_reason\" = $", B: ""},            // origin_reason
+	{A: "\"state\" = $", B: ""},                    // state
+	{A: "\"started_at\" = $", B: ""},               // started_at
+	{A: "\"ended_at\" = $", B: ""},                 // ended_at
+	{A: "\"client_ip\" = $", B: ""},                // client_ip
+	{A: "\"fidelity\" = $", B: ""},                 // fidelity
+	{A: "\"recording_bytes\" = $", B: ""},          // recording_bytes
+	{A: "\"recording_path\" = $", B: ""},           // recording_path
+	{A: "\"command_count\" = $", B: ""},            // command_count
+	{A: "\"exit_code\" = $", B: ""},                // exit_code
+	{A: "\"chain_head\" = $", B: ""},               // chain_head
+	{A: "\"risk_flags\" = $", B: ""},               // risk_flags
+	{A: "\"reported_by\" = $", B: ""},              // reported_by
+	{A: "\"created_at\" = $", B: ""},               // created_at
+	{A: "\"recording_key\" = $", B: ""},            // recording_key
+	{A: "\"terminated_by\" = $", B: ""},            // terminated_by
+	{A: "\"termination_reason\" = $", B: ""},       // termination_reason
+	{A: "\"end_inferred\" = $", B: ""},             // end_inferred
+	{A: "\"last_reported_at\" = $", B: ""},         // last_reported_at
+	{A: "\"kind\" = $", B: ""},                     // kind
+	{A: "\"database_id\" = $", B: ""},              // database_id
+	{A: "\"recording_removed_at\" = $", B: ""},     // recording_removed_at
+	{A: "\"recording_removed_by\" = $", B: ""},     // recording_removed_by
+	{A: "\"recording_removed_reason\" = $", B: ""}, // recording_removed_reason
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -3414,6 +3674,9 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{A: "\"last_reported_at\" = now()", B: ""}, // last_reported_at = the database's clock
 	{}, // kind has no server-side form
 	{}, // database_id has no server-side form
+	{A: "\"recording_removed_at\" = now()", B: ""}, // recording_removed_at = the database's clock
+	{}, // recording_removed_by has no server-side form
+	{}, // recording_removed_reason has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -3425,37 +3688,40 @@ var pkFrags = [1]runtime.Frag{
 // assigned, so every other column takes its database default — which is
 // the only way a DEFAULT gen_random_uuid() can ever fire.
 const (
-	iID                uint64 = 1 << 0
-	iUserEmail         uint64 = 1 << 1
-	iAssetID           uint64 = 1 << 2
-	iAssetHostname     uint64 = 1 << 3
-	iPrincipal         uint64 = 1 << 4
-	iProtocol          uint64 = 1 << 5
-	iOrigin            uint64 = 1 << 6
-	iOriginReason      uint64 = 1 << 7
-	iState             uint64 = 1 << 8
-	iStartedAt         uint64 = 1 << 9
-	iEndedAt           uint64 = 1 << 10
-	iClientIP          uint64 = 1 << 11
-	iFidelity          uint64 = 1 << 12
-	iRecordingBytes    uint64 = 1 << 13
-	iRecordingPath     uint64 = 1 << 14
-	iCommandCount      uint64 = 1 << 15
-	iExitCode          uint64 = 1 << 16
-	iChainHead         uint64 = 1 << 17
-	iRiskFlags         uint64 = 1 << 18
-	iReportedBy        uint64 = 1 << 19
-	iCreatedAt         uint64 = 1 << 20
-	iRecordingKey      uint64 = 1 << 21
-	iTerminatedBy      uint64 = 1 << 22
-	iTerminationReason uint64 = 1 << 23
-	iEndInferred       uint64 = 1 << 24
-	iLastReportedAt    uint64 = 1 << 25
-	iKind              uint64 = 1 << 26
-	iDatabaseID        uint64 = 1 << 27
+	iID                     uint64 = 1 << 0
+	iUserEmail              uint64 = 1 << 1
+	iAssetID                uint64 = 1 << 2
+	iAssetHostname          uint64 = 1 << 3
+	iPrincipal              uint64 = 1 << 4
+	iProtocol               uint64 = 1 << 5
+	iOrigin                 uint64 = 1 << 6
+	iOriginReason           uint64 = 1 << 7
+	iState                  uint64 = 1 << 8
+	iStartedAt              uint64 = 1 << 9
+	iEndedAt                uint64 = 1 << 10
+	iClientIP               uint64 = 1 << 11
+	iFidelity               uint64 = 1 << 12
+	iRecordingBytes         uint64 = 1 << 13
+	iRecordingPath          uint64 = 1 << 14
+	iCommandCount           uint64 = 1 << 15
+	iExitCode               uint64 = 1 << 16
+	iChainHead              uint64 = 1 << 17
+	iRiskFlags              uint64 = 1 << 18
+	iReportedBy             uint64 = 1 << 19
+	iCreatedAt              uint64 = 1 << 20
+	iRecordingKey           uint64 = 1 << 21
+	iTerminatedBy           uint64 = 1 << 22
+	iTerminationReason      uint64 = 1 << 23
+	iEndInferred            uint64 = 1 << 24
+	iLastReportedAt         uint64 = 1 << 25
+	iKind                   uint64 = 1 << 26
+	iDatabaseID             uint64 = 1 << 27
+	iRecordingRemovedAt     uint64 = 1 << 28
+	iRecordingRemovedBy     uint64 = 1 << 29
+	iRecordingRemovedReason uint64 = 1 << 30
 )
 
-const nInsertable = 28
+const nInsertable = 31
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -3487,6 +3753,9 @@ var insCols = [nInsertable]string{
 	"\"last_reported_at\"",
 	"\"kind\"",
 	"\"database_id\"",
+	"\"recording_removed_at\"",
+	"\"recording_removed_by\"",
+	"\"recording_removed_reason\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -3495,7 +3764,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"sessions\""
-const insReturning = " RETURNING \"id\", \"user_email\", \"asset_id\", \"asset_hostname\", \"principal\", \"protocol\", \"origin\", \"origin_reason\", \"state\", \"started_at\", \"ended_at\", \"client_ip\", \"fidelity\", \"recording_bytes\", \"recording_path\", \"command_count\", \"exit_code\", \"chain_head\", \"risk_flags\", \"reported_by\", \"created_at\", \"recording_key\", \"terminated_by\", \"termination_reason\", \"end_inferred\", \"last_reported_at\", \"kind\", \"database_id\""
+const insReturning = " RETURNING \"id\", \"user_email\", \"asset_id\", \"asset_hostname\", \"principal\", \"protocol\", \"origin\", \"origin_reason\", \"state\", \"started_at\", \"ended_at\", \"client_ip\", \"fidelity\", \"recording_bytes\", \"recording_path\", \"command_count\", \"exit_code\", \"chain_head\", \"risk_flags\", \"reported_by\", \"created_at\", \"recording_key\", \"terminated_by\", \"termination_reason\", \"end_inferred\", \"last_reported_at\", \"kind\", \"database_id\", \"recording_removed_at\", \"recording_removed_by\", \"recording_removed_reason\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -3514,7 +3783,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"user_email\", \"asset_id\", \"asset_hostname\", \"principal\", \"protocol\", \"origin\", \"origin_reason\", \"state\", \"started_at\", \"ended_at\", \"client_ip\", \"fidelity\", \"recording_bytes\", \"recording_path\", \"command_count\", \"exit_code\", \"chain_head\", \"risk_flags\", \"reported_by\", \"created_at\", \"recording_key\", \"terminated_by\", \"termination_reason\", \"end_inferred\", \"last_reported_at\", \"kind\", \"database_id\""
+const updReturning = " RETURNING \"id\", \"user_email\", \"asset_id\", \"asset_hostname\", \"principal\", \"protocol\", \"origin\", \"origin_reason\", \"state\", \"started_at\", \"ended_at\", \"client_ip\", \"fidelity\", \"recording_bytes\", \"recording_path\", \"command_count\", \"exit_code\", \"chain_head\", \"risk_flags\", \"reported_by\", \"created_at\", \"recording_key\", \"terminated_by\", \"termination_reason\", \"end_inferred\", \"last_reported_at\", \"kind\", \"database_id\", \"recording_removed_at\", \"recording_removed_by\", \"recording_removed_reason\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -3886,6 +4155,59 @@ func (m *Mut) SetDatabaseIDNull() {
 	m.expr &^= dDatabaseID
 }
 
+func (m *Mut) SetRecordingRemovedAt(v time.Time) {
+	m.row.RecordingRemovedAt = runtime.Null[time.Time]{V: v, Valid: true}
+	m.dirty |= dRecordingRemovedAt
+	m.expr &^= dRecordingRemovedAt
+}
+
+// SetRecordingRemovedAtNow assigns the database's clock, not this process's.
+//
+// Binding time.Now() instead would record when THIS server
+// thought it was. Servers skew, so rows written seconds apart
+// can land out of order, and an event stamped by a fast clock
+// reads as preceding the thing that caused it.
+func (m *Mut) SetRecordingRemovedAtNow() {
+	m.expr |= dRecordingRemovedAt
+	m.dirty &^= dRecordingRemovedAt
+}
+
+// SetRecordingRemovedAtNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetRecordingRemovedAtNull() {
+	m.row.RecordingRemovedAt = runtime.Null[time.Time]{}
+	m.dirty |= dRecordingRemovedAt
+	m.expr &^= dRecordingRemovedAt
+}
+
+func (m *Mut) SetRecordingRemovedBy(v string) {
+	m.row.RecordingRemovedBy = runtime.Null[string]{V: v, Valid: true}
+	m.dirty |= dRecordingRemovedBy
+	m.expr &^= dRecordingRemovedBy
+}
+
+// SetRecordingRemovedByNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetRecordingRemovedByNull() {
+	m.row.RecordingRemovedBy = runtime.Null[string]{}
+	m.dirty |= dRecordingRemovedBy
+	m.expr &^= dRecordingRemovedBy
+}
+
+func (m *Mut) SetRecordingRemovedReason(v string) {
+	m.row.RecordingRemovedReason = runtime.Null[string]{V: v, Valid: true}
+	m.dirty |= dRecordingRemovedReason
+	m.expr &^= dRecordingRemovedReason
+}
+
+// SetRecordingRemovedReasonNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetRecordingRemovedReasonNull() {
+	m.row.RecordingRemovedReason = runtime.Null[string]{}
+	m.dirty |= dRecordingRemovedReason
+	m.expr &^= dRecordingRemovedReason
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -4148,6 +4470,42 @@ func (n *Ins) SetDatabaseIDNull() {
 	n.set |= iDatabaseID
 }
 
+func (n *Ins) SetRecordingRemovedAt(v time.Time) {
+	n.row.RecordingRemovedAt = runtime.Null[time.Time]{V: v, Valid: true}
+	n.set |= iRecordingRemovedAt
+}
+
+// SetRecordingRemovedAtNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetRecordingRemovedAtNull() {
+	n.row.RecordingRemovedAt = runtime.Null[time.Time]{}
+	n.set |= iRecordingRemovedAt
+}
+
+func (n *Ins) SetRecordingRemovedBy(v string) {
+	n.row.RecordingRemovedBy = runtime.Null[string]{V: v, Valid: true}
+	n.set |= iRecordingRemovedBy
+}
+
+// SetRecordingRemovedByNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetRecordingRemovedByNull() {
+	n.row.RecordingRemovedBy = runtime.Null[string]{}
+	n.set |= iRecordingRemovedBy
+}
+
+func (n *Ins) SetRecordingRemovedReason(v string) {
+	n.row.RecordingRemovedReason = runtime.Null[string]{V: v, Valid: true}
+	n.set |= iRecordingRemovedReason
+}
+
+// SetRecordingRemovedReasonNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetRecordingRemovedReasonNull() {
+	n.row.RecordingRemovedReason = runtime.Null[string]{}
+	n.set |= iRecordingRemovedReason
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -4197,7 +4555,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 27)
+	set := make([]string, 0, 30)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -4281,6 +4639,15 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<27) != 0 {
 			set = append(set, "database_id")
 		}
+		if mask&(1<<28) != 0 {
+			set = append(set, "recording_removed_at")
+		}
+		if mask&(1<<29) != 0 {
+			set = append(set, "recording_removed_by")
+		}
+		if mask&(1<<30) != 0 {
+			set = append(set, "recording_removed_reason")
+		}
 	}
 	return set
 }
@@ -4345,33 +4712,36 @@ func assignAdded(c string, add uint64) (string, bool) {
 }
 
 var assignFor = map[string]string{
-	"user_email":         "\"user_email\" = EXCLUDED.\"user_email\"",
-	"asset_id":           "\"asset_id\" = EXCLUDED.\"asset_id\"",
-	"asset_hostname":     "\"asset_hostname\" = EXCLUDED.\"asset_hostname\"",
-	"principal":          "\"principal\" = EXCLUDED.\"principal\"",
-	"protocol":           "\"protocol\" = EXCLUDED.\"protocol\"",
-	"origin":             "\"origin\" = EXCLUDED.\"origin\"",
-	"origin_reason":      "\"origin_reason\" = EXCLUDED.\"origin_reason\"",
-	"state":              "\"state\" = EXCLUDED.\"state\"",
-	"started_at":         "\"started_at\" = EXCLUDED.\"started_at\"",
-	"ended_at":           "\"ended_at\" = EXCLUDED.\"ended_at\"",
-	"client_ip":          "\"client_ip\" = EXCLUDED.\"client_ip\"",
-	"fidelity":           "\"fidelity\" = EXCLUDED.\"fidelity\"",
-	"recording_bytes":    "\"recording_bytes\" = EXCLUDED.\"recording_bytes\"",
-	"recording_path":     "\"recording_path\" = EXCLUDED.\"recording_path\"",
-	"command_count":      "\"command_count\" = EXCLUDED.\"command_count\"",
-	"exit_code":          "\"exit_code\" = EXCLUDED.\"exit_code\"",
-	"chain_head":         "\"chain_head\" = EXCLUDED.\"chain_head\"",
-	"risk_flags":         "\"risk_flags\" = EXCLUDED.\"risk_flags\"",
-	"reported_by":        "\"reported_by\" = EXCLUDED.\"reported_by\"",
-	"created_at":         "\"created_at\" = EXCLUDED.\"created_at\"",
-	"recording_key":      "\"recording_key\" = EXCLUDED.\"recording_key\"",
-	"terminated_by":      "\"terminated_by\" = EXCLUDED.\"terminated_by\"",
-	"termination_reason": "\"termination_reason\" = EXCLUDED.\"termination_reason\"",
-	"end_inferred":       "\"end_inferred\" = EXCLUDED.\"end_inferred\"",
-	"last_reported_at":   "\"last_reported_at\" = EXCLUDED.\"last_reported_at\"",
-	"kind":               "\"kind\" = EXCLUDED.\"kind\"",
-	"database_id":        "\"database_id\" = EXCLUDED.\"database_id\"",
+	"user_email":               "\"user_email\" = EXCLUDED.\"user_email\"",
+	"asset_id":                 "\"asset_id\" = EXCLUDED.\"asset_id\"",
+	"asset_hostname":           "\"asset_hostname\" = EXCLUDED.\"asset_hostname\"",
+	"principal":                "\"principal\" = EXCLUDED.\"principal\"",
+	"protocol":                 "\"protocol\" = EXCLUDED.\"protocol\"",
+	"origin":                   "\"origin\" = EXCLUDED.\"origin\"",
+	"origin_reason":            "\"origin_reason\" = EXCLUDED.\"origin_reason\"",
+	"state":                    "\"state\" = EXCLUDED.\"state\"",
+	"started_at":               "\"started_at\" = EXCLUDED.\"started_at\"",
+	"ended_at":                 "\"ended_at\" = EXCLUDED.\"ended_at\"",
+	"client_ip":                "\"client_ip\" = EXCLUDED.\"client_ip\"",
+	"fidelity":                 "\"fidelity\" = EXCLUDED.\"fidelity\"",
+	"recording_bytes":          "\"recording_bytes\" = EXCLUDED.\"recording_bytes\"",
+	"recording_path":           "\"recording_path\" = EXCLUDED.\"recording_path\"",
+	"command_count":            "\"command_count\" = EXCLUDED.\"command_count\"",
+	"exit_code":                "\"exit_code\" = EXCLUDED.\"exit_code\"",
+	"chain_head":               "\"chain_head\" = EXCLUDED.\"chain_head\"",
+	"risk_flags":               "\"risk_flags\" = EXCLUDED.\"risk_flags\"",
+	"reported_by":              "\"reported_by\" = EXCLUDED.\"reported_by\"",
+	"created_at":               "\"created_at\" = EXCLUDED.\"created_at\"",
+	"recording_key":            "\"recording_key\" = EXCLUDED.\"recording_key\"",
+	"terminated_by":            "\"terminated_by\" = EXCLUDED.\"terminated_by\"",
+	"termination_reason":       "\"termination_reason\" = EXCLUDED.\"termination_reason\"",
+	"end_inferred":             "\"end_inferred\" = EXCLUDED.\"end_inferred\"",
+	"last_reported_at":         "\"last_reported_at\" = EXCLUDED.\"last_reported_at\"",
+	"kind":                     "\"kind\" = EXCLUDED.\"kind\"",
+	"database_id":              "\"database_id\" = EXCLUDED.\"database_id\"",
+	"recording_removed_at":     "\"recording_removed_at\" = EXCLUDED.\"recording_removed_at\"",
+	"recording_removed_by":     "\"recording_removed_by\" = EXCLUDED.\"recording_removed_by\"",
+	"recording_removed_reason": "\"recording_removed_reason\" = EXCLUDED.\"recording_removed_reason\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -4478,6 +4848,12 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.Kind)
 		case 27:
 			args = append(args, n.row.DatabaseID.Arg())
+		case 28:
+			args = append(args, n.row.RecordingRemovedAt.Arg())
+		case 29:
+			args = append(args, n.row.RecordingRemovedBy.Arg())
+		case 30:
+			args = append(args, n.row.RecordingRemovedReason.Arg())
 		}
 	}
 	var out Row
@@ -4515,7 +4891,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 28)
+	args := make([]any, 0, 31)
 	args = append(args, r.ID)
 	args = append(args, r.UserEmail)
 	args = append(args, r.AssetID.Arg())
@@ -4544,6 +4920,9 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.LastReportedAt)
 	args = append(args, r.Kind)
 	args = append(args, r.DatabaseID.Arg())
+	args = append(args, r.RecordingRemovedAt.Arg())
+	args = append(args, r.RecordingRemovedBy.Arg())
+	args = append(args, r.RecordingRemovedReason.Arg())
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -4598,13 +4977,16 @@ var copyCols = []string{
 	"last_reported_at",
 	"kind",
 	"database_id",
+	"recording_removed_at",
+	"recording_removed_by",
+	"recording_removed_reason",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [28]any
+	buf  [31]any
 }
 
 func (s *rowSource) Next() bool {
@@ -4650,6 +5032,9 @@ func (s *rowSource) Values() []any {
 	s.buf[25] = &r.LastReportedAt
 	s.buf[26] = &r.Kind
 	s.buf[27] = r.DatabaseID.Ptr()
+	s.buf[28] = r.RecordingRemovedAt.Ptr()
+	s.buf[29] = r.RecordingRemovedBy.Ptr()
+	s.buf[30] = r.RecordingRemovedReason.Ptr()
 	return s.buf[:]
 }
 
@@ -4708,8 +5093,11 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 25
 	mask |= 1 << 26
 	mask |= 1 << 27
+	mask |= 1 << 28
+	mask |= 1 << 29
+	mask |= 1 << 30
 	st := stmtForInsertNoReturn(mask, 0, 0)
-	args := make([]any, 0, 28)
+	args := make([]any, 0, 31)
 	args = append(args, r.ID)
 	args = append(args, r.UserEmail)
 	args = append(args, r.AssetID.Arg())
@@ -4738,6 +5126,9 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.LastReportedAt)
 	args = append(args, r.Kind)
 	args = append(args, r.DatabaseID.Arg())
+	args = append(args, r.RecordingRemovedAt.Arg())
+	args = append(args, r.RecordingRemovedBy.Arg())
+	args = append(args, r.RecordingRemovedReason.Arg())
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -4827,6 +5218,12 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.Kind)
 		case 27:
 			args = append(args, n.row.DatabaseID.Arg())
+		case 28:
+			args = append(args, n.row.RecordingRemovedAt.Arg())
+		case 29:
+			args = append(args, n.row.RecordingRemovedBy.Arg())
+		case 30:
+			args = append(args, n.row.RecordingRemovedReason.Arg())
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -4936,6 +5333,12 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.Kind)
 		case 26:
 			args = append(args, m.row.DatabaseID.Arg())
+		case 27:
+			args = append(args, m.row.RecordingRemovedAt.Arg())
+		case 28:
+			args = append(args, m.row.RecordingRemovedBy.Arg())
+		case 29:
+			args = append(args, m.row.RecordingRemovedReason.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -5072,6 +5475,12 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.Kind)
 		case 26:
 			args = append(args, m.row.DatabaseID.Arg())
+		case 27:
+			args = append(args, m.row.RecordingRemovedAt.Arg())
+		case 28:
+			args = append(args, m.row.RecordingRemovedBy.Arg())
+		case 29:
+			args = append(args, m.row.RecordingRemovedReason.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -5274,6 +5683,12 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.Kind)
 		case 26:
 			args = append(args, m.row.DatabaseID.Arg())
+		case 27:
+			args = append(args, m.row.RecordingRemovedAt.Arg())
+		case 28:
+			args = append(args, m.row.RecordingRemovedBy.Arg())
+		case 29:
+			args = append(args, m.row.RecordingRemovedReason.Arg())
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

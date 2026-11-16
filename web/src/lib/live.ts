@@ -1768,6 +1768,20 @@ export async function statementAsk(dbId: string, requestId: string): Promise<Sta
   return get<StatementAsk>(`/api/v1/databases/${encodeURIComponent(dbId)}/statements/${encodeURIComponent(requestId)}`)
 }
 
+/**
+ * Removes a session's stored recording. Admins only; the host name is typed
+ * back and a reason given, and both the session and the audit log keep them.
+ * `fileNotDeleted` says the session no longer has the recording but storage
+ * would not delete the file.
+ */
+export async function removeRecording(
+  id: string,
+  confirm: string,
+  reason: string,
+): Promise<{ removed: boolean; fileNotDeleted?: string }> {
+  return send('DELETE', `/api/v1/sessions/${encodeURIComponent(id)}/recording`, { confirm, reason })
+}
+
 export async function deleteDatabase(id: string): Promise<void> {
   await send('DELETE', `/api/v1/databases/${encodeURIComponent(id)}`)
 }

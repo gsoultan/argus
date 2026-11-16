@@ -83,6 +83,8 @@ const SESSIONS = [
   // hundreds of megabytes, almost all of it the file. The player asks before
   // it downloads one this size.
   session({ id: 's-huge-transfer', state: 'closed', origin: 'direct', fidelity: 'ebpf', principal: 'sys-admin', clientIp: '10.0.0.167', startedAt: ago(20_000), endedAt: ago(19_999), lastReportedAt: ago(19_999), silent: false, recordingBytes: 269_400_000, riskFlags: ['bypassed-gateway'], recordingKey: 'recordings/2026-11-16/huge.cast' }),
+  // An admin removes this one's recording in large-recording.spec.ts.
+  session({ id: 's-removable', state: 'closed', origin: 'direct', fidelity: 'ebpf', principal: 'sys-admin', assetHostname: 'imp-crm', clientIp: '10.0.0.167', startedAt: ago(21_000), endedAt: ago(20_999), lastReportedAt: ago(20_999), silent: false, recordingBytes: 269_400_000, riskFlags: ['bypassed-gateway'], recordingKey: 'recordings/2026-11-16/removable.cast' }),
   session({ id: 's-unknown-end', state: 'terminated', startedAt: ago(18_600), endedAt: null, lastReportedAt: ago(18_500), silent: false }),
 ]
 
@@ -512,6 +514,18 @@ const server = createServer(async (req, res) => {
     // that produced it -- 18 sessions in the dev control plane are in exactly
     // this state. The control plane's own wording, verbatim, because the
     // console repeats it rather than inventing its own.
+    if (path === '/api/v1/sessions/s-removable/recording' && req.method === 'DELETE') {
+      const body = await readBody(req)
+      const target = SESSIONS.find((/** @type {any} */ v) => v.id === 's-removable')
+      if (String(body.confirm ?? '').toLowerCase() !== target.assetHostname) {
+        return json(res, 400, { error: `type the host name, ${target.assetHostname}, to confirm` })
+      }
+      Object.assign(target, {
+        recordingKey: null, recordingRemovedAt: new Date().toISOString(),
+        recordingRemovedBy: 'dev@northwind.id', recordingRemovedReason: body.reason,
+      })
+      return json(res, 200, { session: target.id, removed: true, by: 'dev@northwind.id' })
+    }
     if (path === '/api/v1/sessions/s-huge-transfer/recording') {
       HUGE_FETCHES += 1
       res.writeHead(200, { 'content-type': 'application/x-asciicast', 'x-argus-chain-verified': 'unverified' })
