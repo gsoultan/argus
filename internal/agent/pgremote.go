@@ -55,6 +55,76 @@ func (l pgLocator) behindPooler(host string, port int) (pgBouncerSeen, bool) {
 	return pgBouncerSeen{}, false
 }
 
+// sentOn says where this server's PgBouncer sends a database whose entry
+// names this server, when no Postgres runs here: an entry added before the
+// agent could reach another server, or typed by hand, keeps the default
+// socket, yet PgBouncer on this server sends the database elsewhere. Only
+// a [databases] line for that name, or "*", counts, and only when every
+// PgBouncer here agrees on one place, so the agent never guesses.
+func (l pgLocator) sentOn(db tunnel.GrantDB) (tunnel.PoolerTarget, bool) {
+	if !tunnel.LocalPGHost(db.Host) || db.Name == "" {
+		return tunnel.PoolerTarget{}, false
+	}
+	loc := l.locate()
+	if len(loc.Bouncers) == 0 {
+		return tunnel.PoolerTarget{}, false
+	}
+	for _, p := range loc.Places {
+		if l.live(p) {
+			return tunnel.PoolerTarget{}, false
+		}
+	}
+	if !strings.HasPrefix(db.Host, "/") {
+		// A loopback address: a Postgres there listens on TCP only, which
+		// nothing above sees, unless the port is PgBouncer's own.
+		ours := false
+		for _, b := range loc.Bouncers {
+			ours = ours || b.Port == db.Port
+		}
+		if !ours {
+			return tunnel.PoolerTarget{}, false
+		}
+	}
+	for _, name := range []string{db.Name, "*"} {
+		var found []tunnel.PoolerTarget
+		named := false
+		for _, b := range loc.Bouncers {
+			for _, t := range b.Targets {
+				if t.Name != name {
+					continue
+				}
+				named = true
+				if t.Local() || !tunnel.RemotePGHost(t.Host) {
+					continue
+				}
+				if t.DBName == "" {
+					t.DBName = db.Name
+				}
+				same := false
+				for _, f := range found {
+					same = same || (strings.EqualFold(f.Host, t.Host) && f.Port == t.Port && f.DBName == t.DBName)
+				}
+				if !same {
+					found = append(found, t)
+				}
+			}
+		}
+		switch {
+		case len(found) == 0 && named:
+			// PgBouncer names the database and keeps it here; "*" is
+			// not where it goes.
+			return tunnel.PoolerTarget{}, false
+		case len(found) == 0:
+			continue
+		case len(found) == 1:
+			return found[0], true
+		default:
+			return tunnel.PoolerTarget{}, false
+		}
+	}
+	return tunnel.PoolerTarget{}, false
+}
+
 func pgLocatorBehind(root, host string, port int) bool {
 	_, ok := pgLocator{root: root}.behindPooler(host, port)
 	return ok

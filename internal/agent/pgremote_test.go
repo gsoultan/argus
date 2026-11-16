@@ -62,6 +62,66 @@ func TestPGRemoteAdminRefuses(t *testing.T) {
 	}
 }
 
+// An entry that names this server, on a server with no Postgres of its own,
+// opens where this server's PgBouncer sends that database, and nowhere else.
+func TestPGSentOn(t *testing.T) {
+	f := newPGFakeHost(t)
+	f.file("/etc/pgbouncer/pgbouncer.ini", "[databases]\n"+
+		"athena_db = host=10.0.3.7 port=5432\n"+
+		"alias = host=10.0.3.7 port=5433 dbname=real\n"+
+		"local = host=/var/run/postgresql port=5432\n"+
+		"* = host=10.0.3.9\n"+
+		"[pgbouncer]\nlisten_port = 6432\n")
+	l := pgLocator{root: f.root}
+	sock := "/var/run/postgresql"
+	for _, c := range []struct {
+		db   tunnel.GrantDB
+		want string // host:port/dbname, or "" for left alone
+	}{
+		{tunnel.GrantDB{Name: "athena_db", Host: sock, Port: 5432}, "10.0.3.7:5432/athena_db"},
+		{tunnel.GrantDB{Name: "alias", Host: sock, Port: 5432}, "10.0.3.7:5433/real"},
+		{tunnel.GrantDB{Name: "other", Host: sock, Port: 5432}, "10.0.3.9:5432/other"},
+		// Named and kept on this server: "*" is not where it goes.
+		{tunnel.GrantDB{Name: "local", Host: sock, Port: 5432}, ""},
+		// PgBouncer's own port on loopback is PgBouncer, not Postgres.
+		{tunnel.GrantDB{Name: "athena_db", Host: "127.0.0.1", Port: 6432}, "10.0.3.7:5432/athena_db"},
+		// Any other loopback port may be a Postgres on TCP only.
+		{tunnel.GrantDB{Name: "athena_db", Host: "127.0.0.1", Port: 5432}, ""},
+		// An entry already naming another server is not this check's.
+		{tunnel.GrantDB{Name: "athena_db", Host: "10.0.3.7", Port: 5432}, ""},
+	} {
+		got := ""
+		if tg, ok := l.sentOn(c.db); ok {
+			got = fmt.Sprintf("%s:%d/%s", tg.Host, tg.Port, tg.DBName)
+		}
+		if got != c.want {
+			t.Errorf("%+v: got %q, want %q", c.db, got, c.want)
+		}
+	}
+
+	// "local" goes to a socket here, and no "*" covers it twice over: it
+	// is left alone rather than sent somewhere PgBouncer does not send it.
+	f2 := newPGFakeHost(t)
+	f2.file("/etc/pgbouncer/pgbouncer.ini", "[databases]\nlocal = host=/var/run/postgresql\n")
+	if _, ok := (pgLocator{root: f2.root}).sentOn(tunnel.GrantDB{Name: "local", Host: sock, Port: 5432}); ok {
+		t.Error("a database PgBouncer keeps on this server was sent elsewhere")
+	}
+
+	// Two PgBouncers that disagree: no guess.
+	f3 := newPGFakeHost(t)
+	f3.file("/etc/pgbouncer/pgbouncer.ini", "[databases]\nathena_db = host=10.0.3.7\n")
+	f3.file("/etc/pgbouncer.ini", "[databases]\nathena_db = host=10.0.3.8\n")
+	if _, ok := (pgLocator{root: f3.root}).sentOn(tunnel.GrantDB{Name: "athena_db", Host: sock, Port: 5432}); ok {
+		t.Error("guessed between two PgBouncers")
+	}
+
+	// A Postgres running here is opened as before.
+	f.socket(sock, "5432")
+	if tg, ok := l.sentOn(tunnel.GrantDB{Name: "athena_db", Host: sock, Port: 5432}); ok {
+		t.Errorf("sent to %+v with a Postgres running here", tg)
+	}
+}
+
 // End to end against a real Postgres, reached as another server would be:
 // by an address that is not loopback's usual name, through PgBouncer's
 // configuration and userlist.txt.
@@ -169,6 +229,11 @@ func TestPostgresSessionBehindPgBouncer(t *testing.T) {
 	}
 	if ans := open(host); !ans.OK {
 		t.Fatalf("refused: %s", ans.Error)
+	}
+	// An entry that kept the default socket, as one added before the agent
+	// could reach another server did: opened where PgBouncer sends it.
+	if ans := open("/var/run/postgresql"); !ans.OK {
+		t.Fatalf("the default socket was not sent through PgBouncer: %s", ans.Error)
 	}
 	// Any other server is refused before anything is dialled.
 	if ans := open("127.0.0.3"); ans.OK || !strings.Contains(ans.Error, "behind its PgBouncer") {

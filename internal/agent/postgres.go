@@ -132,6 +132,18 @@ func Postgres(cfg PostgresConfig) TunnelService {
 			return
 		}
 		db := *g.DB
+		poolDB := ""
+		if t, ok := (pgLocator{root: cfg.PGRoot}).sentOn(db); ok {
+			// No Postgres here: open the one this server's PgBouncer sends
+			// the database to, as if the entry had named it.
+			log.Info("tunnel: no Postgres on this server, opening the one its PgBouncer sends to",
+				"database", db.Name, "postgres", net2(t.Host, t.Port))
+			poolDB = db.Name
+			db.Host, db.Port, db.Name = t.Host, t.Port, t.DBName
+			moved := g
+			moved.DB = &db
+			g = moved
+		}
 		switch {
 		case !tunnel.ValidPersonalRole(g.Principal):
 			call.Refuse("not a role Argus will sign in as: " + g.Principal)
@@ -149,7 +161,7 @@ func Postgres(cfg PostgresConfig) TunnelService {
 			return
 		}
 
-		s, err := openPGSession(ctx, cfg, admin, uses, g, log)
+		s, err := openPGSession(ctx, cfg, admin, uses, g, poolDB, log)
 		if err != nil {
 			log.Warn("tunnel: database session refused", "database", db.Name, "role", g.Principal,
 				"for", g.Email, "error", err)
@@ -179,7 +191,10 @@ type pgSession struct {
 	uses  *roleUse
 	g     tunnel.Grant
 	db    tunnel.GrantDB
-	log   *slog.Logger
+	// poolDB is the name PgBouncer knows the database by, when it differs
+	// from db.Name on the Postgres it sends to (pgremote.go sentOn).
+	poolDB string
+	log    *slog.Logger
 
 	conn    *pgconn.PgConn
 	types   map[uint32]string
@@ -207,7 +222,7 @@ type pgSession struct {
 }
 
 func openPGSession(ctx context.Context, cfg PostgresConfig, admin pgAdminRunner, uses *roleUse,
-	g tunnel.Grant, log *slog.Logger) (*pgSession, error) {
+	g tunnel.Grant, poolDB string, log *slog.Logger) (*pgSession, error) {
 
 	db := *g.DB
 	idb := make([]byte, 16)
@@ -215,7 +230,7 @@ func openPGSession(ctx context.Context, cfg PostgresConfig, admin pgAdminRunner,
 		return nil, err
 	}
 	s := &pgSession{id: sessionUUID(idb), cfg: cfg, admin: admin, uses: uses,
-		g: g, db: db, log: log}
+		g: g, db: db, poolDB: poolDB, log: log}
 
 	password, err := sessionPassword()
 	if err != nil {
@@ -321,6 +336,9 @@ func (s *pgSession) connect(ctx context.Context, password string) (*pgconn.PgCon
 			return nil, err
 		}
 		cfg.Host, cfg.Port, cfg.Database = w.host, uint16(w.port), s.db.Name
+		if w.pooled && s.poolDB != "" {
+			cfg.Database = s.poolDB
+		}
 		cfg.User, cfg.Password = s.g.Principal, password
 		// PgBouncer refuses startup parameters it does not track, so a
 		// pooled session carries only its name and sets the rest per
