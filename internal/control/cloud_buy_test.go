@@ -21,8 +21,8 @@ func TestTotals(t *testing.T) {
 }
 
 // Buying a commitment: quoted, the total typed, always someone else's
-// approval (even in Development), never the asker's, and re-priced just
-// before buying.
+// approval (even in Development), the asker's only when nobody else could
+// decide, and re-priced just before buying.
 func TestCloudBuyReservation(t *testing.T) {
 	e := changeAPI(t)
 	region := "ap-southeast-3"
@@ -60,7 +60,7 @@ func TestCloudBuyReservation(t *testing.T) {
 		!strings.Contains(c.Summary, "Buy a Reserved Instance for 2 m6i.large in ap-southeast-3, 1 year, no upfront: "+q.TotalText+" in all") {
 		t.Fatalf("asked: %+v", c)
 	}
-	// Never the person who asked.
+	// Not the person who asked, while someone else could decide.
 	if w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes/"+c.ID+"/approve", "admin-token", `{"confirmSelf":"approve my own request"}`); w.Code != http.StatusForbidden ||
 		!strings.Contains(w.Body.String(), "someone other than the person who asked") {
 		t.Fatalf("own approval: %d %s", w.Code, w.Body)
@@ -85,4 +85,26 @@ func TestCloudBuyReservation(t *testing.T) {
 	}
 	// And asking at the old total is refused now.
 	e.ask(t, "admin-token", body("sp-buy", sp, "$13,140", "compute baseline"), http.StatusConflict)
+
+	// Alone in the organization, the person who asked approves their own
+	// purchase with the phrase, and the audit log says so.
+	e.fake.PriceBump = 0
+	ctx := context.Background()
+	if _, err := e.s.pool.Exec(ctx, `UPDATE users SET disabled_at = now() WHERE disabled_at IS NULL AND role = ANY($1) AND lower(email) <> lower($2)`,
+		requestDeciders, e.admin); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = e.s.pool.Exec(context.Background(), `UPDATE users SET disabled_at = NULL WHERE role = ANY($1) AND lower(email) <> lower($2)`, requestDeciders, e.admin)
+	})
+	w = do(t, e.h, http.MethodPost, "/api/v1/cloud/reservations/quote", "admin-token", `{"accountId":"`+e.acct.ID+`","query":`+riQuery+`}`)
+	_ = json.Unmarshal(w.Body.Bytes(), &q)
+	c = e.ask(t, "admin-token", body("ri-buy", riQuery, q.TotalText, "steady web tier"), http.StatusAccepted)
+	if w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes/"+c.ID+"/approve", "admin-token", `{}`); w.Code != http.StatusConflict {
+		t.Fatalf("alone, without the phrase: %d %s", w.Code, w.Body)
+	}
+	if w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes/"+c.ID+"/approve", "admin-token", `{"confirmSelf":"approve my own request"}`); w.Code != http.StatusOK ||
+		!strings.Contains(w.Body.String(), `"applied"`) || len(e.fake.Bought) != 2 {
+		t.Fatalf("alone, own purchase: %d %s %v", w.Code, w.Body, e.fake.Bought)
+	}
 }

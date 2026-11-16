@@ -1071,14 +1071,9 @@ func (a *API) postCloudChangeDecision(approve bool) http.HandlerFunc {
 			a.fail(w, "cloud change", err)
 			return
 		}
-		if strings.EqualFold(ch.RequestedBy, sess.Email) && cloud.IsBuy(ch.Action) && approve {
-			// A commitment is never approved by the person who asked, even
-			// alone in the organization.
-			writeErr(w, http.StatusForbidden, "buying a reservation always needs someone other than the person who asked")
-			return
-		}
 		if strings.EqualFold(ch.RequestedBy, sess.Email) {
-			// Theirs: approved only when nobody else could (self_approval.go).
+			// Theirs: approved only when nobody else could (self_approval.go),
+			// a reservation purchase too.
 			confirm, err := readConfirmSelf(r)
 			if err != nil {
 				writeErr(w, http.StatusBadRequest, err.Error())

@@ -114,10 +114,10 @@ function ChangeCard({ c, mine, decides }: { c: CloudChange; mine: boolean; decid
                 <Button size="xs" color={c.action === 'remove' || isBuy(c.action) ? 'rose' : undefined} loading={decide.isPending} onClick={() => void act('approve')}>Approve</Button>
               </>
             )}
-            {mine && decides && alone && !isBuy(c.action) && (
+            {mine && decides && alone && (
               <ApproveOwn size="xs" what="this change" loading={decide.isPending} onApprove={(confirmSelf) => act('approve', confirmSelf)} />
             )}
-            {mine && decides && (!alone || isBuy(c.action)) && <Tooltip label="Someone else approves a change you asked for"><Text size={FS.micro} c="dimmed">Yours</Text></Tooltip>}
+            {mine && decides && !alone && <Tooltip label="Someone else approves a change you asked for"><Text size={FS.micro} c="dimmed">Yours</Text></Tooltip>}
           </Group>
         )}
       </Flex>
