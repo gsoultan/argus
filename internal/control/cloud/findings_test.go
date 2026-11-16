@@ -237,3 +237,24 @@ func TestFindingBasisIsStable(t *testing.T) {
 		t.Fatal("the same rule on another day is the same finding")
 	}
 }
+
+// AWS's own health checks and planned maintenance are findings; a system
+// problem says to stop and start, not reboot.
+func TestFindingsHealthAndMaintenance(t *testing.T) {
+	rs := []Resource{
+		{Kind: KindInstance, ID: "i-1", Name: "db-01", State: "running", Details: map[string]string{"systemStatus": "impaired", "instanceStatus": "ok"}},
+		{Kind: KindInstance, ID: "i-2", Name: "web-01", State: "running", Details: map[string]string{"systemStatus": "ok", "instanceStatus": "ok",
+			"eventCode": "instance-retirement", "eventDescription": "The instance is running on degraded hardware", "eventNotBefore": "2026-11-20T02:00:00Z"}},
+		{Kind: KindInstance, ID: "i-3", Name: "old", State: "stopped", Details: map[string]string{"instanceStatus": "impaired"}},
+	}
+	m := byCheck(Findings(rs, nil, now))
+	if len(m["status-impaired"]) != 1 || m["status-impaired"][0].Severity != SeverityHigh || m["status-impaired"][0].ResourceID != "i-1" {
+		t.Fatalf("impaired = %+v", m["status-impaired"])
+	}
+	if f := m["status-impaired"][0]; f.HowToFix == "" || f.HowToFix[:13] != "Stop and star" {
+		t.Errorf("a hardware problem must say stop and start: %q", f.HowToFix)
+	}
+	if len(m["scheduled-event"]) != 1 || m["scheduled-event"][0].Why != "web-01: The instance is running on degraded hardware (from 20 Nov 2026 02:00 UTC)." {
+		t.Fatalf("event = %+v", m["scheduled-event"])
+	}
+}

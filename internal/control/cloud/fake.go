@@ -35,6 +35,8 @@ type Fake struct {
 	Now func() time.Time
 	// Protected is termination protection, by instance id.
 	Protected map[string]bool
+	// Console is what each instance wrote to its console, by id.
+	Console map[string]string
 	// Configs is each instance's settings, by id, beyond termination
 	// protection (which Protected holds).
 	Configs map[string]InstanceConfig
@@ -488,4 +490,21 @@ func (f *Fake) AccountInventory(_ context.Context, a Account, _ []string) (Snaps
 		now = f.Now()
 	}
 	return Snapshot{Region: GlobalRegion, Kinds: AccountKinds, Resources: append([]Resource(nil), f.Resources[GlobalRegion]...), ReadAt: now}, nil
+}
+
+func (f *Fake) ConsoleOutput(_ context.Context, a Account, actor Actor, region, id string) (ConsoleText, error) {
+	f.record("console " + id + " " + string(actor))
+	if err := f.admit(a); err != nil {
+		return ConsoleText{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, err := f.find(region, id); err != nil {
+		return ConsoleText{}, err
+	}
+	now := time.Now()
+	if f.Now != nil {
+		now = f.Now()
+	}
+	return ConsoleText{Text: f.Console[id], At: &now}, nil
 }

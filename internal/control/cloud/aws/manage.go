@@ -383,6 +383,23 @@ func (p *Provider) Configure(ctx context.Context, a cloud.Account, actor cloud.A
 	return out, nil
 }
 
+// ConsoleOutput reads the newest console output AWS keeps for an instance.
+func (p *Provider) ConsoleOutput(ctx context.Context, a cloud.Account, actor cloud.Actor, region, id string) (cloud.ConsoleText, error) {
+	c, err := p.client(ctx, a, actor, region)
+	if err != nil {
+		return cloud.ConsoleText{}, err
+	}
+	out, err := c.GetConsoleOutput(ctx, &ec2.GetConsoleOutputInput{InstanceId: awssdk.String(id), Latest: awssdk.Bool(true)})
+	if err != nil {
+		return cloud.ConsoleText{}, errors.New(plain(err))
+	}
+	raw, err := base64.StdEncoding.DecodeString(awssdk.ToString(out.Output))
+	if err != nil {
+		return cloud.ConsoleText{}, fmt.Errorf("AWS sent console output Argus could not read: %w", err)
+	}
+	return cloud.ConsoleText{Text: string(raw), At: out.Timestamp}, nil
+}
+
 // PlanRemove reads what terminating id takes with it.
 func (p *Provider) PlanRemove(ctx context.Context, a cloud.Account, actor cloud.Actor, region, id string) (cloud.RemovePlan, error) {
 	c, err := p.client(ctx, a, actor, region)

@@ -400,6 +400,26 @@ func (f *finder) instance(r Resource) {
 			Matters:  "It can be reached from the internet, and sessions on it are not recorded by Argus.",
 			HowToFix: "Add it as a server and install the agent, or take away its public IP if nothing needs it."}, r, r.PublicIP)
 	}
+	if r.State == "running" && (r.Details["systemStatus"] == "impaired" || r.Details["instanceStatus"] == "impaired") {
+		which, fix := "its own", "Look at its boot log from its panel, then reboot it. If it stays impaired, stop and start it, which moves it to other hardware."
+		if r.Details["systemStatus"] == "impaired" {
+			which, fix = "AWS's hardware or network", "Stop and start it, which moves it to healthy hardware. A reboot does not."
+		}
+		f.add(Finding{Check: "status-impaired", Group: GroupRisk, Severity: SeverityHigh, Source: SourceCloud, Title: "Failing AWS health checks",
+			Why:      fmt.Sprintf("AWS reports a problem with %s for %s.", which, r.Name),
+			Matters:  "It may not answer at all, and AWS will not fix a problem inside the instance by itself.",
+			HowToFix: fix}, r, r.Details["systemStatus"]+"/"+r.Details["instanceStatus"])
+	}
+	if code := r.Details["eventCode"]; code != "" && live {
+		when := "soon"
+		if t, err := time.Parse(time.RFC3339, r.Details["eventNotBefore"]); err == nil {
+			when = "from " + t.Format("2 Jan 2006 15:04 UTC")
+		}
+		f.add(Finding{Check: "scheduled-event", Group: GroupRisk, Severity: SeverityMedium, Source: SourceCloud, Title: "AWS has planned maintenance",
+			Why:      fmt.Sprintf("%s: %s (%s).", r.Name, r.Details["eventDescription"], when),
+			Matters:  "AWS will reboot, stop or retire it on its own schedule, possibly at a busy time.",
+			HowToFix: "Stop and start it yourself at a quiet time before then; that usually clears a retirement or a hardware reboot."}, r, code+"/"+r.Details["eventNotBefore"])
+	}
 	if live && r.Details["metadataTokens"] == "optional" {
 		f.add(Finding{Check: "imds-v1", Group: GroupRisk, Severity: SeverityMedium, Source: SourceCloud, Title: "Old instance metadata allowed",
 			Why:      fmt.Sprintf("%s still answers metadata requests without a token (IMDSv1).", r.Name),

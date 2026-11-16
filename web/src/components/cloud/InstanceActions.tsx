@@ -1,12 +1,12 @@
-import { ActionIcon, Alert, Badge, Box, Button, Checkbox, Group, Menu, SegmentedControl, Select, Skeleton, Stack, Switch, Table, Text, TextInput } from '@mantine/core'
+import { ActionIcon, Alert, Badge, Box, Button, Checkbox, Code, Group, Menu, Modal, ScrollArea, SegmentedControl, Select, Skeleton, Stack, Switch, Table, Text, TextInput } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import {
-  IconDots, IconLock, IconLockOpen, IconMoon, IconPhoto, IconSettings, IconShield, IconPlayerPlay, IconPlayerStop, IconRefresh, IconResize, IconTag, IconTrash, IconUserCheck,
+  IconAlertTriangle, IconDots, IconFileText, IconLock, IconLockOpen, IconMoon, IconPhoto, IconSettings, IconShield, IconPlayerPlay, IconPlayerStop, IconRefresh, IconResize, IconTag, IconTrash, IconUserCheck,
 } from '@tabler/icons-react'
 import { useState } from 'react'
-import { Field, relTime } from '~/components/primitives'
+import { Field, absTime, relTime } from '~/components/primitives'
 import {
-  ACTION_LEVEL, cloudAccountsQuery, cloudChangesQuery, cloudInstanceSettingsQuery, cloudLaunchOptionsQuery, cloudRemovePlanQuery, envOf,
+  ACTION_LEVEL, cloudAccountsQuery, cloudChangesQuery, cloudConsoleQuery, cloudInstanceSettingsQuery, cloudLaunchOptionsQuery, cloudRemovePlanQuery, envOf,
   type CloudAction, type CloudEnvironment, type CloudInstanceConfig, type CloudItem,
 } from '~/lib/cloud'
 import { meQuery } from '~/lib/queries'
@@ -92,6 +92,74 @@ export function InstanceActions({ it }: { it: CloudItem }) {
       {open === 'image-create' && <ImageCreate it={it} env={env} onClose={close} />}
       {open === 'instance-firewalls' && <InstanceFirewalls it={it} env={env} onClose={close} />}
     </Stack>
+  )
+}
+
+const CHECK_WORD: Record<string, { label: string; color: string }> = {
+  ok: { label: 'Passing', color: 'teal' }, impaired: { label: 'Failing', color: 'rose' },
+  initializing: { label: 'Starting', color: 'slate' }, 'insufficient-data': { label: 'Not enough data', color: 'slate' },
+}
+
+/**
+ * How AWS sees the instance: its two status checks (AWS's hardware and
+ * network, and the instance itself), maintenance AWS has planned, and the
+ * boot log for one that does not answer. Read with the last inventory, so
+ * it is as old as "Last read" says.
+ */
+export function InstanceHealth({ it }: { it: CloudItem }) {
+  const { data: me } = useQuery(meQuery())
+  const accounts = useQuery(cloudAccountsQuery())
+  const [log, setLog] = useState(false)
+  const d = it.resource.details ?? {}
+  const account = accounts.data?.accounts.find((a) => a.id === it.accountId)
+  const canRead = canSee(me?.role, 'admin') && account?.access === 'manage' && it.resource.state !== 'terminated'
+  const sys = d.systemStatus ? CHECK_WORD[d.systemStatus] : undefined
+  const own = d.instanceStatus ? CHECK_WORD[d.instanceStatus] : undefined
+  if (!sys && !own && !d.eventCode && !canRead) return null
+  return (
+    <Stack gap="xs" data-testid="instance-health">
+      {(sys || own) && (
+        <Group gap="lg">
+          {sys && <Field label="AWS hardware and network"><Badge variant="light" color={sys.color} radius="sm">{sys.label}</Badge></Field>}
+          {own && <Field label="The instance itself"><Badge variant="light" color={own.color} radius="sm">{own.label}</Badge></Field>}
+        </Group>
+      )}
+      {d.eventCode && (
+        <Alert color="amber" variant="light" p="xs" icon={<IconAlertTriangle size={16} />}>
+          <Text size={FS.meta}>
+            <b>AWS has planned maintenance{d.eventNotBefore ? ` from ${absTime(d.eventNotBefore)}` : ''}.</b> {d.eventDescription}.
+            Stopping and starting it yourself at a quiet time before then usually clears it.
+          </Text>
+        </Alert>
+      )}
+      {canRead && (
+        <Button size="xs" variant="default" w="fit-content" leftSection={<IconFileText size={14} />} onClick={() => setLog(true)}>Boot log</Button>
+      )}
+      {log && <BootLog it={it} onClose={() => setLog(false)} />}
+    </Stack>
+  )
+}
+
+function BootLog({ it, onClose }: { it: CloudItem; onClose: () => void }) {
+  const q = useQuery(cloudConsoleQuery(it, true))
+  return (
+    <Modal opened onClose={onClose} centered size="xl" title={<Text fw={700}>Boot log of {it.resource.name}</Text>}>
+      <Stack gap="sm">
+        <Text size={FS.meta} c="dimmed">
+          What the instance last printed to its console, as AWS keeps it{q.data?.at ? `, taken ${relTime(q.data.at)}` : ''}.
+          AWS updates it a few minutes after the instance writes. Reading it is recorded in the audit log.
+        </Text>
+        {q.isPending && <Skeleton h={240} />}
+        {q.error && <Alert color="rose" variant="light">{(q.error as Error).message}</Alert>}
+        {q.data && (q.data.text.trim() === ''
+          ? <Text size={FS.meta} c="dimmed">AWS has no console output for it yet. A Windows instance, or one started moments ago, often has none.</Text>
+          : (
+            <ScrollArea.Autosize mah={420} type="auto" data-testid="boot-log">
+              <Code block fz={FS.micro} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{q.data.text}</Code>
+            </ScrollArea.Autosize>
+          ))}
+      </Stack>
+    </Modal>
   )
 }
 

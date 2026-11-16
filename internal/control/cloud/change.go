@@ -8,6 +8,7 @@ import (
 	"errors"
 	"regexp"
 	"strings"
+	"time"
 )
 
 /*
@@ -225,6 +226,18 @@ type InstanceConfig struct {
 type Configurer interface {
 	InstanceConfig(ctx context.Context, a Account, actor Actor, region, id string) (InstanceConfig, error)
 	Configure(ctx context.Context, a Account, actor Actor, region, id string, s InstanceSettings) (Result, error)
+}
+
+// Consoler is a Manager that reads what an instance wrote to its serial
+// console: its boot log, for a server that does not answer.
+type Consoler interface {
+	ConsoleOutput(ctx context.Context, a Account, actor Actor, region, id string) (ConsoleText, error)
+}
+
+// ConsoleText is an instance's latest console output and when AWS took it.
+type ConsoleText struct {
+	Text string     `json:"text"`
+	At   *time.Time `json:"at"`
 }
 
 // Burstable is whether a size earns and spends processor credits.

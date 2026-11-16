@@ -475,6 +475,21 @@ export const cloudInstanceSettingsQuery = (it: CloudItem | null) =>
     gcTime: 0,
   })
 
+/** What an instance last wrote to its console, cleaned of terminal escapes. */
+export interface CloudConsoleText { text: string; at: string | null }
+
+/** Read on demand only: every read is audited. */
+export const cloudConsoleQuery = (it: CloudItem | null, enabled: boolean) =>
+  queryOptions({
+    queryKey: ['cloud', 'console-output', it?.accountId, it?.resource.region, it?.resource.id],
+    queryFn: () => get<CloudConsoleText>(`/api/v1/cloud/console-output?accountId=${encodeURIComponent(it!.accountId)}` +
+      `&region=${encodeURIComponent(it!.resource.region)}&resourceId=${encodeURIComponent(it!.resource.id)}`),
+    enabled: isConfigured() && Boolean(it) && enabled,
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
+  })
+
 export function useAskCloudChange() {
   const qc = useQueryClient()
   return useMutation({

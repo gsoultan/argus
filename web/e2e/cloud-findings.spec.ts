@@ -59,7 +59,8 @@ const item = (kind: string, id: string, name: string, extra: object = {}) => ({
 const RESOURCES: Record<string, object[]> = {
   firewall: [item('firewall', 'sg-web', 'sg-web-public', { network: 'vpc-1', rules: [SSH, { inbound: true, protocol: 'tcp', fromPort: 443, toPort: 443, source: '0.0.0.0/0' },
     { inbound: false, protocol: 'all', fromPort: 0, toPort: 65535, source: '0.0.0.0/0' }] })],
-  instance: [item('instance', 'i-2', 'web-02', { state: 'running', size: 't3.medium', details: { metadataTokens: 'optional', hibernation: 'yes' } })],
+  instance: [item('instance', 'i-2', 'web-02', { state: 'running', size: 't3.medium', details: { metadataTokens: 'optional', hibernation: 'yes', systemStatus: 'ok', instanceStatus: 'impaired',
+    eventCode: 'system-reboot', eventDescription: 'Scheduled reboot for host maintenance', eventNotBefore: new Date(now + 4 * 86_400_000).toISOString() } })],
   snapshot: [item('snapshot', 'snap-0a14f1', 'db-primary nightly', { size: '80 GiB' }), item('snapshot', 'snap-03caa1', 'before resize', { size: '200 GiB' })],
 }
 
@@ -190,4 +191,27 @@ test('old instance metadata is fixed from its finding', async ({ page }) => {
   await modal.getByRole('button', { name: 'Ask for approval' }).click()
   await expect.poll(() => asked).toMatchObject({ action: 'settings', resourceId: 'i-2', spec: { requireTokens: true } })
   expect(Object.keys((asked as unknown as { spec: object }).spec)).toEqual(['requireTokens'])
+})
+
+// An instance AWS says is failing shows it, with planned maintenance, and
+// its boot log is read only when asked for.
+test('an instance failing its checks shows its boot log', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await stub(page)
+  let reads = 0
+  await page.route('**/api/v1/cloud/console-output?*', (r) => {
+    reads++
+    return r.fulfill({ json: { text: '[  OK  ] Mounted /boot.\n[FAILED] Failed to mount /data.\nYou are in emergency mode.\n', at: new Date(now - 120_000).toISOString() } })
+  })
+  await signIn(page)
+  await page.goto('/cloud?tab=instances')
+  await page.getByText('web-02').first().click()
+  const health = page.getByTestId('instance-health')
+  await expect(health.getByText('Failing')).toBeVisible()
+  await expect(health.getByText(/Scheduled reboot for host maintenance/)).toBeVisible()
+  expect(reads).toBe(0)
+  await health.getByRole('button', { name: 'Boot log' }).click()
+  await expect(page.getByTestId('boot-log')).toContainText('You are in emergency mode.')
+  expect(reads).toBe(1)
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/09-boot-log.png` })
 })

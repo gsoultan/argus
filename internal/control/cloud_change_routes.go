@@ -44,6 +44,7 @@ func (a *API) registerCloudChangeRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/cloud/launch-options", a.getCloudLaunchOptions)
 	mux.HandleFunc("GET /api/v1/cloud/remove-plan", a.getCloudRemovePlan)
 	mux.HandleFunc("GET /api/v1/cloud/instance-settings", a.getCloudInstanceSettings)
+	mux.HandleFunc("GET /api/v1/cloud/console-output", a.getCloudConsoleOutput)
 	mux.HandleFunc("GET /api/v1/cloud/changes", a.getCloudChanges)
 	mux.HandleFunc("POST /api/v1/cloud/changes", a.postCloudChange)
 	mux.HandleFunc("GET /api/v1/cloud/changes/{id}", a.getCloudChange)

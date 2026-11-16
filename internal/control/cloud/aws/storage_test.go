@@ -22,7 +22,7 @@ func TestMissingFromThePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(missing) != 22 || missing[0] != "ec2:ModifyInstanceMetadataOptions" {
+	if len(missing) != 23 || missing[0] != "ec2:ModifyInstanceMetadataOptions" {
 		t.Fatalf("missing: %v", missing)
 	}
 	now := `{"Statement":[{"Effect":"Allow","Action":["` + strings.Join(ManagePolicy, `","`) + `"]}]}`

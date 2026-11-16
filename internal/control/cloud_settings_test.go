@@ -63,3 +63,26 @@ func TestCloudSettingsChangeOnlyWhatDiffers(t *testing.T) {
 	// It was not launched to hibernate, so Argus does not offer it.
 	e.ask(t, "admin-token", e.body("hibernate", ""), http.StatusConflict)
 }
+
+// The console output is for people who may change the account, comes back
+// without terminal escapes, and every read is audited.
+func TestCloudConsoleOutputIsAudited(t *testing.T) {
+	e := changeAPI(t)
+	e.fake.Console = map[string]string{e.instance(): "\x1b[0;32m[  OK  ]\x1b[0m Mounted /\r\nKernel panic\x07 - not syncing\n"}
+	url := "/api/v1/cloud/console-output?accountId=" + e.acct.ID + "&region=ap-southeast-3&resourceId=" + e.instance()
+	if w := do(t, e.h, http.MethodGet, url, "auditor-token", ""); w.Code != http.StatusForbidden {
+		t.Fatalf("an auditor read the console: %d", w.Code)
+	}
+	w := do(t, e.h, http.MethodGet, url, "admin-token", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("console: %d %s", w.Code, w.Body)
+	}
+	var out cloud.ConsoleText
+	_ = json.Unmarshal(w.Body.Bytes(), &out)
+	if out.Text != "[  OK  ] Mounted /\nKernel panic - not syncing\n" || out.At == nil {
+		t.Fatalf("console = %q", out.Text)
+	}
+	if auditCount(t, e.s, "cloud.console_output.read", "aws payments-prod ap-southeast-3 pay-api-01 ("+e.instance()+")") != 1 {
+		t.Fatal("a console read must be audited")
+	}
+}
