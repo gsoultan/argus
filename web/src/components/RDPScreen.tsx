@@ -11,6 +11,7 @@ import {
 } from '~/lib/clipboard'
 import { chord, isMac, KeyMapper, loadKeyboardPrefs, type KeyboardPrefs, type KeyOut } from '~/lib/keymap'
 import { pictureSize, slowLink, type PicturePrefs } from '~/lib/picture'
+import { PointerInput } from '~/lib/pointerInput'
 import type { RDPWorkerRequest, RDPWorkerResponse } from '~/workers/rdp.worker'
 
 /**
@@ -513,7 +514,7 @@ export function RDPScreen({
     // Coordinates are scaled from the element's rendered size back to the
     // desktop's, so a canvas shown smaller than the remote screen still points
     // at the pixel the user is looking at.
-    const toDesktop = (e: MouseEvent) => {
+    const toDesktop = (e: { clientX: number; clientY: number }) => {
       const rect = canvas.getBoundingClientRect()
       return {
         x: Math.round(((e.clientX - rect.left) / rect.width) * sizeRef.current.width),
@@ -521,27 +522,28 @@ export function RDPScreen({
       }
     }
 
-    // Pointer movement is throttled to one animation frame. A mouse reports far
-    // more often than a screen refreshes, and sending every sample floods the
-    // link without the user seeing any of the extra positions.
-    let queued: { x: number; y: number } | null = null
-    let pending = false
-    const onMove = (e: MouseEvent) => {
-      queued = toDesktop(e)
-      if (pending) return
-      pending = true
-      requestAnimationFrame(() => {
-        pending = false
-        if (queued) send({ type: 'mouse', ...queued })
-      })
-    }
-
-    const onButton = (e: MouseEvent, down: boolean) => {
+    // Mouse, pen and touch alike, as they happen: see lib/pointerInput.ts.
+    const pointer = new PointerInput(send, toDesktop)
+    const onPointerDown = (e: PointerEvent) => {
       e.preventDefault()
-      send({ type: 'button', button: e.button, down, ...toDesktop(e) })
+      // The drag stays with the screen when it leaves the canvas.
+      try {
+        canvas.setPointerCapture(e.pointerId)
+      } catch {
+        // A pointer the browser has already let go of.
+      }
+      canvas.focus({ preventScroll: true })
+      pointer.down(e)
     }
+    const onPointerMove = (e: PointerEvent) => pointer.move(e)
+    const onPointerUp = (e: PointerEvent) => {
+      e.preventDefault()
+      pointer.up(e)
+    }
+    const onPointerCancel = (e: PointerEvent) => pointer.cancel(e)
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
+      pointer.flush()
       send({ type: 'wheel', delta: e.deltaY, ...toDesktop(e) })
     }
     // A phone's screen takes keys by position, as it always has: Android
@@ -590,14 +592,18 @@ export function RDPScreen({
       if (document.visibilityState === 'hidden') letGo()
     }
 
-    const down = (e: MouseEvent) => onButton(e, true)
-    const up = (e: MouseEvent) => onButton(e, false)
     const keyDown = (e: KeyboardEvent) => onKey(e, true)
     const keyUp = (e: KeyboardEvent) => onKey(e, false)
 
-    canvas.addEventListener('mousemove', onMove)
-    canvas.addEventListener('mousedown', down)
-    canvas.addEventListener('mouseup', up)
+    // Touches reach the screen rather than scrolling or zooming the page,
+    // and a long press shows no callout over it.
+    canvas.style.touchAction = 'none'
+    canvas.style.setProperty('-webkit-touch-callout', 'none')
+    canvas.style.userSelect = 'none'
+    canvas.addEventListener('pointerdown', onPointerDown)
+    canvas.addEventListener('pointermove', onPointerMove)
+    canvas.addEventListener('pointerup', onPointerUp)
+    canvas.addEventListener('pointercancel', onPointerCancel)
     canvas.addEventListener('wheel', onWheel, { passive: false })
     const noMenu = (e: MouseEvent) => e.preventDefault()
     canvas.addEventListener('contextmenu', noMenu)
@@ -612,9 +618,11 @@ export function RDPScreen({
       canvas.removeEventListener('blur', letGo)
       canvas.removeEventListener('focus', onFocus)
       document.removeEventListener('visibilitychange', onHidden)
-      canvas.removeEventListener('mousemove', onMove)
-      canvas.removeEventListener('mousedown', down)
-      canvas.removeEventListener('mouseup', up)
+      canvas.removeEventListener('pointerdown', onPointerDown)
+      canvas.removeEventListener('pointermove', onPointerMove)
+      canvas.removeEventListener('pointerup', onPointerUp)
+      canvas.removeEventListener('pointercancel', onPointerCancel)
+      canvas.style.touchAction = ''
       canvas.removeEventListener('wheel', onWheel)
       canvas.removeEventListener('contextmenu', noMenu)
       canvas.removeEventListener('keydown', keyDown)
