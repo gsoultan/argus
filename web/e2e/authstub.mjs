@@ -516,7 +516,7 @@ const server = createServer(async (req, res) => {
     // console repeats it rather than inventing its own.
     if (path === '/api/v1/sessions/s-removable/recording' && req.method === 'DELETE') {
       const body = await readBody(req)
-      const target = SESSIONS.find((/** @type {any} */ v) => v.id === 's-removable')
+      const target = /** @type {any} */ (SESSIONS.find((/** @type {any} */ v) => v.id === 's-removable'))
       if (String(body.confirm ?? '').toLowerCase() !== target.assetHostname) {
         return json(res, 400, { error: `type the host name, ${target.assetHostname}, to confirm` })
       }

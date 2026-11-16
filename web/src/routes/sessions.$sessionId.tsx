@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import {
   Alert, Badge, Box, Button, Card, Grid, Group, Modal, ScrollArea, Stack, Text,
-  Textarea, TextInput,
+  Textarea,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
@@ -24,6 +24,10 @@ import { PlayerFallback } from '~/components/PlayerFallback'
  * reachable only from a modal on an active session. Importing all four at
  * module scope meant every visit paid for all of them.
  */
+// Only an admin who opens it needs it, so it stays out of the page's bundle.
+const RemoveRecordingDialog = lazy(() =>
+  import('~/components/RemoveRecordingDialog').then((m) => ({ default: m.RemoveRecordingDialog })),
+)
 const Replay = lazy(() =>
   import('~/components/Replay').then((m) => ({ default: m.Replay })),
 )
@@ -53,7 +57,7 @@ import { isStatementProtocol } from '~/lib/engines'
 import { notifyOk } from '~/lib/notify'
 import type { ReplayActivity, Session } from '~/types/domain'
 import type { KernelExec } from '~/lib/castDecode'
-import { meQuery, sessionQuery, useRemoveRecording, useTerminateSession } from '~/lib/queries'
+import { meQuery, sessionQuery, useTerminateSession } from '~/lib/queries'
 import { isConfigured, live, shadowTicket, watchEndpoint } from '~/lib/live'
 import { useCastDecoder } from '~/lib/useWorkers'
 
@@ -81,11 +85,8 @@ function SessionDetail() {
     },
   })
   const terminate = useTerminateSession()
-  const removeRec = useRemoveRecording()
   const { data: me } = useQuery(meQuery())
   const [removeOpen, removeDialog] = useDisclosure(false)
-  const [removeHost, setRemoveHost] = useState('')
-  const [removeWhy, setRemoveWhy] = useState('')
   const [confirmOpen, confirm] = useDisclosure(false)
   const [shadowOpen, shadow] = useDisclosure(false)
   const [shadowError, setShadowError] = useState<string>()
@@ -311,32 +312,6 @@ function SessionDetail() {
       'Recording exported',
       'asciicast v2. Play it with `asciinema play`, or re-hash it to check it against the chain head.',
     )
-  }
-
-  const onRemoveRecording = async () => {
-    let out: { fileNotDeleted?: string }
-    try {
-      out = await removeRec.mutateAsync({ id: session.id, confirm: removeHost.trim(), reason: removeWhy.trim() })
-    } catch (err) {
-      // The dialog stays open: closing it would read as done.
-      notifications.show({
-        color: 'rose',
-        title: 'Recording not removed',
-        message: err instanceof Error ? err.message : 'the control plane refused',
-      })
-      return
-    }
-    removeDialog.close()
-    setRemoveHost('')
-    setRemoveWhy('')
-    setRealCast(undefined)
-    notifications.show({
-      color: out.fileNotDeleted ? 'amber' : 'teal',
-      title: 'Recording removed',
-      message: out.fileNotDeleted
-        ? `Argus no longer holds it, but ${out.fileNotDeleted}.`
-        : 'The file is deleted. The session stays, and the removal is in the audit log.',
-    })
   }
 
   const onTerminate = async () => {
@@ -842,51 +817,11 @@ function SessionDetail() {
         )}
       </Modal>
 
-      <Modal opened={removeOpen} onClose={removeDialog.close} title="Remove recording" size="md">
-        <Alert color="rose" icon={<IconAlertTriangle size={16} />} mb="md">
-          <Text size={FS.body} lh={1.5}>
-            The recording of this session ({bytes(session.recordingBytes)}) is deleted from
-            storage and cannot be replayed again. The session stays in Activity with who
-            opened it, from where, its chain head and its size, and the removal is recorded in
-            the audit log against your account.
-          </Text>
-        </Alert>
-        <Stack gap="sm">
-          <TextInput
-            size="sm"
-            label={`Type ${session.assetHostname} to confirm`}
-            value={removeHost}
-            onChange={(e) => setRemoveHost(e.currentTarget.value)}
-            autoComplete="off"
-          />
-          <Textarea
-            size="sm"
-            label="Reason"
-            description="Kept with the session and in the audit log."
-            placeholder="e.g. A CI deploy copied a build through this session; nothing else ran."
-            minRows={2}
-            autosize
-            value={removeWhy}
-            onChange={(e) => setRemoveWhy(e.currentTarget.value)}
-          />
-        </Stack>
-        <Group justify="flex-end" mt="md">
-          <Button variant="subtle" color="slate" onClick={removeDialog.close}>
-            Cancel
-          </Button>
-          <Button
-            color="rose"
-            loading={removeRec.isPending}
-            disabled={
-              removeHost.trim().toLowerCase() !== session.assetHostname.toLowerCase() ||
-              removeWhy.trim().length < 4
-            }
-            onClick={onRemoveRecording}
-          >
-            Remove recording
-          </Button>
-        </Group>
-      </Modal>
+      {removeOpen && (
+        <Suspense fallback={null}>
+          <RemoveRecordingDialog session={session} onClose={removeDialog.close} />
+        </Suspense>
+      )}
 
       <Modal opened={confirmOpen} onClose={confirm.close} title="Terminate session" size="md">
         <Alert color="rose" icon={<IconAlertTriangle size={16} />} mb="md">

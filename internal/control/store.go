@@ -590,6 +590,18 @@ func sessionFromRow(r *session.Row) Session {
 	if r.TerminationReason.Valid {
 		v.TerminationReason = &r.TerminationReason.V
 	}
+	// A removed recording, so the list says so rather than calling it
+	// "not on the control plane yet", which would send someone waiting for
+	// an upload that is never coming.
+	if r.RecordingRemovedAt.Valid {
+		v.RecordingRemovedAt = &r.RecordingRemovedAt.V
+	}
+	if r.RecordingRemovedBy.Valid {
+		v.RecordingRemovedBy = &r.RecordingRemovedBy.V
+	}
+	if r.RecordingRemovedReason.Valid {
+		v.RecordingRemovedReason = &r.RecordingRemovedReason.V
+	}
 	v.LastReportedAt = r.LastReportedAt
 	v.Silent = silent(v.State, v.LastReportedAt)
 	v.EndInferred = r.EndInferred

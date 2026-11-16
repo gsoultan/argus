@@ -195,8 +195,12 @@ const BUDGET_KB = {
    * of Select's chunk. The bytes are the same; the rest is the extra file.
    * 412.1 kB with session tabs: the overview's sessions store and header link.
    * 413.6 kB with the console noticing a new build, as the overview, above.
+   * 415.0 kB with large recordings and removing one: the page asks before
+   * downloading a recording past 32 MB, says how far a download has got, and
+   * shows a removed recording in the player's place. The remove dialog
+   * itself is a lazy chunk, fetched only when an admin opens it.
    */
-  sessionDetail: 414,
+  sessionDetail: 416,
 }
 
 /**

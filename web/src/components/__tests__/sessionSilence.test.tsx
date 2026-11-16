@@ -152,6 +152,13 @@ describe('a recording that has not reached the control plane', () => {
 
   // An active session's recording is still being written and has no business
   // being in storage yet, so this would be noise on every live row.
+  // Removed by an admin: not on its way, so not "not here yet".
+  it('says removed, not pending, for a recording an admin removed', () => {
+    ui(<ArtefactPending session={{ state: 'closed', recordingKey: null, recordingRemovedAt: '2026-11-16T12:00:00Z' }} />)
+    expect(screen.getByLabelText('Recording removed')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Recording not on the control plane yet')).not.toBeInTheDocument()
+  })
+
   it('says nothing about a session still running', () => {
     ui(<ArtefactPending session={{ state: 'active', recordingKey: null }} />)
     expect(screen.queryByLabelText('Recording not on the control plane yet')).not.toBeInTheDocument()

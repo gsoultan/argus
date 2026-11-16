@@ -175,7 +175,26 @@ export function RecordingArchived({ session }: { session: Pick<Session, 'recordi
   )
 }
 
-export function ArtefactPending({ session }: { session: Pick<Session, 'state' | 'recordingKey'> }) {
+export function ArtefactPending({
+  session,
+}: {
+  session: Pick<Session, 'state' | 'recordingKey'> & Partial<Pick<Session, 'recordingRemovedAt' | 'recordingRemovedBy'>>
+}) {
+  if (session.recordingRemovedAt) {
+    // Gone on purpose. "Not on the control plane yet" would have someone
+    // waiting for an upload that is never coming.
+    return (
+      <Tooltip
+        label={`Removed${session.recordingRemovedBy ? ` by ${session.recordingRemovedBy}` : ''} to free storage. The session, its chain head and the audit entry remain.`}
+        multiline
+        maw={320}
+      >
+        <ThemeIcon variant="light" color="gray" size={18} radius="sm" aria-label="Recording removed">
+          <IconCloudOff size={12} />
+        </ThemeIcon>
+      </Tooltip>
+    )
+  }
   if (session.state === 'active' || session.recordingKey) return null
   return (
     <Tooltip

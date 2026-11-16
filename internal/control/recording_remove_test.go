@@ -91,6 +91,21 @@ func TestAnAdminRemovesARecordingAndTheRemovalIsRecorded(t *testing.T) {
 		t.Errorf("audit entries for the removal: %d (%v)", n, err)
 	}
 
+	// The list says so too, rather than "not on the control plane yet".
+	list, err := s.Sessions(context.Background(), SessionFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := false
+	for _, v := range list {
+		if v.ID == id {
+			listed = v.RecordingRemovedAt != nil && v.RecordingRemovedBy != nil
+		}
+	}
+	if !listed {
+		t.Error("the sessions list does not say the recording was removed")
+	}
+
 	r := do(t, h, http.MethodGet, "/api/v1/sessions/"+id+"/recording", "admin-token", "")
 	if r.Code != http.StatusGone || !strings.Contains(r.Body.String(), "CI deploy") {
 		t.Errorf("replay after removal: %d %s", r.Code, r.Body)
