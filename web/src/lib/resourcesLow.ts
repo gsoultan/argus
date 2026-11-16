@@ -1,37 +1,16 @@
-import { get } from '~/lib/live'
 import type { ResourceWarning } from '~/types/domain'
 
 /*
- * Which assets are running low, from the control plane's one rule
- * (internal/control/resources.go): the assets list's Running low filter and
- * its badges. Only usage reported in the last few minutes counts, so an
- * agent that went quiet neither raises nor keeps a badge. Kept out of
- * live.ts, which every page loads.
+ * How a running-low warning from the control plane's one rule
+ * (internal/control/resources.go) is written in the console. The assets
+ * list reads its warnings with each card's usage (assetsUsage.ts). Only
+ * usage reported in the last few minutes counts, so an agent that went
+ * quiet neither raises nor keeps a badge. Kept out of live.ts, which every
+ * page loads.
  */
 
 /** How recent usage must be to warn, as the control plane counts it (resourcesFresh). */
 export const LOW_FRESH_MS = 5 * 60 * 1000
-
-export interface ResourcesLowRow {
-  assetId: string
-  hostname: string
-  usageAt: string
-  /** Critical first. */
-  warnings: ResourceWarning[]
-}
-
-export interface ResourcesLow {
-  assets: ResourcesLowRow[]
-  /** How recent usage had to be to count. */
-  freshSeconds: number
-}
-
-export const resourcesLowQuery = () => ({
-  queryKey: ['resources-low'] as const,
-  queryFn: (): Promise<ResourcesLow> => get('/api/v1/resources-low'),
-  staleTime: 60_000,
-  refetchInterval: 60_000,
-})
 
 /** The tone a warning is shown in: rose when critical, amber when low. */
 export function warningTone(w: ResourceWarning | undefined): 'rose' | 'amber' | undefined {
