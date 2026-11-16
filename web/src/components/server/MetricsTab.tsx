@@ -4,8 +4,9 @@ import { useElementSize } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { absTime, now as clockNow } from '~/components/primitives'
 import { span as spanWords, useTicker } from '~/components/server/RunPanel'
-import { LowStrip, bitRate, diskFull, systemQuery } from '~/components/server/SystemCard'
+import { LiveBadge, LowStrip, bitRate, diskFull, systemQuery } from '~/components/server/SystemCard'
 import { get, live } from '~/lib/live'
+import { LIVE_WINDOW_MS, useLiveUsage, type LiveUsage } from '~/lib/liveUsage'
 import { bytes, warningTone } from '~/lib/resourcesLow'
 import { FS } from '~/theme'
 import type { Asset, ResourceWarning, ServerProcess, ServerSystem } from '~/types/domain'
@@ -162,14 +163,17 @@ export function MetricsTab({ asset }: { asset: Asset }) {
   const [range, setRange] = useState<MetricsRange>('24h')
   const { data: sys } = useQuery(systemQuery(asset))
   const { data: m, isError, isLoading } = useQuery(metricsQuery(asset, range))
-  const fresh = !!sys?.usageAt && asset.agentState === 'healthy' && clockNow() - Date.parse(sys.usageAt) <= 5 * 60_000
+  const liveU = useLiveUsage(asset.id, !!sys?.reported && asset.agentState !== 'absent' && asset.kind !== 'android')
+  const isLive = liveU.state === 'live'
+  const fresh = isLive || (!!sys?.usageAt && asset.agentState === 'healthy' && clockNow() - Date.parse(sys.usageAt) <= 5 * 60_000)
 
   return (
     <Stack gap="md">
       {sys?.usage && fresh && (sys.warnings?.length ?? 0) > 0 && (
         <Box mx={-16} mt={-16}><LowStrip warnings={sys.warnings!} faded={false} /></Box>
       )}
-      {sys && <NowTiles sys={sys} fresh={fresh} />}
+      {sys && <NowTiles sys={sys} fresh={fresh} live={liveU} />}
+      {isLive && liveU.samples.length >= 2 && <LiveCharts live={liveU} cpus={sys?.system?.cpus ?? 0} />}
       <Card padding={0}>
         <Group justify="space-between" wrap="wrap" gap="sm" px="md" py="sm" style={{ borderBottom: '1px solid var(--color-line)' }}>
           <Text component="h2" fw={600} size="sm" style={{ margin: 0 }}>Resource history</Text>
@@ -206,11 +210,14 @@ function stepLabel(s: number): string {
   return s >= 3600 ? `${s / 3600} hours` : `${s / 60} minutes`
 }
 
-function NowTiles({ sys, fresh }: { sys: ServerSystem; fresh: boolean }) {
+function NowTiles({ sys, fresh, live: liveU }: { sys: ServerSystem; fresh: boolean; live: LiveUsage }) {
   const u = sys.usage
   if (!u) return null
+  // The processor warning is over a minute; a live tile shows two seconds,
+  // so it is not coloured by it (the strip above still names it).
   const w = (r: ResourceWarning['resource'], mount?: string) =>
-    fresh ? sys.warnings?.find((x) => x.resource === r && (mount === undefined || x.mount === mount)) : undefined
+    fresh && !(r === 'cpu' && liveU.state === 'live')
+      ? sys.warnings?.find((x) => x.resource === r && (mount === undefined || x.mount === mount)) : undefined
   const fullest = [...u.disks].sort((a, b) => diskFull(b) - diskFull(a))[0]
   const rx = (u.net ?? []).reduce((s, n) => s + (n.rxBps ?? 0), 0)
   const tx = (u.net ?? []).reduce((s, n) => s + (n.txBps ?? 0), 0)
@@ -218,8 +225,12 @@ function NowTiles({ sys, fresh }: { sys: ServerSystem; fresh: boolean }) {
   return (
     <Box>
       <Group justify="space-between" gap="xs" mb={6}>
-        <Text component="h2" fw={600} size="sm" style={{ margin: 0 }}>Now <Text span inherit c="dimmed" fw={400}>(the last minute)</Text></Text>
-        {sys.usageAt && <ReportedAgo at={sys.usageAt} fresh={fresh} />}
+        <Text component="h2" fw={600} size="sm" style={{ margin: 0 }}>
+          Now <Text span inherit c="dimmed" fw={400}>{liveU.state === 'live' ? `(the last ${trimNum(liveU.every)} seconds)` : '(the last minute)'}</Text>
+        </Text>
+        {liveU.state === 'live'
+          ? <LiveBadge every={liveU.every} />
+          : sys.usageAt && <ReportedAgo at={sys.usageAt} fresh={fresh} why={liveU.state === 'unavailable' ? liveU.reason : ''} />}
       </Group>
     <SimpleGrid cols={{ base: 2, md: 4 }} spacing="md" style={{ opacity: fresh ? 1 : 0.6 }}>
       <Tile label="Processor" value={u.cpuBusy !== null ? `${Math.round(u.cpuBusy)}% busy` : '—'} tone={warningTone(w('cpu'))}
@@ -284,12 +295,73 @@ function TopProcesses({ top, faded }: { top: ServerProcess[]; faded: boolean }) 
  * How old the Now figures are, counting up. The agent sends them about once
  * a minute, so up to a minute is as fresh as they get.
  */
-function ReportedAgo({ at, fresh }: { at: string; fresh: boolean }) {
+function ReportedAgo({ at, fresh, why }: { at: string; fresh: boolean; why: string }) {
   const t = useTicker(5_000)
   return (
-    <Text size={FS.micro} c={fresh ? 'dimmed' : 'amber.7'} title={absTime(at)} data-testid="now-reported">
+    <Text size={FS.micro} c={fresh ? 'dimmed' : 'amber.7'} title={why ? `Not live: ${why}.` : absTime(at)} data-testid="now-reported">
       Reported {spanWords(Math.max(0, t - Date.parse(at)))} ago · the agent reports about once a minute
     </Text>
+  )
+}
+
+function trimNum(v: number): string {
+  return Number.isInteger(v) ? String(v) : v.toFixed(1)
+}
+
+/**
+ * The last few minutes as they arrive, every couple of seconds, held only in
+ * this page: the history below is the stored one, a point every five minutes.
+ */
+function LiveCharts({ live: liveU, cpus }: { live: LiveUsage; cpus: number }) {
+  const s = liveU.samples
+  const times = s.map((x) => x.at)
+  const to = times[times.length - 1]!
+  // From the first sample when there are not yet five minutes of them, so the
+  // time before the page opened is not shaded as a stretch with no reports.
+  const from = Math.max(to - LIVE_WINDOW_MS, times[0]!)
+  const step = liveU.every * 1000
+  const common = { times, from, to, step, events: [] }
+  const pct = (v: number) => `${Math.round(v)}%`
+  const sum = (f: (n: { rxBps: number | null; txBps: number | null }) => number | null) =>
+    s.map((x) => (x.usage.net?.length ? x.usage.net.reduce((a, n) => a + (f(n) ?? 0), 0) * 8 : null))
+  const cpu = s.map((x) => x.usage.cpuBusy)
+  const mem = s.map((x) => (x.usage.memTotal ? ((x.usage.memTotal - x.usage.memAvailable) / x.usage.memTotal) * 100 : null))
+  const rx = sum((n) => n.rxBps)
+  const tx = sum((n) => n.txBps)
+  const netPeak = Math.max(0, ...rx.filter((v): v is number => v !== null), ...tx.filter((v): v is number => v !== null))
+  const load = s.map((x) => (x.usage.load && cpus ? x.usage.load[0] / cpus : null))
+  const last = <T,>(vs: (T | null)[]) => [...vs].reverse().find((v) => v !== null) ?? null
+  const mins = Math.max(1, Math.round((to - from) / 60_000))
+  const over = `last ${mins === 1 ? 'minute' : `${mins} minutes`}`
+  return (
+    <Card padding={0} data-testid="live-charts">
+      <Group justify="space-between" gap="sm" px="md" py="sm">
+        <Text component="h2" fw={600} size="sm" style={{ margin: 0 }}>
+          Live <Text span inherit c="dimmed" fw={400}>(the {over}, every {trimNum(liveU.every)} s)</Text>
+        </Text>
+      </Group>
+      <SimpleGrid cols={{ base: 1, lg: 2 }} spacing={0}>
+        <Chart title="Processor" testId="live-cpu" {...common} max={100} fmt={pct} threshold={90}
+          summary={last(cpu) === null ? 'not reported' : `now ${Math.round(last(cpu)!)}%`}
+          lines={[{ label: 'busy', color: C.azure, values: cpu }]} />
+        <Chart title="Memory used" testId="live-mem" {...common} max={100} fmt={pct} threshold={90}
+          summary={last(mem) === null ? 'not reported' : `now ${Math.round(last(mem)!)}%`}
+          lines={[{ label: 'memory', color: C.teal, values: mem }]} />
+        <Chart title="Network" testId="live-net" {...common} max={niceMax(Math.max(netPeak, 1) * 1.05)} fmt={bitRateShort}
+          summary={netPeak > 0 ? `all interfaces · peak ${bitRate(netPeak / 8)}` : 'not reported'}
+          lines={[{ label: 'in', color: C.teal, values: rx }, { label: 'out', color: C.sky, values: tx }]} />
+        {load.some((v) => v !== null) && (
+          <Chart title="Load per processor" testId="live-load" {...common} max={Math.max(2, niceMax(Math.max(0, ...load.filter((v): v is number => v !== null)) * 1.05))}
+            fmt={(v) => v.toFixed(v < 10 ? 1 : 0)} threshold={1} thresholdLabel="waiting above 1"
+            summary={`now ${last(load)!.toFixed(2)} per processor`}
+            lines={[{ label: '1-minute load', color: C.azure, values: load }]} />
+        )}
+      </SimpleGrid>
+      <Text size={FS.micro} c="dimmed" px="md" py="sm" lh={1.5} style={{ borderTop: '1px solid var(--color-line)' }}>
+        Straight from the agent while this page is open, and kept only here: close the page and these are gone.
+        The history below is what is stored, a point every five minutes.
+      </Text>
+    </Card>
   )
 }
 
@@ -502,7 +574,9 @@ function timeLabel(t: number, spanMs: number): string {
   const d = new Date(t)
   return spanMs > 2 * 86_400_000
     ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-    : d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleTimeString(undefined, spanMs < 3_600_000
+      ? { hour: '2-digit', minute: '2-digit', second: '2-digit' }
+      : { hour: '2-digit', minute: '2-digit' })
 }
 
 function Chart({ title, summary, lines, times, from, to, step, max, fmt, threshold, thresholdLabel, limit, events = [], testId }: {
@@ -579,7 +653,9 @@ function Chart({ title, summary, lines, times, from, to, step, max, fmt, thresho
   const hoverEvent = hover === null ? undefined
     : shownEvents.filter((e) => Math.abs(e.t - times[hover]!) <= step).sort((a, b) => Math.abs(a.t - times[hover]!) - Math.abs(b.t - times[hover]!))[0]
   const hoverText = hover === null ? null
-    : `${new Date(times[hover]!).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · ` +
+    : `${new Date(times[hover]!).toLocaleString(undefined, step < 60_000
+      ? { hour: '2-digit', minute: '2-digit', second: '2-digit' }
+      : { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · ` +
       (hoverEvent ? `${hoverEvent.summary} · ` : '') +
       lines.map((l) => `${l.label} ${l.values[hover] == null ? '—' : fmt(l.values[hover]!)}`).join(' · ')
 

@@ -326,7 +326,10 @@ func handleStream(ctx context.Context, call *Call, cfg TunnelConfig, log *slog.L
 	// Picking a held terminal back up is not a new session: it is neither
 	// turned away by an update waiting for sessions to end, nor counted
 	// again -- the shell it reattaches is already counted, held or not.
-	if call.Header.Service != "ping" && call.Header.Service != tunnel.TerminalResumeService {
+	// Live usage is not a session either: an update must not wait for
+	// someone to close a server's page.
+	if call.Header.Service != "ping" && call.Header.Service != tunnel.TerminalResumeService &&
+		call.Header.Service != tunnel.UsageLiveService {
 		if cfg.Gate != nil {
 			if why := cfg.Gate(call.Header.Service); why != "" {
 				call.Refuse(why)

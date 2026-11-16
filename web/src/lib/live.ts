@@ -2211,6 +2211,11 @@ export function alertStreamURL(): string {
   return `${BASE}/api/v1/alerts/stream${TOKEN ? `?token=${encodeURIComponent(TOKEN)}` : ''}`
 }
 
+/** The server-sent events stream of one server's usage, every couple of seconds. */
+export function usageLiveURL(assetId: string): string {
+  return `${BASE}/api/v1/assets/${encodeURIComponent(assetId)}/usage/live${TOKEN ? `?token=${encodeURIComponent(TOKEN)}` : ''}`
+}
+
 export async function consoleAlerts(unread: boolean, before?: number): Promise<AlertPage> {
   const q = new URLSearchParams()
   if (unread) q.set('unread', '1')

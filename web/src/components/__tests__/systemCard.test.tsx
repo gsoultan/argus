@@ -199,3 +199,19 @@ describe('SystemCard', () => {
     expect(uptime('2026-11-03T04:00:00Z', NOW)).toBe('1 hour')
   })
 })
+
+describe('SystemCard live', () => {
+  it('says the figures are live instead of how old they are, and does not fade them', () => {
+    renderWithProviders(<SystemCardBody asset={linux({ agentState: 'stale' })} data={report({ usageAt: '2026-11-03T04:00:00Z' })}
+      onTab={() => {}} now={NOW} live={{ state: 'live', reason: '', every: 2, samples: [] }} />)
+    expect(screen.getByTestId('usage-live').textContent).toContain('every 2 s')
+    expect(screen.queryByText(/Reported by the agent/)).toBeNull()
+    expect(screen.queryByText(/has not reported since/)).toBeNull()
+  })
+  it('keeps the reported time, with why it is not live, when live figures cannot be had', () => {
+    renderWithProviders(<SystemCardBody asset={linux()} data={report()} onTab={() => {}} now={NOW}
+      live={{ state: 'unavailable', reason: 'this agent is older than live figures; update it to see them', every: 2, samples: [] }} />)
+    expect(screen.queryByTestId('usage-live')).toBeNull()
+    expect(screen.getByText(/Reported by the agent/).getAttribute('title')).toMatch(/Not live: this agent is older/)
+  })
+})

@@ -4,6 +4,10 @@ package agent
 
 import (
 	"bufio"
+	"bytes"
+	"errors"
+	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -511,7 +515,12 @@ func readProcs(r sysRoots, pageSize int) []procCounters {
 	if err != nil {
 		return nil
 	}
-	var out []procCounters
+	out := make([]procCounters, 0, min(len(names), maxProcScan))
+	// One buffer for every file: a stat line is a few hundred bytes, and
+	// os.ReadFile would allocate and stat for each of hundreds of processes
+	// on every sample -- every two seconds while a page is watching.
+	buf := make([]byte, 4096)
+	path := make([]byte, 0, len(r.proc)+32)
 	for _, n := range names {
 		if len(out) == maxProcScan {
 			break
@@ -520,44 +529,130 @@ func readProcs(r sysRoots, pageSize int) []procCounters {
 		if err != nil || pid <= 0 {
 			continue
 		}
-		b, err := os.ReadFile(filepath.Join(r.proc, n, "stat"))
-		if err != nil {
+		path = append(append(append(path[:0], r.proc...), '/'), n...)
+		path = append(path, "/stat"...)
+		k, ok := readSmall(string(path), buf)
+		if !ok {
 			continue
 		}
-		if c, ok := parseProcStat(pid, string(b), pageSize); ok {
+		if c, ok := parseProcStatBytes(pid, buf[:k], pageSize); ok {
 			out = append(out, c)
 		}
 	}
 	return out
 }
 
+// readSmall reads a small file into buf, returning how much it read; false
+// when it could not be opened or read, or did not fit.
+func readSmall(path string, buf []byte) (int, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, false
+	}
+	defer f.Close()
+	n := 0
+	for n < len(buf) {
+		k, err := f.Read(buf[n:])
+		n += k
+		if err != nil {
+			return n, n > 0 && errors.Is(err, io.EOF)
+		}
+		if k == 0 {
+			break
+		}
+	}
+	return n, n < len(buf)
+}
+
+// parseUint reads a decimal counter without allocating.
+func parseUint(b []byte) (uint64, bool) {
+	if len(b) == 0 || len(b) > 20 {
+		return 0, false
+	}
+	var v uint64
+	for _, c := range b {
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		d := uint64(c - '0')
+		if v > (math.MaxUint64-d)/10 {
+			return 0, false
+		}
+		v = v*10 + d
+	}
+	return v, true
+}
+
 // parseProcStat reads one /proc/<pid>/stat line. The name is in brackets
 // and may itself hold spaces and brackets, so the fields are counted from
 // the last closing bracket.
 func parseProcStat(pid int, line string, pageSize int) (procCounters, bool) {
-	open, close := strings.IndexByte(line, '('), strings.LastIndexByte(line, ')')
+	return parseProcStatBytes(pid, []byte(line), pageSize)
+}
+
+// parseProcStatBytes is parseProcStat on the file's bytes, reading only the
+// four fields it needs and allocating nothing but the name.
+func parseProcStatBytes(pid int, line []byte, pageSize int) (procCounters, bool) {
+	open, close := bytes.IndexByte(line, '('), bytes.LastIndexByte(line, ')')
 	if open < 0 || close < open {
 		return procCounters{}, false
 	}
-	rest := strings.Fields(line[close+1:])
-	// rest[0] is field 3 (state): utime 14, stime 15, starttime 22, rss 24.
-	if len(rest) < 22 {
-		return procCounters{}, false
+	// Fields after the name, counted from 0 at field 3 (state): utime 14,
+	// stime 15, starttime 22, rss 24.
+	var ut, st, start uint64
+	var rss int64
+	var got int
+	field, i, rest := 0, 0, line[close+1:]
+	for i < len(rest) && got < 4 {
+		for i < len(rest) && (rest[i] == ' ' || rest[i] == '\n') {
+			i++
+		}
+		j := i
+		for j < len(rest) && rest[j] != ' ' && rest[j] != '\n' {
+			j++
+		}
+		if j == i {
+			break
+		}
+		f := rest[i:j]
+		switch field {
+		case 11, 12, 19:
+			v, ok := parseUint(f)
+			if !ok {
+				return procCounters{}, false
+			}
+			switch field {
+			case 11:
+				ut = v
+			case 12:
+				st = v
+			default:
+				start = v
+			}
+			got++
+		case 21:
+			neg := len(f) > 0 && f[0] == '-'
+			if neg {
+				f = f[1:]
+			}
+			v, ok := parseUint(f)
+			if !ok {
+				return procCounters{}, false
+			}
+			if !neg {
+				rss = int64(min(v, 1<<62))
+			}
+			got++
+		}
+		field++
+		i = j
 	}
-	num := func(i int) (uint64, bool) {
-		v, err := strconv.ParseUint(rest[i], 10, 64)
-		return v, err == nil
-	}
-	ut, ok1 := num(11)
-	st, ok2 := num(12)
-	start, ok3 := num(19)
-	rss, err := strconv.ParseInt(rest[21], 10, 64)
-	if !ok1 || !ok2 || !ok3 || err != nil {
+	if got < 4 {
 		return procCounters{}, false
 	}
 	if rss < 0 {
 		rss = 0
 	}
-	return procCounters{key: procKey{pid: pid, start: start}, name: line[open+1 : close],
+	return procCounters{key: procKey{pid: pid, start: start}, name: string(line[open+1 : close]),
 		cpu: ut + st, memory: uint64(rss) * uint64(pageSize)}, true
 }

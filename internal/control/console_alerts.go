@@ -710,4 +710,5 @@ func (h *alertHub) closeAll() {
 func (a *API) StopAlertStreams() {
 	a.alertHub.closeAll()
 	a.homeHub.closeAll()
+	a.usageLive.closeAll()
 }

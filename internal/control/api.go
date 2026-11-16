@@ -177,6 +177,9 @@ type API struct {
 	// the id each was given, so a console can switch it on and off.
 	homeHub     homeHub
 	homeStreams sync.Map // string -> *homeControl
+	// usageLive shares one live usage stream per server among its viewers;
+	// see usage_live.go.
+	usageLive usageLiveHub
 
 	// setup is the first-run page's one-time token; see setup.go.
 	setup setupGate
@@ -445,6 +448,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/assets/{id}/applications", a.getApplications)
 	mux.HandleFunc("GET /api/v1/assets/{id}/android-apps", a.getAndroidApps)
 	mux.HandleFunc("GET /api/v1/assets/{id}/system", a.getSystem)
+	mux.HandleFunc("GET /api/v1/assets/{id}/usage/live", a.getUsageLive)
 	mux.HandleFunc("PUT /api/v1/assets/{id}/assignments", a.putAssignment)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}/assignments/{email}", a.deleteAssignment)
 	mux.HandleFunc("GET /api/v1/assets/{id}/team-assignments", a.getTeamAssignments)

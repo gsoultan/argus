@@ -650,26 +650,32 @@ func (s *Store) SystemFor(ctx context.Context, id string) (ServerSystem, error) 
 	var hu HostUsage
 	if len(uRaw) > 0 && string(uRaw) != "null" && json.Unmarshal(uRaw, &hu) == nil {
 		out.Reported = true
-		disks := make([]SystemDisk, 0, len(hu.Disks))
-		for _, d := range hu.Disks {
-			disks = append(disks, SystemDisk(d))
-		}
-		net := make([]SystemNetRate, 0, len(hu.Net))
-		for _, n := range hu.Net {
-			net = append(net, SystemNetRate{Name: n.Name, RxBps: n.RxBps, TxBps: n.TxBps, SpeedMbps: n.SpeedMbps})
-		}
-		out.Usage = &SystemUsage{
-			Load: hu.Load, CPUBusy: hu.CPUBusy, MemTotal: hu.MemTotal, MemAvailable: hu.MemAvailable,
-			SwapTotal: hu.SwapTotal, SwapFree: hu.SwapFree, Disks: disks, Net: net,
-			Steal: hu.Steal, TCPConns: hu.TCPConns, Top: make([]SystemProcess, 0, len(hu.Top)),
-		}
-		for _, p := range boundedTop(hu.Top) {
-			out.Usage.Top = append(out.Usage.Top, SystemProcess(p))
-		}
+		out.Usage = systemUsageOf(hu)
 		out.UsageAt = usageAt
 		out.Warnings = LowResources(hu)
 	}
 	return out, nil
+}
+
+// systemUsageOf is a usage report as the System card shows it.
+func systemUsageOf(hu HostUsage) *SystemUsage {
+	disks := make([]SystemDisk, 0, len(hu.Disks))
+	for _, d := range hu.Disks {
+		disks = append(disks, SystemDisk(d))
+	}
+	net := make([]SystemNetRate, 0, len(hu.Net))
+	for _, n := range hu.Net {
+		net = append(net, SystemNetRate{Name: n.Name, RxBps: n.RxBps, TxBps: n.TxBps, SpeedMbps: n.SpeedMbps})
+	}
+	u := &SystemUsage{
+		Load: hu.Load, CPUBusy: hu.CPUBusy, MemTotal: hu.MemTotal, MemAvailable: hu.MemAvailable,
+		SwapTotal: hu.SwapTotal, SwapFree: hu.SwapFree, Disks: disks, Net: net,
+		Steal: hu.Steal, TCPConns: hu.TCPConns, Top: make([]SystemProcess, 0, len(hu.Top)),
+	}
+	for _, p := range boundedTop(hu.Top) {
+		u.Top = append(u.Top, SystemProcess(p))
+	}
+	return u
 }
 
 // getSystem serves GET /api/v1/assets/{id}/system. Fleet roles only, like
