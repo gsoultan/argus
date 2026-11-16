@@ -164,6 +164,18 @@ export function useCastDecoder(source: string | undefined): ReplaySource {
       }
     }
 
+    // A worker that dies -- most often out of memory on a very large
+    // recording -- sends no message at all. Without this the player stayed on
+    // "Decoding recording…" for ever.
+    w.onerror = (ev) => {
+      ev.preventDefault()
+      setState((s) => ({
+        ...s,
+        status: 'failed',
+        error: ev.message || 'the browser could not decode a recording this large',
+      }))
+    }
+
     w.postMessage({ type: 'decode', source })
     return () => {
       w.terminate()

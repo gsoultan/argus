@@ -696,6 +696,30 @@ export interface AuditPage {
   total: number | null
 }
 
+/**
+ * A response body as text, saying how much has arrived as it goes.
+ *
+ * A recording can be large, and `res.text()` says nothing until the last byte
+ * is in: the player sat on "Decoding recording…" for the whole download, which
+ * on a slow link reads as a hang.
+ */
+async function readText(res: Response, onProgress?: (received: number) => void): Promise<string> {
+  if (!onProgress || !res.body) return res.text()
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  const parts: string[] = []
+  let received = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    received += value.byteLength
+    parts.push(decoder.decode(value, { stream: true }))
+    onProgress(received)
+  }
+  parts.push(decoder.decode())
+  return parts.join('')
+}
+
 export type RecordingResult =
   | { kind: 'ok'; cast: string; verified: string }
   | { kind: 'unavailable'; reason: string }
@@ -1546,7 +1570,10 @@ export const live = {
    * The control plane's own wording is carried through rather than replaced.
    * It knows which of several things went wrong and says so precisely.
    */
-  async recording(id: string): Promise<RecordingResult | null> {
+  async recording(
+    id: string,
+    onProgress?: (received: number) => void,
+  ): Promise<RecordingResult | null> {
     if (!isConfigured()) return null
     let res: Response
     try {
@@ -1574,7 +1601,7 @@ export const live = {
     }
     return {
       kind: 'ok',
-      cast: await res.text(),
+      cast: await readText(res, onProgress),
       verified: res.headers.get('X-Argus-Chain-Verified') ?? 'unverified',
     }
   },

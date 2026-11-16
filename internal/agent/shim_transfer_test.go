@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -93,6 +94,17 @@ func TestAnUploadIsCountedNotCopiedIntoTheRecording(t *testing.T) {
 	}
 	rec, body, out := transferSession(t, "cat > /dev/null; echo deployed", payload)
 
+	// The runner's login went straight to sshd, not through Argus. It is
+	// still recorded, still marked as a bypass, and its commands still count.
+	if rec.Origin != Direct {
+		t.Errorf("origin %q; a login through sshd is a bypass", rec.Origin)
+	}
+	if flags := riskFlags(rec); !slices.Contains(flags, "bypassed-gateway") {
+		t.Errorf("risk flags %v; the console shows this as bypassed-argus", flags)
+	}
+	if rec.ChainHead == "" || rec.Path == "" {
+		t.Errorf("the bypassed session was not sealed as a recording: %+v", rec)
+	}
 	if rec.Bytes > 64<<10 {
 		t.Errorf("an 8 MB upload left a %d byte recording; it should hold the "+
 			"command and the counts, not the payload", rec.Bytes)

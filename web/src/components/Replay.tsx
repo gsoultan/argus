@@ -11,6 +11,8 @@ export interface ReplayProps {
   decoded: ReplaySource
   /** Called as playback moves, so a sibling panel can highlight the current command. */
   onTimeChange?: (t: number) => void
+  /** What to say before there is anything to decode, such as how far a download has got. */
+  waiting?: string
 }
 
 /**
@@ -31,7 +33,7 @@ export interface ReplayProps {
  * seeking is the sole operation that costs more, and the worker's keyframes
  * bound even that.
  */
-export function Replay({ decoded, onTimeChange }: ReplayProps) {
+export function Replay({ decoded, onTimeChange, waiting }: ReplayProps) {
   const [playing, setPlaying] = useState(false)
   const [time, setTime] = useState(0)
   const [speed, setSpeed] = useState<string>('2')
@@ -214,7 +216,9 @@ export function Replay({ decoded, onTimeChange }: ReplayProps) {
       <Box className="grid place-items-center" h={420} style={{ background: '#05080c' }}>
         <Stack align="center" gap="xs">
           <Loader size="sm" color="azure" />
-          <Text size="xs" c="dimmed">Decoding recording…</Text>
+          <Text size="xs" c="dimmed">
+            {status === 'idle' && waiting ? waiting : 'Decoding recording…'}
+          </Text>
           {decoded.progress > 0 && (
             <Progress value={decoded.progress * 100} size="xs" w={180} color="azure" />
           )}

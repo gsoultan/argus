@@ -105,6 +105,11 @@ function SessionDetail() {
   const [realCast, setRealCast] = useState<string | undefined>()
   const [verified, setVerified] = useState<string | null>(null)
   const [fetched, setFetched] = useState(false)
+  // How much of the recording has arrived, so a large one says so instead of
+  // sitting on "Decoding recording…".
+  const [castReceived, setCastReceived] = useState(0)
+  // A recording past REPLAY_ASK_ABOVE is only downloaded once someone asks.
+  const [loadLarge, setLoadLarge] = useState(false)
   const castUrl = new URLSearchParams(window.location.search).get('cast')
 
   // ?rdp=<url> loads a display stream straight from a URL, the way ?cast= does
@@ -174,8 +179,10 @@ function SessionDetail() {
       return () => { cancelled = true }
     }
     if (!session) return
+    if (tooLargeToAutoload(session) && !loadLarge) return
+    setCastReceived(0)
     void live
-      .recording(session.id)
+      .recording(session.id, (n) => { if (!cancelled) setCastReceived(n) })
       .then((r) => {
         if (cancelled) return
         if (r?.kind === 'ok') { setRealCast(r.cast); setVerified(r.verified); setCastError(undefined) }
@@ -190,7 +197,7 @@ function SessionDetail() {
     // hands back a new object every few seconds, and each one refetched the
     // recording.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [castUrl, session?.id, session?.state, session?.recordingKey])
+  }, [castUrl, session?.id, session?.state, session?.recordingKey, loadLarge])
 
   // A database session's recording is statements, not a cast; the terminal
   // decoder never sees it.
@@ -513,9 +520,29 @@ function SessionDetail() {
                     description={castError}
                   />
                 </Box>
+              ) : !castUrl && tooLargeToAutoload(session) && !loadLarge ? (
+                // Asked, not fetched: the whole recording comes down into this
+                // tab before a frame can play, and at this size that is
+                // minutes of download and hundreds of megabytes of memory.
+                <Box p="lg">
+                  <EmptyState
+                    icon={IconFileOff}
+                    title={`This recording is ${bytes(session.recordingBytes)}`}
+                    description="That is far larger than a terminal session usually is, which almost always means a file was copied through it. Replaying it downloads all of it into this browser first. The commands the session ran are in the recording either way."
+                    action={
+                      <Button size="xs" variant="light" onClick={() => setLoadLarge(true)}>
+                        Download and replay ({bytes(session.recordingBytes)})
+                      </Button>
+                    }
+                  />
+                </Box>
               ) : (
                 <Suspense fallback={<PlayerFallback label="Loading player…" />}>
-                  <Replay decoded={decoded} onTimeChange={setCursor} />
+                  <Replay
+                    decoded={decoded}
+                    onTimeChange={setCursor}
+                    waiting={castWaiting(castReceived, session.recordingBytes)}
+                  />
                 </Suspense>
               )}
             </Card>
@@ -649,7 +676,15 @@ function SessionDetail() {
                         </Box>
                       )
                     })}
-                    {commands.length === 0 && (
+                    {commands.length === 0 && !isPG && decoded.status !== 'ready' && (
+                      // Not loaded is not the same as nothing ran: the
+                      // commands are in the recording, which has not been read.
+                      <EmptyState
+                        compact
+                        title="Commands appear once the recording is loaded."
+                      />
+                    )}
+                    {commands.length === 0 && (isPG || decoded.status === 'ready') && (
                       <EmptyState
                         compact
                         title="No commands detected."
@@ -806,6 +841,28 @@ function renderExec(e: KernelExec): string {
     .map((a) => (a === '' ? "''" : /[\s'"\\$`]/.test(a) ? `'${a.replaceAll("'", `'\\''`)}'` : a))
     .join(' ')
   return e.truncated ? `${rendered} …[truncated]` : rendered
+}
+
+/**
+ * Above this a terminal recording is downloaded only when someone asks.
+ *
+ * A typed session of a working day is a few megabytes; one this large is
+ * nearly always a file transfer, and loading it unasked froze the page.
+ */
+const REPLAY_ASK_ABOVE = 32 * 1024 ** 2
+
+function tooLargeToAutoload(session: Pick<Session, 'recordingBytes' | 'protocol'>): boolean {
+  // Only a real recording: the demo build's is generated here, not downloaded.
+  return isConfigured() && session.protocol !== 'rdp' && !isStatementProtocol(session.protocol) &&
+    (session.recordingBytes ?? 0) > REPLAY_ASK_ABOVE
+}
+
+/** What the terminal player says while the recording downloads. */
+function castWaiting(received: number, total: number): string | undefined {
+  if (received === 0) return undefined
+  return total > 0
+    ? `Loading the recording… ${bytes(received)} of ${bytes(total)}`
+    : `Loading the recording… ${bytes(received)}`
 }
 
 /**
