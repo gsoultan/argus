@@ -57,6 +57,9 @@ const session = (/** @type {Record<string, unknown>} */ o) => ({
   riskFlags: [], endedAt: null, endInferred: false, ...o,
 })
 
+/** How often the large recording was downloaded, for the test that it is not unasked. */
+let HUGE_FETCHES = 0
+
 const SESSIONS = [
   session({ id: 's-live-1', state: 'active', startedAt: ago(9), lastReportedAt: ago(0), silent: false }),
   session({ id: 's-live-2', state: 'active', startedAt: ago(4), lastReportedAt: ago(0), silent: false }),
@@ -76,6 +79,12 @@ const SESSIONS = [
   // Ended at a time nobody recorded: `endedAt` was once written only inside the
   // seal branch, so a terminated session with no recorder kept a null. 26 of
   // these in dev, every one rendering as still running.
+  // A runner's deploy copied through a direct login: the recording is
+  // hundreds of megabytes, almost all of it the file. The player asks before
+  // it downloads one this size.
+  session({ id: 's-huge-transfer', state: 'closed', origin: 'direct', fidelity: 'ebpf', principal: 'sys-admin', clientIp: '10.0.0.167', startedAt: ago(20_000), endedAt: ago(19_999), lastReportedAt: ago(19_999), silent: false, recordingBytes: 269_400_000, riskFlags: ['bypassed-gateway'], recordingKey: 'recordings/2026-11-16/huge.cast' }),
+  // An admin removes this one's recording in large-recording.spec.ts.
+  session({ id: 's-removable', state: 'closed', origin: 'direct', fidelity: 'ebpf', principal: 'sys-admin', assetHostname: 'imp-crm', clientIp: '10.0.0.167', startedAt: ago(21_000), endedAt: ago(20_999), lastReportedAt: ago(20_999), silent: false, recordingBytes: 269_400_000, riskFlags: ['bypassed-gateway'], recordingKey: 'recordings/2026-11-16/removable.cast' }),
   session({ id: 's-unknown-end', state: 'terminated', startedAt: ago(18_600), endedAt: null, lastReportedAt: ago(18_500), silent: false }),
 ]
 
@@ -350,6 +359,18 @@ const server = createServer(async (req, res) => {
     return json(res, 200, { authenticated: true, email: 'dev@northwind.id', role: to.role },
       { 'set-cookie': `argus_org=${to.slug}; Path=/; Max-Age=28800; HttpOnly; SameSite=Lax` })
   }
+  // For the large-recording test: whether the player downloaded unasked.
+  if (path === '/__stub/huge-fetches') return json(res, 200, { count: HUGE_FETCHES })
+  // Each browser project removes s-removable once against this one stub, so
+  // the test puts its recording back before it starts.
+  if (path === '/__stub/restore-removable' && req.method === 'POST') {
+    const target = /** @type {any} */ (SESSIONS.find((/** @type {any} */ v) => v.id === 's-removable'))
+    Object.assign(target, {
+      recordingKey: 'recordings/2026-11-16/removable.cast', recordingRemovedAt: undefined,
+      recordingRemovedBy: undefined, recordingRemovedReason: undefined,
+    })
+    return json(res, 200, { restored: true })
+  }
   if (path.startsWith('/api/')) {
     if (!signedIn(req)) return json(res, 401, { error: 'unauthorized' })
     if (orgOf(req).slug !== 'default') {
@@ -503,6 +524,23 @@ const server = createServer(async (req, res) => {
     // that produced it -- 18 sessions in the dev control plane are in exactly
     // this state. The control plane's own wording, verbatim, because the
     // console repeats it rather than inventing its own.
+    if (path === '/api/v1/sessions/s-removable/recording' && req.method === 'DELETE') {
+      const body = await readBody(req)
+      const target = /** @type {any} */ (SESSIONS.find((/** @type {any} */ v) => v.id === 's-removable'))
+      if (String(body.confirm ?? '').toLowerCase() !== target.assetHostname) {
+        return json(res, 400, { error: `type the host name, ${target.assetHostname}, to confirm` })
+      }
+      Object.assign(target, {
+        recordingKey: null, recordingRemovedAt: new Date().toISOString(),
+        recordingRemovedBy: 'dev@northwind.id', recordingRemovedReason: body.reason,
+      })
+      return json(res, 200, { session: target.id, removed: true, by: 'dev@northwind.id' })
+    }
+    if (path === '/api/v1/sessions/s-huge-transfer/recording') {
+      HUGE_FETCHES += 1
+      res.writeHead(200, { 'content-type': 'application/x-asciicast', 'x-argus-chain-verified': 'unverified' })
+      return res.end('{"version":2,"width":80,"height":24}\n[0.1,"i","scp -t /srv/app\\r\\n"]\n[0.2,"o","deployed\\r\\n"]\n')
+    }
     if (/^\/api\/v1\/sessions\/[^/]+\/recording$/.test(path)) {
       return json(res, 404, {
         error: 'recording is not in object storage; it exists only on the host that produced it',

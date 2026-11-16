@@ -75,6 +75,9 @@ type API struct {
 	// storeRecording replaces recordings.Upload for a shipped recording. Nil
 	// uses recordings; set by tests that have no object store.
 	storeRecording recordingUploader
+	// removeObject replaces the storage delete when a recording is removed.
+	// Nil uses recordings; set by tests that have no object store.
+	removeObject recordingRemover
 
 	// jobs is the backups and restores running through this replica.
 	jobs backupJobs
@@ -474,6 +477,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/discovered/{hostname}/enrol", a.postEnrol)
 	mux.HandleFunc("POST /api/v1/discovered/{hostname}/ignore", a.postIgnoreHost)
 	mux.HandleFunc("GET /api/v1/sessions/{id}/recording", a.user(a.getRecording))
+	mux.HandleFunc("DELETE /api/v1/sessions/{id}/recording", a.deleteRecording)
 	mux.HandleFunc("GET /api/v1/sessions/{id}/rdp-replay", a.user(a.getRDPReplay))
 	mux.HandleFunc("GET /api/v1/sessions/{id}/recording/link", a.user(a.presignRecording))
 	mux.HandleFunc("GET /api/v1/policy", a.user(a.getPolicy))

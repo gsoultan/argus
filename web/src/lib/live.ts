@@ -696,6 +696,30 @@ export interface AuditPage {
   total: number | null
 }
 
+/**
+ * A response body as text, saying how much has arrived as it goes.
+ *
+ * A recording can be large, and `res.text()` says nothing until the last byte
+ * is in: the player sat on "Decoding recording…" for the whole download, which
+ * on a slow link reads as a hang.
+ */
+async function readText(res: Response, onProgress?: (received: number) => void): Promise<string> {
+  if (!onProgress || !res.body) return res.text()
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  const parts: string[] = []
+  let received = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    received += value.byteLength
+    parts.push(decoder.decode(value, { stream: true }))
+    onProgress(received)
+  }
+  parts.push(decoder.decode())
+  return parts.join('')
+}
+
 export type RecordingResult =
   | { kind: 'ok'; cast: string; verified: string }
   | { kind: 'unavailable'; reason: string }
@@ -1546,7 +1570,10 @@ export const live = {
    * The control plane's own wording is carried through rather than replaced.
    * It knows which of several things went wrong and says so precisely.
    */
-  async recording(id: string): Promise<RecordingResult | null> {
+  async recording(
+    id: string,
+    onProgress?: (received: number) => void,
+  ): Promise<RecordingResult | null> {
     if (!isConfigured()) return null
     let res: Response
     try {
@@ -1574,7 +1601,7 @@ export const live = {
     }
     return {
       kind: 'ok',
-      cast: await res.text(),
+      cast: await readText(res, onProgress),
       verified: res.headers.get('X-Argus-Chain-Verified') ?? 'unverified',
     }
   },
@@ -1739,6 +1766,20 @@ export async function changeApproval(dbId: string): Promise<ChangeApproval> {
 /** How an ask to run statements stands. */
 export async function statementAsk(dbId: string, requestId: string): Promise<StatementAsk> {
   return get<StatementAsk>(`/api/v1/databases/${encodeURIComponent(dbId)}/statements/${encodeURIComponent(requestId)}`)
+}
+
+/**
+ * Removes a session's stored recording. Admins only; the host name is typed
+ * back and a reason given, and both the session and the audit log keep them.
+ * `fileNotDeleted` says the session no longer has the recording but storage
+ * would not delete the file.
+ */
+export async function removeRecording(
+  id: string,
+  confirm: string,
+  reason: string,
+): Promise<{ removed: boolean; fileNotDeleted?: string }> {
+  return send('DELETE', `/api/v1/sessions/${encodeURIComponent(id)}/recording`, { confirm, reason })
 }
 
 export async function deleteDatabase(id: string): Promise<void> {

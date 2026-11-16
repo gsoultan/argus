@@ -87,6 +87,13 @@ func (a *API) putRecording(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, "the session's chain head is not this one yet")
 		return
 	}
+	if sess.RecordingRemovedAt != nil {
+		// Removed by an admin after an earlier copy was stored. Answered as
+		// done, so the agent lets go of its copy rather than shipping it
+		// again and again; storing it would undo the removal.
+		writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
+		return
+	}
 	if sess.RecordingKey != nil && *sess.RecordingKey != "" {
 		// Already stored: a retry after a reply that was lost on the way.
 		writeJSON(w, http.StatusOK, map[string]string{"status": "stored", "key": *sess.RecordingKey})

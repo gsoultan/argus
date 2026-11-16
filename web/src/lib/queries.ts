@@ -51,6 +51,7 @@ import {
   requestControlUpdate as liveRequestControlUpdate,
   cancelControlUpdate as liveCancelControlUpdate,
   checkControlUpdate as liveCheckControlUpdate,
+  removeRecording as removeRecordingLive,
 } from '~/lib/live'
 import type { AccessRequest, AssetInput, BackupsView, DirectSsh, PersonOwnSetting, Session, TeamAccess, User } from '~/types/domain'
 
@@ -218,6 +219,18 @@ export function useRotateCredential() {
       void qc.invalidateQueries({ queryKey: ['assets'] })
       void qc.invalidateQueries({ queryKey: ['asset'] })
       void qc.invalidateQueries({ queryKey: qk.stats })
+    },
+  })
+}
+
+export function useRemoveRecording() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { id: string; confirm: string; reason: string }) =>
+      removeRecordingLive(v.id, v.confirm, v.reason),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['sessions'] })
+      void qc.invalidateQueries({ queryKey: ['session'] })
     },
   })
 }

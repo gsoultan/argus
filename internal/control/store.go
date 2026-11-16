@@ -254,6 +254,14 @@ type Session struct {
 	// DatabaseID is set on a database session.
 	DatabaseID *string `json:"databaseId,omitempty"`
 
+	// RecordingRemovedAt, RecordingRemovedBy and RecordingRemovedReason say
+	// that an admin removed this session's stored recording to free space.
+	// The session itself stays. Read-only: no report sets them, only
+	// DELETE /api/v1/sessions/{id}/recording.
+	RecordingRemovedAt     *time.Time `json:"recordingRemovedAt,omitempty"`
+	RecordingRemovedBy     *string    `json:"recordingRemovedBy,omitempty"`
+	RecordingRemovedReason *string    `json:"recordingRemovedReason,omitempty"`
+
 	// LastReportedAt is when a reporter last said this session existed, and
 	// Silent is whether that was long enough ago to stop believing it.
 	//
@@ -434,7 +442,10 @@ func (s *Store) RecordSession(ctx context.Context, in Session) (created bool, er
 			chain_head      = COALESCE(EXCLUDED.chain_head, sessions.chain_head),
 			risk_flags      = CASE WHEN EXCLUDED.state = 'active' AND sessions.state <> 'active'
 			                       THEN sessions.risk_flags ELSE EXCLUDED.risk_flags END,
-			recording_key   = COALESCE(EXCLUDED.recording_key, sessions.recording_key),
+			-- A recording an admin removed stays removed: a late or repeated
+			-- report naming its old key must not point the session back at it.
+			recording_key   = CASE WHEN sessions.recording_removed_at IS NOT NULL THEN NULL
+			                       ELSE COALESCE(EXCLUDED.recording_key, sessions.recording_key) END,
 			-- COALESCE, not EXCLUDED: a later report that omits the reason must
 			-- not erase why a session was stopped.
 			terminated_by      = COALESCE(EXCLUDED.terminated_by, sessions.terminated_by),
@@ -579,6 +590,18 @@ func sessionFromRow(r *session.Row) Session {
 	if r.TerminationReason.Valid {
 		v.TerminationReason = &r.TerminationReason.V
 	}
+	// A removed recording, so the list says so rather than calling it
+	// "not on the control plane yet", which would send someone waiting for
+	// an upload that is never coming.
+	if r.RecordingRemovedAt.Valid {
+		v.RecordingRemovedAt = &r.RecordingRemovedAt.V
+	}
+	if r.RecordingRemovedBy.Valid {
+		v.RecordingRemovedBy = &r.RecordingRemovedBy.V
+	}
+	if r.RecordingRemovedReason.Valid {
+		v.RecordingRemovedReason = &r.RecordingRemovedReason.V
+	}
 	v.LastReportedAt = r.LastReportedAt
 	v.Silent = silent(v.State, v.LastReportedAt)
 	v.EndInferred = r.EndInferred
@@ -594,14 +617,16 @@ func (s *Store) Session(ctx context.Context, id string) (*Session, error) {
 		       client_ip, fidelity, recording_bytes, command_count, exit_code,
 		       chain_head, risk_flags, reported_by, recording_key,
 		       terminated_by, termination_reason, last_reported_at, end_inferred,
-		       kind, database_id::text
+		       kind, database_id::text,
+		       recording_removed_at, recording_removed_by, recording_removed_reason
 		FROM sessions WHERE id = $1`, id).Scan(
 		&v.ID, &v.UserEmail, &v.AssetID, &v.AssetHostname, &v.Principal,
 		&v.Protocol, &v.Origin, &v.OriginReason, &v.State, &v.StartedAt,
 		&v.EndedAt, &v.ClientIP, &v.Fidelity, &v.RecordingBytes,
 		&v.CommandCount, &v.ExitCode, &v.ChainHead, &v.RiskFlags, &v.ReportedBy,
 		&v.RecordingKey, &v.TerminatedBy, &v.TerminationReason, &v.LastReportedAt,
-		&v.EndInferred, &v.Kind, &v.DatabaseID)
+		&v.EndInferred, &v.Kind, &v.DatabaseID,
+		&v.RecordingRemovedAt, &v.RecordingRemovedBy, &v.RecordingRemovedReason)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}

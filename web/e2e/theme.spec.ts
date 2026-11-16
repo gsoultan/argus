@@ -60,6 +60,10 @@ for (const colorScheme of ['light', 'dark'] as const) {
       found = (await page.getByText('Command timeline').count()) > 0
     }
     expect(found, 'no session in the fixture has a command timeline').toBe(true)
+    // The commands are read from the recording, which decodes after the card
+    // renders: measure them once they are there, not the empty card before.
+    await expect(page.locator('.mantine-Card-root', { hasText: 'Command timeline' })
+      .locator('.mantine-Text-root[style*="overflow-wrap"]').first()).toBeVisible()
 
     const ratios = await page.evaluate(() => {
       const parse = (c: string) => (c.match(/[\d.]+/g) ?? []).map(Number)

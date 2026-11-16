@@ -785,6 +785,13 @@ export interface Session {
   fidelity: RecordingFidelity
   /** Bytes of recorded PTY output. */
   recordingBytes: number
+  /**
+   * Set when an admin removed the stored recording to free space. The session
+   * stays; the recording does not come back.
+   */
+  recordingRemovedAt?: ISOTime | null
+  recordingRemovedBy?: string | null
+  recordingRemovedReason?: string | null
   /** Populated for ebpf fidelity; the count of observed execve events. */
   commandCount: number | null
   /** Set when this session was unlocked by an approved access request. */

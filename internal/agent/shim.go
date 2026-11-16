@@ -18,6 +18,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/creack/pty"
 	"golang.org/x/sys/unix"
@@ -559,6 +560,15 @@ func findSFTPServer() (string, error) {
 
 // execWithoutPTY handles `ssh host cmd` and subsystems, which have no terminal.
 func execWithoutPTY(cmd *exec.Cmd, st *stream, origCmd string) int {
+	return runWithoutPTY(cmd, st, origCmd, os.Stdin, os.Stdout, os.Stderr)
+}
+
+// runWithoutPTY is execWithoutPTY with the session's ends passed in, so a
+// test can feed it a transfer.
+//
+// What it records is the command, the text the session exchanged, and how
+// many bytes went each way -- not the files themselves. See transferLog.
+func runWithoutPTY(cmd *exec.Cmd, st *stream, origCmd string, in io.Reader, out, errOut io.Writer) int {
 	if st != nil && origCmd != "" {
 		// Record the command itself; without a PTY there is no echo to capture.
 		st.frame("i", []byte(origCmd+"\r\n"))
@@ -577,8 +587,14 @@ func execWithoutPTY(cmd *exec.Cmd, st *stream, origCmd string) int {
 		return 1
 	}
 	if err := cmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "argus: %v\n", err)
+		fmt.Fprintf(errOut, "argus: %v\n", err)
 		return 1
+	}
+
+	var sent, received *transferLog
+	if st != nil {
+		sent, received = newTransferLog(st, "i", "sent to the server"),
+			newTransferLog(st, "o", "sent back by the server")
 	}
 
 	// Only stdout and stderr gate completion.
@@ -589,26 +605,187 @@ func execWithoutPTY(cmd *exec.Cmd, st *stream, origCmd string) int {
 	// best-effort and ends when the command does.
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); tee(stdout, os.Stdout, st, "o") }()
-	go func() { defer wg.Done(); tee(stderr, os.Stderr, st, "o") }()
+	go func() { defer wg.Done(); tee(stdout, out, received) }()
+	go func() { defer wg.Done(); tee(stderr, errOut, received) }()
 
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		defer stdin.Close()
-		tee(os.Stdin, stdin, st, "i")
+		tee(in, stdin, sent)
 	}()
 
 	wg.Wait()
-	return waitCode(cmd)
+	code := waitCode(cmd)
+	if st != nil {
+		// A moment for the last of the input to be counted: an upload has
+		// normally finished by the time the command exits, and a client that
+		// holds stdin open must not hold the recording's end.
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+		}
+		sent.summarise()
+		received.summarise()
+	}
+	return code
 }
 
-func tee(src io.Reader, dst io.Writer, st *stream, kind string) {
+// transferKeep is how much text one direction of a session without a terminal
+// keeps in its recording. A script piped to `bash -s`, a command's output and
+// an error message all fit many times over; a deploy's payload does not.
+const transferKeep = 1 << 20
+
+// transferLog decides what one direction of a session without a terminal
+// puts in the recording.
+//
+// Before this, every byte went in. A CI runner that copied a 100 MB build to
+// a server left a recording of 257 MB for a six-second session: the recording
+// is JSON text, and binary data does not survive being written as text --
+// each byte that is not valid UTF-8 became a three-byte replacement character
+// and each control byte a six-byte escape. So the file was two and a half
+// times the transfer and could not even give the transfer back.
+//
+// The evidence a transfer leaves is who ran what, when, from where, and how
+// much moved. The command line is recorded, the kernel's list of what ran is
+// recorded beside it, text is kept up to transferKeep, and from the first
+// binary byte on the direction is counted rather than copied. The totals go
+// into the recording at the end, inside the hash chain like everything else.
+type transferLog struct {
+	st   *stream
+	kind string
+	what string
+
+	mu      sync.Mutex
+	total   int64
+	kept    int64
+	binary  bool
+	full    bool
+	partial []byte // the start of a character a read split
+}
+
+func newTransferLog(st *stream, kind, what string) *transferLog {
+	return &transferLog{st: st, kind: kind, what: what}
+}
+
+// write records what it should of one read.
+func (t *transferLog) write(p []byte) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.total += int64(len(p))
+	if t.binary || t.full {
+		return
+	}
+	buf := p
+	if len(t.partial) > 0 {
+		buf = append(append([]byte(nil), t.partial...), p...)
+		t.partial = nil
+	}
+	text, rest, binary := splitText(buf)
+	if room := transferKeep - t.kept; int64(len(text)) > room {
+		text = text[:runeStart(text, int(room))]
+		t.full = true
+	}
+	if len(text) > 0 {
+		t.st.frame(t.kind, text)
+		t.kept += int64(len(text))
+	}
+	switch {
+	case binary:
+		t.binary = true
+		t.st.frame("o", []byte(fmt.Sprintf("\r\n[argus: binary data %s from here on "+
+			"is counted, not kept]\r\n", t.what)))
+	case t.full:
+		t.st.frame("o", []byte(fmt.Sprintf("\r\n[argus: text %s past %s is counted, "+
+			"not kept]\r\n", t.what, sizeWord(transferKeep))))
+	default:
+		t.partial = append(t.partial, rest...)
+	}
+}
+
+// summarise puts the direction's total into the recording, when any of it
+// was left out.
+func (t *transferLog) summarise() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.binary && !t.full {
+		return
+	}
+	kept := "none of it is in this recording"
+	if t.kept > 0 {
+		kept = fmt.Sprintf("the first %d bytes are in this recording", t.kept)
+	}
+	t.st.frame("o", []byte(fmt.Sprintf("\r\n[argus: %d bytes %s (%s); %s]\r\n",
+		t.total, t.what, sizeWord(t.total), kept)))
+}
+
+// splitText returns the longest start of p that is text, what is left over
+// when that is only a character a read split in two, and whether p holds
+// binary data. Text is valid UTF-8 with no NUL.
+func splitText(p []byte) (text, rest []byte, binary bool) {
+	for i := 0; i < len(p); {
+		b := p[i]
+		if b == 0 {
+			return p[:i], nil, true
+		}
+		if b < utf8.RuneSelf {
+			i++
+			continue
+		}
+		r, size := utf8.DecodeRune(p[i:])
+		if r == utf8.RuneError && size <= 1 {
+			if !utf8.FullRune(p[i:]) {
+				// The read ended part way through a character.
+				return p[:i], p[i:], false
+			}
+			return p[:i], nil, true
+		}
+		i += size
+	}
+	return p, nil, false
+}
+
+// runeStart moves n back to the start of the character it falls in, so text
+// cut at the limit is still valid UTF-8.
+func runeStart(p []byte, n int) int {
+	if n <= 0 {
+		return 0
+	}
+	if n >= len(p) {
+		return len(p)
+	}
+	for n > 0 && !utf8.RuneStart(p[n]) {
+		n--
+	}
+	return n
+}
+
+// sizeWord is a byte count as a person reads it.
+func sizeWord(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+func tee(src io.Reader, dst io.Writer, log *transferLog) {
 	buf := make([]byte, 32*1024)
 	for {
 		n, err := src.Read(buf)
 		if n > 0 {
-			if st != nil {
-				st.frame(kind, buf[:n])
-			}
+			log.write(buf[:n])
 			if _, werr := dst.Write(buf[:n]); werr != nil {
 				return
 			}

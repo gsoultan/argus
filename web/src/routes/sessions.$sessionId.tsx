@@ -9,7 +9,7 @@ import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import {
   IconAlertTriangle, IconDownload, IconEye, IconFileOff, IconInfoCircle, IconLink,
-  IconListDetails, IconPlayerStop, IconShieldCheck, IconTerminal2,
+  IconListDetails, IconPlayerStop, IconShieldCheck, IconTerminal2, IconTrash,
 } from '@tabler/icons-react'
 import { EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page'
 import { ButtonLink } from '~/components/links'
@@ -24,6 +24,10 @@ import { PlayerFallback } from '~/components/PlayerFallback'
  * reachable only from a modal on an active session. Importing all four at
  * module scope meant every visit paid for all of them.
  */
+// Only an admin who opens it needs it, so it stays out of the page's bundle.
+const RemoveRecordingDialog = lazy(() =>
+  import('~/components/RemoveRecordingDialog').then((m) => ({ default: m.RemoveRecordingDialog })),
+)
 const Replay = lazy(() =>
   import('~/components/Replay').then((m) => ({ default: m.Replay })),
 )
@@ -53,7 +57,7 @@ import { isStatementProtocol } from '~/lib/engines'
 import { notifyOk } from '~/lib/notify'
 import type { ReplayActivity, Session } from '~/types/domain'
 import type { KernelExec } from '~/lib/castDecode'
-import { sessionQuery, useTerminateSession } from '~/lib/queries'
+import { meQuery, sessionQuery, useTerminateSession } from '~/lib/queries'
 import { isConfigured, live, shadowTicket, watchEndpoint } from '~/lib/live'
 import { useCastDecoder } from '~/lib/useWorkers'
 
@@ -76,10 +80,13 @@ function SessionDetail() {
     refetchInterval: (q) => {
       const s = q.state.data
       if (s?.state === 'active') return 5_000
-      return s && !s.recordingKey ? 10_000 : false
+      // A removed recording is not on its way.
+      return s && !s.recordingKey && !s.recordingRemovedAt ? 10_000 : false
     },
   })
   const terminate = useTerminateSession()
+  const { data: me } = useQuery(meQuery())
+  const [removeOpen, removeDialog] = useDisclosure(false)
   const [confirmOpen, confirm] = useDisclosure(false)
   const [shadowOpen, shadow] = useDisclosure(false)
   const [shadowError, setShadowError] = useState<string>()
@@ -105,6 +112,11 @@ function SessionDetail() {
   const [realCast, setRealCast] = useState<string | undefined>()
   const [verified, setVerified] = useState<string | null>(null)
   const [fetched, setFetched] = useState(false)
+  // How much of the recording has arrived, so a large one says so instead of
+  // sitting on "Decoding recording…".
+  const [castReceived, setCastReceived] = useState(0)
+  // A recording past REPLAY_ASK_ABOVE is only downloaded once someone asks.
+  const [loadLarge, setLoadLarge] = useState(false)
   const castUrl = new URLSearchParams(window.location.search).get('cast')
 
   // ?rdp=<url> loads a display stream straight from a URL, the way ?cast= does
@@ -174,8 +186,12 @@ function SessionDetail() {
       return () => { cancelled = true }
     }
     if (!session) return
+    // Nothing to fetch: the page says who removed it and why.
+    if (session.recordingRemovedAt) { setRealCast(undefined); setFetched(true); return }
+    if (tooLargeToAutoload(session) && !loadLarge) return
+    setCastReceived(0)
     void live
-      .recording(session.id)
+      .recording(session.id, (n) => { if (!cancelled) setCastReceived(n) })
       .then((r) => {
         if (cancelled) return
         if (r?.kind === 'ok') { setRealCast(r.cast); setVerified(r.verified); setCastError(undefined) }
@@ -190,7 +206,7 @@ function SessionDetail() {
     // hands back a new object every few seconds, and each one refetched the
     // recording.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [castUrl, session?.id, session?.state, session?.recordingKey])
+  }, [castUrl, session?.id, session?.state, session?.recordingKey, session?.recordingRemovedAt, loadLarge])
 
   // A database session's recording is statements, not a cast; the terminal
   // decoder never sees it.
@@ -212,6 +228,7 @@ function SessionDetail() {
     // a fiction with nothing on the page saying so. The RDP path on this same
     // page has always refused to do this; the terminal path was the outlier.
     if (castError) return undefined
+    if (session?.recordingRemovedAt) return undefined
     return session
       ? buildCast(session.assetHostname, session.principal, session.startedAt,
           session.fidelity === 'ebpf' ? 'ebpf' : 'pty')
@@ -245,6 +262,13 @@ function SessionDetail() {
   }, [decoded.execs, decoded.heuristicCommands])
 
   const kernelObserved = decoded.execs.length > 0
+
+  // Admins and owners, for an ended session whose recording is stored here.
+  // The control plane checks all of it again; this only keeps the button off
+  // pages where it would be refused.
+  const canRemoveRecording =
+    isConfigured() && (me?.role === 'admin' || me?.role === 'owner') &&
+    !!session && session.state !== 'active' && !!session.recordingKey && !session.recordingRemovedAt
 
   if (!session) {
     return (
@@ -370,6 +394,16 @@ function SessionDetail() {
                 onClick={shadow.open}
               >
                 Watch live
+              </Button>
+            )}
+            {canRemoveRecording && (
+              <Button
+                color="rose"
+                variant="light"
+                leftSection={<IconTrash size={14} />}
+                onClick={removeDialog.open}
+              >
+                Remove recording
               </Button>
             )}
             {session.state === 'active' && (
@@ -500,6 +534,14 @@ function SessionDetail() {
                     </Text>
                   </Box>
                 )
+              ) : session.recordingRemovedAt ? (
+                <Box p="lg">
+                  <EmptyState
+                    icon={IconTrash}
+                    title="This recording was removed"
+                    description={removedWords(session)}
+                  />
+                </Box>
               ) : castError ? (
                 // In the control plane's own words. It knows which of several
                 // things went wrong -- an artefact still on the gateway, a
@@ -513,9 +555,29 @@ function SessionDetail() {
                     description={castError}
                   />
                 </Box>
+              ) : !castUrl && tooLargeToAutoload(session) && !loadLarge ? (
+                // Asked, not fetched: the whole recording comes down into this
+                // tab before a frame can play, and at this size that is
+                // minutes of download and hundreds of megabytes of memory.
+                <Box p="lg">
+                  <EmptyState
+                    icon={IconFileOff}
+                    title={`This recording is ${bytes(session.recordingBytes)}`}
+                    description="That is far larger than a terminal session usually is, which almost always means a file was copied through it. Replaying it downloads all of it into this browser first. The commands the session ran are in the recording either way."
+                    action={
+                      <Button size="xs" variant="light" onClick={() => setLoadLarge(true)}>
+                        Download and replay ({bytes(session.recordingBytes)})
+                      </Button>
+                    }
+                  />
+                </Box>
               ) : (
                 <Suspense fallback={<PlayerFallback label="Loading player…" />}>
-                  <Replay decoded={decoded} onTimeChange={setCursor} />
+                  <Replay
+                    decoded={decoded}
+                    onTimeChange={setCursor}
+                    waiting={castWaiting(castReceived, session.recordingBytes)}
+                  />
                 </Suspense>
               )}
             </Card>
@@ -649,7 +711,15 @@ function SessionDetail() {
                         </Box>
                       )
                     })}
-                    {commands.length === 0 && (
+                    {commands.length === 0 && !isPG && decoded.status !== 'ready' && (
+                      // Not loaded is not the same as nothing ran: the
+                      // commands are in the recording, which has not been read.
+                      <EmptyState
+                        compact
+                        title="Commands appear once the recording is loaded."
+                      />
+                    )}
+                    {commands.length === 0 && (isPG || decoded.status === 'ready') && (
                       <EmptyState
                         compact
                         title="No commands detected."
@@ -747,6 +817,12 @@ function SessionDetail() {
         )}
       </Modal>
 
+      {removeOpen && (
+        <Suspense fallback={null}>
+          <RemoveRecordingDialog session={session} onClose={removeDialog.close} />
+        </Suspense>
+      )}
+
       <Modal opened={confirmOpen} onClose={confirm.close} title="Terminate session" size="md">
         <Alert color="rose" icon={<IconAlertTriangle size={16} />} mb="md">
           <Text size={FS.body} lh={1.5}>
@@ -806,6 +882,39 @@ function renderExec(e: KernelExec): string {
     .map((a) => (a === '' ? "''" : /[\s'"\\$`]/.test(a) ? `'${a.replaceAll("'", `'\\''`)}'` : a))
     .join(' ')
   return e.truncated ? `${rendered} …[truncated]` : rendered
+}
+
+/** Who removed a session's recording, when and why. */
+function removedWords(s: Pick<Session, 'recordingRemovedAt' | 'recordingRemovedBy' | 'recordingRemovedReason'>): string {
+  let out = 'Removed'
+  if (s.recordingRemovedBy) out += ` by ${s.recordingRemovedBy}`
+  if (s.recordingRemovedAt) out += ` on ${absTime(s.recordingRemovedAt)}`
+  out += '. The session record, its chain head and the audit log entry remain.'
+  if (s.recordingRemovedReason) out += ` Reason: ${s.recordingRemovedReason}`
+  return out
+}
+
+/**
+ * Above this a terminal recording is downloaded only when someone asks.
+ *
+ * A typed session of a working day is a few megabytes; one this large is
+ * nearly always a file transfer, and loading it unasked froze the page.
+ */
+const REPLAY_ASK_ABOVE = 32 * 1024 ** 2
+
+function tooLargeToAutoload(session: Pick<Session, 'recordingBytes' | 'protocol' | 'recordingRemovedAt'>): boolean {
+  if (session.recordingRemovedAt) return false
+  // Only a real recording: the demo build's is generated here, not downloaded.
+  return isConfigured() && session.protocol !== 'rdp' && !isStatementProtocol(session.protocol) &&
+    (session.recordingBytes ?? 0) > REPLAY_ASK_ABOVE
+}
+
+/** What the terminal player says while the recording downloads. */
+function castWaiting(received: number, total: number): string | undefined {
+  if (received === 0) return undefined
+  return total > 0
+    ? `Loading the recording… ${bytes(received)} of ${bytes(total)}`
+    : `Loading the recording… ${bytes(received)}`
 }
 
 /**
