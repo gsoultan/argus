@@ -8,7 +8,7 @@ import { IconAlertTriangle, IconBookmark, IconCircleCheck, IconCoin, IconLockOpe
 import { useMemo, useState } from 'react'
 import { EmptyState } from '~/components/page'
 import { Field, Stat, relTime } from '~/components/primitives'
-import { cloudItemsQuery, needsApproval, useAskCloudChange, type CloudItem, type CloudKind } from '~/lib/cloud'
+import { cloudItemsQuery, envOf, needsApproval, useAskCloudChange, type CloudItem, type CloudKind } from '~/lib/cloud'
 import { dollars } from '~/lib/cloudCosts'
 import {
   GROUP_LABEL, SEVERITY_COLOR, SEVERITY_LABEL, SOURCE_HELP, SOURCE_LABEL, cloudFindingsQuery, findingCounts, keepAllowed, useKeepFinding,
@@ -17,6 +17,7 @@ import {
 import { notifyError, notifyOk } from '~/lib/notify'
 import { FS, INK, SP } from '~/theme'
 import { EnvBadge, ResourceDrawer } from './common'
+import { SettingsChange } from './InstanceActions'
 import { RemoveRuleChange, ruleText } from './NetworkActions'
 
 /*
@@ -30,7 +31,7 @@ const INVENTORY: CloudKind[] = ['instance', 'volume', 'firewall', 'address', 'sn
 
 const FIX_LABEL: Record<string, string> = {
   'firewall-rules': 'Remove the rule', 'firewall-delete': 'Delete group', 'volume-delete': 'Delete disk', 'address-release': 'Release',
-  'snapshot-delete': 'Delete', 'image-delete': 'Delete image', stop: 'Stop',
+  'snapshot-delete': 'Delete', 'image-delete': 'Delete image', stop: 'Stop', settings: 'Require tokens',
 }
 
 type Filter = 'all' | FindingGroup
@@ -47,6 +48,7 @@ export function FindingsPanel({ names, admin }: { names: Map<string, string>; ad
   const [keeping, setKeeping] = useState<CloudFinding | null>(null)
   const [resource, setResource] = useState<CloudItem | null>(null)
   const [rule, setRule] = useState<{ it: CloudItem; f: CloudFinding } | null>(null)
+  const [settings, setSettings] = useState<CloudItem | null>(null)
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [bulk, setBulk] = useState(false)
 
@@ -67,6 +69,7 @@ export function FindingsPanel({ names, admin }: { names: Map<string, string>; ad
   const fix = (f: CloudFinding) => {
     const it = itemOf(f)
     if (f.fix === 'firewall-rules' && f.rule && it) setRule({ it, f })
+    else if (f.fix === 'settings' && it) setSettings(it)
     else if (it) setResource(it)
     else setOpen(f)
   }
@@ -218,6 +221,10 @@ export function FindingsPanel({ names, admin }: { names: Map<string, string>; ad
       {keeping && <KeepModal f={keeping} onClose={() => setKeeping(null)} />}
       <ResourceDrawer it={resource} onClose={() => setResource(null)} names={names} />
       {rule && <RemoveRuleChange it={rule.it} rule={rule.f.rule!} onClose={() => setRule(null)} />}
+      {settings && (
+        <SettingsChange it={settings} env={envOf(settings.resource.tags, settings.environment)} preset={{ requireTokens: true }}
+          onClose={() => setSettings(null)} />
+      )}
       {bulk && <BulkSnapshotDelete findings={pickedFindings} items={pickedFindings.map(itemOf)} onClose={(done) => { setBulk(false); if (done) setPicked(new Set()) }} />}
     </Stack>
   )

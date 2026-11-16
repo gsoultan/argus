@@ -130,6 +130,19 @@ func (p *Provider) Launch(ctx context.Context, a cloud.Account, actor cloud.Acto
 			{ResourceType: types.ResourceTypeVolume, Tags: tags},
 		},
 	}
+	for i, gb := range s.ExtraDisks {
+		in.BlockDeviceMappings = append(in.BlockDeviceMappings, types.BlockDeviceMapping{
+			DeviceName: awssdk.String(cloud.ExtraDiskDevice(i)),
+			Ebs: &types.EbsBlockDevice{VolumeSize: awssdk.Int32(gb), VolumeType: types.VolumeTypeGp3,
+				Encrypted: awssdk.Bool(true), DeleteOnTermination: awssdk.Bool(true)},
+		})
+	}
+	if s.Spot {
+		in.InstanceMarketOptions = &types.InstanceMarketOptionsRequest{MarketType: types.MarketTypeSpot,
+			SpotOptions: &types.SpotMarketOptions{SpotInstanceType: types.SpotInstanceTypeOneTime,
+				InstanceInterruptionBehavior: types.InstanceInterruptionBehaviorTerminate}}
+		in.DisableApiTermination = awssdk.Bool(false)
+	}
 	if s.UserData != "" {
 		in.UserData = awssdk.String(base64.StdEncoding.EncodeToString([]byte(s.UserData)))
 	}
@@ -160,6 +173,12 @@ func (p *Provider) Power(ctx context.Context, a cloud.Account, actor cloud.Actor
 		err = e
 	case cloud.ActionStop:
 		out, e := c.StopInstances(ctx, &ec2.StopInstancesInput{InstanceIds: []string{id}})
+		if e == nil {
+			md = out.ResultMetadata
+		}
+		err = e
+	case cloud.ActionHibernate:
+		out, e := c.StopInstances(ctx, &ec2.StopInstancesInput{InstanceIds: []string{id}, Hibernate: awssdk.Bool(true)})
 		if e == nil {
 			md = out.ResultMetadata
 		}
@@ -272,6 +291,126 @@ func (p *Provider) Protect(ctx context.Context, a cloud.Account, actor cloud.Act
 		return cloud.Result{}, errors.New(plain(err))
 	}
 	return cloud.Result{ResourceID: id, RequestID: requestID(out.ResultMetadata)}, nil
+}
+
+// InstanceConfig reads an instance's protections, metadata setting,
+// hibernation and credit mode.
+func (p *Provider) InstanceConfig(ctx context.Context, a cloud.Account, actor cloud.Actor, region, id string) (cloud.InstanceConfig, error) {
+	c, err := p.client(ctx, a, actor, region)
+	if err != nil {
+		return cloud.InstanceConfig{}, err
+	}
+	res, err := c.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{id}})
+	if err != nil {
+		return cloud.InstanceConfig{}, errors.New(plain(err))
+	}
+	if len(res.Reservations) == 0 || len(res.Reservations[0].Instances) == 0 {
+		return cloud.InstanceConfig{}, fmt.Errorf("no instance %s in %s", id, region)
+	}
+	inst := res.Reservations[0].Instances[0]
+	var out cloud.InstanceConfig
+	if inst.MetadataOptions != nil {
+		out.RequireTokens = inst.MetadataOptions.HttpTokens == types.HttpTokensStateRequired
+	}
+	if inst.HibernationOptions != nil {
+		out.Hibernation = awssdk.ToBool(inst.HibernationOptions.Configured)
+	}
+	for _, at := range []types.InstanceAttributeName{types.InstanceAttributeNameDisableApiTermination, types.InstanceAttributeNameDisableApiStop} {
+		attr, err := c.DescribeInstanceAttribute(ctx, &ec2.DescribeInstanceAttributeInput{InstanceId: awssdk.String(id), Attribute: at})
+		if err != nil {
+			return cloud.InstanceConfig{}, errors.New(plain(err))
+		}
+		if attr.DisableApiTermination != nil {
+			out.TerminationProtect = awssdk.ToBool(attr.DisableApiTermination.Value)
+		}
+		if attr.DisableApiStop != nil {
+			out.StopProtect = awssdk.ToBool(attr.DisableApiStop.Value)
+		}
+	}
+	if cloud.Burstable(string(inst.InstanceType)) {
+		cr, err := c.DescribeInstanceCreditSpecifications(ctx, &ec2.DescribeInstanceCreditSpecificationsInput{InstanceIds: []string{id}})
+		if err != nil {
+			return cloud.InstanceConfig{}, errors.New(plain(err))
+		}
+		for _, s := range cr.InstanceCreditSpecifications {
+			out.CreditMode = awssdk.ToString(s.CpuCredits)
+		}
+	}
+	return out, nil
+}
+
+// Configure changes an instance's settings, one AWS call for each that
+// changes. A later call failing leaves the earlier ones done, and the
+// error says which.
+func (p *Provider) Configure(ctx context.Context, a cloud.Account, actor cloud.Actor, region, id string, s cloud.InstanceSettings) (cloud.Result, error) {
+	c, err := p.client(ctx, a, actor, region)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	out := cloud.Result{ResourceID: id}
+	var done []string
+	fail := func(what string, err error) (cloud.Result, error) {
+		if len(done) > 0 {
+			return out, fmt.Errorf("%s were changed, but %s failed: %s", strings.Join(done, " and "), what, plain(err))
+		}
+		return out, errors.New(plain(err))
+	}
+	if s.StopProtect != nil {
+		r, err := c.ModifyInstanceAttribute(ctx, &ec2.ModifyInstanceAttributeInput{InstanceId: awssdk.String(id),
+			DisableApiStop: &types.AttributeBooleanValue{Value: s.StopProtect}})
+		if err != nil {
+			return fail("stop protection", err)
+		}
+		out.RequestID = requestID(r.ResultMetadata)
+		done = append(done, "stop protection")
+	}
+	if s.RequireTokens != nil {
+		tokens := types.HttpTokensStateOptional
+		if *s.RequireTokens {
+			tokens = types.HttpTokensStateRequired
+		}
+		r, err := c.ModifyInstanceMetadataOptions(ctx, &ec2.ModifyInstanceMetadataOptionsInput{InstanceId: awssdk.String(id),
+			HttpTokens: tokens})
+		if err != nil {
+			return fail("the metadata setting", err)
+		}
+		out.RequestID = requestID(r.ResultMetadata)
+		done = append(done, "the metadata setting")
+	}
+	if s.CreditMode != "" {
+		r, err := c.ModifyInstanceCreditSpecification(ctx, &ec2.ModifyInstanceCreditSpecificationInput{
+			InstanceCreditSpecifications: []types.InstanceCreditSpecificationRequest{{InstanceId: awssdk.String(id), CpuCredits: awssdk.String(s.CreditMode)}}})
+		if err != nil {
+			return fail("the credit mode", err)
+		}
+		if len(r.UnsuccessfulInstanceCreditSpecifications) > 0 {
+			u := r.UnsuccessfulInstanceCreditSpecifications[0]
+			msg := "refused"
+			if u.Error != nil {
+				msg = awssdk.ToString(u.Error.Message)
+			}
+			return fail("the credit mode", errors.New(msg))
+		}
+		out.RequestID = requestID(r.ResultMetadata)
+	}
+	return out, nil
+}
+
+// ConsoleOutput reads the newest console output AWS keeps for an instance.
+func (p *Provider) ConsoleOutput(ctx context.Context, a cloud.Account, actor cloud.Actor, region, id string) (cloud.ConsoleText, error) {
+	c, err := p.client(ctx, a, actor, region)
+	if err != nil {
+		return cloud.ConsoleText{}, err
+	}
+	out, err := c.GetConsoleOutput(ctx, &ec2.GetConsoleOutputInput{InstanceId: awssdk.String(id), Latest: awssdk.Bool(true)})
+	if err != nil {
+		return cloud.ConsoleText{}, errors.New(plain(err))
+	}
+	raw, err := base64.StdEncoding.DecodeString(awssdk.ToString(out.Output))
+	if err != nil {
+		return cloud.ConsoleText{}, fmt.Errorf("AWS sent console output Argus could not read: %w", err)
+	}
+	return cloud.ConsoleText{Text: string(raw), At: out.Timestamp}, nil
 }
 
 // PlanRemove reads what terminating id takes with it.

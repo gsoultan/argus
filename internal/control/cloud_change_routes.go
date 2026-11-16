@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,6 +45,8 @@ const cloudApplyTimeout = 90 * time.Second
 func (a *API) registerCloudChangeRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/cloud/launch-options", a.getCloudLaunchOptions)
 	mux.HandleFunc("GET /api/v1/cloud/remove-plan", a.getCloudRemovePlan)
+	mux.HandleFunc("GET /api/v1/cloud/instance-settings", a.getCloudInstanceSettings)
+	mux.HandleFunc("GET /api/v1/cloud/console-output", a.getCloudConsoleOutput)
 	mux.HandleFunc("GET /api/v1/cloud/changes", a.getCloudChanges)
 	mux.HandleFunc("POST /api/v1/cloud/changes", a.postCloudChange)
 	mux.HandleFunc("GET /api/v1/cloud/changes/{id}", a.getCloudChange)
@@ -251,6 +255,12 @@ type cloudLaunchSpec struct {
 	PublicIP   bool              `json:"publicIp"`
 	Agent      bool              `json:"agent"`
 	Tags       map[string]string `json:"tags,omitempty"`
+	// Count launches several alike, named from Name onwards (launchNames).
+	Count      int     `json:"count,omitempty"`
+	ExtraDisks []int32 `json:"extraDisks,omitempty"`
+	Spot       bool    `json:"spot,omitempty"`
+	// Names are the hostnames the launch makes, worked out when planned.
+	Names []string `json:"names,omitempty"`
 }
 
 // UnmarshalJSON makes termination protection the default: a launch that
@@ -437,6 +447,16 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 		ch.Summary = "Start " + inst.Name
 	case cloud.ActionStop:
 		ch.Summary = "Stop " + inst.Name
+	case cloud.ActionHibernate:
+		if inst.Details["hibernation"] != "yes" {
+			return ch, http.StatusConflict, errors.New(inst.Name + " was not launched with hibernation on, so it can only be stopped")
+		}
+		if inst.State != "running" {
+			return ch, http.StatusConflict, errors.New("only a running instance can hibernate; " + inst.Name + " is " + inst.State)
+		}
+		ch.Summary = "Hibernate " + inst.Name
+	case cloud.ActionSettings:
+		return a.planSettings(r, m, in, inst, ch)
 	case cloud.ActionReboot:
 		ch.Summary = "Reboot " + inst.Name
 	case cloud.ActionProtect:
@@ -539,6 +559,35 @@ func (a *API) planLaunch(r *http.Request, m cloudManaged, actor string, in *clou
 	if len(s.Firewalls) == 0 || len(s.Firewalls) > 5 {
 		return ch, http.StatusBadRequest, errors.New("pick one to five security groups")
 	}
+	if s.Count == 0 {
+		s.Count = 1
+	}
+	if s.Count < 1 || s.Count > maxLaunchCount {
+		return ch, http.StatusBadRequest, fmt.Errorf("launch 1 to %d at once", maxLaunchCount)
+	}
+	names, err := launchNames(s.Name, s.Count)
+	if err != nil {
+		return ch, http.StatusBadRequest, err
+	}
+	for _, n := range names {
+		if _, taken := a.assetByHostname(r.Context(), n); taken {
+			return ch, http.StatusConflict, errors.New(n + " is already a server in Argus; pick another name")
+		}
+	}
+	s.Names = names
+	if len(s.ExtraDisks) > cloud.MaxExtraDisks {
+		return ch, http.StatusBadRequest, fmt.Errorf("at most %d extra disks", cloud.MaxExtraDisks)
+	}
+	for _, gb := range s.ExtraDisks {
+		if gb < 1 || gb > 16384 {
+			return ch, http.StatusBadRequest, errors.New("an extra disk is 1 to 16384 GB")
+		}
+	}
+	if s.Spot && s.Protect {
+		// AWS refuses termination protection on Spot; say so rather than
+		// drop it quietly.
+		return ch, http.StatusBadRequest, errors.New("AWS does not allow termination protection on a Spot instance; turn one of them off")
+	}
 	for k, v := range s.Tags {
 		if !cloud.ValidTagKey(k) || len(v) > 256 || k == "Name" {
 			return ch, http.StatusBadRequest, fmt.Errorf("%q cannot be a tag here", k)
@@ -593,7 +642,17 @@ func (a *API) planLaunch(r *http.Request, m cloudManaged, actor string, in *clou
 	ch.Environment = env
 	ch.ResourceName = s.Name
 	ch.Spec, _ = json.Marshal(s)
-	ch.Summary = fmt.Sprintf("Launch %s: %s, %s, %d GB in %s", s.Name, img.Label, s.Size, s.DiskGB, subnet.Zone)
+	what := s.Name
+	if len(names) > 1 {
+		what = fmt.Sprintf("%d instances, %s to %s", len(names), names[0], names[len(names)-1])
+	}
+	ch.Summary = fmt.Sprintf("Launch %s: %s, %s, %d GB in %s", what, img.Label, s.Size, s.DiskGB, subnet.Zone)
+	if n := len(s.ExtraDisks); n > 0 {
+		ch.Summary += fmt.Sprintf(", %d extra disk%s", n, plural(n))
+	}
+	if s.Spot {
+		ch.Summary += ", as Spot"
+	}
 	if s.Agent {
 		ch.Summary += ", with the Argus agent"
 	}
@@ -725,8 +784,10 @@ func (a *API) applyCloudChange(r *http.Request, m cloudManaged, ch CloudChange) 
 	var res cloud.Result
 	var err error
 	switch ch.Action {
-	case cloud.ActionStart, cloud.ActionStop, cloud.ActionReboot:
+	case cloud.ActionStart, cloud.ActionStop, cloud.ActionReboot, cloud.ActionHibernate:
 		res, err = m.manager.Power(ctx, m.target, actor, ch.Region, ch.ResourceID, ch.Action)
+	case cloud.ActionSettings:
+		res, err = applySettings(ctx, m, ch)
 	case cloud.ActionProtect, cloud.ActionUnprotect:
 		res, err = m.manager.Protect(ctx, m.target, actor, ch.Region, ch.ResourceID, ch.Action == cloud.ActionProtect)
 	case cloud.ActionResize:
@@ -806,41 +867,100 @@ func sortedMapValues(m map[string]string) []string {
 	return out
 }
 
+// maxLaunchCount is the most instances one launch makes.
+const maxLaunchCount = 10
+
+var trailingNumber = regexp.MustCompile(`^(.*?)-(\d{1,4})$`)
+
+// launchNames are the hostnames for count instances from a name. One is the
+// name itself. Several number on from a name that ends in -NN (web-03 makes
+// web-03, web-04 and so on), or add -01 onwards to one that does not.
+func launchNames(name string, count int) ([]string, error) {
+	if count <= 1 {
+		return []string{name}, nil
+	}
+	base, first, width := name, 1, 2
+	if m := trailingNumber.FindStringSubmatch(name); m != nil {
+		base, width = m[1], len(m[2])
+		first, _ = strconv.Atoi(m[2])
+	}
+	out := make([]string, 0, count)
+	for i := 0; i < count; i++ {
+		n := fmt.Sprintf("%s-%0*d", base, width, first+i)
+		if !cloud.ValidHostname(n) {
+			return nil, errors.New(n + " is too long for a hostname; use a shorter name")
+		}
+		out = append(out, n)
+	}
+	return out, nil
+}
+
 func (a *API) applyLaunch(ctx context.Context, r *http.Request, m cloudManaged, ch CloudChange) (cloud.Result, error) {
 	var s cloudLaunchSpec
 	if err := json.Unmarshal(ch.Spec, &s); err != nil {
 		return cloud.Result{}, err
 	}
-	spec := cloud.LaunchSpec{Region: ch.Region, Name: s.Name, Image: s.Image, Size: s.Size, DiskGB: s.DiskGB,
-		Subnet: s.Subnet, Firewalls: s.Firewalls, Protect: s.Protect, PublicIP: s.PublicIP,
+	names := s.Names
+	if len(names) == 0 {
+		names = []string{s.Name}
+	}
+	var out cloud.Result
+	var made []string
+	for _, name := range names {
+		res, err := a.launchOne(ctx, r, m, ch, s, name)
+		if err != nil {
+			if len(made) > 0 {
+				err = fmt.Errorf("launched %s, then %s failed and the rest were not started: %w", strings.Join(made, ", "), name, err)
+				out.Detail = "Launched " + strings.Join(made, ", ")
+			}
+			return out, err
+		}
+		if out.ResourceID == "" {
+			out.ResourceID, out.RequestID = res.ResourceID, res.RequestID
+		}
+		made = append(made, name+" ("+res.ResourceID+")")
+	}
+	if len(names) > 1 {
+		out.Detail = "Launched " + strings.Join(made, ", ")
+	}
+	if s.Agent {
+		if len(names) > 1 {
+			out.Detail += ". Each agent enrolls under its own name when its instance first boots"
+		} else {
+			out.Detail = "The agent enrolls as " + s.Name + " when the instance first boots"
+		}
+	}
+	return out, nil
+}
+
+// launchOne launches one instance of a launch change, with its own
+// single-use enrollment token when the agent goes on it.
+func (a *API) launchOne(ctx context.Context, r *http.Request, m cloudManaged, ch CloudChange, s cloudLaunchSpec, name string) (cloud.Result, error) {
+	spec := cloud.LaunchSpec{Region: ch.Region, Name: name, Image: s.Image, Size: s.Size, DiskGB: s.DiskGB,
+		Subnet: s.Subnet, Firewalls: s.Firewalls, Protect: s.Protect && !s.Spot, PublicIP: s.PublicIP,
+		ExtraDisks: s.ExtraDisks, Spot: s.Spot,
 		Tags: map[string]string{"argus:launched-by": ch.RequestedBy, "argus:change": ch.ID}}
 	for k, v := range s.Tags {
 		spec.Tags[k] = v
 	}
-	detail := ""
 	if s.Agent {
 		// One hour, single use, and only for this server's name: the token
 		// sits in the instance's user data, which anyone who can describe
 		// its attributes can read.
-		tok, err := a.store.CreateEnrollToken(ctx, ch.RequestedBy, s.Name, time.Hour)
+		tok, err := a.store.CreateEnrollToken(ctx, ch.RequestedBy, name, time.Hour)
 		if err != nil {
 			return cloud.Result{}, fmt.Errorf("could not make the agent's enrollment token: %w", err)
 		}
-		ud, problem := a.agentUserData(r, s.Name, tok.Token)
+		ud, problem := a.agentUserData(r, name, tok.Token)
 		if problem != "" {
 			return cloud.Result{}, errors.New(problem)
 		}
 		spec.UserData = ud
 		a.auditAsset(r, AuditEvent{Action: "agent.enroll_token.created", Severity: "info", ActorEmail: ch.RequestedBy,
-			Target: s.Name, Detail: "Made a single-use agent enrollment token for " + s.Name + " only, valid for an hour, " +
+			Target: name, Detail: "Made a single-use agent enrollment token for " + name + " only, valid for an hour, " +
 				"for the instance launched by cloud change " + ch.ID + " (token " + tok.ID + ")."})
-		detail = "The agent enrolls as " + s.Name + " when the instance first boots"
 	}
-	res, err := m.manager.Launch(ctx, m.target, cloud.Actor(ch.RequestedBy), spec)
-	if err == nil && detail != "" {
-		res.Detail = detail
-	}
-	return res, err
+	return m.manager.Launch(ctx, m.target, cloud.Actor(ch.RequestedBy), spec)
 }
 
 func (a *API) applyRemove(ctx context.Context, r *http.Request, m cloudManaged, ch CloudChange) (cloud.Result, error) {

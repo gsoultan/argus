@@ -103,21 +103,10 @@ var cloudKindWord = map[cloud.Kind]string{
 // for, saying how to add them.
 func (a *API) storageMissing(m cloudManaged, act cloud.Action) error {
 	pc, ok := m.provider.(cloud.PolicyChecker)
-	if !ok || m.acct.ManageCheckedAt == nil {
+	if !ok {
 		return nil
 	}
-	var lacks []string
-	for _, need := range pc.Needs(act) {
-		if slices.Contains(m.acct.ManageMissing, need) {
-			lacks = append(lacks, need)
-		}
-	}
-	if len(lacks) == 0 {
-		return nil
-	}
-	return fmt.Errorf("the manage role in %s was made before Argus could do this and lacks %s. "+
-		"Update the role from the account's row on the Cloud overview: deploy the template it shows over the argus-access stack, and Argus sees the change at its next read",
-		m.acct.Name, strings.Join(lacks, ", "))
+	return a.missingFor(m, pc.Needs(act))
 }
 
 // planStorage checks a storage request and works out what it will do.

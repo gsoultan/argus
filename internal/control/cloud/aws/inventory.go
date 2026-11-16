@@ -82,7 +82,55 @@ func instances(ctx context.Context, c *ec2.Client, region string) ([]cloud.Resou
 			}
 		}
 	}
+	// AWS's own health checks and planned maintenance. They only add to
+	// what is shown, so a read that fails leaves them out rather than
+	// failing the inventory.
+	if st, err := instanceStatuses(ctx, c); err == nil {
+		for i := range out {
+			if s, ok := st[out[i].ID]; ok {
+				InstanceHealth(&out[i], s)
+			}
+		}
+	}
 	return out, nil
+}
+
+func instanceStatuses(ctx context.Context, c *ec2.Client) (map[string]types.InstanceStatus, error) {
+	out := map[string]types.InstanceStatus{}
+	pg := ec2.NewDescribeInstanceStatusPaginator(c, &ec2.DescribeInstanceStatusInput{IncludeAllInstances: awssdk.Bool(true)})
+	for pg.HasMorePages() {
+		page, err := pg.NextPage(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, s := range page.InstanceStatuses {
+			out[awssdk.ToString(s.InstanceId)] = s
+		}
+	}
+	return out, nil
+}
+
+// InstanceHealth adds AWS's status checks and the next scheduled event
+// that is still to come to an instance's details.
+func InstanceHealth(r *cloud.Resource, s types.InstanceStatus) {
+	if s.SystemStatus != nil && s.SystemStatus.Status != "" && s.SystemStatus.Status != types.SummaryStatusNotApplicable {
+		set(r.Details, "systemStatus", string(s.SystemStatus.Status))
+	}
+	if s.InstanceStatus != nil && s.InstanceStatus.Status != "" && s.InstanceStatus.Status != types.SummaryStatusNotApplicable {
+		set(r.Details, "instanceStatus", string(s.InstanceStatus.Status))
+	}
+	for _, e := range s.Events {
+		d := awssdk.ToString(e.Description)
+		if strings.HasPrefix(d, "[Completed]") || strings.HasPrefix(d, "[Canceled]") {
+			continue
+		}
+		set(r.Details, "eventCode", string(e.Code))
+		set(r.Details, "eventDescription", d)
+		if e.NotBefore != nil {
+			set(r.Details, "eventNotBefore", e.NotBefore.UTC().Format(time.RFC3339))
+		}
+		break
+	}
 }
 
 // Instance maps one EC2 instance.
@@ -134,6 +182,9 @@ func Instance(i types.Instance, region string) cloud.Resource {
 	}
 	if i.MetadataOptions != nil {
 		set(r.Details, "metadataTokens", string(i.MetadataOptions.HttpTokens))
+	}
+	if i.HibernationOptions != nil && awssdk.ToBool(i.HibernationOptions.Configured) {
+		set(r.Details, "hibernation", "yes")
 	}
 	if i.StateReason != nil {
 		set(r.Details, "stateReason", awssdk.ToString(i.StateReason.Message))

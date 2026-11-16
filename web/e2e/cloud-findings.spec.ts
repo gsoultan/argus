@@ -27,7 +27,7 @@ const FINDINGS = [
     howToFix: 'Sign in as root and add an MFA device under Security credentials.' },
   { ...base, id: 'imds-v1:i-2', check: 'imds-v1', group: 'risk', severity: 'medium', source: 'cloud', kind: 'instance', resourceId: 'i-2', name: 'web-02',
     title: 'Old instance metadata allowed', why: 'web-02 still answers metadata requests without a token (IMDSv1).',
-    howToFix: "In AWS, set the instance's metadata to require tokens (IMDSv2)." },
+    howToFix: 'Require tokens (IMDSv2).', fix: 'settings' },
   { ...base, region: 'global', id: 'user-no-mfa:arn:aws:iam::412788931204:user/ana', check: 'user-no-mfa', group: 'risk', severity: 'medium', source: 'cloud',
     kind: 'user', resourceId: 'arn:aws:iam::412788931204:user/ana', name: 'ana', title: 'Person signs in without MFA',
     why: 'IAM user ana has a console password and no MFA device.', howToFix: 'Add an MFA device for the user.' },
@@ -59,6 +59,9 @@ const item = (kind: string, id: string, name: string, extra: object = {}) => ({
 const RESOURCES: Record<string, object[]> = {
   firewall: [item('firewall', 'sg-web', 'sg-web-public', { network: 'vpc-1', rules: [SSH, { inbound: true, protocol: 'tcp', fromPort: 443, toPort: 443, source: '0.0.0.0/0' },
     { inbound: false, protocol: 'all', fromPort: 0, toPort: 65535, source: '0.0.0.0/0' }] })],
+  instance: [item('instance', 'i-2', 'web-02', { state: 'running', size: 't3.medium', network: 'vpc-1',
+    links: [{ kind: 'subnet', id: 'subnet-b' }, { kind: 'firewall', id: 'sg-web', name: 'sg-web-public' }], details: { image: 'ami-ubuntu24', metadataTokens: 'optional', hibernation: 'yes', systemStatus: 'ok', instanceStatus: 'impaired',
+    eventCode: 'system-reboot', eventDescription: 'Scheduled reboot for host maintenance', eventNotBefore: new Date(now + 4 * 86_400_000).toISOString() } })],
   snapshot: [item('snapshot', 'snap-0a14f1', 'db-primary nightly', { size: '80 GiB' }), item('snapshot', 'snap-03caa1', 'before resize', { size: '200 GiB' })],
 }
 
@@ -161,4 +164,94 @@ test('phone: one card per finding, and the Overview shows the High ones', async 
   await page.goto('/cloud')
   await expect(page.getByText('See all 9 in Risks & waste')).toBeVisible()
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/07-overview.png`, fullPage: true })
+})
+
+// The IMDSv1 finding fixes through the instance's settings, with tokens
+// already turned on, and asks for only that one change.
+test('old instance metadata is fixed from its finding', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await stub(page)
+  await page.route('**/api/v1/cloud/instance-settings?*', (r) => r.fulfill({ json: {
+    terminationProtect: true, stopProtect: false, requireTokens: false, hibernation: true, creditMode: 'standard' } }))
+  let asked: Record<string, unknown> | null = null
+  await page.route('**/api/v1/cloud/changes', async (r) => {
+    if (r.request().method() !== 'POST') return r.fallback()
+    asked = r.request().postDataJSON()
+    return r.fulfill({ status: 202, json: { id: 'c1', state: 'awaiting_approval', summary: 'Require tokens for instance metadata (IMDSv2) on web-02' } })
+  })
+  await signIn(page)
+  await page.goto('/cloud?tab=risks')
+  await page.getByText('Old instance metadata allowed').click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Require tokens' }).click()
+  const modal = page.getByRole('dialog', { name: /Settings of web-02/ })
+  await expect(modal.getByRole('switch', { name: /Require tokens/ })).toBeChecked()
+  await expect(modal.getByRole('switch', { name: 'Stop protection' })).not.toBeChecked()
+  await expect(modal.getByText('t3.medium is burstable')).toBeVisible()
+  await modal.getByLabel('Why').fill('Finding: IMDSv1 still allowed')
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/08-imds-fix.png` })
+  await modal.getByRole('button', { name: 'Ask for approval' }).click()
+  await expect.poll(() => asked).toMatchObject({ action: 'settings', resourceId: 'i-2', spec: { requireTokens: true } })
+  expect(Object.keys((asked as unknown as { spec: object }).spec)).toEqual(['requireTokens'])
+})
+
+// An instance AWS says is failing shows it, with planned maintenance, and
+// its boot log is read only when asked for.
+test('an instance failing its checks shows its boot log', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await stub(page)
+  let reads = 0
+  await page.route('**/api/v1/cloud/console-output?*', (r) => {
+    reads++
+    return r.fulfill({ json: { text: '[  OK  ] Mounted /boot.\n[FAILED] Failed to mount /data.\nYou are in emergency mode.\n', at: new Date(now - 120_000).toISOString() } })
+  })
+  await signIn(page)
+  await page.goto('/cloud?tab=instances')
+  await page.getByText('web-02').first().click()
+  const health = page.getByTestId('instance-health')
+  await expect(health.getByText('Failing')).toBeVisible()
+  await expect(health.getByText(/Scheduled reboot for host maintenance/)).toBeVisible()
+  expect(reads).toBe(0)
+  await health.getByRole('button', { name: 'Boot log' }).click()
+  await expect(page.getByTestId('boot-log')).toContainText('You are in emergency mode.')
+  expect(reads).toBe(1)
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/09-boot-log.png` })
+})
+
+// Launching another like an instance copies where and how it runs; three at
+// once number on from its name, with extra disks and Spot.
+test('launch three more like an instance', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1100 })
+  await stub(page)
+  const subnet = (id: string, name: string) => ({ ...item('subnet', id, name, { network: 'vpc-1', size: '10.0.1.0/24', zone: 'us-east-1a' }) })
+  await page.route('**/api/v1/cloud/launch-options?*', (r) => r.fulfill({ json: {
+    images: [{ family: 'ubuntu-22', label: 'Ubuntu 22.04', id: 'ami-ubuntu22', name: 'u22', linux: true },
+      { family: 'ubuntu-24', label: 'Ubuntu 24.04', id: 'ami-ubuntu24', name: 'u24', linux: true }],
+    sizes: ['t3.small', 't3.medium', 'm7i.large'], subnets: [subnet('subnet-a', 'private-a'), subnet('subnet-b', 'private-b')],
+    firewalls: RESOURCES.firewall, environment: 'production', needsApproval: true } }))
+  let asked: Record<string, unknown> | null = null
+  await page.route('**/api/v1/cloud/changes', async (r) => {
+    if (r.request().method() !== 'POST') return r.fallback()
+    asked = r.request().postDataJSON()
+    return r.fulfill({ status: 202, json: { id: 'c2', state: 'awaiting_approval', summary: 'Launch 3 instances, web-03 to web-05' } })
+  })
+  await signIn(page)
+  await page.goto('/cloud?tab=instances')
+  await page.getByText('web-02').first().click()
+  await page.getByRole('button', { name: 'More actions' }).click()
+  await page.getByRole('menuitem', { name: /Launch another like this/ }).click()
+  await expect(page.getByTestId('launch-like')).toContainText('Like web-02')
+  await expect(page.getByRole('textbox', { name: 'Name' })).toHaveValue('web-03')
+  await page.getByRole('textbox', { name: 'How many' }).fill('3')
+  await expect(page.getByTestId('launch-names')).toContainText('web-03, web-04, web-05')
+  await page.getByRole('button', { name: 'Add a disk' }).click()
+  await page.getByRole('switch', { name: 'Use Spot capacity' }).click()
+  await expect(page.getByRole('switch', { name: 'Termination protection' })).toBeDisabled()
+  await page.getByLabel('Why').fill('Three more web nodes for the sale')
+  if (SHOTS) {
+    await page.evaluate(() => window.scrollTo(0, 0))
+    await page.screenshot({ path: `${SHOTS}/10-launch-like.png` })
+  }
+  await page.getByRole('button', { name: 'Ask for approval' }).click()
+  await expect.poll(() => asked).toMatchObject({ action: 'launch', spec: {
+    name: 'web-03', count: 3, extraDisks: [100], spot: true, protect: false, size: 't3.medium', image: 'ami-ubuntu24', subnet: 'subnet-b', firewalls: ['sg-web'] } })
 })

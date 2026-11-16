@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"strings"
+	"time"
 )
 
 /*
@@ -31,6 +33,12 @@ const (
 	ActionProtect   Action = "protect"
 	ActionUnprotect Action = "unprotect"
 	ActionRemove    Action = "remove"
+	// ActionHibernate stops an instance keeping what is in its memory, so
+	// it starts where it left off. Only an instance launched with
+	// hibernation on can.
+	ActionHibernate Action = "hibernate"
+	// ActionSettings changes an instance's settings (InstanceSettings).
+	ActionSettings Action = "settings"
 )
 
 // Level is how much a change can do, which decides who may ask for it and
@@ -46,9 +54,9 @@ const (
 // LevelOf is the level an action needs, or "" for an unknown action.
 func LevelOf(a Action) Level {
 	switch a {
-	case ActionStart, ActionStop, ActionReboot, ActionTags, ActionSnapshotCreate:
+	case ActionStart, ActionStop, ActionHibernate, ActionReboot, ActionTags, ActionSnapshotCreate:
 		return LevelOperate
-	case ActionLaunch, ActionResize, ActionProtect, ActionUnprotect,
+	case ActionLaunch, ActionResize, ActionProtect, ActionUnprotect, ActionSettings,
 		ActionVolumeCreate, ActionVolumeGrow, ActionVolumeAttach, ActionVolumeDetach, ActionImageCreate,
 		ActionAddressAllocate, ActionAddressAssociate, ActionAddressDisassociate,
 		ActionFirewallCreate, ActionFirewallRules, ActionInstanceFirewalls, ActionTargetRegister, ActionTargetDeregister:
@@ -83,10 +91,23 @@ type LaunchSpec struct {
 	Protect   bool              `json:"protect"`
 	PublicIP  bool              `json:"publicIp"`
 	Tags      map[string]string `json:"tags,omitempty"`
+	// ExtraDisks are more encrypted gp3 disks, in GB, attached as /dev/sdf
+	// onwards and deleted with the instance.
+	ExtraDisks []int32 `json:"extraDisks,omitempty"`
+	// Spot asks for spare capacity at the Spot price: one-time, and AWS
+	// terminates it when it needs the capacity back. AWS does not allow
+	// termination protection on it.
+	Spot bool `json:"spot,omitempty"`
 	// UserData runs at first boot. It holds the agent's one-time enrollment
 	// token, so it is never stored or logged.
 	UserData string `json:"-"`
 }
+
+// MaxExtraDisks is the most extra disks a launch adds.
+const MaxExtraDisks = 4
+
+// ExtraDiskDevice is the device name of the i-th extra disk.
+func ExtraDiskDevice(i int) string { return "/dev/sd" + string(rune('f'+i)) }
 
 // Result is what a change did.
 type Result struct {
@@ -183,6 +204,67 @@ type BulkPower interface {
 
 // MaxBulkPower is the most instances one PowerMany call names.
 const MaxBulkPower = 50
+
+// InstanceSettings is what one settings change sets on an instance; a nil
+// or empty field is left as it is.
+type InstanceSettings struct {
+	// StopProtect refuses a stop or hibernate from anyone, Argus's
+	// schedules included, until it is turned off.
+	StopProtect *bool `json:"stopProtect,omitempty"`
+	// RequireTokens makes the metadata service answer only requests with a
+	// session token (IMDSv2), which a server-side request forgery cannot get.
+	RequireTokens *bool `json:"requireTokens,omitempty"`
+	// CreditMode is a burstable instance's: "standard" slows it when its
+	// credits run out, "unlimited" keeps it fast and bills the extra.
+	CreditMode string `json:"creditMode,omitempty"`
+}
+
+// Empty is whether the settings change nothing.
+func (s InstanceSettings) Empty() bool {
+	return s.StopProtect == nil && s.RequireTokens == nil && s.CreditMode == ""
+}
+
+// InstanceConfig is an instance's settings as the provider reads them now.
+type InstanceConfig struct {
+	TerminationProtect bool `json:"terminationProtect"`
+	StopProtect        bool `json:"stopProtect"`
+	RequireTokens      bool `json:"requireTokens"`
+	// Hibernation is whether the instance was launched able to hibernate.
+	Hibernation bool `json:"hibernation"`
+	// CreditMode is "" for an instance that is not burstable.
+	CreditMode string `json:"creditMode"`
+}
+
+// Configurer is a Manager that reads and changes instance settings.
+type Configurer interface {
+	InstanceConfig(ctx context.Context, a Account, actor Actor, region, id string) (InstanceConfig, error)
+	Configure(ctx context.Context, a Account, actor Actor, region, id string, s InstanceSettings) (Result, error)
+}
+
+// Consoler is a Manager that reads what an instance wrote to its serial
+// console: its boot log, for a server that does not answer.
+type Consoler interface {
+	ConsoleOutput(ctx context.Context, a Account, actor Actor, region, id string) (ConsoleText, error)
+}
+
+// ConsoleText is an instance's latest console output and when AWS took it.
+type ConsoleText struct {
+	Text string     `json:"text"`
+	At   *time.Time `json:"at"`
+}
+
+// Burstable is whether a size earns and spends processor credits.
+func Burstable(size string) bool {
+	for _, f := range []string{"t2.", "t3.", "t3a.", "t4g."} {
+		if strings.HasPrefix(size, f) {
+			return true
+		}
+	}
+	return false
+}
+
+// ErrStopProtected is a stop refused because stop protection is on.
+var ErrStopProtected = errors.New("stop protection is on; turn it off first, which is its own change")
 
 // ErrProtected is an instance with termination protection on.
 var ErrProtected = errors.New("termination protection is on; turn it off first, which is its own change")

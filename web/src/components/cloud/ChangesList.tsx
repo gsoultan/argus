@@ -1,8 +1,8 @@
 import { Badge, Box, Button, Card, Flex, Group, Stack, Text, ThemeIcon, Tooltip } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import {
-  IconCamera, IconCirclePlus, IconDeviceFloppy, IconHistory, IconLink, IconLinkOff, IconLock, IconLockOpen, IconPhoto, IconPlayerPlay,
-  IconPlayerStop, IconPlugConnected, IconPlugConnectedX, IconRefresh, IconResize, IconShield, IconShieldPlus, IconTag, IconTrash, IconWorld,
+  IconCamera, IconCirclePlus, IconDeviceFloppy, IconHistory, IconLink, IconLinkOff, IconLock, IconLockOpen, IconMoon, IconPhoto, IconPlayerPlay,
+  IconPlayerStop, IconPlugConnected, IconPlugConnectedX, IconRefresh, IconResize, IconSettings, IconShield, IconShieldPlus, IconTag, IconTrash, IconWorld,
 } from '@tabler/icons-react'
 import { EmptyState } from '~/components/page'
 import { absTime, relTime } from '~/components/primitives'
@@ -15,8 +15,8 @@ import { FS } from '~/theme'
 import { EnvBadge } from './common'
 
 const ICON: Record<CloudAction, typeof IconTrash> = {
-  launch: IconCirclePlus, start: IconPlayerPlay, stop: IconPlayerStop, reboot: IconRefresh, resize: IconResize,
-  tags: IconTag, protect: IconLock, unprotect: IconLockOpen, remove: IconTrash,
+  launch: IconCirclePlus, start: IconPlayerPlay, stop: IconPlayerStop, hibernate: IconMoon, reboot: IconRefresh, resize: IconResize,
+  tags: IconTag, protect: IconLock, unprotect: IconLockOpen, settings: IconSettings, remove: IconTrash,
   'volume-create': IconDeviceFloppy, 'volume-grow': IconResize, 'volume-attach': IconLink, 'volume-detach': IconLinkOff,
   'volume-delete': IconTrash, 'snapshot-create': IconCamera, 'snapshot-delete': IconTrash, 'image-create': IconPhoto,
   'image-delete': IconTrash, 'address-allocate': IconWorld, 'address-associate': IconLink, 'address-disassociate': IconLinkOff,
@@ -24,7 +24,7 @@ const ICON: Record<CloudAction, typeof IconTrash> = {
   'instance-firewalls': IconShield, 'target-register': IconPlugConnected, 'target-deregister': IconPlugConnectedX,
 }
 const ICON_COLOR: Partial<Record<CloudAction, string>> = {
-  launch: 'teal', remove: 'rose', stop: 'amber', 'volume-create': 'teal', 'address-allocate': 'teal',
+  launch: 'teal', remove: 'rose', stop: 'amber', hibernate: 'amber', 'volume-create': 'teal', 'address-allocate': 'teal',
   'volume-delete': 'rose', 'snapshot-delete': 'rose', 'image-delete': 'rose', 'address-release': 'rose',
   'firewall-create': 'teal', 'firewall-delete': 'rose', 'target-deregister': 'amber',
 }

@@ -8,7 +8,7 @@ import {
   type CloudEnvironment, type CloudItem, type CloudResource,
 } from '~/lib/cloud'
 import { FS, INK, SP } from '~/theme'
-import { InstanceActions } from './InstanceActions'
+import { InstanceActions, InstanceHealth } from './InstanceActions'
 import { InstanceSchedule } from './Schedules'
 import { FirewallActions, TargetActions } from './NetworkActions'
 import { StorageActions } from './StorageActions'
@@ -108,6 +108,7 @@ export function ResourceDrawer({ it, onClose, names }: {
               <Badge variant="light" color="rose" radius="sm">Open to the internet: {openToInternet(r).join(', ')}</Badge>
             )}
           </Group>
+          {r.kind === 'instance' && <InstanceHealth it={it} />}
           {r.kind === 'instance' && <InstanceActions it={it} />}
           {r.kind === 'instance' && <InstanceSchedule it={it} />}
           {(r.kind === 'volume' || r.kind === 'snapshot' || r.kind === 'image' || r.kind === 'address') && <StorageActions it={it} />}

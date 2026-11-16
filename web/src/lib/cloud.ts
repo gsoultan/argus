@@ -349,7 +349,7 @@ export type CloudStorageAction =
   | 'address-allocate' | 'address-associate' | 'address-disassociate' | 'address-release'
 export type CloudNetworkAction =
   | 'firewall-create' | 'firewall-rules' | 'firewall-delete' | 'instance-firewalls' | 'target-register' | 'target-deregister'
-export type CloudAction = 'launch' | 'start' | 'stop' | 'reboot' | 'resize' | 'tags' | 'protect' | 'unprotect' | 'remove'
+export type CloudAction = 'launch' | 'start' | 'stop' | 'hibernate' | 'reboot' | 'resize' | 'tags' | 'protect' | 'unprotect' | 'settings' | 'remove'
   | CloudStorageAction | CloudNetworkAction
 export type CloudChangeState = 'awaiting_approval' | 'applying' | 'applied' | 'failed' | 'declined' | 'cancelled'
 
@@ -451,6 +451,43 @@ export const cloudRemovePlanQuery = (it: CloudItem | null) =>
     enabled: isConfigured() && Boolean(it),
     staleTime: 0,
     gcTime: 0,
+  })
+
+/** An instance's settings as AWS reports them now. */
+export interface CloudInstanceConfig {
+  terminationProtect: boolean
+  stopProtect: boolean
+  /** Whether the metadata service answers only requests with a token (IMDSv2). */
+  requireTokens: boolean
+  /** Whether it was launched able to hibernate. */
+  hibernation: boolean
+  /** "standard" or "unlimited"; "" for a size that is not burstable. */
+  creditMode: '' | 'standard' | 'unlimited'
+}
+
+export const cloudInstanceSettingsQuery = (it: CloudItem | null) =>
+  queryOptions({
+    queryKey: ['cloud', 'instance-settings', it?.accountId, it?.resource.region, it?.resource.id],
+    queryFn: () => get<CloudInstanceConfig>(`/api/v1/cloud/instance-settings?accountId=${encodeURIComponent(it!.accountId)}` +
+      `&region=${encodeURIComponent(it!.resource.region)}&resourceId=${encodeURIComponent(it!.resource.id)}`),
+    enabled: isConfigured() && Boolean(it),
+    staleTime: 0,
+    gcTime: 0,
+  })
+
+/** What an instance last wrote to its console, cleaned of terminal escapes. */
+export interface CloudConsoleText { text: string; at: string | null }
+
+/** Read on demand only: every read is audited. */
+export const cloudConsoleQuery = (it: CloudItem | null, enabled: boolean) =>
+  queryOptions({
+    queryKey: ['cloud', 'console-output', it?.accountId, it?.resource.region, it?.resource.id],
+    queryFn: () => get<CloudConsoleText>(`/api/v1/cloud/console-output?accountId=${encodeURIComponent(it!.accountId)}` +
+      `&region=${encodeURIComponent(it!.resource.region)}&resourceId=${encodeURIComponent(it!.resource.id)}`),
+    enabled: isConfigured() && Boolean(it) && enabled,
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
   })
 
 export function useAskCloudChange() {
@@ -804,8 +841,8 @@ export function money(n: number): string {
 
 /** How much each change can do; the control plane decides, this only says so up front. */
 export const ACTION_LEVEL: Record<CloudAction, CloudChange['level']> = {
-  launch: 'change', start: 'operate', stop: 'operate', reboot: 'operate', tags: 'operate',
-  resize: 'change', protect: 'change', unprotect: 'change', remove: 'remove',
+  launch: 'change', start: 'operate', stop: 'operate', hibernate: 'operate', reboot: 'operate', tags: 'operate',
+  resize: 'change', protect: 'change', unprotect: 'change', settings: 'change', remove: 'remove',
   'volume-create': 'change', 'volume-grow': 'change', 'volume-attach': 'change', 'volume-detach': 'change', 'volume-delete': 'remove',
   'snapshot-create': 'operate', 'snapshot-delete': 'remove', 'image-create': 'change', 'image-delete': 'remove',
   'address-allocate': 'change', 'address-associate': 'change', 'address-disassociate': 'change', 'address-release': 'remove',
