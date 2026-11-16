@@ -1,14 +1,14 @@
 import { Badge, Box, Button, Card, Flex, Group, Stack, Text, ThemeIcon, Tooltip } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import {
-  IconCamera, IconCirclePlus, IconDeviceFloppy, IconHistory, IconLink, IconLinkOff, IconLock, IconLockOpen, IconMoon, IconPhoto, IconPlayerPlay,
+  IconBox, IconBoxOff, IconCamera, IconReceipt, IconCirclePlus, IconDeviceFloppy, IconHistory, IconLink, IconLinkOff, IconLock, IconLockOpen, IconMoon, IconPhoto, IconPlayerPlay,
   IconPlayerStop, IconPlugConnected, IconPlugConnectedX, IconRefresh, IconResize, IconSettings, IconShield, IconShieldPlus, IconTag, IconTrash, IconWorld,
 } from '@tabler/icons-react'
 import { EmptyState } from '~/components/page'
 import { absTime, relTime } from '~/components/primitives'
 import { ApproveOwn } from '~/components/ApproveOwn'
 import { useDecidesAlone } from '~/lib/selfApproval'
-import { CHANGE_STATE, useDecideCloudChange, type CloudAction, type CloudChange } from '~/lib/cloud'
+import { CHANGE_STATE, isBuy, useDecideCloudChange, type CloudAction, type CloudChange } from '~/lib/cloud'
 import { notifyError, notifyOk } from '~/lib/notify'
 import { meQuery } from '~/lib/queries'
 import { FS } from '~/theme'
@@ -22,11 +22,13 @@ const ICON: Record<CloudAction, typeof IconTrash> = {
   'image-delete': IconTrash, 'address-allocate': IconWorld, 'address-associate': IconLink, 'address-disassociate': IconLinkOff,
   'address-release': IconTrash, 'firewall-create': IconShieldPlus, 'firewall-rules': IconShield, 'firewall-delete': IconTrash,
   'instance-firewalls': IconShield, 'target-register': IconPlugConnected, 'target-deregister': IconPlugConnectedX,
+  'capacity-create': IconBox, 'capacity-cancel': IconBoxOff, 'ri-buy': IconReceipt, 'sp-buy': IconReceipt,
 }
 const ICON_COLOR: Partial<Record<CloudAction, string>> = {
   launch: 'teal', remove: 'rose', stop: 'amber', hibernate: 'amber', 'volume-create': 'teal', 'address-allocate': 'teal',
   'volume-delete': 'rose', 'snapshot-delete': 'rose', 'image-delete': 'rose', 'address-release': 'rose',
   'firewall-create': 'teal', 'firewall-delete': 'rose', 'target-deregister': 'amber',
+  'capacity-create': 'teal', 'capacity-cancel': 'amber', 'ri-buy': 'rose', 'sp-buy': 'rose',
 }
 
 /**
@@ -107,13 +109,13 @@ function ChangeCard({ c, mine, decides }: { c: CloudChange; mine: boolean; decid
             {!mine && decides && (
               <>
                 <Button size="xs" variant="default" loading={decide.isPending} onClick={() => void act('decline')}>Decline</Button>
-                <Button size="xs" color={c.action === 'remove' ? 'rose' : undefined} loading={decide.isPending} onClick={() => void act('approve')}>Approve</Button>
+                <Button size="xs" color={c.action === 'remove' || isBuy(c.action) ? 'rose' : undefined} loading={decide.isPending} onClick={() => void act('approve')}>Approve</Button>
               </>
             )}
-            {mine && decides && alone && (
+            {mine && decides && alone && !isBuy(c.action) && (
               <ApproveOwn size="xs" what="this change" loading={decide.isPending} onApprove={(confirmSelf) => act('approve', confirmSelf)} />
             )}
-            {mine && decides && !alone && <Tooltip label="Someone else approves a change you asked for"><Text size={FS.micro} c="dimmed">Yours</Text></Tooltip>}
+            {mine && decides && (!alone || isBuy(c.action)) && <Tooltip label="Someone else approves a change you asked for"><Text size={FS.micro} c="dimmed">Yours</Text></Tooltip>}
           </Group>
         )}
       </Flex>

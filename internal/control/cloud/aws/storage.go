@@ -353,6 +353,10 @@ var actionNeeds = map[cloud.Action][]string{
 	cloud.ActionSettings:          {"ec2:ModifyInstanceAttribute", "ec2:ModifyInstanceMetadataOptions", "ec2:ModifyInstanceCreditSpecification"},
 	cloud.ActionTargetRegister:    {"elasticloadbalancing:RegisterTargets"},
 	cloud.ActionTargetDeregister:  {"elasticloadbalancing:DeregisterTargets"},
+	cloud.ActionCapacityCreate:    {"ec2:CreateCapacityReservation", "ec2:CreateTags"},
+	cloud.ActionCapacityCancel:    {"ec2:CancelCapacityReservation"},
+	cloud.ActionRIBuy:             {"ec2:PurchaseReservedInstancesOffering"},
+	cloud.ActionSPBuy:             {"savingsplans:DescribeSavingsPlansOfferings", "savingsplans:CreateSavingsPlan"},
 }
 
 // Needs is the permissions an action takes.

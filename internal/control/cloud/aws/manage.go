@@ -137,6 +137,10 @@ func (p *Provider) Launch(ctx context.Context, a cloud.Account, actor cloud.Acto
 				Encrypted: awssdk.Bool(true), DeleteOnTermination: awssdk.Bool(true)},
 		})
 	}
+	if s.CapacityReservation != "" {
+		in.CapacityReservationSpecification = &types.CapacityReservationSpecification{
+			CapacityReservationTarget: &types.CapacityReservationTarget{CapacityReservationId: awssdk.String(s.CapacityReservation)}}
+	}
 	if s.Spot {
 		in.InstanceMarketOptions = &types.InstanceMarketOptionsRequest{MarketType: types.MarketTypeSpot,
 			SpotOptions: &types.SpotMarketOptions{SpotInstanceType: types.SpotInstanceTypeOneTime,

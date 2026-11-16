@@ -67,9 +67,13 @@ const DIST = new URL('../dist/', import.meta.url).pathname
  * workstations, and screen sharing on Linux and macOS were all merged: each
  * fitted alone, and together they went over 732 by 0.02 kB. Nothing new is
  * stored; the same ten entries.
+ * 733.1 kB with Cloud's Reservations tab: its name in the tab list, which
+ * the entry carries for the cloud route's search rule. The tab, the
+ * capacity and buy dialogs and their queries are in chunks that are not
+ * stored, and so is the bell's new Cloud kind.
  */
 const MAX_ENTRIES = 10
-const MAX_KB = 733
+const MAX_KB = 734
 
 async function precached(): Promise<string[]> {
   const sw = await readFile(join(DIST, 'sw.js'), 'utf8')

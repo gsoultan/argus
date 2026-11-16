@@ -59,10 +59,11 @@ func LevelOf(a Action) Level {
 	case ActionLaunch, ActionResize, ActionProtect, ActionUnprotect, ActionSettings,
 		ActionVolumeCreate, ActionVolumeGrow, ActionVolumeAttach, ActionVolumeDetach, ActionImageCreate,
 		ActionAddressAllocate, ActionAddressAssociate, ActionAddressDisassociate,
-		ActionFirewallCreate, ActionFirewallRules, ActionInstanceFirewalls, ActionTargetRegister, ActionTargetDeregister:
+		ActionFirewallCreate, ActionFirewallRules, ActionInstanceFirewalls, ActionTargetRegister, ActionTargetDeregister,
+		ActionCapacityCreate, ActionCapacityCancel:
 		return LevelChange
 	case ActionRemove, ActionVolumeDelete, ActionSnapshotDelete, ActionImageDelete, ActionAddressRelease,
-		ActionFirewallDelete:
+		ActionFirewallDelete, ActionRIBuy, ActionSPBuy:
 		return LevelRemove
 	}
 	return ""
@@ -94,6 +95,9 @@ type LaunchSpec struct {
 	// ExtraDisks are more encrypted gp3 disks, in GB, attached as /dev/sdf
 	// onwards and deleted with the instance.
 	ExtraDisks []int32 `json:"extraDisks,omitempty"`
+	// CapacityReservation launches into that Capacity Reservation, which
+	// must have room in the subnet's zone for the size.
+	CapacityReservation string `json:"capacityReservation,omitempty"`
 	// Spot asks for spare capacity at the Spot price: one-time, and AWS
 	// terminates it when it needs the capacity back. AWS does not allow
 	// termination protection on it.

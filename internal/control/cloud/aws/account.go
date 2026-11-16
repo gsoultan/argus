@@ -74,6 +74,11 @@ func (p *Provider) AccountInventory(ctx context.Context, a cloud.Account, region
 		snap.Resources = append(snap.Resources, dbs...)
 	}
 
+	rs, kinds, rfails := reservations(ctx, cfg, regions)
+	snap.Kinds = append(snap.Kinds, kinds...)
+	snap.Resources = append(snap.Resources, rs...)
+	fails = append(fails, rfails...)
+
 	if len(fails) > 0 {
 		return snap, errors.New(strings.Join(fails, "; "))
 	}

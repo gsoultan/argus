@@ -443,7 +443,7 @@ func (m *ConsoleAlert) Schema(t *storm.Table) {
 	t.Col(&m.Subject).Default("''::text")
 	t.Col(&m.Closed).Default("''::text")
 	t.CheckNamed("console_alerts_kind_check",
-		"kind = ANY (ARRAY['approval'::text, 'signin'::text, 'session'::text, 'security'::text, 'server'::text, 'backup'::text, 'data'::text, 'updates'::text, 'resources'::text])")
+		"kind = ANY (ARRAY['approval'::text, 'signin'::text, 'session'::text, 'security'::text, 'server'::text, 'backup'::text, 'data'::text, 'updates'::text, 'resources'::text, 'cloud'::text])")
 	t.CheckNamed("console_alerts_severity_check", "severity = ANY (ARRAY['info'::text, 'warning'::text, 'critical'::text])")
 	t.CheckNamed("console_alerts_audience_check", "audience = ANY (ARRAY['deciders'::text, 'admins'::text, 'person'::text])")
 	t.CheckNamed("console_alerts_link_check", "(link = ''::text) OR (link ~~ '/%'::text)")
@@ -1938,7 +1938,7 @@ func (m *CloudChange) Schema(t *storm.Table) {
 	t.Col(&m.RequestID).Default("''::text")
 	t.Col(&m.Result).Default("'{}'::jsonb")
 	t.Col(&m.Error).Default("''::text")
-	t.CheckNamed("cloud_changes_action_check", "action = ANY (ARRAY['launch'::text, 'start'::text, 'stop'::text, 'hibernate'::text, 'reboot'::text, 'resize'::text, 'tags'::text, 'protect'::text, 'unprotect'::text, 'settings'::text, 'remove'::text, 'volume-create'::text, 'volume-grow'::text, 'volume-attach'::text, 'volume-detach'::text, 'volume-delete'::text, 'snapshot-create'::text, 'snapshot-delete'::text, 'image-create'::text, 'image-delete'::text, 'address-allocate'::text, 'address-associate'::text, 'address-disassociate'::text, 'address-release'::text, 'firewall-create'::text, 'firewall-rules'::text, 'firewall-delete'::text, 'instance-firewalls'::text, 'target-register'::text, 'target-deregister'::text])")
+	t.CheckNamed("cloud_changes_action_check", "action = ANY (ARRAY['launch'::text, 'start'::text, 'stop'::text, 'hibernate'::text, 'reboot'::text, 'resize'::text, 'tags'::text, 'protect'::text, 'unprotect'::text, 'settings'::text, 'remove'::text, 'volume-create'::text, 'volume-grow'::text, 'volume-attach'::text, 'volume-detach'::text, 'volume-delete'::text, 'snapshot-create'::text, 'snapshot-delete'::text, 'image-create'::text, 'image-delete'::text, 'address-allocate'::text, 'address-associate'::text, 'address-disassociate'::text, 'address-release'::text, 'firewall-create'::text, 'firewall-rules'::text, 'firewall-delete'::text, 'instance-firewalls'::text, 'target-register'::text, 'target-deregister'::text, 'capacity-create'::text, 'capacity-cancel'::text, 'ri-buy'::text, 'sp-buy'::text])")
 	t.CheckNamed("cloud_changes_environment_check", "environment = ANY (ARRAY['production'::text, 'staging'::text, 'development'::text])")
 	t.CheckNamed("cloud_changes_level_check", "level = ANY (ARRAY['operate'::text, 'change'::text, 'remove'::text])")
 	t.CheckNamed("cloud_changes_state_check", "state = ANY (ARRAY['awaiting_approval'::text, 'applying'::text, 'applied'::text, 'failed'::text, 'declined'::text, 'cancelled'::text])")

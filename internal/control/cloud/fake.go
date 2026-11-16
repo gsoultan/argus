@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -51,6 +52,10 @@ type Fake struct {
 	PowerErr map[string]error
 	// StorageErr fails the next storage call of an action.
 	StorageErr map[Action]error
+	// PriceBump is added to every quote's hourly price, as AWS changing it.
+	PriceBump float64
+	// Bought is every commitment bought, as its offer id.
+	Bought []string
 	// Missing is what ManageMissing answers.
 	Missing []string
 	// CostRows is what the account is billed, CostForecast its month-end
@@ -497,7 +502,7 @@ func (f *Fake) AccountInventory(_ context.Context, a Account, _ []string) (Snaps
 	if f.Now != nil {
 		now = f.Now()
 	}
-	return Snapshot{Region: GlobalRegion, Kinds: AccountKinds, Resources: append([]Resource(nil), f.Resources[GlobalRegion]...), ReadAt: now}, nil
+	return Snapshot{Region: GlobalRegion, Kinds: append(slices.Clone(AccountKinds), ReservationKinds...), Resources: append([]Resource(nil), f.Resources[GlobalRegion]...), ReadAt: now}, nil
 }
 
 func (f *Fake) ConsoleOutput(_ context.Context, a Account, actor Actor, region, id string) (ConsoleText, error) {

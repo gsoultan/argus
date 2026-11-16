@@ -16,7 +16,7 @@ export type FindingSource = 'cloud' | 'agent' | 'judgement'
 
 /** Kinds a finding can be about: the inventory's, plus the account-wide ones. */
 export type FindingKind = 'instance' | 'volume' | 'firewall' | 'address' | 'snapshot' | 'image' | 'load-balancer' | 'target-group'
-  | 'account' | 'user' | 'bucket' | 'database'
+  | 'account' | 'user' | 'bucket' | 'database' | 'reserved-instance' | 'savings-plan' | 'capacity-reservation'
 
 export interface FindingRef { kind: string; id: string; name?: string }
 

@@ -39,10 +39,13 @@ const (
 	AlertUpdates = "updates"
 	// AlertResources is an asset running low on disk or memory (resources.go).
 	AlertResources = "resources"
+	// AlertCloud is news about cloud accounts: reservations ending soon
+	// (cloud_reservation_alerts.go).
+	AlertCloud = "cloud"
 )
 
 // AlertKinds is every kind, in the order Settings lists them.
-var AlertKinds = []string{AlertApproval, AlertSignIn, AlertSession, AlertSecurity, AlertServer, AlertBackup, AlertData, AlertUpdates, AlertResources}
+var AlertKinds = []string{AlertApproval, AlertSignIn, AlertSession, AlertSecurity, AlertServer, AlertBackup, AlertData, AlertUpdates, AlertResources, AlertCloud}
 
 // Alert audiences.
 const (

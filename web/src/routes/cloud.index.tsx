@@ -6,6 +6,7 @@ import { useMemo, useState } from 'react'
 import { AccessPanel } from '~/components/cloud/Access'
 import { CloudOverview } from '~/components/cloud/CloudOverview'
 import { CostsPanel } from '~/components/cloud/Costs'
+import { ReservationsPanel } from '~/components/cloud/Reservations'
 import { ChangesList } from '~/components/cloud/ChangesList'
 import { SchedulesList } from '~/components/cloud/Schedules'
 import { InstancesTable, NetworkTables, StorageTables } from '~/components/cloud/CloudTables'
@@ -123,7 +124,7 @@ function Cloud() {
             {canChange && tab === 'disks' && <Button size="sm" leftSection={<IconCirclePlus size={16} />} onClick={() => setMaking('disk')}>New disk</Button>}
             {canChange && tab === 'network' && <Button size="sm" variant="default" leftSection={<IconCirclePlus size={16} />} onClick={() => setMaking('address')}>Allocate an Elastic IP</Button>}
             {canChange && tab === 'network' && <Button size="sm" leftSection={<IconShieldPlus size={16} />} onClick={() => setMaking('firewall')}>New security group</Button>}
-            {canChange && tab !== 'schedules' && tab !== 'disks' && tab !== 'network' && tab !== 'access' && tab !== 'costs' && tab !== 'risks' && <ButtonLink to="/cloud/launch" size="sm" leftSection={<IconCirclePlus size={16} />}>Launch an instance</ButtonLink>}
+            {canChange && tab !== 'schedules' && tab !== 'disks' && tab !== 'network' && tab !== 'access' && tab !== 'costs' && tab !== 'reservations' && tab !== 'risks' && <ButtonLink to="/cloud/launch" size="sm" leftSection={<IconCirclePlus size={16} />}>Launch an instance</ButtonLink>}
           </Group>
         ) : undefined}
         tabs={hasAccounts ? (
@@ -147,7 +148,7 @@ function Cloud() {
       <PageBody>
         <Stack gap="md">
           {accounts.error && <Alert color="rose" variant="light">{(accounts.error as Error).message}</Alert>}
-          {tab !== 'overview' && tab !== 'changes' && tab !== 'schedules' && tab !== 'access' && tab !== 'costs' && tab !== 'risks' && hasAccounts && (
+          {tab !== 'overview' && tab !== 'changes' && tab !== 'schedules' && tab !== 'access' && tab !== 'costs' && tab !== 'reservations' && tab !== 'risks' && hasAccounts && (
             <Toolbar right={<Text size={FS.meta} c="dimmed">{newest ? `Read ${relTime(newest)}` : null}</Text>}>
               <TextInput placeholder="Name, id, address or tag" leftSection={<IconSearch size={14} />} value={search}
                 onChange={(e) => setSearch(e.currentTarget.value)} w={{ base: '100%', sm: 300 }} aria-label="Search cloud resources" />
@@ -173,6 +174,7 @@ function Cloud() {
           {tab === 'access' && <AccessPanel accounts={list} />}
           {tab === 'risks' && <FindingsPanel names={names} admin={admin} />}
           {tab === 'costs' && <CostsPanel accounts={list} onTab={setTab} />}
+          {tab === 'reservations' && <ReservationsPanel onTab={setTab} />}
           {tab === 'changes' && (
             <ChangesList changes={changes.data} loading={changes.isPending}
               empty={{ title: 'No changes yet', text: 'Launching, stopping, resizing and removing instances from Argus shows up here, with who asked, who approved and what AWS said.' }} />

@@ -173,6 +173,7 @@ func Findings(rs []Resource, facts map[string]ServerFacts, now time.Time) []Find
 	for _, x := range Idle(rs, now) {
 		f.idle(x)
 	}
+	f.reservations(rs)
 	for _, r := range rs {
 		switch r.Kind {
 		case KindFirewall:
