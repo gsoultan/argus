@@ -9,7 +9,8 @@ import { CostsPanel } from '~/components/cloud/Costs'
 import { ReservationsPanel } from '~/components/cloud/Reservations'
 import { ChangesList } from '~/components/cloud/ChangesList'
 import { SchedulesList } from '~/components/cloud/Schedules'
-import { InstancesTable, NetworkTables, StorageTables } from '~/components/cloud/CloudTables'
+import { InstancesTable, NetworkTables, ScalingGroupsTable, StorageTables } from '~/components/cloud/CloudTables'
+import { NewBalancer, NewTargetGroup } from '~/components/cloud/BalancerActions'
 import { NewFirewall } from '~/components/cloud/NetworkActions'
 import { NewAddress, NewDisk } from '~/components/cloud/StorageActions'
 import { FindingsPanel } from '~/components/cloud/Findings'
@@ -38,7 +39,7 @@ export const Route = createFileRoute('/cloud/')({
   component: Cloud,
 })
 
-const KINDS: CloudKind[] = ['instance', 'volume', 'firewall', 'network', 'subnet', 'address', 'snapshot', 'image', 'load-balancer', 'target-group']
+const KINDS: CloudKind[] = ['instance', 'volume', 'firewall', 'network', 'subnet', 'address', 'snapshot', 'image', 'load-balancer', 'target-group', 'scaling-group']
 
 function Cloud() {
   const navigate = useNavigate({ from: Route.fullPath })
@@ -66,8 +67,9 @@ function Cloud() {
     image: useQuery(cloudItemsQuery('image')),
     'load-balancer': useQuery(cloudItemsQuery('load-balancer')),
     'target-group': useQuery(cloudItemsQuery('target-group')),
+    'scaling-group': useQuery(cloudItemsQuery('scaling-group')),
   }
-  const [making, setMaking] = useState<'disk' | 'address' | 'firewall' | null>(null)
+  const [making, setMaking] = useState<'disk' | 'address' | 'firewall' | 'balancer' | 'target-group' | null>(null)
   const [account, setAccount] = useState<string | null>(null)
   const [search, setSearch] = useState('')
 
@@ -76,7 +78,7 @@ function Cloud() {
     const m = new Map<string, string>()
     for (const k of KINDS) for (const it of q[k].data ?? []) if (it.resource.name !== it.resource.id) m.set(it.resource.id, it.resource.name)
     return m
-  }, [q.instance.data, q.volume.data, q.firewall.data, q.network.data, q.subnet.data, q.address.data, q.snapshot.data, q.image.data, q['load-balancer'].data, q['target-group'].data])
+  }, [q.instance.data, q.volume.data, q.firewall.data, q.network.data, q.subnet.data, q.address.data, q.snapshot.data, q.image.data, q['load-balancer'].data, q['target-group'].data, q['scaling-group'].data])
 
   const narrow = (list?: CloudItem[]) => {
     if (!list) return list
@@ -132,7 +134,7 @@ function Cloud() {
             <Tabs.List className="argus-tabs-scroll" style={{ borderBottom: 0 }}>
               {CLOUD_TABS.map((t) => (
                 <Tabs.Tab key={t} value={t} fz="sm" rightSection={
-                  t === 'instances' ? badge(count('instance')) : t === 'disks' ? badge(count('volume')) : t === 'network' ? badge(count('firewall'))
+                  t === 'instances' ? badge(count('instance')) : t === 'disks' ? badge(count('volume')) : t === 'network' ? badge(count('firewall')) : t === 'scaling' ? badge(count('scaling-group'))
                     : t === 'changes' && pending.data?.length ? <Badge size="xs" variant="filled" color="amber" circle={false}>{pending.data.length}</Badge>
                     : t === 'risks' && highRisks ? <Badge size="xs" variant="filled" color="rose" circle={false}>{highRisks} high</Badge>
                     : t === 'access' && waitingAccess ? <Badge size="xs" variant="filled" color="amber" circle={false}>{waitingAccess}</Badge>
@@ -186,12 +188,23 @@ function Cloud() {
           {tab === 'network' && (
             <NetworkTables firewalls={narrow(q.firewall.data)} instances={q.instance.data} networks={narrow(q.network.data)} subnets={q.subnet.data}
               addresses={narrow(q.address.data)} balancers={narrow(q['load-balancer'].data)} targetGroups={narrow(q['target-group'].data)}
-              loading={q.firewall.isPending} names={names} filtered={filtered} />
+              loading={q.firewall.isPending} names={names} filtered={filtered} onMake={admin && canChange ? setMaking : undefined} />
+          )}
+          {tab === 'scaling' && (
+            <Stack gap="xs">
+              <Text size={FS.meta} c="dimmed">
+                Auto Scaling groups in your AWS accounts. Each keeps how many servers it wants running, between its minimum and maximum, and replaces one that fails.
+              </Text>
+              <ScalingGroupsTable items={narrow(q['scaling-group'].data)} loading={q['scaling-group'].isPending} names={names} filtered={filtered}
+                targetGroups={q['target-group'].data} />
+            </Stack>
           )}
         </Stack>
         {making === 'disk' && <NewDisk onClose={() => setMaking(null)} />}
         {making === 'address' && <NewAddress onClose={() => setMaking(null)} />}
         {making === 'firewall' && <NewFirewall onClose={() => setMaking(null)} />}
+        {making === 'balancer' && <NewBalancer onClose={() => setMaking(null)} />}
+        {making === 'target-group' && <NewTargetGroup onClose={() => setMaking(null)} />}
       </PageBody>
     </Box>
   )

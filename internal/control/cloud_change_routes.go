@@ -428,6 +428,9 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 	if cloud.IsBuy(in.Action) {
 		return a.planBuy(r, m, actor, in, ch)
 	}
+	if cloud.IsBalancing(in.Action) {
+		return a.planBalancing(r, m, in, ch)
+	}
 	if cloud.IsStorage(in.Action) {
 		return a.planStorage(r, m, in, ch)
 	}
@@ -833,6 +836,8 @@ func (a *API) applyCloudChange(r *http.Request, m cloudManaged, ch CloudChange) 
 			res, err = a.applyCapacity(ctx, m, ch)
 		} else if cloud.IsBuy(ch.Action) {
 			res, err = a.applyBuy(ctx, m, ch)
+		} else if cloud.IsBalancing(ch.Action) {
+			res, err = a.applyBalancing(ctx, m, ch)
 		} else if cloud.IsStorage(ch.Action) {
 			res, err = a.applyStorage(ctx, m, ch)
 		} else if cloud.IsNetwork(ch.Action) {
@@ -860,7 +865,8 @@ func (a *API) applyCloudChange(r *http.Request, m cloudManaged, ch CloudChange) 
 		if res.ResourceID != "" && ch.Action == cloud.ActionLaunch {
 			detail += "; instance " + res.ResourceID
 		}
-		if res.ResourceID != "" && (ch.Action == cloud.ActionVolumeCreate || ch.Action == cloud.ActionAddressAllocate || ch.Action == cloud.ActionFirewallCreate) {
+		if res.ResourceID != "" && (ch.Action == cloud.ActionVolumeCreate || ch.Action == cloud.ActionAddressAllocate || ch.Action == cloud.ActionFirewallCreate ||
+			ch.Action == cloud.ActionTargetGroupCreate) {
 			detail += "; made " + res.ResourceID
 		}
 		if len(res.Snapshots) > 0 {
