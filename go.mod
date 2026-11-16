@@ -15,6 +15,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.344.2
 	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.63.9
 	github.com/aws/aws-sdk-go-v2/service/iam v1.64.9
+	github.com/aws/aws-sdk-go-v2/service/savingsplans v1.41.5
 	github.com/aws/aws-sdk-go-v2/service/sts v1.51.9
 	github.com/aws/smithy-go v1.28.9
 	github.com/cilium/ebpf v0.22.0

@@ -33,7 +33,8 @@ for what each check means and how it says how it knows.
 
 // cloudFindingKinds are the kinds the checks read.
 var cloudFindingKinds = []cloud.Kind{cloud.KindInstance, cloud.KindVolume, cloud.KindFirewall, cloud.KindAddress, cloud.KindSnapshot,
-	cloud.KindImage, cloud.KindLoadBalancer, cloud.KindTargetGroup, cloud.KindAccount, cloud.KindUser, cloud.KindBucket, cloud.KindDatabase}
+	cloud.KindImage, cloud.KindLoadBalancer, cloud.KindTargetGroup, cloud.KindAccount, cloud.KindUser, cloud.KindBucket, cloud.KindDatabase,
+	cloud.KindReservedInstance, cloud.KindSavingsPlan, cloud.KindCapacityReservation}
 
 // cloudFindingItem is a finding with the account it is in, and whether a
 // person kept it.

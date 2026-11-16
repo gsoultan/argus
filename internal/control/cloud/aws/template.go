@@ -23,6 +23,7 @@ var ReadPolicy = []string{
 	"cloudtrail:LookupEvents",
 	"pricing:GetProducts",
 	"ce:GetCostAndUsage", "ce:GetCostForecast",
+	"savingsplans:DescribeSavingsPlans",
 	"ssm:DescribeInstanceInformation",
 }
 

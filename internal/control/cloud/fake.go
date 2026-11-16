@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -497,7 +498,7 @@ func (f *Fake) AccountInventory(_ context.Context, a Account, _ []string) (Snaps
 	if f.Now != nil {
 		now = f.Now()
 	}
-	return Snapshot{Region: GlobalRegion, Kinds: AccountKinds, Resources: append([]Resource(nil), f.Resources[GlobalRegion]...), ReadAt: now}, nil
+	return Snapshot{Region: GlobalRegion, Kinds: append(slices.Clone(AccountKinds), ReservationKinds...), Resources: append([]Resource(nil), f.Resources[GlobalRegion]...), ReadAt: now}, nil
 }
 
 func (f *Fake) ConsoleOutput(_ context.Context, a Account, actor Actor, region, id string) (ConsoleText, error) {
