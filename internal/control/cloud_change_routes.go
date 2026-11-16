@@ -919,8 +919,16 @@ func (a *API) postCloudChangeDecision(approve bool) http.HandlerFunc {
 			return
 		}
 		if strings.EqualFold(ch.RequestedBy, sess.Email) {
-			writeErr(w, http.StatusForbidden, "someone other than the person who asked decides a change")
-			return
+			// Theirs: approved only when nobody else could (self_approval.go).
+			confirm, err := readConfirmSelf(r)
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			if !a.approveOwn(w, r, sess.Email, approve, requestDeciders, false, confirm,
+				"someone other than the person who asked decides a change", "cloud change: "+ch.Summary, ch.AccountName) {
+				return
+			}
 		}
 		m, code, err := a.cloudManagedAccount(r.Context(), ch.AccountID)
 		if approve && err != nil {

@@ -502,8 +502,9 @@ export async function decideRequest(
   id: string,
   decision: 'approved' | 'denied',
   note: string,
+  confirmSelf?: string,
 ): Promise<AccessRequest> {
-  return post<AccessRequest>(`/api/v1/requests/${id}/decision`, { decision, note })
+  return post<AccessRequest>(`/api/v1/requests/${id}/decision`, { decision, note, ...(confirmSelf ? { confirmSelf } : {}) })
 }
 
 /** Takes back the caller's own pending request. */

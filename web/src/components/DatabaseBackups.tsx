@@ -18,6 +18,7 @@ import {
   backupCatalogQuery, backupTestQuery, databaseBackupsQuery, useCancelBackup, useCancelBackupTest, useCancelRestore, useDeleteBackup,
   usePinBackup, useRestoreBackup, useSetBackupSchedule, useStartBackup, useTestBackup, useTryBackupChecks, useUndoRestore,
 } from '~/lib/queries'
+import { AloneOr } from '~/components/ApproveOwn'
 import { FS, SP, INK } from '~/theme'
 import type {
   BackupDestination, BackupSchedule, BackupTest, BackupsView, CheckResult, DBLevel, Database, DatabaseBackup, DatabaseRestore, TestCheck,
@@ -202,7 +203,7 @@ function RestoreCard({ r, database, dba }: { r: DatabaseRestore; database: Datab
       </Group>
       {pending ? (
         <Text size={FS.micro} c="dimmed" mt={4}>
-          An approver has it. Once they say yes, every session on {r.dbname} ends and the restore starts. <Anchor component={Link} to="/approvals" size={FS.micro}>Approvals</Anchor>
+          <AloneOr kind="requests" what="it">An approver has it.</AloneOr> Once it is approved, every session on {r.dbname} ends and the restore starts. <Anchor component={Link} to="/approvals" size={FS.micro}>Approvals</Anchor>
         </Text>
       ) : (
         <>
@@ -740,7 +741,7 @@ export function RestoreModal({ database, b, level, opened, onClose }: {
             </Button>
             <Button variant="default" onClick={onClose}>Cancel</Button>
           </Group>
-          {mode === 'replace' && <Text size={FS.micro} c="dimmed">Approvers · 30 min to decide</Text>}
+          {mode === 'replace' && <Text size={FS.micro} c="dimmed"><AloneOr kind="requests" what="the restore">Approvers · 30 min to decide</AloneOr></Text>}
         </Group>
       </Stack>
     </Modal>

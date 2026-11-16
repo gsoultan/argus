@@ -468,8 +468,8 @@ export function useAskCloudChange() {
 export function useDecideCloudChange() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, verb }: { id: string; verb: 'approve' | 'decline' | 'cancel' }) =>
-      send<CloudChange>('POST', `/api/v1/cloud/changes/${encodeURIComponent(id)}/${verb}`),
+    mutationFn: ({ id, verb, confirmSelf }: { id: string; verb: 'approve' | 'decline' | 'cancel'; confirmSelf?: string }) =>
+      send<CloudChange>('POST', `/api/v1/cloud/changes/${encodeURIComponent(id)}/${verb}`, confirmSelf ? { confirmSelf } : undefined),
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: changesKey })
       window.setTimeout(() => void qc.invalidateQueries({ queryKey: ['cloud'] }), 5_000)
@@ -697,10 +697,10 @@ export function useSaveSchedule() {
 export function useScheduleAction() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, verb }: { id: string; verb: 'approve' | 'decline' | 'pause' | 'resume' | 'delete' }) =>
+    mutationFn: ({ id, verb, confirmSelf }: { id: string; verb: 'approve' | 'decline' | 'pause' | 'resume' | 'delete'; confirmSelf?: string }) =>
       verb === 'delete'
         ? send('DELETE', `/api/v1/cloud/schedules/${encodeURIComponent(id)}`)
-        : send('POST', `/api/v1/cloud/schedules/${encodeURIComponent(id)}/${verb}`),
+        : send('POST', `/api/v1/cloud/schedules/${encodeURIComponent(id)}/${verb}`, confirmSelf ? { confirmSelf } : undefined),
     onSettled: () => void qc.invalidateQueries({ queryKey: schedulesKey }),
   })
 }

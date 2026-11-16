@@ -1054,8 +1054,9 @@ export const api = {
     id: string,
     decision: 'approved' | 'denied',
     note: string,
+    confirmSelf?: string,
   ): Promise<AccessRequest> {
-    if (isConfigured()) return decideRequest(id, decision, note)
+    if (isConfigured()) return decideRequest(id, decision, note, confirmSelf)
     await latency(450)
     const r = db.requests.find((x) => x.id === id)
     if (!r) throw new Error('request not found')

@@ -67,7 +67,7 @@ func TestRedisChangesNeedApprovalOnProduction(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("ask: %d %s", w.Code, w.Body)
 	}
-	if _, err := s.DecideRequest(ctx, ask.RequestID, "approved", "", admin); err != nil {
+	if _, err := s.DecideRequest(ctx, ask.RequestID, "approved", "", admin, false); err != nil {
 		t.Fatal(err)
 	}
 	// Another pattern does not fit the approval.

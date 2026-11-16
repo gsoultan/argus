@@ -13,6 +13,8 @@ import {
 } from '~/lib/cloudAccess'
 import { notifyError, notifyOk } from '~/lib/notify'
 import { meQuery } from '~/lib/queries'
+import { AloneOr, ApproveOwn } from '~/components/ApproveOwn'
+import { useDecidesAlone } from '~/lib/selfApproval'
 import { FS, INK, SP } from '~/theme'
 import { EnvBadge } from './common'
 
@@ -139,7 +141,7 @@ function AskForm({ accounts, minutes, role }: { accounts: CloudAccount[]; minute
           <Group gap={6}>
             {account && <EnvBadge env={account.environment} />}
             <Text size={FS.meta} c="dimmed">
-              {account ? (waits ? 'Someone else approves this first. It runs from when they do.' : 'No approval needed here; it starts at once.') : ''}
+              {account ? (waits ? <AloneOr kind="requests" what="it">Someone else approves this first. It runs from when they do.</AloneOr> : 'No approval needed here; it starts at once.') : ''}
             </Text>
           </Group>
           <Button leftSection={waits ? <IconUserCheck size={16} /> : <IconKey size={16} />} loading={ask.isPending}
@@ -155,15 +157,18 @@ function AskForm({ accounts, minutes, role }: { accounts: CloudAccount[]; minute
 /** One grant in force or waiting, with what its holder or a decider can do. */
 export function GrantCard({ g, me, role }: { g: CloudAccessGrant; me?: string; role?: string }) {
   const verb = useCloudAccessVerb()
+  const alone = useDecidesAlone('requests')
   const session = useCloudSession()
   const [keys, setKeys] = useState<CloudKeys | null>(null)
   const mine = me?.toLowerCase() === g.requestedBy.toLowerCase()
-  const act = async (v: 'approve' | 'decline' | 'cancel' | 'end') => {
+  const act = async (v: 'approve' | 'decline' | 'cancel' | 'end', confirmSelf?: string) => {
     try {
-      await verb.mutateAsync({ id: g.id, verb: v })
+      await verb.mutateAsync({ id: g.id, verb: v, confirmSelf })
       notifyOk({ approve: 'Approved', decline: 'Declined', cancel: 'Withdrawn', end: 'Access ended' }[v], `${LEVEL[g.level].label} access to ${g.accountName} for ${g.requestedBy}`)
+      return true
     } catch (err) {
       notifyError('Could not do that', err)
+      return false
     }
   }
   const openConsole = async () => {
@@ -209,6 +214,9 @@ export function GrantCard({ g, me, role }: { g: CloudAccessGrant; me?: string; r
           )}
           {live && (mine || decides(role)) && (
             <Button size="xs" variant="default" color="rose" leftSection={<IconPlayerStop size={14} />} loading={verb.isPending} onClick={() => void act('end')}>End now</Button>
+          )}
+          {g.state === 'awaiting_approval' && mine && decides(role) && alone && (
+            <ApproveOwn size="xs" what="this access" loading={verb.isPending} onApprove={(confirmSelf) => act('approve', confirmSelf)} />
           )}
           {g.state === 'awaiting_approval' && mine && (
             <Button size="xs" variant="default" loading={verb.isPending} onClick={() => void act('cancel')}>Withdraw</Button>

@@ -4,7 +4,10 @@ import { IconCheck, IconClockHour4, IconShieldCheck } from '@tabler/icons-react'
 import { FS } from '~/theme'
 import { useQueryClient } from '@tanstack/react-query'
 import { askStatements, cancelRequest, changeApproval, statementAsk } from '~/lib/live'
-import { notifyOk, notifyWarn } from '~/lib/notify'
+import { notifyOk, notifyWarn, run as notifyRun } from '~/lib/notify'
+import { useDecideRequest } from '~/lib/queries'
+import { useDecidesAlone } from '~/lib/selfApproval'
+import { ApproveOwn, decidesAloneWords } from '~/components/ApproveOwn'
 import { combineChecks, deciderWords, impactWords, shortName, type ChangeImpact, type CheckLike } from '~/lib/changeApproval'
 import { EnvBadge, ImpactTiles, People } from '~/components/ChangeImpact'
 import type { ChangeApproval, DBLabel, StatementItem } from '~/types/domain'
@@ -75,6 +78,9 @@ export function useStatementApproval(databaseId: string, databaseName: string, o
   const checkRef = useRef(opts.check)
   checkRef.current = opts.check
   const qc = useQueryClient()
+  // Nobody else could decide it: the asker approves their own, while it waits.
+  const decidesAlone = useDecidesAlone('requests')
+  const decide = useDecideRequest()
 
   const ask: AskApproval = useCallback((items, o) => new Promise<string | null>((resolve) => {
     openRef.current?.resolve(null)
@@ -189,6 +195,8 @@ export function useStatementApproval(databaseId: string, databaseName: string, o
   const others = (approval?.approvers === 'editors' ? approval.editors : [])
     .filter((e) => e.toLowerCase() !== opts.me?.toLowerCase())
   const deciders = deciderWords(databaseName, approval, opts.me)
+  // Another editor could decide it, so the asker does not decide alone.
+  const alone = decidesAlone && others.length === 0
   const dialog = (
     <Modal opened={open !== null} onClose={dismiss} centered size="lg"
       title={<Group gap="xs"><IconShieldCheck size={18} /><Text fw={650}>Ask for approval</Text>{opts.label && <EnvBadge label={opts.label} />}</Group>}>
@@ -223,9 +231,9 @@ export function useStatementApproval(databaseId: string, databaseName: string, o
                 placeholder="Order 7 was imported twice; removing the copy." />
               {phase.kind === 'form' && phase.error && <Alert color="rose" variant="light">{phase.error}</Alert>}
               <Text size={FS.micro} c="dimmed">
-                Who can decide: {approval?.approvers === 'editors'
+                {alone ? <>{decidesAloneWords('it')}{' '}</> : <>Who can decide: {approval?.approvers === 'editors'
                   ? <>admins, approvers{others.length ? <>, and {others.length === 1 ? 'one other editor' : `${others.length} other editors`} ({others.map(shortName).join(', ')})</> : ''}</>
-                  : 'admins and approvers'}. They see it in the bell and on Approvals.
+                  : 'admins and approvers'}. They see it in the bell and on Approvals.</>}
                 {' '}Once approved, {n === 1 ? 'it runs' : 'each runs'} once, exactly as shown, within the hour
                 {rowsWord ? `, and stops if it would change more than ${rowsWord.split(' · ')[0]}` : ''}. A change to the text or a value needs a new ask.
               </Text>
@@ -251,9 +259,17 @@ export function useStatementApproval(databaseId: string, databaseName: string, o
                     <Text size={FS.body} fw={600}>Waiting for one of them</Text>
                     {others.length > 0 && <People emails={others} />}
                     <Text size={FS.meta} c="dimmed">
-                      {others.length ? `${others.map(shortName).join(', ')} (editors of ${databaseName}), and the admins and approvers. Not you.` : 'An admin or an approver. Not you.'}
-                      {' '}It runs as soon as they approve, while this stays open.
+                      {alone ? 'Nobody else can approve it, so you may approve it yourself.'
+                        : others.length ? `${others.map(shortName).join(', ')} (editors of ${databaseName}), and the admins and approvers. Not you.` : 'An admin or an approver. Not you.'}
+                      {' '}It runs as soon as {alone ? 'it is approved' : 'they approve'}, while this stays open.
                     </Text>
+                    {alone && (
+                      <Group>
+                        <ApproveOwn what="this change" loading={decide.isPending}
+                          onApprove={(confirmSelf) => notifyRun(() => decide.mutateAsync({ id: phase.id, decision: 'approved', note: '', confirmSelf }),
+                            { failure: 'Not approved' })} />
+                      </Group>
+                    )}
                   </Stack>
                 </Group>
                 <Group gap="sm" wrap="nowrap" align="flex-start">

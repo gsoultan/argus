@@ -137,7 +137,10 @@ func (s *Store) CreateRequest(ctx context.Context, r AccessRequest) (AccessReque
 }
 
 // DecideRequest approves or denies, enforcing separation of duty.
-func (s *Store) DecideRequest(ctx context.Context, id, decision, note, decidedBy string) (AccessRequest, error) {
+//
+// own lets the person who asked approve it, which the caller allows only
+// when nobody else could (self_approval.go).
+func (s *Store) DecideRequest(ctx context.Context, id, decision, note, decidedBy string, own bool) (AccessRequest, error) {
 	if !uuidRE.MatchString(id) {
 		return AccessRequest{}, ErrRequestNotFound
 	}
@@ -169,7 +172,7 @@ func (s *Store) DecideRequest(ctx context.Context, id, decision, note, decidedBy
 	// Separation of duty. Without it the approval step is decoration: anyone
 	// could grant themselves root and the audit log would show a tidy approval
 	// by the same person who asked.
-	if requester == decidedBy {
+	if !own && strings.EqualFold(requester, decidedBy) {
 		return AccessRequest{}, ErrSelfApproval
 	}
 

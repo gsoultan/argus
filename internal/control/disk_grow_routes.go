@@ -472,7 +472,20 @@ func (a *API) postDiskRunDecision(approve bool) http.HandlerFunc {
 		if !a.privileged(w, sess, "approving disk grows", "admin", "owner") {
 			return
 		}
-		run, err := a.store.DecideDiskRun(r.Context(), r.PathValue("id"), sess.Email, approve)
+		run, err := a.store.DecideDiskRun(r.Context(), r.PathValue("id"), sess.Email, approve, false)
+		if errors.Is(err, ErrOwnRequest) {
+			// Theirs: approved only when nobody else could (self_approval.go).
+			confirm, cerr := readConfirmSelf(r)
+			if cerr != nil {
+				writeErr(w, http.StatusBadRequest, cerr.Error())
+				return
+			}
+			if !a.approveOwn(w, r, sess.Email, approve, runDeciders, false, confirm,
+				strings.TrimPrefix(err.Error(), ErrRunState.Error()+": "), "disk grow", run.AssetHostname) {
+				return
+			}
+			run, err = a.store.DecideDiskRun(r.Context(), r.PathValue("id"), sess.Email, approve, true)
+		}
 		if err != nil {
 			a.failDiskRun(w, err)
 			return

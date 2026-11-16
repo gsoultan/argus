@@ -133,7 +133,7 @@ func TestDatabaseAccessLevels(t *testing.T) {
 	if acc, _ = s.DatabaseAccess(ctx, ana, db.ID); acc.Level != tunnel.LevelRead {
 		t.Fatalf("a pending request gives nothing: %+v", acc)
 	}
-	if _, err := s.DecideRequest(ctx, req.ID, "approved", "", admin); err != nil {
+	if _, err := s.DecideRequest(ctx, req.ID, "approved", "", admin, false); err != nil {
 		t.Fatal(err)
 	}
 	acc, err = s.DatabaseAccess(ctx, ana, db.ID)

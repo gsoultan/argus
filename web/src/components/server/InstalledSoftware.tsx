@@ -13,6 +13,8 @@ import { ScriptInstall } from '~/components/server/ScriptInstall'
 import { RunState } from '~/components/server/UpdatesTab'
 import type { PackageRun, ScriptReport } from '~/lib/live'
 import { run as notifyRun } from '~/lib/notify'
+import { AloneOr, ApproveOwn } from '~/components/ApproveOwn'
+import { useDecidesAlone } from '~/lib/selfApproval'
 import { runFinished } from '~/lib/packageApi'
 import { useDecidePackageRun } from '~/lib/packageQueries'
 import { meQuery } from '~/lib/queries'
@@ -339,7 +341,7 @@ function InstallDrawer({ asset, manager, windows = false, onClose }: { asset: As
 function ApprovalNote({ hostname }: { hostname: string }) {
   return (
     <Alert color="amber" p="xs">
-      <Text size={FS.body}>{hostname}'s update rule asks for a second admin: another admin approves before it runs.</Text>
+      <Text size={FS.body}><AloneOr kind="runs" what="this run">{hostname}'s update rule asks for a second admin: another admin approves before it runs.</AloneOr></Text>
     </Alert>
   )
 }
@@ -490,6 +492,7 @@ export function RecentChanges({ assetId, runs, canEdit, onPreview }: {
 function ChangeRow({ run: r, canEdit, onPreview }: { run: PackageRun; canEdit: boolean; onPreview: (p: SoftwarePreview) => void }) {
   const { data: me } = useQuery(meQuery())
   const decide = useDecidePackageRun()
+  const alone = useDecidesAlone('runs')
   const undo = useUndoSoftwareRun()
   const refresh = useRefreshSoftware()
   const mine = me?.email?.toLowerCase() === r.requestedBy.toLowerCase()
@@ -512,6 +515,11 @@ function ChangeRow({ run: r, canEdit, onPreview }: { run: PackageRun; canEdit: b
       <Table.Td ta="right">
         {canEdit && (
           <Group gap={SP.snug} justify="flex-end" wrap="nowrap">
+            {r.state === 'awaiting_approval' && mine && alone && (
+              <ApproveOwn what="this change" loading={decide.isPending}
+                onApprove={(confirmSelf) => notifyRun(() => decide.mutateAsync({ id: r.id, action: 'approve', confirmSelf }).then(refresh),
+                  { failure: 'Not approved', success: ['Approved', 'The server starts at its next check-in.'] })} />
+            )}
             {r.state === 'awaiting_approval' && !mine && (
               <>
                 <Button size="compact-xs" color="teal" leftSection={<IconCheck size={12} />} loading={decide.isPending}

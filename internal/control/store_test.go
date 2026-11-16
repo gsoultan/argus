@@ -138,7 +138,7 @@ func TestSelfApprovalIsRefused(t *testing.T) {
 	s := testStore(t)
 	r := newRequest(t, s, "operator@northwind.id")
 
-	_, err := s.DecideRequest(context.Background(), r.ID, "approved", "", "operator@northwind.id")
+	_, err := s.DecideRequest(context.Background(), r.ID, "approved", "", "operator@northwind.id", false)
 	if !errors.Is(err, ErrSelfApproval) {
 		t.Errorf("err = %v, want ErrSelfApproval", err)
 	}
@@ -148,7 +148,7 @@ func TestApprovalByAnotherPersonSucceeds(t *testing.T) {
 	s := testStore(t)
 	r := newRequest(t, s, "operator@northwind.id")
 
-	out, err := s.DecideRequest(context.Background(), r.ID, "approved", "ok", "approver@northwind.id")
+	out, err := s.DecideRequest(context.Background(), r.ID, "approved", "ok", "approver@northwind.id", false)
 	if err != nil {
 		t.Fatalf("DecideRequest: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestConcurrentDecisionsAdmitOne(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			_, err := s.DecideRequest(context.Background(), r.ID, "approved", "ok",
-				fmt.Sprintf("approver%d@northwind.id", i))
+				fmt.Sprintf("approver%d@northwind.id", i), false)
 			if err == nil {
 				mu.Lock()
 				decided++
@@ -196,10 +196,10 @@ func TestDecidingTwiceIsRefused(t *testing.T) {
 	ctx := context.Background()
 	r := newRequest(t, s, "operator@northwind.id")
 
-	if _, err := s.DecideRequest(ctx, r.ID, "approved", "ok", "a@x.id"); err != nil {
+	if _, err := s.DecideRequest(ctx, r.ID, "approved", "ok", "a@x.id", false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.DecideRequest(ctx, r.ID, "denied", "changed my mind", "b@x.id"); !errors.Is(err, ErrAlreadyDecided) {
+	if _, err := s.DecideRequest(ctx, r.ID, "denied", "changed my mind", "b@x.id", false); !errors.Is(err, ErrAlreadyDecided) {
 		t.Errorf("err = %v, want ErrAlreadyDecided", err)
 	}
 }
@@ -255,7 +255,7 @@ func TestActiveGrantMatchesAndExpires(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.DecideRequest(ctx, r.ID, "approved", "ok", "approver@x.id"); err != nil {
+	if _, err := s.DecideRequest(ctx, r.ID, "approved", "ok", "approver@x.id", false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -294,7 +294,7 @@ func TestDeniedRequestGrantsNothing(t *testing.T) {
 		Principal: "root", Justification: "INC-1234 a long enough justification.",
 		DurationMinutes: 60,
 	})
-	if _, err := s.DecideRequest(ctx, r.ID, "denied", "scope too broad", "approver@x.id"); err != nil {
+	if _, err := s.DecideRequest(ctx, r.ID, "denied", "scope too broad", "approver@x.id", false); err != nil {
 		t.Fatal(err)
 	}
 

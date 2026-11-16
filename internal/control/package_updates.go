@@ -1199,8 +1199,9 @@ func (s *Store) PackageRunsFor(ctx context.Context, host string, limit int) ([]P
 }
 
 // DecidePackageRun approves or denies a run waiting for approval. The one
-// who asked cannot decide it.
-func (s *Store) DecidePackageRun(ctx context.Context, id, by string, approve bool) (PackageRun, error) {
+// who asked cannot decide it, unless own says nobody else could
+// (self_approval.go).
+func (s *Store) DecidePackageRun(ctx context.Context, id, by string, approve, own bool) (PackageRun, error) {
 	r, err := s.PackageRunByID(ctx, id)
 	if err != nil {
 		return r, err
@@ -1208,8 +1209,8 @@ func (s *Store) DecidePackageRun(ctx context.Context, id, by string, approve boo
 	if r.State != RunAwaitingApproval {
 		return r, fmt.Errorf("%w: this run is %s, not waiting for approval", ErrRunState, strings.ReplaceAll(r.State, "_", " "))
 	}
-	if strings.EqualFold(r.RequestedBy, by) {
-		return r, fmt.Errorf("%w: a run you asked for is approved by another admin", ErrRunState)
+	if !own && strings.EqualFold(r.RequestedBy, by) {
+		return r, errOwnRun{"a run you asked for is approved by another admin"}
 	}
 	next := RunDenied
 	if approve {

@@ -78,10 +78,10 @@ func TestStatementApprovalOnProduction(t *testing.T) {
 	if !seen {
 		t.Fatalf("the approver cannot see what they approve: %+v", reqs)
 	}
-	if _, err := s.DecideRequest(ctx, ask.RequestID, "approved", "", ana); err == nil {
+	if _, err := s.DecideRequest(ctx, ask.RequestID, "approved", "", ana, false); err == nil {
 		t.Fatal("approved their own statement")
 	}
-	if _, err := s.DecideRequest(ctx, ask.RequestID, "approved", "", admin); err != nil {
+	if _, err := s.DecideRequest(ctx, ask.RequestID, "approved", "", admin, false); err != nil {
 		t.Fatal(err)
 	}
 	// The approval raises no level.

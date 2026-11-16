@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { levelName } from '~/lib/engines'
 import { notifyError, notifyOk } from '~/lib/notify'
 import { useRequestDatabaseAccess } from '~/lib/queries'
+import { useDecidesAlone } from '~/lib/selfApproval'
 import { FS } from '~/theme'
 import type { DBLevel } from '~/types/domain'
 
@@ -20,11 +21,14 @@ export function AskModal({ dbId, opened, onClose, top, what = 'database', engine
   const [minutes, setMinutes] = useState('60')
   const [why, setWhy] = useState('')
   const req = useRequestDatabaseAccess()
+  const alone = useDecidesAlone('requests')
   const options = LEVELS.slice(0, LEVELS.indexOf(top) + 1)
   const submit = async () => {
     try {
       await req.mutateAsync({ id: dbId, level, justification: why, durationMinutes: Number(minutes) })
-      notifyOk('Request sent', `An approver has it. You will be able to open the ${what} as soon as they say yes.`)
+      notifyOk('Request sent', alone
+        ? `Nobody else can approve it, so approve it yourself on Approvals. Then you can open the ${what}.`
+        : `An approver has it. You will be able to open the ${what} as soon as they say yes.`)
       onClose()
     } catch (err) {
       notifyError('Not sent', err)

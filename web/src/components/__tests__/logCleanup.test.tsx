@@ -197,7 +197,7 @@ describe('LogsTab', () => {
     live.decideLogRun.mockResolvedValue(runOf({ state: 'queued' }))
     renderWith(<LogsTab asset={asset} canEdit />)
     fireEvent.click(await screen.findByRole('button', { name: 'Approve' }))
-    await waitFor(() => expect(live.decideLogRun).toHaveBeenCalledWith('r1', 'approve'))
+    await waitFor(() => expect(live.decideLogRun).toHaveBeenCalledWith('r1', 'approve', undefined))
     expect((screen.getByRole('button', { name: 'Clean 8 GB…' }) as HTMLButtonElement).disabled).toBe(true)
   })
 

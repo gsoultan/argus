@@ -57,8 +57,8 @@ export function useAskCloudAccess() {
 export function useCloudAccessVerb() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, verb }: { id: string; verb: 'approve' | 'decline' | 'cancel' | 'end' }) =>
-      send<CloudAccessGrant>('POST', `/api/v1/cloud/access/${encodeURIComponent(id)}/${verb}`),
+    mutationFn: ({ id, verb, confirmSelf }: { id: string; verb: 'approve' | 'decline' | 'cancel' | 'end'; confirmSelf?: string }) =>
+      send<CloudAccessGrant>('POST', `/api/v1/cloud/access/${encodeURIComponent(id)}/${verb}`, confirmSelf ? { confirmSelf } : undefined),
     onSettled: () => void qc.invalidateQueries({ queryKey: accessKey }),
   })
 }

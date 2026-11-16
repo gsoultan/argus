@@ -48,8 +48,9 @@ export async function packageRun(id: string): Promise<PackageRun> {
   return get(`/api/v1/package-runs/${encodeURIComponent(id)}`)
 }
 
-export async function decidePackageRun(id: string, action: 'approve' | 'deny' | 'cancel'): Promise<PackageRun> {
-  return send('POST', `/api/v1/package-runs/${encodeURIComponent(id)}/${action}`)
+/** confirmSelf is the phrase for approving your own, when nobody else can (see selfApproval.ts). */
+export async function decidePackageRun(id: string, action: 'approve' | 'deny' | 'cancel', confirmSelf?: string): Promise<PackageRun> {
+  return send('POST', `/api/v1/package-runs/${encodeURIComponent(id)}/${action}`, confirmSelf ? { confirmSelf } : undefined)
 }
 
 export async function packageFleet(): Promise<PackageFleetRow[]> {

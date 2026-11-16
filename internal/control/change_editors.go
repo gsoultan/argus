@@ -188,6 +188,33 @@ func (a *API) decidesAsEditor(ctx context.Context, email, id string) (Database, 
 	return db, isEditor(acc.Level), nil
 }
 
+// otherEditorsDecide is whether someone other than email may decide request
+// id as an editor of its database: a change on a database whose editors
+// approve each other's, with an editor besides them.
+func (a *API) otherEditorsDecide(ctx context.Context, email, id string) (bool, error) {
+	principal, dbID, err := a.store.requestDatabase(ctx, id)
+	if err != nil || principal != statementPrincipal || dbID == "" {
+		return false, err
+	}
+	db, err := a.store.Database(ctx, dbID)
+	if errors.Is(err, ErrDatabaseNotFound) {
+		return false, nil
+	}
+	if err != nil || !db.EditorsApprove() {
+		return false, err
+	}
+	editors, err := a.store.DatabaseEditors(ctx, db.ID)
+	if err != nil {
+		return false, err
+	}
+	for _, e := range editors {
+		if !strings.EqualFold(e, email) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // changeLink is where a change request is reviewed.
 func changeLink(id string) string { return "/approvals?req=" + id }
 

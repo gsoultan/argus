@@ -150,6 +150,11 @@ func TestCloudRemoveOnProductionNeedsSomeoneElse(t *testing.T) {
 	if w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes/"+c.ID+"/approve", "admin-token", ""); w.Code != http.StatusForbidden {
 		t.Fatalf("the person who asked approved their own remove: %d", w.Code)
 	}
+	// Others could decide it, so the phrase for deciding alone changes nothing.
+	if w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes/"+c.ID+"/approve", "admin-token",
+		`{"confirmSelf":"`+SelfApprovalPhrase+`"}`); w.Code != http.StatusForbidden {
+		t.Fatalf("the phrase approved a remove someone else could decide: %d %s", w.Code, w.Body)
+	}
 	w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes/"+c.ID+"/approve", "approver-token", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("approve: %d %s", w.Code, w.Body)

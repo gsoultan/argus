@@ -60,7 +60,7 @@ describe('Change review', () => {
     expect(screen.getByText('1042')).toBeInTheDocument()
     expect(screen.getByText(/stops if it would change more than these 18 rows/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /Approve 2 statements, 18 rows/ }))
-    await waitFor(() => expect(api.decideRequest).toHaveBeenCalledWith('r1', 'approved', ''))
+    await waitFor(() => expect(api.decideRequest).toHaveBeenCalledWith('r1', 'approved', '', undefined))
     await waitFor(() => expect(close).toHaveBeenCalled())
   })
 

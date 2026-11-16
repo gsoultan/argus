@@ -26,6 +26,8 @@ import { ChangesList } from '~/components/cloud/ChangesList'
 import { cloudChangesQuery } from '~/lib/cloud'
 import { ChangeReview, ChangesTable } from '~/components/ChangeReview'
 import { ImpactText } from '~/components/ChangeImpact'
+import { ApproveOwn } from '~/components/ApproveOwn'
+import { useDecidesAlone } from '~/lib/selfApproval'
 import { impactOf } from '~/lib/changeApproval'
 import { levelName } from '~/lib/engines'
 import type { AccessRequest, DBLevel, DirectLogin, StatementAsk } from '~/types/domain'
@@ -114,6 +116,10 @@ function Approvals() {
     }
   }, [reviewId, one.isError])
   const mayDecide = (r: AccessRequest) => (decides || !!r.asEditor) && r.requesterEmail.toLowerCase() !== mine
+  // Their own, when nobody else holds a role that decides it. The control
+  // plane counts again, and refuses when another editor of the database could.
+  const alone = useDecidesAlone('requests')
+  const mayApproveOwn = (r: AccessRequest) => decides && alone && r.requesterEmail.toLowerCase() === mine
 
   return (
     <Box>
@@ -185,6 +191,7 @@ function Approvals() {
                 key={r.id}
                 request={r}
                 mine={!!mine && r.requesterEmail.toLowerCase() === mine}
+                approveOwn={mayApproveOwn(r)}
                 // The control plane refuses a decision from anyone else, and
                 // refuses anyone deciding their own, so neither gets the buttons.
                 canDecide={mayDecide(r)}
@@ -224,10 +231,11 @@ function Approvals() {
       </PageBody>
 
       <NewRequestModal opened={newOpen} onClose={newModal.close} host={search.ask} account={search.as} />
-      {review?.statement && <ChangeReview request={review} canDecide={mayDecide(review)} me={me?.email} onClose={closeReview} />}
+      {review?.statement && <ChangeReview request={review} canDecide={mayDecide(review)} approveOwn={mayApproveOwn(review)} me={me?.email} onClose={closeReview} />}
       {review && !review.statement && (
         <Modal opened onClose={closeReview} size="lg" centered title={<Text fw={650}>Access request</Text>}>
           <RequestCard request={review} canDecide={mayDecide(review)} mine={review.requesterEmail.toLowerCase() === mine}
+            approveOwn={mayApproveOwn(review)}
             onReview={() => undefined} onDecided={closeReview} />
         </Modal>
       )}
@@ -373,11 +381,13 @@ function StatementList({ ask }: { ask: StatementAsk }) {
   )
 }
 
-function RequestCard({ request: r, canDecide, mine, onReview, onDecided }: {
+function RequestCard({ request: r, canDecide, mine, approveOwn, onReview, onDecided }: {
   request: AccessRequest
   canDecide: boolean
   /** The reader asked for it, so may cancel it while it waits. */
   mine?: boolean
+  /** The reader asked for it and nobody else could decide it (lib/selfApproval.ts). */
+  approveOwn?: boolean
   onReview: () => void
   onDecided?: () => void
 }) {
@@ -399,29 +409,29 @@ function RequestCard({ request: r, canDecide, mine, onReview, onDecided }: {
   const [note, setNote] = useState('')
   const [expanded, setExpanded] = useState(false)
 
-  const onDecide = async (decision: 'approved' | 'denied') => {
+  const onDecide = async (decision: 'approved' | 'denied', confirmSelf?: string) => {
     if (decision === 'denied' && note.trim().length < MIN_DENIAL_NOTE) {
       setExpanded(true)
       notifyWarn('Reason required', 'A denial must say why, so the requester can act on it.')
-      return
+      return false
     }
     // Guarded: an approval that the control plane refused must not look like one
     // that succeeded. Without this the button simply stops spinning and the
     // approver walks away believing they granted access.
     try {
-      await decide.mutateAsync({ id: r.id, decision, note })
+      await decide.mutateAsync({ id: r.id, decision, note, confirmSelf })
     } catch (err) {
       // Decided by someone else, or taken back by the person who asked,
       // while it was on screen. The list is refetched and shows how.
       if (settledMeanwhile(err)) {
         notifyWarn('Nothing to decide', err instanceof Error ? err.message : String(err))
-        return
+        return false
       }
       notifyError(
         decision === 'approved' ? 'Access not granted' : 'Request not denied',
         err,
       )
-      return
+      return false
     }
     onDecided?.()
     notifications.show({
@@ -436,6 +446,7 @@ function RequestCard({ request: r, canDecide, mine, onReview, onDecided }: {
             : `${r.requesterEmail} can reach ${r.assetHostnames.length} host(s) as ${r.principal} for ${r.durationMinutes / 60}h.`
           : `${r.requesterEmail} was notified.`,
     })
+    return true
   }
 
   const pending = r.state === 'pending'
@@ -524,12 +535,20 @@ function RequestCard({ request: r, canDecide, mine, onReview, onDecided }: {
       {pending && !canDecide && (
         <Box pt="xs" style={{ borderTop: '1px solid var(--color-line)' }}>
           <Group justify="space-between" gap="xs">
-            <Text size={FS.micro} c="dimmed">{r.statement ? 'Waiting for someone else to decide. Never you.' : 'Waiting for an approver.'}</Text>
-            {mine && (
-              <Button size="compact-xs" variant="subtle" color="rose" loading={cancel.isPending} onClick={() => void onCancel()}>
-                Cancel request
-              </Button>
-            )}
+            <Text size={FS.micro} c="dimmed">
+              {mine && approveOwn ? 'Nobody else can approve this, so you may approve it yourself.'
+                : r.statement ? 'Waiting for someone else to decide. Never you.' : 'Waiting for an approver.'}
+            </Text>
+            <Group gap="xs">
+              {mine && approveOwn && (
+                <ApproveOwn what="this request" loading={decide.isPending} onApprove={(confirmSelf) => onDecide('approved', confirmSelf)} />
+              )}
+              {mine && (
+                <Button size="compact-xs" variant="subtle" color="rose" loading={cancel.isPending} onClick={() => void onCancel()}>
+                  Cancel request
+                </Button>
+              )}
+            </Group>
           </Group>
         </Box>
       )}

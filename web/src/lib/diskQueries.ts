@@ -60,7 +60,7 @@ export function useStartDiskGrow(assetId: string) {
 export function useDecideDiskRun() {
   const done = useInvalidate()
   return useMutation({
-    mutationFn: (v: { id: string; action: 'approve' | 'deny' | 'cancel' }) => decideDiskRun(v.id, v.action),
+    mutationFn: (v: { id: string; action: 'approve' | 'deny' | 'cancel'; confirmSelf?: string }) => decideDiskRun(v.id, v.action, v.confirmSelf),
     onSettled: done,
   })
 }
