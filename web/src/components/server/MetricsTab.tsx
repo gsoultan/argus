@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Box, Card, Group, SegmentedControl, SimpleGrid, Skeleton, Stack, Text } from '@mantine/core'
+import { Box, Card, Group, SegmentedControl, SimpleGrid, Skeleton, Stack, Table, Text } from '@mantine/core'
 import { useElementSize } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { absTime, now as clockNow } from '~/components/primitives'
@@ -8,7 +8,7 @@ import { LowStrip, bitRate, diskFull, systemQuery } from '~/components/server/Sy
 import { get, live } from '~/lib/live'
 import { bytes, warningTone } from '~/lib/resourcesLow'
 import { FS } from '~/theme'
-import type { Asset, ResourceWarning, ServerSystem } from '~/types/domain'
+import type { Asset, ResourceWarning, ServerProcess, ServerSystem } from '~/types/domain'
 
 /*
  * An asset's own metrics page: how it is now (the same System query the
@@ -61,6 +61,30 @@ export interface AssetMetrics {
   reported: boolean
   mounts: string[]
   points: MetricsPoint[]
+  /** What changed on the server in the range, oldest first. Missing from an older control plane. */
+  events?: MetricsEvent[]
+  /** The cloud instance it runs as, when one in a connected account matches. */
+  cloud?: MetricsCloud | null
+}
+
+/** A change Argus made or saw: a cloud change, a package update, or the server starting. */
+export interface MetricsEvent {
+  at: string
+  kind: 'cloud' | 'update' | 'restart'
+  summary: string
+  by: string
+}
+
+export interface MetricsCloud {
+  instanceId: string
+  instanceType: string
+  /** The size's baseline network bandwidth, bytes per second. */
+  networkBps: number | null
+  /** The attached volumes' provisioned totals; null unless every volume states one. */
+  diskIops: number | null
+  diskBps: number | null
+  /** On-demand list price per hour in US dollars, in steps, oldest first. */
+  cost: { from: string; perHour: number | null }[]
 }
 
 const RANGES: { value: MetricsRange; label: string; span: number; step: number }[] = [
@@ -119,7 +143,19 @@ function fixtureMetrics(a: Asset, range: MetricsRange): AssetMetrics {
       samples: r.step / 60,
     })
   }
-  return { ...base, reported: true, mounts: ['/var/lib/postgresql', '/'], points }
+  const ago = (f: number) => new Date(from + (to - from) * f).toISOString()
+  return {
+    ...base, reported: true, mounts: ['/var/lib/postgresql', '/'], points,
+    events: [
+      { at: ago(0.3), kind: 'update', summary: 'Updated 14 packages and restarted', by: 'automatic' },
+      { at: ago(0.31), kind: 'restart', summary: 'Server started', by: '' },
+      { at: ago(0.62), kind: 'cloud', summary: 'Resize db-01 from m6i.large to m6i.xlarge', by: 'dana@example.com' },
+    ],
+    cloud: {
+      instanceId: 'i-0a41c7e2f9b3d5608', instanceType: 'm6i.xlarge', networkBps: 195_250_000, diskIops: 3000, diskBps: 125 * 1024 * 1024,
+      cost: [{ from: base.from, perHour: 0.096 }, { from: ago(0.62), perHour: 0.192 }],
+    },
+  }
 }
 
 export function MetricsTab({ asset }: { asset: Asset }) {
@@ -159,6 +195,7 @@ export function MetricsTab({ asset }: { asset: Asset }) {
           Each point averages what the agent reported in {stepLabel(m?.stepSeconds ?? 300)}; dashed lines are the busiest moment in it.
           A shaded stretch is when the agent did not report: nothing is drawn there. Kept 30 days in detail, and 13 months by the hour
           for the 90-day and 1-year ranges.
+          {(m?.events?.length ?? 0) > 0 && ' Markers are changes Argus made or saw here; a change made in the cloud console or by another tool is not shown.'}
         </Text>
       </Card>
     </Stack>
@@ -200,7 +237,46 @@ function NowTiles({ sys, fresh }: { sys: ServerSystem; fresh: boolean }) {
         </Text>
       )}
     </SimpleGrid>
+    {u.top && u.top.length > 0 && <TopProcesses top={u.top} faded={!fresh} />}
     </Box>
+  )
+}
+
+/**
+ * What is using the server now, from the same report as the tiles: the
+ * busiest programs by processor, then by memory. Names only; the agent never
+ * sends a command line, which can hold a password.
+ */
+function TopProcesses({ top, faded }: { top: ServerProcess[]; faded: boolean }) {
+  return (
+    <Card padding={0} mt="md" style={{ opacity: faded ? 0.6 : 1 }} data-testid="top-processes">
+      <Text component="h3" fw={600} size="sm" px="md" pt="sm" pb={4} style={{ margin: 0 }}>
+        What is using it <Text span inherit c="dimmed" fw={400}>(busiest by processor, then by memory)</Text>
+      </Text>
+      <Table.ScrollContainer minWidth={0} type="native">
+        <Table verticalSpacing={4} fz={FS.meta}>
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th>Program</Table.Th>
+              <Table.Th ta="right">Processor</Table.Th>
+              <Table.Th ta="right">Memory</Table.Th>
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {top.map((p) => (
+              <Table.Tr key={p.pid}>
+                <Table.Td>
+                  <Text span inherit ff="monospace">{p.name}</Text>{' '}
+                  <Text span size={FS.micro} c="dimmed">pid {p.pid}</Text>
+                </Table.Td>
+                <Table.Td ta="right">{p.cpu === null ? '—' : pct1(p.cpu)}</Table.Td>
+                <Table.Td ta="right">{bytes(p.memory)}</Table.Td>
+              </Table.Tr>
+            ))}
+          </Table.Tbody>
+        </Table>
+      </Table.ScrollContainer>
+    </Card>
   )
 }
 
@@ -260,7 +336,9 @@ export function MetricsHistory({ m }: { m: AssetMetrics }) {
   const netPeak = Math.max(peak(pick((p) => (p.rxMax === null ? null : p.rxMax * 8))), peak(pick((p) => (p.txMax === null ? null : p.txMax * 8))), peak(rx), peak(tx))
   const mounts = m.mounts.slice(0, DISK_COLORS.length)
   const lastMem = [...mem].reverse().find((v) => v !== null)
-  const common = { times, from, to, step }
+  const events = useMemo(() => (m.events ?? []).map((e) => ({ ...e, t: Date.parse(e.at) })), [m])
+  const common = { times, from, to, step, events }
+  const cl = m.cloud ?? null
   const cpuAvg = avg(cpu)
   // Every summary names its range, so it is not read against the Now tiles.
   const over = `last ${RANGES.find((r) => r.value === m.range)?.label ?? m.range}`
@@ -278,6 +356,12 @@ export function MetricsHistory({ m }: { m: AssetMetrics }) {
   const wbps = opt((p) => p.writeBps)
   const iopsPeak = Math.max(peak(opt((p) => p.iopsMax)), peak(rops), peak(wops))
   const ioBpsPeak = Math.max(peak(opt((p) => p.ioBpsMax)), peak(rbps), peak(wbps))
+  // A limit is drawn when the use comes near enough to it to read against;
+  // far below, the summary says how far, so the line does not flatten the chart.
+  const near = (peakV: number, lim: number | null | undefined) => !!lim && peakV >= lim * 0.25
+  const share = (peakV: number, lim: number | null | undefined, whose: string) =>
+    lim ? ` · ${peakV / lim < 0.01 ? 'under 1' : Math.round((peakV / lim) * 100)}% of ${whose}` : ''
+  const netLim = cl?.networkBps ? cl.networkBps * 8 : null
   const count = (v: number) => (v >= 10_000 ? `${Math.round(v / 1000)}k` : v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${Math.round(v)}`)
   return (
     <SimpleGrid cols={{ base: 1, lg: 2 }} spacing={0} className="metrics-history">
@@ -290,8 +374,9 @@ export function MetricsHistory({ m }: { m: AssetMetrics }) {
       <Chart title="Disks" testId="chart-disks" {...common} max={100} fmt={pct} threshold={90}
         summary={mounts.length ? `${over}: fullest ${mounts[0]}` : 'not reported'}
         lines={mounts.map((mt, i) => ({ label: mt, color: DISK_COLORS[i]!, values: pick((p) => p.disks?.[mt] ?? null) }))} />
-      <Chart title="Network" testId="chart-net" {...common} max={niceMax(netPeak * 1.05)} fmt={bitRateShort}
-        summary={netPeak > 0 ? `${over}: all interfaces · peak ${bitRate(netPeak / 8)}` : 'not reported'}
+      <Chart title="Network" testId="chart-net" {...common} max={niceMax(Math.max(netPeak, near(netPeak, netLim) ? netLim! : 0) * 1.05)} fmt={bitRateShort}
+        limit={near(netPeak, netLim) ? { value: netLim!, label: `${cl!.instanceType} baseline ${bitRateShort(netLim!)}` } : undefined}
+        summary={netPeak > 0 ? `${over}: all interfaces · peak ${bitRate(netPeak / 8)}${share(netPeak, netLim, `the ${cl?.instanceType} baseline`)}` : 'not reported'}
         lines={[{ label: 'in', color: C.teal, values: rx }, { label: 'out', color: C.sky, values: tx }]} />
       {seen(load) && (
         <Chart title="Load per processor" testId="chart-load" {...common} max={Math.max(2, niceMax(peak(load) * 1.05))}
@@ -310,16 +395,90 @@ export function MetricsHistory({ m }: { m: AssetMetrics }) {
           lines={[{ label: 'open', color: C.teal, values: tcp }]} />
       )}
       {seen(rops) && (
-        <Chart title="Disk operations" testId="chart-iops" {...common} max={niceMax(iopsPeak * 1.05)} fmt={(v) => `${count(v)}/s`}
-          summary={`${over}: all disks · busiest ${count(iopsPeak)} a second`}
+        <Chart title="Disk operations" testId="chart-iops" {...common} max={niceMax(Math.max(iopsPeak, near(iopsPeak, cl?.diskIops) ? cl!.diskIops! : 0) * 1.05)}
+          fmt={(v) => `${count(v)}/s`}
+          limit={near(iopsPeak, cl?.diskIops) ? { value: cl!.diskIops!, label: `volumes allow ${count(cl!.diskIops!)}/s` } : undefined}
+          summary={`${over}: all disks · busiest ${count(iopsPeak)} a second${share(iopsPeak, cl?.diskIops, 'what the volumes allow')}`}
           lines={[{ label: 'reads', color: C.azure, values: rops }, { label: 'writes', color: C.rose, values: wops }]} />
       )}
       {seen(rbps) && (
-        <Chart title="Disk throughput" testId="chart-disk-bytes" {...common} max={niceMax(ioBpsPeak * 1.05)} fmt={(v) => `${bytes(v)}/s`}
-          summary={`${over}: all disks · busiest ${bytes(ioBpsPeak)}/s`}
+        <Chart title="Disk throughput" testId="chart-disk-bytes" {...common} max={niceMax(Math.max(ioBpsPeak, near(ioBpsPeak, cl?.diskBps) ? cl!.diskBps! : 0) * 1.05)}
+          fmt={(v) => `${bytes(v)}/s`}
+          limit={near(ioBpsPeak, cl?.diskBps) ? { value: cl!.diskBps!, label: `volumes allow ${bytes(cl!.diskBps!)}/s` } : undefined}
+          summary={`${over}: all disks · busiest ${bytes(ioBpsPeak)}/s${share(ioBpsPeak, cl?.diskBps, 'what the volumes allow')}`}
           lines={[{ label: 'read', color: C.azure, values: rbps }, { label: 'written', color: C.rose, values: wbps }]} />
       )}
+      {cl && cl.cost.length > 0 && <CostChart cloud={cl} from={from} to={to} step={step} events={events} />}
+      {events.length > 0 && <EventList events={events} />}
     </SimpleGrid>
+  )
+}
+
+type TimedEvent = MetricsEvent & { t: number }
+
+const EVENT_COLOR: Record<MetricsEvent['kind'], string> = { cloud: C.sky, update: C.teal, restart: C.slate }
+const EVENT_WORD: Record<MetricsEvent['kind'], string> = { cloud: 'Cloud', update: 'Updates', restart: 'Started' }
+
+/**
+ * What the instance cost by the hour over the range, on the same time axis:
+ * its list price now, walked back through the starts, stops and resizes
+ * Argus applied. Nothing while stopped.
+ */
+function CostChart({ cloud, from, to, step, events }: {
+  cloud: MetricsCloud; from: number; to: number; step: number; events: TimedEvent[]
+}) {
+  const steps = cloud.cost.map((c) => ({ t: Math.max(from, Date.parse(c.from)), v: c.perHour }))
+  // One point a step across the range, so the line is drawn whether or not
+  // the agent reported: the bill runs either way.
+  const n = Math.min(400, Math.max(2, Math.round((to - from) / step)))
+  const times: number[] = []
+  const values: (number | null)[] = []
+  for (let i = 0; i <= n; i++) {
+    const t = from + ((to - from) * i) / n
+    let v: number | null = null
+    for (const s of steps) if (s.t <= t) v = s.v
+    times.push(t)
+    values.push(v)
+  }
+  let total = 0
+  let known = true
+  steps.forEach((s, i) => {
+    const end = i + 1 < steps.length ? steps[i + 1]!.t : to
+    if (s.v === null) known = false
+    else total += s.v * ((end - s.t) / 3_600_000)
+  })
+  const nowPrice = steps[steps.length - 1]?.v ?? null
+  const peakV = Math.max(0, ...values.filter((v): v is number => v !== null))
+  const usd = (v: number) => `$${v < 1 ? v.toFixed(3) : v.toFixed(2)}`
+  return (
+    <Chart title="Instance cost" testId="chart-cost" times={times} from={from} to={to} step={((to - from) / n) * 1.01}
+      events={events} max={niceMax(Math.max(0.01, peakV) * 1.1)} fmt={usd}
+      summary={`${cloud.instanceType} · ${nowPrice === null ? 'price not known' : `${usd(nowPrice)} an hour now`}` +
+        (known ? ` · about ${usd(total)} over the range` : '')}
+      lines={[{ label: 'on-demand list price per hour (us-east-1 prices)', color: C.amber, values }]} />
+  )
+}
+
+/** The markers as a list, so they can be read without hovering. */
+function EventList({ events }: { events: TimedEvent[] }) {
+  return (
+    <Box p="md" style={{ borderTop: '1px solid var(--color-line)', gridColumn: '1 / -1' }} data-testid="metrics-events">
+      <Text size={FS.meta} fw={600} mb={4}>Changes in this range</Text>
+      <Stack gap={2}>
+        {[...events].reverse().map((e) => (
+          <Group key={`${e.at}-${e.kind}-${e.summary}`} gap="xs" wrap="nowrap" align="baseline">
+            <svg width="8" height="8" aria-hidden style={{ flex: 'none' }}><rect width="8" height="8" rx="2" fill={EVENT_COLOR[e.kind]} /></svg>
+            <Text size={FS.micro} c="dimmed" w={110} style={{ flex: 'none' }} title={absTime(e.at)}>
+              {new Date(e.t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+            </Text>
+            <Text size={FS.micro} style={{ minWidth: 0 }}>
+              <Text span inherit c="dimmed">{EVENT_WORD[e.kind]} · </Text>{e.summary}
+              {e.by && <Text span inherit c="dimmed"> · {e.by}</Text>}
+            </Text>
+          </Group>
+        ))}
+      </Stack>
+    </Box>
   )
 }
 
@@ -346,7 +505,7 @@ function timeLabel(t: number, spanMs: number): string {
     : d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
 }
 
-function Chart({ title, summary, lines, times, from, to, step, max, fmt, threshold, thresholdLabel, testId }: {
+function Chart({ title, summary, lines, times, from, to, step, max, fmt, threshold, thresholdLabel, limit, events = [], testId }: {
   title: string
   summary: string
   lines: Line[]
@@ -359,6 +518,10 @@ function Chart({ title, summary, lines, times, from, to, step, max, fmt, thresho
   threshold?: number
   /** What the dashed line means; "low at" the value when not given. */
   thresholdLabel?: string
+  /** What the instance or its volumes allow, drawn as a solid line. */
+  limit?: { value: number; label: string }
+  /** Changes in the range, drawn as markers. */
+  events?: TimedEvent[]
   testId: string
 }) {
   const { ref, width } = useElementSize()
@@ -412,12 +575,16 @@ function Chart({ title, summary, lines, times, from, to, step, max, fmt, thresho
     setHover(best >= 0 && bd <= step * 1.5 ? best : null)
   }
 
+  const shownEvents = events.filter((e) => e.t >= from && e.t <= to)
+  const hoverEvent = hover === null ? undefined
+    : shownEvents.filter((e) => Math.abs(e.t - times[hover]!) <= step).sort((a, b) => Math.abs(a.t - times[hover]!) - Math.abs(b.t - times[hover]!))[0]
   const hoverText = hover === null ? null
     : `${new Date(times[hover]!).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · ` +
+      (hoverEvent ? `${hoverEvent.summary} · ` : '') +
       lines.map((l) => `${l.label} ${l.values[hover] == null ? '—' : fmt(l.values[hover]!)}`).join(' · ')
 
   return (
-    <Box p="md" ref={ref} className="metrics-chart" data-testid={testId} data-gaps={gaps.length}
+    <Box p="md" ref={ref} className="metrics-chart" data-testid={testId} data-gaps={gaps.length} data-events={shownEvents.length}
       style={{ borderTop: '1px solid var(--color-line)' }}>
       <Group justify="space-between" gap="xs" wrap="nowrap" mb={4}>
         <Text size={FS.meta} fw={600}>{title}</Text>
@@ -458,6 +625,20 @@ function Chart({ title, summary, lines, times, from, to, step, max, fmt, thresho
             <text x={W - pr - 2} y={y(threshold) - 3} fontSize="10" textAnchor="end" fill="var(--mantine-color-amber-7)">{thresholdLabel ?? `low at ${fmt(threshold)}`}</text>
           </g>
         )}
+        {limit && (
+          <g data-testid={`${testId}-limit`}>
+            <line x1={pl} x2={W - pr} y1={y(limit.value)} y2={y(limit.value)} stroke={C.rose} strokeWidth={1.2} />
+            <text x={pl + 4} y={y(limit.value) - 3} fontSize="10" fill="var(--mantine-color-rose-7)">{limit.label}</text>
+          </g>
+        )}
+        {shownEvents.map((e) => (
+          <g key={`${e.at}-${e.kind}-${e.summary}`}>
+            <line x1={x(e.t)} x2={x(e.t)} y1={pt} y2={pt + ih} stroke={EVENT_COLOR[e.kind]} strokeWidth={1} strokeDasharray="2 2" />
+            <path d={`M${x(e.t) - 4},${pt} L${x(e.t) + 4},${pt} L${x(e.t)},${pt + 6} Z`} fill={EVENT_COLOR[e.kind]}>
+              <title>{e.summary}</title>
+            </path>
+          </g>
+        ))}
         {[0, 0.5, 1].map((f) => (
           <text key={f} x={pl + iw * f} y={H - 4} fontSize="10" textAnchor={f === 0 ? 'start' : f === 1 ? 'end' : 'middle'}
             fill="var(--mantine-color-dimmed)">{f === 1 ? 'now' : timeLabel(from + span * f, span)}</text>

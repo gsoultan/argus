@@ -26,6 +26,7 @@ var (
 	procGetSystemTimes       = modKernel32Sys.NewProc("GetSystemTimes")
 	procGlobalMemoryStatusEx = modKernel32Sys.NewProc("GlobalMemoryStatusEx")
 	procGetTickCount64       = modKernel32Sys.NewProc("GetTickCount64")
+	procK32GetProcessMemInfo = modKernel32Sys.NewProc("K32GetProcessMemoryInfo")
 
 	modIphlpapiSys         = windows.NewLazySystemDLL("iphlpapi.dll")
 	procGetTcpStatisticsEx = modIphlpapiSys.NewProc("GetTcpStatisticsEx")
@@ -96,6 +97,7 @@ func (u *UsageSampler) platformSample() (Usage, bool) {
 	if now, ok := systemTimes(); ok {
 		out.CPUBusy = busySince(u.prev, now)
 		u.prev = now
+		out.Top = u.topProcesses(processCounters(), now.total)
 	}
 	if m, ok := globalMemory(); ok {
 		out.MemTotal, out.MemAvailable = m.TotalPhys, m.AvailPhys
@@ -282,4 +284,72 @@ func physicalDiskCounters() []diskCounters {
 			readBytes: uint64(dp.BytesRead), wroteBytes: uint64(dp.BytesWritten)})
 	}
 	return out
+}
+
+// processMemoryCounters is PROCESS_MEMORY_COUNTERS.
+type processMemoryCounters struct {
+	Cb                         uint32
+	PageFaultCount             uint32
+	PeakWorkingSetSize         uintptr
+	WorkingSetSize             uintptr
+	QuotaPeakPagedPoolUsage    uintptr
+	QuotaPagedPoolUsage        uintptr
+	QuotaPeakNonPagedPoolUsage uintptr
+	QuotaNonPagedPoolUsage     uintptr
+	PagefileUsage              uintptr
+	PeakPagefileUsage          uintptr
+}
+
+// processCounters reads each process's name, processor time (kernel plus
+// user, in the 100 ns units GetSystemTimes uses) and working set. Opening a
+// process only to query it needs the limited right, which the agent's
+// service account has for every process but a few protected ones; those
+// are skipped.
+func processCounters() []procCounters {
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return nil
+	}
+	defer windows.CloseHandle(snap)
+	var e windows.ProcessEntry32
+	e.Size = uint32(unsafe.Sizeof(e))
+	if windows.Process32First(snap, &e) != nil {
+		return nil
+	}
+	memOK := procK32GetProcessMemInfo.Find() == nil
+	var out []procCounters
+	for {
+		if e.ProcessID != 0 && len(out) < maxProcScan {
+			if c, ok := oneProcess(e, memOK); ok {
+				out = append(out, c)
+			}
+		}
+		if windows.Process32Next(snap, &e) != nil {
+			break
+		}
+	}
+	return out
+}
+
+func oneProcess(e windows.ProcessEntry32, memOK bool) (procCounters, bool) {
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, e.ProcessID)
+	if err != nil {
+		return procCounters{}, false
+	}
+	defer windows.CloseHandle(h)
+	var created, exited, kernel, user windows.Filetime
+	if windows.GetProcessTimes(h, &created, &exited, &kernel, &user) != nil {
+		return procCounters{}, false
+	}
+	ft := func(f windows.Filetime) uint64 { return uint64(f.HighDateTime)<<32 | uint64(f.LowDateTime) }
+	c := procCounters{key: procKey{pid: int(e.ProcessID), start: ft(created)},
+		name: windows.UTF16ToString(e.ExeFile[:]), cpu: ft(kernel) + ft(user)}
+	if memOK {
+		var m processMemoryCounters
+		m.Cb = uint32(unsafe.Sizeof(m))
+		if r, _, _ := procK32GetProcessMemInfo.Call(uintptr(h), uintptr(unsafe.Pointer(&m)), uintptr(m.Cb)); r != 0 {
+			c.memory = uint64(m.WorkingSetSize)
+		}
+	}
+	return c, true
 }

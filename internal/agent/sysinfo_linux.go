@@ -30,6 +30,7 @@ func platformSystem() SystemInfo { return readSystem(liveRoots) }
 func (u *UsageSampler) platformSample() (Usage, bool) {
 	out, now := readUsage(liveRoots, u.prev)
 	u.prev = now
+	out.Top = u.topProcesses(readProcs(liveRoots, os.Getpagesize()), now.total)
 	out.Net = u.netRates(readNetDev(liveRoots), out.At)
 	out.DiskIO = u.diskRates(readDiskStats(liveRoots), out.At)
 	return out, true
@@ -495,4 +496,68 @@ func skipBlockDevice(name string) bool {
 		}
 	}
 	return false
+}
+
+// readProcs reads each process's name, processor time (in clock ticks, the
+// unit /proc/stat's totals are in) and resident memory from /proc/<pid>/stat.
+// A process that exits while it is read is skipped.
+func readProcs(r sysRoots, pageSize int) []procCounters {
+	d, err := os.Open(r.proc)
+	if err != nil {
+		return nil
+	}
+	names, err := d.Readdirnames(-1)
+	d.Close()
+	if err != nil {
+		return nil
+	}
+	var out []procCounters
+	for _, n := range names {
+		if len(out) == maxProcScan {
+			break
+		}
+		pid, err := strconv.Atoi(n)
+		if err != nil || pid <= 0 {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(r.proc, n, "stat"))
+		if err != nil {
+			continue
+		}
+		if c, ok := parseProcStat(pid, string(b), pageSize); ok {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// parseProcStat reads one /proc/<pid>/stat line. The name is in brackets
+// and may itself hold spaces and brackets, so the fields are counted from
+// the last closing bracket.
+func parseProcStat(pid int, line string, pageSize int) (procCounters, bool) {
+	open, close := strings.IndexByte(line, '('), strings.LastIndexByte(line, ')')
+	if open < 0 || close < open {
+		return procCounters{}, false
+	}
+	rest := strings.Fields(line[close+1:])
+	// rest[0] is field 3 (state): utime 14, stime 15, starttime 22, rss 24.
+	if len(rest) < 22 {
+		return procCounters{}, false
+	}
+	num := func(i int) (uint64, bool) {
+		v, err := strconv.ParseUint(rest[i], 10, 64)
+		return v, err == nil
+	}
+	ut, ok1 := num(11)
+	st, ok2 := num(12)
+	start, ok3 := num(19)
+	rss, err := strconv.ParseInt(rest[21], 10, 64)
+	if !ok1 || !ok2 || !ok3 || err != nil {
+		return procCounters{}, false
+	}
+	if rss < 0 {
+		rss = 0
+	}
+	return procCounters{key: procKey{pid: pid, start: start}, name: line[open+1 : close],
+		cpu: ut + st, memory: uint64(rss) * uint64(pageSize)}, true
 }

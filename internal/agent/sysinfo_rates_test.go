@@ -73,3 +73,48 @@ func TestStealSince(t *testing.T) {
 		t.Errorf("steal = %v, want 25", v)
 	}
 }
+
+func TestTopProcesses(t *testing.T) {
+	var u UsageSampler
+	pc := func(pid int, name string, cpu, mem uint64) procCounters {
+		return procCounters{key: procKey{pid: pid, start: 1}, name: name, cpu: cpu, memory: mem}
+	}
+	first := []procCounters{pc(1, "a", 0, 10), pc(2, "b", 0, 900), pc(3, "c", 0, 5)}
+	got := u.topProcesses(first, 1000)
+	if len(got) != 3 || got[0].CPU != nil || got[0].Name != "b" {
+		t.Fatalf("first = %+v, want by memory with no processor share yet", got)
+	}
+	// 1000 ticks of machine time later: a used 500 (50%), c 10 (1%), b none.
+	// A process restarted under pid 3 is a new process with no share.
+	now := []procCounters{pc(1, "a", 500, 10), pc(2, "b", 0, 900), {key: procKey{pid: 3, start: 2}, name: "c", cpu: 10, memory: 5}}
+	got = u.topProcesses(now, 2000)
+	if got[0].Name != "a" || got[0].CPU == nil || *got[0].CPU != 50 {
+		t.Errorf("busiest = %+v", got[0])
+	}
+	if got[1].Name != "b" || got[1].CPU == nil || *got[1].CPU != 0 {
+		t.Errorf("second = %+v", got[1])
+	}
+	for _, p := range got {
+		if p.Name == "c" && p.CPU != nil {
+			t.Errorf("a restarted process has a share from its predecessor: %v", *p.CPU)
+		}
+	}
+
+	// Many processes: five by processor and five more by memory, no repeats.
+	var many []procCounters
+	for i := 1; i <= 40; i++ {
+		many = append(many, pc(i, "p", uint64(i*10), uint64(1000-i)))
+	}
+	var v UsageSampler
+	v.topProcesses(many, 1000)
+	for i := range many {
+		many[i].cpu *= 2
+	}
+	top := v.topProcesses(many, 2000)
+	if len(top) != 10 {
+		t.Fatalf("top = %d, want 10", len(top))
+	}
+	if top[0].PID != 40 || top[5].PID != 1 {
+		t.Errorf("order = %d ... %d, want the busiest first and then the largest", top[0].PID, top[5].PID)
+	}
+}

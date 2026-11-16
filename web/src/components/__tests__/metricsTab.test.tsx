@@ -88,4 +88,38 @@ describe('MetricsHistory', () => {
     expect(screen.getByTestId('chart-iops').textContent).toContain('busiest 900 a second')
     expect(screen.getByTestId('chart-disk-bytes').textContent).toMatch(/busiest 4\.8 MB\/s|busiest 5(\.0)? MB\/s/)
   })
+  // A busy server is read against what its instance allows, what changed on
+  // it, and what it cost while it did.
+  it('draws the instance limits, the changes and the cost', () => {
+    const pts = Array.from({ length: 72 }, (_, i) => point(i, { rx: 8e6, tx: 2e7, rxMax: 9e6, txMax: 4e7, readOps: 900, writeOps: 400, iopsMax: 2600, readBps: 1e6, writeBps: 1e6, ioBpsMax: 2e6 }))
+    const at = (h: number) => new Date(FROM + h * 3600 * 1000).toISOString()
+    renderWithProviders(<MetricsHistory m={{
+      ...metrics(pts),
+      events: [{ at: at(2), kind: 'cloud', summary: 'Resize web-01 to m6i.large', by: 'dana@example.com' },
+        { at: at(4), kind: 'update', summary: 'Updated 3 packages', by: 'lee@example.com' }],
+      cloud: { instanceId: 'i-1', instanceType: 'm6i.large', networkBps: 97_625_000, diskIops: 3000, diskBps: 125 * 1024 * 1024,
+        cost: [{ from: at(0), perHour: 0.0832 }, { from: at(2), perHour: 0.096 }] },
+    }} />)
+    // Network peaks near the baseline: the line is drawn. Disk throughput is
+    // far below what the volumes allow: the summary says how far instead.
+    expect(screen.getByTestId('chart-net-limit').textContent).toContain('m6i.large baseline')
+    expect(screen.getByTestId('chart-iops-limit').textContent).toContain('volumes allow 3.0k/s')
+    expect(screen.queryByTestId('chart-disk-bytes-limit')).toBeNull()
+    expect(screen.getByTestId('chart-disk-bytes').textContent).toMatch(/\d+% of what the volumes allow/)
+    expect(Number(screen.getByTestId('chart-cpu').dataset.events)).toBe(2)
+    const cost = screen.getByTestId('chart-cost')
+    expect(cost.textContent).toContain('$0.096 an hour now')
+    // Two hours at 0.0832 and four at 0.096.
+    expect(cost.textContent).toContain('about $0.550 over the range')
+    const list = screen.getByTestId('metrics-events')
+    expect(list.textContent).toContain('Resize web-01 to m6i.large')
+    expect(list.textContent).toContain('dana@example.com')
+  })
+
+  it('shows no cost or change list without them', () => {
+    renderWithProviders(<MetricsHistory m={metrics(Array.from({ length: 72 }, (_, i) => point(i)))} />)
+    expect(screen.queryByTestId('chart-cost')).toBeNull()
+    expect(screen.queryByTestId('metrics-events')).toBeNull()
+    expect(screen.queryByTestId('chart-net-limit')).toBeNull()
+  })
 })
