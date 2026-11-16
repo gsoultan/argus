@@ -641,6 +641,120 @@ func (m *RevokedSession) Schema(t *storm.Table) {
 	t.Index(&m.ExpiresAt).Named("revoked_sessions_expires_at")
 }
 
+// ScaleGroupActivity is table scale_group_activity: what a scale group did
+// and why (migration 089).
+//
+// The table name is not what storm would derive from the type, so it is
+// set explicitly in Schema — otherwise the first diff would rename it.
+type ScaleGroupActivity struct {
+	ID       int64
+	Group    ScaleGroup
+	At       time.Time
+	Kind     string
+	Actor    string
+	Detail   string
+	ChangeID string
+}
+
+func (m *ScaleGroupActivity) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Name("scale_group_activity")
+	t.Col(&m.ID).Serial()
+	t.Col(&m.Group).ConstraintName("scale_group_activity_group_id_fkey")
+	t.Col(&m.Group).OnDelete(storm.Cascade)
+	t.Col(&m.At).Default("now()")
+	t.Col(&m.ChangeID).Default("''::text")
+	t.Index(&m.Group, storm.Desc(&m.At)).Named("scale_group_activity_recent")
+}
+
+// ScaleGroupMember is table scale_group_members: one server in a scale
+// group, from launch until terminated (migration 089).
+type ScaleGroupMember struct {
+	Group        ScaleGroup
+	InstanceID   string
+	Hostname     string
+	Zone         string
+	Subnet       string
+	State        string
+	AddedBy      string
+	JoinedAt     time.Time
+	RegisteredAt *time.Time
+	DrainUntil   *time.Time
+	LeftAt       *time.Time
+}
+
+func (m *ScaleGroupMember) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Group, &m.InstanceID)
+	t.Col(&m.Group).ConstraintName("scale_group_members_group_id_fkey")
+	t.Col(&m.Group).OnDelete(storm.Cascade)
+	t.Col(&m.Zone).Default("''::text")
+	t.Col(&m.Subnet).Default("''::text")
+	t.Col(&m.JoinedAt).Default("now()")
+	t.CheckNamed("scale_group_members_state_check", "state = ANY (ARRAY['joining'::text, 'member'::text, 'draining'::text, 'gone'::text, 'failed'::text])")
+}
+
+// ScaleGroup is table scale_groups: servers behind one load balancer with a
+// rule for adding and taking away (migration 089).
+type ScaleGroup struct {
+	ID           [16]byte
+	Account      CloudAccount
+	Region       string
+	Name         string
+	Environment  string
+	TargetGroup  string
+	TargetName   string
+	Port         int32
+	Balancer     string
+	Template     storm.JSON
+	MinSize      int32
+	MaxSize      int32
+	CostCap      float64
+	AddWait      int32
+	RemoveWait   int32
+	Rules        storm.JSON
+	Mode         string
+	AutoBy       string
+	AutoAt       *time.Time
+	State        string
+	PausedReason string
+	Note         string
+	EnrollBase   string
+	FailedStarts int32
+	LastAddAt    *time.Time
+	LastRemoveAt *time.Time
+	CheckedAt    *time.Time
+	CreatedBy    string
+	CreatedAt    time.Time
+}
+
+func (m *ScaleGroup) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Account).ConstraintName("scale_groups_account_id_fkey")
+	t.Col(&m.Account).OnDelete(storm.Cascade)
+	t.Col(&m.TargetName).Default("''::text")
+	t.Col(&m.Port).Default("0")
+	t.Col(&m.Balancer).Default("''::text")
+	t.Col(&m.CostCap).Default("0")
+	t.Col(&m.AddWait).Default("10")
+	t.Col(&m.RemoveWait).Default("30")
+	t.Col(&m.Mode).Default("'ask'::text")
+	t.Col(&m.AutoBy).Default("''::text")
+	t.Col(&m.State).Default("'active'::text")
+	t.Col(&m.PausedReason).Default("''::text")
+	t.Col(&m.Note).Default("''::text")
+	t.Col(&m.EnrollBase).Default("''::text")
+	t.Col(&m.FailedStarts).Default("0")
+	t.Col(&m.CreatedAt).Default("now()")
+	t.CheckNamed("scale_groups_check", "max_size >= min_size")
+	t.CheckNamed("scale_groups_environment_check", "environment = ANY (ARRAY['production'::text, 'staging'::text, 'development'::text])")
+	t.CheckNamed("scale_groups_min_size_check", "min_size >= 1")
+	t.CheckNamed("scale_groups_mode_check", "mode = ANY (ARRAY['ask'::text, 'auto'::text])")
+	t.CheckNamed("scale_groups_name_check", "name ~ '^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$'::text")
+	t.CheckNamed("scale_groups_state_check", "state = ANY (ARRAY['active'::text, 'paused'::text])")
+	t.Index(&m.Account, &m.Region, &m.Name).Unique().Named("scale_groups_name")
+}
+
 // SchemaMigration is table schema_migrations.
 type SchemaMigration struct {
 	Name      string
@@ -1237,6 +1351,9 @@ func All() []any {
 		&SavedQuery{},
 		&RedeemedTicket{},
 		&RevokedSession{},
+		&ScaleGroup{},
+		&ScaleGroupMember{},
+		&ScaleGroupActivity{},
 		&SchemaMigration{},
 		&Session{},
 		&ServerLogin{},
@@ -1944,10 +2061,10 @@ func (m *CloudChange) Schema(t *storm.Table) {
 	t.Col(&m.RequestID).Default("''::text")
 	t.Col(&m.Result).Default("'{}'::jsonb")
 	t.Col(&m.Error).Default("''::text")
-	t.CheckNamed("cloud_changes_action_check", "action = ANY (ARRAY['launch'::text, 'start'::text, 'stop'::text, 'hibernate'::text, 'reboot'::text, 'resize'::text, 'tags'::text, 'protect'::text, 'unprotect'::text, 'settings'::text, 'remove'::text, 'volume-create'::text, 'volume-grow'::text, 'volume-attach'::text, 'volume-detach'::text, 'volume-delete'::text, 'snapshot-create'::text, 'snapshot-delete'::text, 'image-create'::text, 'image-delete'::text, 'address-allocate'::text, 'address-associate'::text, 'address-disassociate'::text, 'address-release'::text, 'firewall-create'::text, 'firewall-rules'::text, 'firewall-delete'::text, 'instance-firewalls'::text, 'target-register'::text, 'target-deregister'::text, 'capacity-create'::text, 'capacity-cancel'::text, 'ri-buy'::text, 'sp-buy'::text, 'target-group-create'::text, 'health-check'::text, 'balancer-create'::text, 'group-size'::text])")
+	t.CheckNamed("cloud_changes_action_check", "action = ANY (ARRAY['launch'::text, 'start'::text, 'stop'::text, 'hibernate'::text, 'reboot'::text, 'resize'::text, 'tags'::text, 'protect'::text, 'unprotect'::text, 'settings'::text, 'remove'::text, 'volume-create'::text, 'volume-grow'::text, 'volume-attach'::text, 'volume-detach'::text, 'volume-delete'::text, 'snapshot-create'::text, 'snapshot-delete'::text, 'image-create'::text, 'image-delete'::text, 'address-allocate'::text, 'address-associate'::text, 'address-disassociate'::text, 'address-release'::text, 'firewall-create'::text, 'firewall-rules'::text, 'firewall-delete'::text, 'instance-firewalls'::text, 'target-register'::text, 'target-deregister'::text, 'capacity-create'::text, 'capacity-cancel'::text, 'ri-buy'::text, 'sp-buy'::text, 'target-group-create'::text, 'health-check'::text, 'balancer-create'::text, 'group-size'::text, 'scale-group-create'::text, 'scale-group-change'::text, 'scale-add'::text, 'scale-remove'::text])")
 	t.CheckNamed("cloud_changes_environment_check", "environment = ANY (ARRAY['production'::text, 'staging'::text, 'development'::text])")
 	t.CheckNamed("cloud_changes_level_check", "level = ANY (ARRAY['operate'::text, 'change'::text, 'remove'::text])")
-	t.CheckNamed("cloud_changes_state_check", "state = ANY (ARRAY['awaiting_approval'::text, 'applying'::text, 'applied'::text, 'failed'::text, 'declined'::text, 'cancelled'::text])")
+	t.CheckNamed("cloud_changes_state_check", "state = ANY (ARRAY['awaiting_approval'::text, 'applying'::text, 'applied'::text, 'failed'::text, 'declined'::text, 'cancelled'::text, 'lapsed'::text])")
 	t.Index(&m.Account, &m.ResourceID).Unique().Where("(state = ANY (ARRAY['awaiting_approval'::text, 'applying'::text])) AND (resource_id <> ''::text)").Named("cloud_changes_one_open")
 	t.Index(storm.Desc(&m.RequestedAt)).Named("cloud_changes_recent")
 	t.Index(&m.Account, &m.ResourceID).Named("cloud_changes_resource")

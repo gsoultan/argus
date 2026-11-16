@@ -414,6 +414,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	a.registerDiskGrowRoutes(mux)
 	a.registerCloudRoutes(mux)
 	a.registerCloudChangeRoutes(mux)
+	a.registerScaleGroupRoutes(mux)
 	a.registerCloudScheduleRoutes(mux)
 	a.registerCloudAccessRoutes(mux)
 	a.registerCloudCostRoutes(mux)

@@ -15,7 +15,7 @@ import { ResizeChange } from './InstanceActions'
  * A suggestion from Argus's own metrics: a busy server behind a load
  * balancer gets "add a server behind it", a busy one alone "resize up", one
  * idle for two weeks "resize down". It never acts: pressing it opens the
- * launch or the resize with the answers filled in, which then goes through
+ * scale group wizard or the resize with the answers filled in, which then goes through
  * the usual plan and approval. "Not now" hides it on this browser for a day.
  */
 
@@ -46,7 +46,7 @@ function Act({ s, onSnooze, size = 'sm' }: { s: ServerSuggestion; onSnooze?: () 
       {admin && (
         <Button size={size} color={s.kind === 'resize-down' ? 'teal' : undefined}
           onClick={() => s.kind === 'add-server'
-            ? void navigate({ to: '/cloud/launch', search: { like: it.resource.id, account: it.accountId } })
+            ? void navigate({ to: '/cloud/scale/new', search: { account: it.accountId, region: it.resource.region, from: it.resource.id } })
             : setResizing(true)}>
           {suggestionAction(s)}
         </Button>
@@ -74,7 +74,7 @@ export function SuggestionBanner({ assetId }: { assetId: string }) {
           <Text size={FS.body} fw={700}>{s.title}</Text>
           <Text size={FS.meta}>{s.detail}</Text>
           {s.kind === 'add-server' && (
-            <Text size={FS.micro} c="dimmed">It opens a launch like this server. Put the new one behind {s.balancer} from its target group once it runs.</Text>
+            <Text size={FS.micro} c="dimmed">It opens a scale group made from this server: servers like it join {s.balancer} when it is busy, and go when it is quiet.</Text>
           )}
         </Stack>
         <Act s={s} onSnooze={snooze} />

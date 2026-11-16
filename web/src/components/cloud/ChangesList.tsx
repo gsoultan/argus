@@ -1,7 +1,7 @@
 import { Badge, Box, Button, Card, Flex, Group, Stack, Text, ThemeIcon, Tooltip } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import {
-  IconArrowsSplit, IconBox, IconBoxOff, IconHeartbeat, IconStack2, IconTargetArrow, IconCamera, IconReceipt, IconCirclePlus, IconDeviceFloppy, IconHistory, IconLink, IconLinkOff, IconLock, IconLockOpen, IconMoon, IconPhoto, IconPlayerPlay,
+  IconArrowsSplit, IconCircleMinus, IconStack3, IconBox, IconBoxOff, IconHeartbeat, IconStack2, IconTargetArrow, IconCamera, IconReceipt, IconCirclePlus, IconDeviceFloppy, IconHistory, IconLink, IconLinkOff, IconLock, IconLockOpen, IconMoon, IconPhoto, IconPlayerPlay,
   IconPlayerStop, IconPlugConnected, IconPlugConnectedX, IconRefresh, IconResize, IconSettings, IconShield, IconShieldPlus, IconTag, IconTrash, IconWorld,
 } from '@tabler/icons-react'
 import { EmptyState } from '~/components/page'
@@ -13,6 +13,8 @@ import { notifyError, notifyOk } from '~/lib/notify'
 import { meQuery } from '~/lib/queries'
 import { FS } from '~/theme'
 import { EnvBadge } from './common'
+import { ScalePlanBlock } from './ScaleGroups'
+import { askerName, type ScalePlan } from '~/lib/cloudScale'
 
 const ICON: Record<CloudAction, typeof IconTrash> = {
   launch: IconCirclePlus, start: IconPlayerPlay, stop: IconPlayerStop, hibernate: IconMoon, reboot: IconRefresh, resize: IconResize,
@@ -24,13 +26,14 @@ const ICON: Record<CloudAction, typeof IconTrash> = {
   'instance-firewalls': IconShield, 'target-register': IconPlugConnected, 'target-deregister': IconPlugConnectedX,
   'capacity-create': IconBox, 'capacity-cancel': IconBoxOff, 'ri-buy': IconReceipt, 'sp-buy': IconReceipt,
   'target-group-create': IconTargetArrow, 'health-check': IconHeartbeat, 'balancer-create': IconArrowsSplit, 'group-size': IconStack2,
+  'scale-group-create': IconStack3, 'scale-group-change': IconStack3, 'scale-add': IconCirclePlus, 'scale-remove': IconCircleMinus,
 }
 const ICON_COLOR: Partial<Record<CloudAction, string>> = {
   launch: 'teal', remove: 'rose', stop: 'amber', hibernate: 'amber', 'volume-create': 'teal', 'address-allocate': 'teal',
   'volume-delete': 'rose', 'snapshot-delete': 'rose', 'image-delete': 'rose', 'address-release': 'rose',
   'firewall-create': 'teal', 'firewall-delete': 'rose', 'target-deregister': 'amber',
   'capacity-create': 'teal', 'capacity-cancel': 'amber', 'ri-buy': 'rose', 'sp-buy': 'rose',
-  'target-group-create': 'teal', 'balancer-create': 'teal',
+  'target-group-create': 'teal', 'balancer-create': 'teal', 'scale-group-create': 'teal', 'scale-add': 'teal', 'scale-remove': 'amber',
 }
 
 /**
@@ -90,10 +93,13 @@ function ChangeCard({ c, mine, decides }: { c: CloudChange; mine: boolean; decid
               {c.accountName} · {c.region}{c.resourceId ? <> · <Text span ff="monospace" size={FS.meta}>{c.resourceId}</Text></> : null}
             </Text>
             <Text size={FS.meta} mt={6}>
-              <Tooltip label={absTime(c.requestedAt)}><span>Asked by <b>{c.requestedBy}</b> {relTime(c.requestedAt)}</span></Tooltip>
+              <Tooltip label={absTime(c.requestedAt)}><span>Asked by <b>{askerName(c.requestedBy)}</b> {relTime(c.requestedAt)}</span></Tooltip>
               {c.decidedBy && c.state !== 'cancelled' && <> · {c.state === 'declined' ? 'declined' : 'approved'} by <b>{c.decidedBy}</b></>}
             </Text>
             {c.reason && <Text size={FS.meta} c="dimmed" fs="italic" mt={2}>“{c.reason}”</Text>}
+            {(c.action === 'scale-add' || c.action === 'scale-remove') && c.requestedBy === 'argus-scale' && (c.plan as Partial<ScalePlan>).after != null && (
+              <ScalePlanBlock plan={c.plan as unknown as ScalePlan} requestedAt={c.requestedAt} action={c.action} state={c.state} />
+            )}
             {c.action === 'remove' && c.plan?.plan && (
               <Text size={FS.meta} mt={6}>
                 {(() => { const n = c.plan.plan.volumes.filter((v) => v.deleted).length; return n === 1 ? '1 disk is deleted with it' : `${n} disks are deleted with it` })()}
