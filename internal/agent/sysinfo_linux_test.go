@@ -252,3 +252,32 @@ func TestReadDiskStatsWholeDisksOnly(t *testing.T) {
 		t.Errorf("nvme0n1 = %+v", d)
 	}
 }
+
+func TestParseProcStat(t *testing.T) {
+	// A name with a space and a bracket in it, which is why fields are
+	// counted from the last closing bracket.
+	line := "4242 (my (odd) prog) S 1 4242 4242 0 -1 4194560 100 0 0 0 250 50 0 0 20 0 3 0 98765 123456789 2048 18446744073709551615\n"
+	c, ok := parseProcStat(4242, line, 4096)
+	if !ok {
+		t.Fatal("not parsed")
+	}
+	if c.name != "my (odd) prog" || c.cpu != 300 || c.key.start != 98765 || c.memory != 2048*4096 {
+		t.Errorf("parsed %+v", c)
+	}
+	if _, ok := parseProcStat(1, "1 (init) S 1 2", 4096); ok {
+		t.Error("a cut-off line parsed")
+	}
+}
+
+func TestReadProcsSkipsWhatIsNotAProcess(t *testing.T) {
+	r := fixtureRoots(t, map[string]string{
+		"proc/12/stat":   "12 (postgres) S 1 12 12 0 -1 0 0 0 0 0 10 5 0 0 20 0 1 0 500 0 100 0\n",
+		"proc/self/stat": "12 (postgres) S 1 12 12 0 -1 0 0 0 0 0 10 5 0 0 20 0 1 0 500 0 100 0\n",
+		"proc/13/stat":   "garbage",
+		"proc/stat":      "cpu 1 1 1 1\n",
+	}, nil)
+	got := readProcs(r, 4096)
+	if len(got) != 1 || got[0].key.pid != 12 || got[0].name != "postgres" {
+		t.Errorf("procs = %+v", got)
+	}
+}

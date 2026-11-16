@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/gsoultan/argus/internal/control/cloud"
@@ -48,30 +49,37 @@ func (a *API) getAssetCloud(w http.ResponseWriter, r *http.Request) {
 	if c, ok := instances[id]; ok {
 		out.Reported = &c
 	}
-	items, err := a.store.CloudResources(ctx, cloud.KindInstance)
+	out.Instance, err = a.assetInstance(ctx, id, instances)
 	if err != nil {
 		a.fail(w, "asset cloud", err)
 		return
 	}
-	if len(items) > 0 {
-		assets, err := a.store.Assets(ctx)
-		if err != nil {
-			a.fail(w, "asset cloud", err)
-			return
-		}
-		reported, err := a.store.AgentAddresses(ctx)
-		if err != nil {
-			a.fail(w, "asset cloud", err)
-			return
-		}
-		matchServers(items, assets, reported, instances)
-		for i := range items {
-			if items[i].Server != nil && items[i].Server.ID == id {
-				out.Instance = &items[i]
-				break
-			}
-		}
-	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, out)
+}
+
+// assetInstance is the instance in a connected account that a server runs
+// as, matched the way Cloud › Instances matches it; nil when none does.
+// instances is what agents reported (AgentInstances), read once by the
+// caller.
+func (a *API) assetInstance(ctx context.Context, id string, instances map[string]HostCloud) (*CloudItem, error) {
+	items, err := a.store.CloudResources(ctx, cloud.KindInstance)
+	if err != nil || len(items) == 0 {
+		return nil, err
+	}
+	assets, err := a.store.Assets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	reported, err := a.store.AgentAddresses(ctx)
+	if err != nil {
+		return nil, err
+	}
+	matchServers(items, assets, reported, instances)
+	for i := range items {
+		if items[i].Server != nil && items[i].Server.ID == id {
+			return &items[i], nil
+		}
+	}
+	return nil, nil
 }

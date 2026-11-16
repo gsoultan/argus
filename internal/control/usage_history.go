@@ -302,6 +302,12 @@ type AssetMetrics struct {
 	// Mounts is every disk seen in the range, fullest last seen first.
 	Mounts []string       `json:"mounts"`
 	Points []MetricsPoint `json:"points"`
+	// Events are what changed on the server in the range, oldest first:
+	// cloud changes Argus made, package updates and restarts.
+	Events []MetricsEvent `json:"events"`
+	// Cloud is the instance the server runs as, when one in a connected
+	// account matches; nil otherwise.
+	Cloud *MetricsCloud `json:"cloud"`
 }
 
 // errBadRange is a range the tab does not offer.
@@ -316,7 +322,7 @@ func (s *Store) MetricsFor(ctx context.Context, id, rng string, now time.Time) (
 	to := now.UTC()
 	from := to.Add(-r.span).Truncate(r.step)
 	out := AssetMetrics{Range: rng, StepSeconds: int(r.step / time.Second), From: from, To: to,
-		Mounts: []string{}, Points: []MetricsPoint{}}
+		Mounts: []string{}, Points: []MetricsPoint{}, Events: []MetricsEvent{}}
 
 	var host *string
 	var cpus *int
@@ -504,7 +510,8 @@ func (s *Store) MetricsFor(ctx context.Context, id, rng string, now time.Time) (
 	if len(out.Mounts) > maxHistoryMounts {
 		out.Mounts = out.Mounts[:maxHistoryMounts]
 	}
-	return out, nil
+	out.Events, err = s.hostEvents(ctx, *host, from, to)
+	return out, err
 }
 
 // getMetrics serves the Metrics tab. Fleet roles only, like the System card.
@@ -526,6 +533,9 @@ func (a *API) getMetrics(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, errBadRange) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if err == nil {
+		err = a.addMetricsCloud(r.Context(), r.PathValue("id"), &out)
 	}
 	if err != nil {
 		a.failAsset(w, "metrics", err)

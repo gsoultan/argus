@@ -165,3 +165,16 @@ func TestStopRefusal(t *testing.T) {
 		t.Fatal("the tag key is matched without case")
 	}
 }
+
+func TestNetworkBaseline(t *testing.T) {
+	for size, want := range map[string]float64{"t3.micro": 8e6, "m6i.large": 97625000, "r7i.4xlarge": 781250000} {
+		if got, ok := NetworkBaseline(size); !ok || got != want {
+			t.Errorf("%s: got %v %v, want %v", size, got, ok, want)
+		}
+	}
+	for _, size := range []string{"", "m6i.8xlarge", "x2.large"} {
+		if _, ok := NetworkBaseline(size); ok {
+			t.Errorf("%s: want unknown", size)
+		}
+	}
+}

@@ -3,6 +3,7 @@ package agent
 import (
 	"math"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 )
@@ -84,6 +85,24 @@ type Usage struct {
 	// DiskIO is each physical disk's operations and bytes per second since
 	// the previous sample. Nil where the platform reports none.
 	DiskIO []DiskIO `json:"disk_io,omitempty"`
+	// Top is what is using the machine now: the five processes using the
+	// most processor since the previous sample and the five using the most
+	// memory, at most ten. Names only, never command lines. Nil where the
+	// platform reports none.
+	Top []Process `json:"top,omitempty"`
+}
+
+// Process is one running program in Top.
+type Process struct {
+	// Name is the program's name: the kernel's 15-character comm on
+	// Linux, the executable's file name on Windows.
+	Name string `json:"name"`
+	PID  int    `json:"pid"`
+	// CPU is its share of the whole machine's processor time since the
+	// previous sample, 0 to 100; nil on its first sighting.
+	CPU *float64 `json:"cpu,omitempty"`
+	// Memory is its resident memory (working set on Windows), in bytes.
+	Memory uint64 `json:"memory"`
 }
 
 // DiskIO is one physical disk's activity, averaged since the previous
@@ -124,6 +143,13 @@ type Disk struct {
 // maxNet bounds the interfaces in one report; a host with more is a
 // container host whose veths are not what anyone is asking about.
 const maxNet = 32
+
+// topN is how many processes Top keeps by each measure.
+const topN = 5
+
+// maxProcScan bounds the processes read for one sample, so a machine
+// running a fork bomb costs a bounded read.
+const maxProcScan = 8192
 
 // maxDiskIO bounds the physical disks in one report.
 const maxDiskIO = 16
@@ -176,6 +202,93 @@ type UsageSampler struct {
 	// disk is each physical disk's counters at the previous sample.
 	disk   map[string]diskCounters
 	diskAt time.Time
+	// procs is each process's processor time at the previous sample, with
+	// the machine's total, so its share can be told.
+	procs     map[procKey]uint64
+	procTotal uint64
+}
+
+// procKey names a process across samples: a pid can be reused, its start
+// time with it cannot.
+type procKey struct {
+	pid   int
+	start uint64
+}
+
+// procCounters is one process as the platform reads it.
+type procCounters struct {
+	key    procKey
+	name   string
+	cpu    uint64 // processor time, in the units total is in
+	memory uint64
+}
+
+// topProcesses turns two readings of the process table into Top, keeping
+// the new reading for the next call. total is the machine's processor time
+// in the same units as each process's. Nil when no process was read.
+func (u *UsageSampler) topProcesses(now []procCounters, total uint64) []Process {
+	if len(now) == 0 {
+		return nil
+	}
+	dt := float64(0)
+	if u.procTotal > 0 && total > u.procTotal {
+		dt = float64(total - u.procTotal)
+	}
+	next := make(map[procKey]uint64, len(now))
+	all := make([]Process, 0, len(now))
+	for _, c := range now {
+		next[c.key] = c.cpu
+		p := Process{Name: c.name, PID: c.key.pid, Memory: c.memory}
+		if prev, ok := u.procs[c.key]; ok && dt > 0 && c.cpu >= prev {
+			v := math.Min(100, float64(int(float64(c.cpu-prev)/dt*1000+0.5))/10)
+			p.CPU = &v
+		}
+		all = append(all, p)
+	}
+	u.procs, u.procTotal = next, total
+	return pickTop(all)
+}
+
+// pickTop keeps the topN by processor and the topN by memory, busiest by
+// processor first, then the rest by memory.
+func pickTop(all []Process) []Process {
+	cpuOf := func(p Process) float64 {
+		if p.CPU == nil {
+			return -1
+		}
+		return *p.CPU
+	}
+	sort.SliceStable(all, func(i, j int) bool {
+		if cpuOf(all[i]) != cpuOf(all[j]) {
+			return cpuOf(all[i]) > cpuOf(all[j])
+		}
+		return all[i].Memory > all[j].Memory
+	})
+	out := make([]Process, 0, 2*topN)
+	seen := map[int]bool{}
+	for _, p := range all {
+		if len(out) == topN || p.CPU == nil {
+			break
+		}
+		out = append(out, p)
+		seen[p.PID] = true
+	}
+	byMem := append([]Process(nil), all...)
+	sort.SliceStable(byMem, func(i, j int) bool { return byMem[i].Memory > byMem[j].Memory })
+	added := 0
+	for _, p := range byMem {
+		if added == topN {
+			break
+		}
+		if seen[p.PID] {
+			added++
+			continue
+		}
+		out = append(out, p)
+		seen[p.PID] = true
+		added++
+	}
+	return out
 }
 
 // diskCounters is one physical disk as the platform reads it: completed

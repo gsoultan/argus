@@ -9,7 +9,10 @@ import (
 	"net/http"
 	"net/netip"
 	"regexp"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -130,6 +133,18 @@ type HostUsage struct {
 	Steal    *float64     `json:"steal,omitempty"`
 	TCPConns *float64     `json:"tcp_conns,omitempty"`
 	DiskIO   []HostDiskIO `json:"disk_io,omitempty"`
+	// Top is what is using the machine now, at most maxTopProcs; nil from
+	// an agent older than it.
+	Top []HostProcess `json:"top,omitempty"`
+}
+
+// HostProcess mirrors agent.Process: a program's name (never its command
+// line), pid, share of the machine's processor and resident memory.
+type HostProcess struct {
+	Name   string   `json:"name"`
+	PID    int      `json:"pid"`
+	CPU    *float64 `json:"cpu,omitempty"`
+	Memory float64  `json:"memory"`
 }
 
 // HostDiskIO mirrors agent.DiskIO: one physical disk's operations and bytes
@@ -167,6 +182,9 @@ const (
 	maxIfaceAddrs  = 16
 	maxNetRates    = 32
 	maxDiskIO      = 16
+	maxTopProcs    = 10
+	// maxProcMemory is 64 TiB, past any machine's memory.
+	maxProcMemory = 1 << 46
 	// maxDiskOps is ten million operations a second, past any one disk
 	// made; more is a broken counter.
 	maxDiskOps = 1e7
@@ -297,7 +315,39 @@ func (u *HostUsage) bounded() *HostUsage {
 		}
 	}
 	c.DiskIO = boundedDiskIO(c.DiskIO)
+	c.Top = boundedTop(c.Top)
 	return &c
+}
+
+// boundedTop keeps at most maxTopProcs processes with a printable name and
+// figures that can be true. A name is the program's own, so it is shown as
+// text, never markup, and cut to what a row holds.
+func boundedTop(in []HostProcess) []HostProcess {
+	if in == nil {
+		return nil
+	}
+	out := make([]HostProcess, 0, min(len(in), maxTopProcs))
+	for _, p := range in {
+		if len(out) == maxTopProcs {
+			break
+		}
+		name := clipText(strings.Map(func(r rune) rune {
+			if unicode.IsControl(r) || r == utf8.RuneError {
+				return -1
+			}
+			return r
+		}, p.Name), 64)
+		if name == "" || p.PID <= 0 || math.IsNaN(p.Memory) || p.Memory < 0 || p.Memory > maxProcMemory {
+			continue
+		}
+		q := HostProcess{Name: name, PID: p.PID, Memory: math.Round(p.Memory)}
+		if p.CPU != nil && !math.IsNaN(*p.CPU) && *p.CPU >= 0 && *p.CPU <= 100 {
+			v := *p.CPU
+			q.CPU = &v
+		}
+		out = append(out, q)
+	}
+	return out
 }
 
 // boundedDiskIO keeps at most maxDiskIO named disks, dropping a rate no
@@ -526,6 +576,16 @@ type SystemUsage struct {
 	// Steal and TCPConns are null where the agent does not report them.
 	Steal    *float64 `json:"steal"`
 	TCPConns *float64 `json:"tcpConns"`
+	// Top is what is using the machine now; empty where not reported.
+	Top []SystemProcess `json:"top"`
+}
+
+// SystemProcess is one row of what is using a server now.
+type SystemProcess struct {
+	Name   string   `json:"name"`
+	PID    int      `json:"pid"`
+	CPU    *float64 `json:"cpu"`
+	Memory float64  `json:"memory"`
 }
 
 // SystemNetRate is one interface's traffic on the System card.
@@ -601,7 +661,10 @@ func (s *Store) SystemFor(ctx context.Context, id string) (ServerSystem, error) 
 		out.Usage = &SystemUsage{
 			Load: hu.Load, CPUBusy: hu.CPUBusy, MemTotal: hu.MemTotal, MemAvailable: hu.MemAvailable,
 			SwapTotal: hu.SwapTotal, SwapFree: hu.SwapFree, Disks: disks, Net: net,
-			Steal: hu.Steal, TCPConns: hu.TCPConns,
+			Steal: hu.Steal, TCPConns: hu.TCPConns, Top: make([]SystemProcess, 0, len(hu.Top)),
+		}
+		for _, p := range boundedTop(hu.Top) {
+			out.Usage.Top = append(out.Usage.Top, SystemProcess(p))
 		}
 		out.UsageAt = usageAt
 		out.Warnings = LowResources(hu)

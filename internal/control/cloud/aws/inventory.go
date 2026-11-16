@@ -197,6 +197,10 @@ func Volume(v types.Volume, region string) cloud.Resource {
 	if v.Iops != nil {
 		set(r.Details, "iops", strconv.Itoa(int(*v.Iops)))
 	}
+	if v.Throughput != nil {
+		// MiB/s; only gp3 states one.
+		set(r.Details, "throughput", strconv.Itoa(int(*v.Throughput)))
+	}
 	set(r.Details, "snapshot", awssdk.ToString(v.SnapshotId))
 	return r
 }

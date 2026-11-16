@@ -531,6 +531,18 @@ export interface ServerUsage {
   steal?: number | null
   /** TCP connections open now; null where not reported. */
   tcpConns?: number | null
+  /** What is using the machine now: the busiest by processor, then by memory. Empty where not reported. */
+  top?: ServerProcess[]
+}
+
+/** One program running on a server. Its name only, never its command line. */
+export interface ServerProcess {
+  name: string
+  pid: number
+  /** Percent of the whole machine's processor time; null on the agent's first sample. */
+  cpu: number | null
+  /** Resident memory, in bytes. */
+  memory: number
 }
 
 /** One interface's traffic, averaged over the agent's last sample (about a minute). */
