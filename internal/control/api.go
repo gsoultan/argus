@@ -370,6 +370,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/sessions/{id}/watch", a.handleWatch)
 	mux.HandleFunc("POST /api/v1/sessions/{id}/terminate", a.handleTerminate)
 	mux.HandleFunc("GET /api/v1/requests", a.getRequests)
+	mux.HandleFunc("GET /api/v1/approvals/self", a.getSelfApproval)
 	mux.HandleFunc("POST /api/v1/requests", a.postRequest)
 	mux.HandleFunc("GET /api/v1/requests/accounts", a.getRequestAccounts)
 	mux.HandleFunc("POST /api/v1/requests/{id}/decision", a.postDecision)

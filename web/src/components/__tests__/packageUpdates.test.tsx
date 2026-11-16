@@ -77,9 +77,10 @@ const runOf = (over: Partial<PackageRun>): PackageRun => ({
   batchId: null, batchPosition: null, ...over,
 })
 
-function renderWith(node: React.ReactNode, email = 'grace@example.com') {
+function renderWith(node: React.ReactNode, email = 'grace@example.com', alone = false) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   qc.setQueryData(['me'], { email, role: 'admin' })
+  qc.setQueryData(['approvals', 'self'], { requests: false, runs: alone, phrase: 'approve my own request' })
   render(
     <QueryClientProvider client={qc}>
       <MantineProvider theme={theme}>{node}</MantineProvider>
@@ -193,7 +194,7 @@ describe('UpdatesTab', () => {
     live.decidePackageRun.mockResolvedValue(runOf({ state: 'queued' }))
     renderWith(<UpdatesTab asset={asset} canEdit />)
     fireEvent.click(await screen.findByRole('button', { name: 'Approve' }))
-    await waitFor(() => expect(live.decidePackageRun).toHaveBeenCalledWith('r1', 'approve'))
+    await waitFor(() => expect(live.decidePackageRun).toHaveBeenCalledWith('r1', 'approve', undefined))
   })
 
   it('does not offer approval to the one who asked', async () => {
@@ -201,7 +202,22 @@ describe('UpdatesTab', () => {
     renderWith(<UpdatesTab asset={asset} canEdit />, 'ada@example.com')
     expect(await screen.findByText('Waiting for approval')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Approve my own' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Cancel run' })).toBeTruthy()
+  })
+
+  it('lets the only admin approve their own run, once they type the phrase', async () => {
+    live.assetPackages.mockResolvedValue(view({ runs: [runOf({ state: 'awaiting_approval' })] }))
+    live.decidePackageRun.mockResolvedValue(runOf({ state: 'queued' }))
+    renderWith(<UpdatesTab asset={asset} canEdit />, 'ada@example.com', true)
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve my own' }))
+    const approve = await screen.findByRole('button', { name: 'Approve' })
+    expect((approve as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.change(screen.getByLabelText(/to confirm/), { target: { value: 'approve my own request' } })
+    expect((approve as HTMLButtonElement).disabled).toBe(false)
+    fireEvent.click(approve)
+    await waitFor(() => expect(live.decidePackageRun).toHaveBeenCalledWith('r1', 'approve', 'approve my own request'))
   })
 })
 

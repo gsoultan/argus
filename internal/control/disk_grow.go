@@ -703,8 +703,8 @@ func (s *Store) recordDiskRunStatus(ctx context.Context, host string, st DiskRun
 }
 
 // DecideDiskRun approves or denies a grow waiting for approval. The one who
-// asked cannot decide it.
-func (s *Store) DecideDiskRun(ctx context.Context, id, by string, approve bool) (DiskGrowRun, error) {
+// asked cannot decide it, unless own says nobody else could.
+func (s *Store) DecideDiskRun(ctx context.Context, id, by string, approve, own bool) (DiskGrowRun, error) {
 	r, err := s.DiskRunByID(ctx, id)
 	if err != nil {
 		return r, err
@@ -713,8 +713,8 @@ func (s *Store) DecideDiskRun(ctx context.Context, id, by string, approve bool) 
 		return r, fmt.Errorf("%w: this grow is %s, not waiting for approval", ErrRunState,
 			strings.ReplaceAll(r.State, "_", " "))
 	}
-	if strings.EqualFold(r.RequestedBy, by) {
-		return r, fmt.Errorf("%w: a grow you asked for is approved by another admin", ErrRunState)
+	if !own && strings.EqualFold(r.RequestedBy, by) {
+		return r, errOwnRun{"a grow you asked for is approved by another admin"}
 	}
 	next := RunDenied
 	if approve {

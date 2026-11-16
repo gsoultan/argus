@@ -54,6 +54,7 @@ enforces all of it and CI runs it by name.
 | [android-devices](android-devices.md) | Android devices as assets: kind, view/control, the android service, the Add-a-device wizard, the phone toolbar |
 | [cloud-findings](cloud-findings.md) | Cloud › Risks & waste: the checks, how each says how it knows, the account-wide read, keeping a finding |
 | [asset-types](asset-types.md) | Servers, workstations and devices: the kind, the tabs each type gets, the plan for who is asked before a session |
+| [self-approval](self-approval.md) | Approvals: who decides, and when the person who asked may approve their own |
 
 ## Standing rules for this repo
 

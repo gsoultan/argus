@@ -223,8 +223,16 @@ func (a *API) postCloudAccessDecision(approve bool) http.HandlerFunc {
 			return
 		}
 		if strings.EqualFold(g.RequestedBy, sess.Email) {
-			writeErr(w, http.StatusForbidden, "someone other than the person who asked decides their access")
-			return
+			// Theirs: approved only when nobody else could (self_approval.go).
+			confirm, err := readConfirmSelf(r)
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			if !a.approveOwn(w, r, sess.Email, approve, requestDeciders, false, confirm,
+				"someone other than the person who asked decides their access", "cloud access: "+accessWords(g), g.AccountName) {
+				return
+			}
 		}
 		g, err = a.store.DecideCloudAccess(r.Context(), g.ID, sess.Email, approve)
 		if errors.Is(err, ErrCloudAccessSettled) {

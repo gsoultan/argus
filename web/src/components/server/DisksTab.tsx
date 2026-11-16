@@ -15,6 +15,8 @@ import { assetDisksQuery, diskRunQuery, useDecideDiskRun, useScanDisks, useStart
 import { downloadText } from '~/lib/download'
 import { isConfigured } from '~/lib/live'
 import { run as notifyRun } from '~/lib/notify'
+import { AloneOr, ApproveOwn } from '~/components/ApproveOwn'
+import { useDecidesAlone } from '~/lib/selfApproval'
 import { meQuery } from '~/lib/queries'
 import { FS, INK, SP } from '~/theme'
 import type { Asset } from '~/types/domain'
@@ -422,7 +424,7 @@ function GrowDialog({ fs: f, view: v, asset, onClose }: { fs: DiskFS; view: Disk
         </Stack>
         {needs && (
           <Alert color="amber" p="xs" icon={<IconHourglass size={16} />}>
-            <Text size={FS.body}>This server&apos;s rule asks for a second admin: the grow waits until another admin approves it.</Text>
+            <Text size={FS.body}><AloneOr kind="runs" what="this grow">This server&apos;s rule asks for a second admin: the grow waits until another admin approves it.</AloneOr></Text>
           </Alert>
         )}
         <Group justify="space-between" gap="sm" wrap="wrap">
@@ -517,6 +519,7 @@ function Steps({ steps }: { steps: DiskRun['steps'] }) {
 function RunActions({ run: r, canEdit }: { run: DiskRun; canEdit: boolean }) {
   const { data: me } = useQuery(meQuery())
   const decide = useDecideDiskRun()
+  const alone = useDecidesAlone('runs')
   if (!canEdit) return null
   const act = (action: 'approve' | 'deny' | 'cancel', ok: [string, string], failure: string) =>
     void notifyRun(() => decide.mutateAsync({ id: r.id, action }), { failure, success: ok })
@@ -524,6 +527,11 @@ function RunActions({ run: r, canEdit }: { run: DiskRun; canEdit: boolean }) {
   const canTakeBack = r.state === 'awaiting_approval' || (r.state === 'queued' && !r.sentAt)
   return (
     <Group gap={SP.snug} wrap="nowrap">
+      {r.state === 'awaiting_approval' && mine && alone && (
+        <ApproveOwn what="this grow" loading={decide.isPending}
+          onApprove={(confirmSelf) => notifyRun(() => decide.mutateAsync({ id: r.id, action: 'approve', confirmSelf }),
+            { failure: 'Not approved', success: ['Approved', 'The server starts at its next check-in.'] })} />
+      )}
       {r.state === 'awaiting_approval' && !mine && (
         <>
           <Button size="compact-xs" color="teal" leftSection={<IconCheck size={12} />} loading={decide.isPending}

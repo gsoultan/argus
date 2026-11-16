@@ -81,7 +81,7 @@ export function useStartPackageRuns() {
 export function useDecidePackageRun() {
   const done = useInvalidate()
   return useMutation({
-    mutationFn: (v: { id: string; action: 'approve' | 'deny' | 'cancel' }) => decidePackageRun(v.id, v.action),
+    mutationFn: (v: { id: string; action: 'approve' | 'deny' | 'cancel'; confirmSelf?: string }) => decidePackageRun(v.id, v.action, v.confirmSelf),
     onSettled: done,
   })
 }

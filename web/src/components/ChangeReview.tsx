@@ -5,6 +5,7 @@ import {
 import { notifications } from '@mantine/notifications'
 import { IconAlertTriangle, IconCheck, IconDatabase, IconShieldCheck, IconX } from '@tabler/icons-react'
 import { relTime } from '~/components/primitives'
+import { ApproveOwn } from '~/components/ApproveOwn'
 import { EnvBadge, ImpactText, ImpactTiles, PreviewRows } from '~/components/ChangeImpact'
 import { BIG_CHANGE, impactOf, impactWords, shortName } from '~/lib/changeApproval'
 import { notifyError, notifyWarn } from '~/lib/notify'
@@ -71,7 +72,14 @@ export function ChangesTable({ reqs, mine, onOpen }: { reqs: AccessRequest[]; mi
 }
 
 /** One change request, opened: what it changes, and the decision. */
-export function ChangeReview({ request: r, canDecide, onClose, me }: { request: AccessRequest | null; canDecide: boolean; onClose: () => void; me?: string }) {
+export function ChangeReview({ request: r, canDecide, approveOwn, onClose, me }: {
+  request: AccessRequest | null
+  canDecide: boolean
+  /** The reader asked for it and nobody else could decide it (lib/selfApproval.ts). */
+  approveOwn?: boolean
+  onClose: () => void
+  me?: string
+}) {
   const decide = useDecideRequest()
   const [note, setNote] = useState('')
   const [tab, setTab] = useState<string | null>('rows')
@@ -86,18 +94,18 @@ export function ChangeReview({ request: r, canDecide, onClose, me }: { request: 
   const pending = r.state === 'pending'
   const outcome = requestOutcome(r, me)
 
-  const onDecide = async (decision: 'approved' | 'denied') => {
+  const onDecide = async (decision: 'approved' | 'denied', confirmSelf?: string) => {
     if (decision === 'denied' && note.trim().length < MIN_DENIAL_NOTE) {
       notifyError('Reason required', new Error('a denial must say why, so the asker can act on it'))
-      return
+      return false
     }
     try {
-      await decide.mutateAsync({ id: r.id, decision, note })
+      await decide.mutateAsync({ id: r.id, decision, note, confirmSelf })
     } catch (err) {
       // Settled while it was open: the review stays, and its banner says how.
       if (settledMeanwhile(err)) notifyWarn('Nothing to decide', err instanceof Error ? err.message : String(err))
       else notifyError(decision === 'approved' ? 'Not approved' : 'Not denied', err)
-      return
+      return false
     }
     notifications.show({
       color: decision === 'approved' ? 'teal' : 'rose',
@@ -107,6 +115,7 @@ export function ChangeReview({ request: r, canDecide, onClose, me }: { request: 
         : `${who} was told why.`,
     })
     onClose()
+    return true
   }
 
   return (
@@ -188,6 +197,11 @@ export function ChangeReview({ request: r, canDecide, onClose, me }: { request: 
               </Button>
             </Group>
           </>
+        ) : pending && approveOwn ? (
+          <Group justify="space-between">
+            <Text size={FS.meta} c="dimmed">Nobody else can approve this, so you may approve it yourself.</Text>
+            <ApproveOwn size="sm" what="this change" loading={decide.isPending} onApprove={(confirmSelf) => onDecide('approved', confirmSelf)} />
+          </Group>
         ) : pending ? (
           <Text size={FS.meta} c="dimmed">
             {r.requesterEmail.length && !canDecide ? 'Waiting for someone else to decide. You never decide your own.' : ''}

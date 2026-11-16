@@ -169,8 +169,9 @@ func (a *API) postDecision(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var in struct {
-		Decision string `json:"decision"`
-		Note     string `json:"note"`
+		Decision    string `json:"decision"`
+		Note        string `json:"note"`
+		ConfirmSelf string `json:"confirmSelf"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -187,23 +188,20 @@ func (a *API) postDecision(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out, err := a.store.DecideRequest(r.Context(), r.PathValue("id"),
-		in.Decision, in.Note, sess.Email)
+		in.Decision, in.Note, sess.Email, false)
 	if errors.Is(err, ErrSelfApproval) {
-		a.log.Warn("self-approval attempt",
-			"email", sess.Email, "request", r.PathValue("id"))
-		// Worth an audit entry: someone reaching for this is worth knowing
-		// about even though it was refused.
-		if _, aerr := a.store.AppendAudit(r.Context(), AuditEvent{
-			Action:     "request.self_approval_blocked",
-			Severity:   "warning",
-			ActorEmail: sess.Email,
-			Target:     "access-request",
-			Detail:     "Attempted to decide their own access request. Refused.",
-		}); aerr != nil {
-			a.log.Error("audit append failed", "error", aerr)
+		// Theirs: approved only when nobody else could (self_approval.go).
+		others, oerr := a.otherEditorsDecide(r.Context(), sess.Email, r.PathValue("id"))
+		if oerr != nil {
+			a.fail(w, "decide", oerr)
+			return
 		}
-		writeErr(w, http.StatusForbidden, err.Error())
-		return
+		if !a.approveOwn(w, r, sess.Email, in.Decision == "approved", requestDeciders, others, in.ConfirmSelf,
+			err.Error(), "request", r.PathValue("id")) {
+			a.auditSelfApprovalBlocked(r, sess.Email)
+			return
+		}
+		out, err = a.store.DecideRequest(r.Context(), r.PathValue("id"), in.Decision, in.Note, sess.Email, true)
 	}
 	if errors.Is(err, ErrAlreadyDecided) {
 		// Someone else decided it, or the person who asked took it back,
@@ -399,4 +397,19 @@ func joinHosts(hosts []string) string {
 		return hosts[0]
 	}
 	return hosts[0] + " +" + strconv.Itoa(len(hosts)-1) + " more"
+}
+
+// auditSelfApprovalBlocked records someone deciding their own request and
+// being refused: someone reaching for it is worth knowing about.
+func (a *API) auditSelfApprovalBlocked(r *http.Request, email string) {
+	a.log.Warn("self-approval attempt", "email", email, "request", r.PathValue("id"))
+	if _, aerr := a.store.AppendAudit(r.Context(), AuditEvent{
+		Action:     "request.self_approval_blocked",
+		Severity:   "warning",
+		ActorEmail: email,
+		Target:     "access-request",
+		Detail:     "Attempted to decide their own access request. Refused.",
+	}); aerr != nil {
+		a.log.Error("audit append failed", "error", aerr)
+	}
 }

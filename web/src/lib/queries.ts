@@ -324,8 +324,8 @@ export function useCreateRequest() {
 export function useDecideRequest() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (v: { id: string; decision: 'approved' | 'denied'; note: string }) =>
-      api.decideRequest(v.id, v.decision, v.note),
+    mutationFn: (v: { id: string; decision: 'approved' | 'denied'; note: string; confirmSelf?: string }) =>
+      api.decideRequest(v.id, v.decision, v.note, v.confirmSelf),
     // Settled, not only succeeded: a refusal because someone else decided it,
     // or the asker took it back, is news the list has to show too.
     onSettled: () => {

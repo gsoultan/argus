@@ -31,8 +31,9 @@ export async function logRun(id: string): Promise<LogRun> {
   return get(`/api/v1/log-runs/${encodeURIComponent(id)}`)
 }
 
-export async function decideLogRun(id: string, action: 'approve' | 'deny' | 'cancel'): Promise<LogRun> {
-  return send('POST', `/api/v1/log-runs/${encodeURIComponent(id)}/${action}`)
+/** confirmSelf is the phrase for approving your own, when nobody else can (see selfApproval.ts). */
+export async function decideLogRun(id: string, action: 'approve' | 'deny' | 'cancel', confirmSelf?: string): Promise<LogRun> {
+  return send('POST', `/api/v1/log-runs/${encodeURIComponent(id)}/${action}`, confirmSelf ? { confirmSelf } : undefined)
 }
 
 export async function logPolicy(): Promise<LogCleanupPolicy> {

@@ -16,6 +16,8 @@ import {
 import { notifyError, notifyOk } from '~/lib/notify'
 import { meQuery } from '~/lib/queries'
 import { canSee } from '~/lib/roles'
+import { ApproveOwn } from '~/components/ApproveOwn'
+import { useDecidesAlone } from '~/lib/selfApproval'
 import { FS, INK } from '~/theme'
 
 /**
@@ -93,6 +95,7 @@ export function SchedulesList({ schedules, keep, loading, names }: {
 
 function ScheduleCard({ s, admin, me, decides }: { s: CloudScheduleView; admin: boolean; me: string; decides: boolean }) {
   const act = useScheduleAction()
+  const alone = useDecidesAlone('requests')
   const navigate = useNavigate()
   const [runsOpen, setRunsOpen] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -100,13 +103,15 @@ function ScheduleCard({ s, admin, me, decides }: { s: CloudScheduleView; admin: 
   const asker = s.pendingBy ?? s.updatedBy
   const waiting = s.state === 'awaiting_approval' || Boolean(s.pending)
   const mine = asker.toLowerCase() === me.toLowerCase()
-  const run = async (verb: 'approve' | 'decline' | 'pause' | 'resume' | 'delete') => {
+  const run = async (verb: 'approve' | 'decline' | 'pause' | 'resume' | 'delete', confirmSelf?: string) => {
     try {
-      await act.mutateAsync({ id: s.id, verb })
+      await act.mutateAsync({ id: s.id, verb, confirmSelf })
       const done = { approve: 'Approved', decline: 'Declined', pause: 'Paused', resume: 'Resumed', delete: 'Deleted' }[verb]
       notifyOk(done, verb === 'resume' ? `${s.name} runs as you from the next transition.` : s.name)
+      return true
     } catch (err) {
       notifyError('Could not do that', err)
+      return false
     }
   }
   return (
@@ -150,6 +155,12 @@ function ScheduleCard({ s, admin, me, decides }: { s: CloudScheduleView; admin: 
             <Group gap="xs" mt="xs">
               <Button size="compact-xs" variant="default" loading={act.isPending} onClick={() => void run('decline')}>Decline</Button>
               <Button size="compact-xs" loading={act.isPending} onClick={() => void run('approve')}>Approve</Button>
+            </Group>
+          )}
+          {decides && mine && alone && (
+            <Group gap="xs" mt="xs">
+              <ApproveOwn what={s.pending ? 'this edit' : 'this schedule'} loading={act.isPending}
+                onApprove={(confirmSelf) => run('approve', confirmSelf)} />
             </Group>
           )}
         </Alert>

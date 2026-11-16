@@ -59,7 +59,7 @@ export function useStartLogRun(assetId: string) {
 export function useDecideLogRun() {
   const done = useInvalidate()
   return useMutation({
-    mutationFn: (v: { id: string; action: 'approve' | 'deny' | 'cancel' }) => decideLogRun(v.id, v.action),
+    mutationFn: (v: { id: string; action: 'approve' | 'deny' | 'cancel'; confirmSelf?: string }) => decideLogRun(v.id, v.action, v.confirmSelf),
     onSettled: done,
   })
 }

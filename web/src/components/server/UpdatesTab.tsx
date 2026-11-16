@@ -19,6 +19,8 @@ import {
   assetPackagesQuery, packageRunQuery, useCheckPackages, useDecidePackageRun, useStartPackageRun,
 } from '~/lib/packageQueries'
 import { meQuery } from '~/lib/queries'
+import { AloneOr, ApproveOwn } from '~/components/ApproveOwn'
+import { useDecidesAlone } from '~/lib/selfApproval'
 import { runFinished } from '~/lib/packageApi'
 import { FS, SP } from '~/theme'
 import type { Asset } from '~/types/domain'
@@ -217,7 +219,7 @@ function ConfirmReboot({ assetId, name, view: v, onClose }: { assetId: string; n
         </Text>
         {v.rule.needsApproval && (
           <Alert color="azure" p="xs">
-            <Text size={FS.body}>This server's rule asks for a second admin: the reboot waits until another admin approves it.</Text>
+            <Text size={FS.body}><AloneOr kind="runs" what="this reboot">This server's rule asks for a second admin: the reboot waits until another admin approves it.</AloneOr></Text>
           </Alert>
         )}
         <Group justify="flex-end" gap="sm">
@@ -430,7 +432,7 @@ function ConfirmRelease({ assetId, name, view: v, release: rel, onClose }: {
         </List>
         {v.rule.needsApproval && (
           <Alert color="azure" p="xs">
-            <Text size={FS.body}>This server's rule asks for a second admin: the upgrade waits until another admin approves it.</Text>
+            <Text size={FS.body}><AloneOr kind="runs" what="this upgrade">This server's rule asks for a second admin: the upgrade waits until another admin approves it.</AloneOr></Text>
           </Alert>
         )}
         <TextInput label="Type the server name to confirm" placeholder={short} value={typed}
@@ -653,7 +655,7 @@ function ConfirmRun({ assetId, name, mode, names, view: v, onClose }: {
         )}
         {v.rule.needsApproval && (
           <Alert color="azure" p="xs">
-            <Text size={FS.body}>This server's rule asks for a second admin: the run waits until another admin approves it.</Text>
+            <Text size={FS.body}><AloneOr kind="runs" what="this run">This server's rule asks for a second admin: the run waits until another admin approves it.</AloneOr></Text>
           </Alert>
         )}
         <Radio.Group label="If an update needs a reboot" value={reboot} onChange={(x) => setReboot(x as PackageReboot)}>
@@ -809,6 +811,7 @@ function RunLog({ log }: { log: string | undefined }) {
 function RunActions({ run: r, canEdit }: { run: PackageRun; canEdit: boolean }) {
   const { data: me } = useQuery(meQuery())
   const decide = useDecidePackageRun()
+  const alone = useDecidesAlone('runs')
   if (!canEdit) return null
   const act = (action: 'approve' | 'deny' | 'cancel', ok: [string, string], failure: string) =>
     void notifyRun(() => decide.mutateAsync({ id: r.id, action }), { failure, success: ok })
@@ -816,6 +819,11 @@ function RunActions({ run: r, canEdit }: { run: PackageRun; canEdit: boolean }) 
   const canTakeBack = r.state === 'awaiting_approval' || r.state === 'waiting' || (r.state === 'queued' && !r.sentAt)
   return (
     <Group gap={SP.snug} wrap="nowrap">
+      {r.state === 'awaiting_approval' && mine && alone && (
+        <ApproveOwn what="this run" loading={decide.isPending}
+          onApprove={(confirmSelf) => notifyRun(() => decide.mutateAsync({ id: r.id, action: 'approve', confirmSelf }),
+            { failure: 'Not approved', success: ['Approved', 'The server starts at its next check-in.'] })} />
+      )}
       {r.state === 'awaiting_approval' && !mine && (
         <>
           <Button size="compact-xs" color="teal" leftSection={<IconCheck size={12} />} loading={decide.isPending}

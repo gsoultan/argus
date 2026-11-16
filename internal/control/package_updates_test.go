@@ -560,7 +560,7 @@ func TestPackageRunNeedsApproval(t *testing.T) {
 		t.Fatal("a run waiting for approval was sent")
 	}
 	// Not by the one who asked, and not by an operator.
-	if w := do(t, e.h, http.MethodPost, "/api/v1/package-runs/"+run.ID+"/approve", "admin-token", ""); w.Code != http.StatusConflict {
+	if w := do(t, e.h, http.MethodPost, "/api/v1/package-runs/"+run.ID+"/approve", "admin-token", ""); w.Code != http.StatusForbidden {
 		t.Errorf("self-approval: %d %s", w.Code, w.Body)
 	}
 	if w := do(t, e.h, http.MethodPost, "/api/v1/package-runs/"+run.ID+"/approve", "operator-token", ""); w.Code != http.StatusForbidden {

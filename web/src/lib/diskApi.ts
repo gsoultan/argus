@@ -174,8 +174,9 @@ export async function diskRun(id: string): Promise<DiskRun> {
   return get(`/api/v1/disk-runs/${encodeURIComponent(id)}`)
 }
 
-export async function decideDiskRun(id: string, action: 'approve' | 'deny' | 'cancel'): Promise<DiskRun> {
-  return send('POST', `/api/v1/disk-runs/${encodeURIComponent(id)}/${action}`)
+/** confirmSelf is the phrase for approving your own, when nobody else can (see selfApproval.ts). */
+export async function decideDiskRun(id: string, action: 'approve' | 'deny' | 'cancel', confirmSelf?: string): Promise<DiskRun> {
+  return send('POST', `/api/v1/disk-runs/${encodeURIComponent(id)}/${action}`, confirmSelf ? { confirmSelf } : undefined)
 }
 
 export async function diskPolicy(): Promise<DiskGrowPolicy> {

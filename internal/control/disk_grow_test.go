@@ -309,7 +309,7 @@ func TestDiskGrowNeedsAnotherAdmin(t *testing.T) {
 		t.Fatal("a grow waiting for approval was sent")
 	}
 	w := do(t, e.h, http.MethodPost, "/api/v1/disk-runs/"+run.ID+"/approve", "admin-token", "")
-	if w.Code != http.StatusConflict {
+	if w.Code != http.StatusForbidden {
 		t.Errorf("self-approval: %d %s", w.Code, w.Body)
 	}
 	w = do(t, e.h, http.MethodPost, "/api/v1/disk-runs/"+run.ID+"/approve", "second-token", "")

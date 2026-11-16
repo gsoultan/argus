@@ -18,6 +18,8 @@ import {
 import { logRunFinished } from '~/lib/logApi'
 import { assetLogsQuery, logRunQuery, useDecideLogRun, useScanLogs, useStartLogRun } from '~/lib/logQueries'
 import { run as notifyRun } from '~/lib/notify'
+import { AloneOr, ApproveOwn } from '~/components/ApproveOwn'
+import { useDecidesAlone } from '~/lib/selfApproval'
 import { meQuery } from '~/lib/queries'
 import { FS, INK, SP } from '~/theme'
 import type { Asset } from '~/types/domain'
@@ -566,7 +568,7 @@ function ConfirmClean({ assetId, view: v, pick: initial, onClose }: {
           onChange={(e) => setTyped(e.currentTarget.value)} ff="monospace" data-autofocus autoComplete="off" />
         {v.rule.needsApproval && (
           <Alert color="amber" p="xs">
-            <Text size={FS.body}>This server&apos;s rule asks for a second admin: the cleanup waits until another admin approves it.</Text>
+            <Text size={FS.body}><AloneOr kind="runs" what="this cleanup">This server&apos;s rule asks for a second admin: the cleanup waits until another admin approves it.</AloneOr></Text>
           </Alert>
         )}
         <Group justify="flex-end" gap="sm">
@@ -642,6 +644,7 @@ function ActiveRun({ run: r, canEdit }: { run: LogRun; canEdit: boolean }) {
 function RunActions({ run: r, canEdit }: { run: LogRun; canEdit: boolean }) {
   const { data: me } = useQuery(meQuery())
   const decide = useDecideLogRun()
+  const alone = useDecidesAlone('runs')
   if (!canEdit) return null
   const act = (action: 'approve' | 'deny' | 'cancel', ok: [string, string], failure: string) =>
     void notifyRun(() => decide.mutateAsync({ id: r.id, action }), { failure, success: ok })
@@ -649,6 +652,11 @@ function RunActions({ run: r, canEdit }: { run: LogRun; canEdit: boolean }) {
   const canTakeBack = r.state === 'awaiting_approval' || (r.state === 'queued' && !r.sentAt)
   return (
     <Group gap={SP.snug} wrap="nowrap">
+      {r.state === 'awaiting_approval' && mine && alone && (
+        <ApproveOwn what="this cleanup" loading={decide.isPending}
+          onApprove={(confirmSelf) => notifyRun(() => decide.mutateAsync({ id: r.id, action: 'approve', confirmSelf }),
+            { failure: 'Not approved', success: ['Approved', 'The server starts at its next check-in.'] })} />
+      )}
       {r.state === 'awaiting_approval' && !mine && (
         <>
           <Button size="compact-xs" color="teal" leftSection={<IconCheck size={12} />} loading={decide.isPending}

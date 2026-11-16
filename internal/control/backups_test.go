@@ -234,10 +234,10 @@ func TestReplaceRestoreWaitsForApproval(t *testing.T) {
 		t.Fatal("the approver's queue does not point the request at the restore")
 	}
 	// The requester cannot approve their own replace.
-	if _, err := s.DecideRequest(ctx, req.ID, "approved", "", dba); err != ErrSelfApproval {
+	if _, err := s.DecideRequest(ctx, req.ID, "approved", "", dba, false); err != ErrSelfApproval {
 		t.Fatalf("self approval: %v", err)
 	}
-	if _, err := s.DecideRequest(ctx, req.ID, "approved", "ok", approver); err != nil {
+	if _, err := s.DecideRequest(ctx, req.ID, "approved", "ok", approver, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.SetRestoreState(ctx, r.ID, "running", "starting", ""); err != nil {

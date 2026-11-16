@@ -512,7 +512,20 @@ func (a *API) postLogRunDecision(approve bool) http.HandlerFunc {
 		if !a.privileged(w, sess, "approving log cleanups", "admin", "owner") {
 			return
 		}
-		run, err := a.store.DecideLogRun(r.Context(), r.PathValue("id"), sess.Email, approve)
+		run, err := a.store.DecideLogRun(r.Context(), r.PathValue("id"), sess.Email, approve, false)
+		if errors.Is(err, ErrOwnRequest) {
+			// Theirs: approved only when nobody else could (self_approval.go).
+			confirm, cerr := readConfirmSelf(r)
+			if cerr != nil {
+				writeErr(w, http.StatusBadRequest, cerr.Error())
+				return
+			}
+			if !a.approveOwn(w, r, sess.Email, approve, runDeciders, false, confirm,
+				strings.TrimPrefix(err.Error(), ErrRunState.Error()+": "), "log cleanup", run.AssetHostname) {
+				return
+			}
+			run, err = a.store.DecideLogRun(r.Context(), r.PathValue("id"), sess.Email, approve, true)
+		}
 		if err != nil {
 			a.failLogRun(w, err)
 			return

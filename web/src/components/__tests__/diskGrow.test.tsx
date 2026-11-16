@@ -183,7 +183,7 @@ describe('DisksTab', () => {
     live.decideDiskRun.mockResolvedValue(runOf({ state: 'queued' }))
     renderWith(<DisksTab asset={asset} canEdit />)
     fireEvent.click(await screen.findByRole('button', { name: 'Approve' }))
-    await waitFor(() => expect(live.decideDiskRun).toHaveBeenCalledWith('r1', 'approve'))
+    await waitFor(() => expect(live.decideDiskRun).toHaveBeenCalledWith('r1', 'approve', undefined))
   })
 
   it('does not let the one who asked approve', async () => {

@@ -515,8 +515,16 @@ func (a *API) postCloudScheduleDecision(approve bool) http.HandlerFunc {
 		}
 		asker := cur.Requester()
 		if strings.EqualFold(asker, sess.Email) {
-			writeErr(w, http.StatusForbidden, "someone other than the person who asked decides a schedule")
-			return
+			// Theirs: approved only when nobody else could (self_approval.go).
+			confirm, err := readConfirmSelf(r)
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			if !a.approveOwn(w, r, sess.Email, approve, requestDeciders, false, confirm,
+				"someone other than the person who asked decides a schedule", "cloud schedule "+cur.Name, cur.Name) {
+				return
+			}
 		}
 		s, kept, err := a.store.DecideCloudSchedule(r.Context(), cur.ID, approve)
 		switch {

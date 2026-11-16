@@ -6,6 +6,8 @@ import {
 } from '@tabler/icons-react'
 import { EmptyState } from '~/components/page'
 import { absTime, relTime } from '~/components/primitives'
+import { ApproveOwn } from '~/components/ApproveOwn'
+import { useDecidesAlone } from '~/lib/selfApproval'
 import { CHANGE_STATE, useDecideCloudChange, type CloudAction, type CloudChange } from '~/lib/cloud'
 import { notifyError, notifyOk } from '~/lib/notify'
 import { meQuery } from '~/lib/queries'
@@ -50,19 +52,22 @@ export function ChangesList({ changes, loading, empty }: { changes?: CloudChange
 
 function ChangeCard({ c, mine, decides }: { c: CloudChange; mine: boolean; decides: boolean }) {
   const decide = useDecideCloudChange()
+  const alone = useDecidesAlone('requests')
   const Icon = ICON[c.action]
   const st = CHANGE_STATE[c.state]
   const waiting = c.state === 'awaiting_approval'
-  const act = async (verb: 'approve' | 'decline' | 'cancel') => {
+  const act = async (verb: 'approve' | 'decline' | 'cancel', confirmSelf?: string) => {
     try {
-      const out = await decide.mutateAsync({ id: c.id, verb })
+      const out = await decide.mutateAsync({ id: c.id, verb, confirmSelf })
       if (verb === 'approve') {
         if (out.state === 'failed') notifyError('Approved, but AWS refused it', new Error(out.error || 'No reason was given.'))
         else if (out.state === 'awaiting_approval') notifyOk('Sent back', 'AWS changed since this was asked for. Look at it again before approving.')
         else notifyOk('Approved', `${out.summary}. It ran as ${out.requestedBy}.`)
       } else notifyOk(verb === 'decline' ? 'Declined' : 'Withdrawn', out.summary)
+      return true
     } catch (err) {
       notifyError('Could not record the decision', err)
+      return false
     }
   }
   const snaps = Object.entries(c.result?.snapshots ?? {})
@@ -105,7 +110,10 @@ function ChangeCard({ c, mine, decides }: { c: CloudChange; mine: boolean; decid
                 <Button size="xs" color={c.action === 'remove' ? 'rose' : undefined} loading={decide.isPending} onClick={() => void act('approve')}>Approve</Button>
               </>
             )}
-            {mine && decides && <Tooltip label="Someone else approves a change you asked for"><Text size={FS.micro} c="dimmed">Yours</Text></Tooltip>}
+            {mine && decides && alone && (
+              <ApproveOwn size="xs" what="this change" loading={decide.isPending} onApprove={(confirmSelf) => act('approve', confirmSelf)} />
+            )}
+            {mine && decides && !alone && <Tooltip label="Someone else approves a change you asked for"><Text size={FS.micro} c="dimmed">Yours</Text></Tooltip>}
           </Group>
         )}
       </Flex>

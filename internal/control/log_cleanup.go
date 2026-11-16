@@ -1111,8 +1111,8 @@ func (s *Store) recordLogRunStatus(ctx context.Context, host string, st LogRunSt
 }
 
 // DecideLogRun approves or denies a cleanup waiting for approval. The one
-// who asked cannot decide it.
-func (s *Store) DecideLogRun(ctx context.Context, id, by string, approve bool) (LogCleanupRun, error) {
+// who asked cannot decide it, unless own says nobody else could.
+func (s *Store) DecideLogRun(ctx context.Context, id, by string, approve, own bool) (LogCleanupRun, error) {
 	r, err := s.LogRunByID(ctx, id)
 	if err != nil {
 		return r, err
@@ -1121,8 +1121,8 @@ func (s *Store) DecideLogRun(ctx context.Context, id, by string, approve bool) (
 		return r, fmt.Errorf("%w: this cleanup is %s, not waiting for approval", ErrRunState,
 			strings.ReplaceAll(r.State, "_", " "))
 	}
-	if strings.EqualFold(r.RequestedBy, by) {
-		return r, fmt.Errorf("%w: a cleanup you asked for is approved by another admin", ErrRunState)
+	if !own && strings.EqualFold(r.RequestedBy, by) {
+		return r, errOwnRun{"a cleanup you asked for is approved by another admin"}
 	}
 	next := RunDenied
 	if approve {
