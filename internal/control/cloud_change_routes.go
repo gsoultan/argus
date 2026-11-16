@@ -43,6 +43,7 @@ const cloudApplyTimeout = 90 * time.Second
 func (a *API) registerCloudChangeRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/cloud/launch-options", a.getCloudLaunchOptions)
 	mux.HandleFunc("GET /api/v1/cloud/remove-plan", a.getCloudRemovePlan)
+	mux.HandleFunc("GET /api/v1/cloud/instance-settings", a.getCloudInstanceSettings)
 	mux.HandleFunc("GET /api/v1/cloud/changes", a.getCloudChanges)
 	mux.HandleFunc("POST /api/v1/cloud/changes", a.postCloudChange)
 	mux.HandleFunc("GET /api/v1/cloud/changes/{id}", a.getCloudChange)
@@ -437,6 +438,16 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 		ch.Summary = "Start " + inst.Name
 	case cloud.ActionStop:
 		ch.Summary = "Stop " + inst.Name
+	case cloud.ActionHibernate:
+		if inst.Details["hibernation"] != "yes" {
+			return ch, http.StatusConflict, errors.New(inst.Name + " was not launched with hibernation on, so it can only be stopped")
+		}
+		if inst.State != "running" {
+			return ch, http.StatusConflict, errors.New("only a running instance can hibernate; " + inst.Name + " is " + inst.State)
+		}
+		ch.Summary = "Hibernate " + inst.Name
+	case cloud.ActionSettings:
+		return a.planSettings(r, m, in, inst, ch)
 	case cloud.ActionReboot:
 		ch.Summary = "Reboot " + inst.Name
 	case cloud.ActionProtect:
@@ -725,8 +736,10 @@ func (a *API) applyCloudChange(r *http.Request, m cloudManaged, ch CloudChange) 
 	var res cloud.Result
 	var err error
 	switch ch.Action {
-	case cloud.ActionStart, cloud.ActionStop, cloud.ActionReboot:
+	case cloud.ActionStart, cloud.ActionStop, cloud.ActionReboot, cloud.ActionHibernate:
 		res, err = m.manager.Power(ctx, m.target, actor, ch.Region, ch.ResourceID, ch.Action)
+	case cloud.ActionSettings:
+		res, err = applySettings(ctx, m, ch)
 	case cloud.ActionProtect, cloud.ActionUnprotect:
 		res, err = m.manager.Protect(ctx, m.target, actor, ch.Region, ch.ResourceID, ch.Action == cloud.ActionProtect)
 	case cloud.ActionResize:

@@ -254,7 +254,7 @@ func costSteps(state, size string, changes []appliedChange, from time.Time) []Co
 		ch := changes[i]
 		after := cur
 		switch ch.Action {
-		case cloud.ActionStop:
+		case cloud.ActionStop, cloud.ActionHibernate:
 			cur.running = true
 		case cloud.ActionStart:
 			cur.running = false

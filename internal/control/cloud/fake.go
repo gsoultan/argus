@@ -35,6 +35,9 @@ type Fake struct {
 	Now func() time.Time
 	// Protected is termination protection, by instance id.
 	Protected map[string]bool
+	// Configs is each instance's settings, by id, beyond termination
+	// protection (which Protected holds).
+	Configs map[string]InstanceConfig
 	// LastUserData is what the last launch would have run at first boot.
 	LastUserData string
 	// PowerErr fails starting or stopping one instance, by id, in Power
@@ -212,12 +215,66 @@ func (f *Fake) Power(_ context.Context, a Account, actor Actor, region, id strin
 	if e := f.PowerErr[id]; e != nil {
 		return Result{}, e
 	}
+	if (act == ActionStop || act == ActionHibernate) && f.Configs[id].StopProtect {
+		return Result{}, ErrStopProtected
+	}
 	switch act {
 	case ActionStart:
 		f.Resources[region][i].State = "running"
 	case ActionStop:
 		f.Resources[region][i].State = "stopped"
+	case ActionHibernate:
+		if !f.Configs[id].Hibernation {
+			return Result{}, errors.New("UnsupportedHibernationConfiguration: the instance was not launched with hibernation on")
+		}
+		f.Resources[region][i].State = "stopped"
 	}
+	return Result{ResourceID: id, RequestID: f.request()}, nil
+}
+
+func (f *Fake) InstanceConfig(_ context.Context, a Account, actor Actor, region, id string) (InstanceConfig, error) {
+	f.record("config " + id + " " + string(actor))
+	if err := f.admit(a); err != nil {
+		return InstanceConfig{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	i, err := f.find(region, id)
+	if err != nil {
+		return InstanceConfig{}, err
+	}
+	c := f.Configs[id]
+	c.TerminationProtect = f.Protected[id]
+	if Burstable(f.Resources[region][i].Size) && c.CreditMode == "" {
+		c.CreditMode = "standard"
+	}
+	return c, nil
+}
+
+func (f *Fake) Configure(_ context.Context, a Account, actor Actor, region, id string, s InstanceSettings) (Result, error) {
+	f.record("configure " + id + " " + string(actor))
+	if err := f.admit(a); err != nil {
+		return Result{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, err := f.find(region, id); err != nil {
+		return Result{}, err
+	}
+	if f.Configs == nil {
+		f.Configs = map[string]InstanceConfig{}
+	}
+	c := f.Configs[id]
+	if s.StopProtect != nil {
+		c.StopProtect = *s.StopProtect
+	}
+	if s.RequireTokens != nil {
+		c.RequireTokens = *s.RequireTokens
+	}
+	if s.CreditMode != "" {
+		c.CreditMode = s.CreditMode
+	}
+	f.Configs[id] = c
 	return Result{ResourceID: id, RequestID: f.request()}, nil
 }
 
@@ -241,6 +298,9 @@ func (f *Fake) PowerMany(_ context.Context, a Account, actor Actor, region strin
 		}
 		if e := f.PowerErr[id]; e != nil {
 			return Result{}, e
+		}
+		if act == ActionStop && f.Configs[id].StopProtect {
+			return Result{}, ErrStopProtected
 		}
 		idx[n] = i
 	}

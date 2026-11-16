@@ -22,7 +22,7 @@ func TestMissingFromThePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(missing) != 20 || missing[0] != "ec2:DeleteSnapshot" {
+	if len(missing) != 22 || missing[0] != "ec2:ModifyInstanceMetadataOptions" {
 		t.Fatalf("missing: %v", missing)
 	}
 	now := `{"Statement":[{"Effect":"Allow","Action":["` + strings.Join(ManagePolicy, `","`) + `"]}]}`

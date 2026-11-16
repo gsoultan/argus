@@ -135,6 +135,9 @@ func Instance(i types.Instance, region string) cloud.Resource {
 	if i.MetadataOptions != nil {
 		set(r.Details, "metadataTokens", string(i.MetadataOptions.HttpTokens))
 	}
+	if i.HibernationOptions != nil && awssdk.ToBool(i.HibernationOptions.Configured) {
+		set(r.Details, "hibernation", "yes")
+	}
 	if i.StateReason != nil {
 		set(r.Details, "stateReason", awssdk.ToString(i.StateReason.Message))
 	}

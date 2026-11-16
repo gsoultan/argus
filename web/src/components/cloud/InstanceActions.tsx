@@ -1,13 +1,13 @@
-import { ActionIcon, Alert, Badge, Box, Button, Checkbox, Group, Menu, Select, Stack, Table, Text, TextInput } from '@mantine/core'
+import { ActionIcon, Alert, Badge, Box, Button, Checkbox, Group, Menu, SegmentedControl, Select, Skeleton, Stack, Switch, Table, Text, TextInput } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import {
-  IconDots, IconLock, IconLockOpen, IconPhoto, IconShield, IconPlayerPlay, IconPlayerStop, IconRefresh, IconResize, IconTag, IconTrash, IconUserCheck,
+  IconDots, IconLock, IconLockOpen, IconMoon, IconPhoto, IconSettings, IconShield, IconPlayerPlay, IconPlayerStop, IconRefresh, IconResize, IconTag, IconTrash, IconUserCheck,
 } from '@tabler/icons-react'
 import { useState } from 'react'
 import { Field, relTime } from '~/components/primitives'
 import {
-  ACTION_LEVEL, cloudAccountsQuery, cloudChangesQuery, cloudLaunchOptionsQuery, cloudRemovePlanQuery, envOf,
-  type CloudAction, type CloudEnvironment, type CloudItem,
+  ACTION_LEVEL, cloudAccountsQuery, cloudChangesQuery, cloudInstanceSettingsQuery, cloudLaunchOptionsQuery, cloudRemovePlanQuery, envOf,
+  type CloudAction, type CloudEnvironment, type CloudInstanceConfig, type CloudItem,
 } from '~/lib/cloud'
 import { meQuery } from '~/lib/queries'
 import { canSee } from '~/lib/roles'
@@ -59,6 +59,9 @@ export function InstanceActions({ it }: { it: CloudItem }) {
       <Group gap="xs">
         {running && <Button size="xs" variant="default" leftSection={<IconPlayerStop size={14} />} disabled={!!waiting} onClick={() => setOpen('stop')}>Stop</Button>}
         {stopped && <Button size="xs" variant="default" leftSection={<IconPlayerPlay size={14} />} disabled={!!waiting} onClick={() => setOpen('start')}>Start</Button>}
+        {running && it.resource.details?.hibernation === 'yes' && (
+          <Button size="xs" variant="default" leftSection={<IconMoon size={14} />} disabled={!!waiting} onClick={() => setOpen('hibernate')}>Hibernate</Button>
+        )}
         {running && <Button size="xs" variant="default" leftSection={<IconRefresh size={14} />} disabled={!!waiting} onClick={() => setOpen('reboot')}>Reboot</Button>}
         {!gone && <Button size="xs" variant="default" leftSection={<IconResize size={14} />} disabled={!!waiting} onClick={() => setOpen('resize')}>Change size</Button>}
         {!gone && <Button size="xs" variant="default" leftSection={<IconTag size={14} />} disabled={!!waiting} onClick={() => setOpen('tags')}>Tags</Button>}
@@ -68,6 +71,7 @@ export function InstanceActions({ it }: { it: CloudItem }) {
               <ActionIcon variant="default" size={30} aria-label="More actions" disabled={!!waiting}><IconDots size={15} /></ActionIcon>
             </Menu.Target>
             <Menu.Dropdown>
+              <Menu.Item leftSection={<IconSettings size={14} />} onClick={() => setOpen('settings')}>Instance settings…</Menu.Item>
               <Menu.Item leftSection={<IconLock size={14} />} onClick={() => setOpen('protect')}>Turn on termination protection</Menu.Item>
               <Menu.Item leftSection={<IconLockOpen size={14} />} onClick={() => setOpen('unprotect')}>Turn off termination protection</Menu.Item>
               <Menu.Item leftSection={<IconPhoto size={14} />} onClick={() => setOpen('image-create')}>Make an image…</Menu.Item>
@@ -78,10 +82,11 @@ export function InstanceActions({ it }: { it: CloudItem }) {
           </Menu>
         )}
       </Group>
-      {(open === 'start' || open === 'stop' || open === 'reboot' || open === 'protect' || open === 'unprotect') && (
+      {(open === 'start' || open === 'stop' || open === 'hibernate' || open === 'reboot' || open === 'protect' || open === 'unprotect') && (
         <SimpleChange it={it} env={env} action={open} onClose={close} />
       )}
       {open === 'resize' && <ResizeChange it={it} env={env} onClose={close} />}
+      {open === 'settings' && <SettingsChange it={it} env={env} onClose={close} />}
       {open === 'tags' && <TagsChange it={it} env={env} onClose={close} />}
       {open === 'remove' && <RemoveChange it={it} onClose={close} />}
       {open === 'image-create' && <ImageCreate it={it} env={env} onClose={close} />}
@@ -93,6 +98,7 @@ export function InstanceActions({ it }: { it: CloudItem }) {
 const SIMPLE: Record<string, { title: string; verb: string; done: string; text: string; color?: string }> = {
   start: { title: 'Start', verb: 'Start', done: 'Starting', text: 'AWS starts the instance. It keeps its disks; a public address that is not an Elastic IP changes.' },
   stop: { title: 'Stop', verb: 'Stop', done: 'Stopping', color: 'amber', text: 'AWS shuts the instance down. Its disks stay and are still billed; the instance is not. Anything only in memory is lost.' },
+  hibernate: { title: 'Hibernate', verb: 'Hibernate', done: 'Hibernating', color: 'amber', text: 'AWS saves what is in memory to the root disk and stops the instance. Starting it again picks up where it left off. The instance is not billed while hibernated; its disks are.' },
   reboot: { title: 'Reboot', verb: 'Reboot', done: 'Rebooting', color: 'amber', text: 'AWS restarts the instance. Anyone signed in to it is disconnected.' },
   protect: { title: 'Turn on termination protection for', verb: 'Turn on', done: 'Protected', text: 'Nobody can remove the instance, from Argus or AWS, until protection is turned off again.' },
   unprotect: { title: 'Turn off termination protection for', verb: 'Turn off', done: 'Protection off', color: 'amber', text: 'The instance can be removed again. Removing it from Argus still needs its name typed, and approval where its environment asks for it.' },
@@ -107,6 +113,66 @@ function SimpleChange({ it, env, action, onClose }: { it: CloudItem; env: CloudE
       onClose={onClose} busy={busy} submit={s.verb} color={s.color}
       onSubmit={() => void submit({ accountId: it.accountId, region: it.resource.region, action, resourceId: it.resource.id, reason }, s.done)}>
       <Text size={FS.body} lh={1.55}>{s.text}</Text>
+    </ChangeModal>
+  )
+}
+
+type SettingsDraft = { stopProtect?: boolean; requireTokens?: boolean; creditMode?: CloudInstanceConfig['creditMode'] }
+
+/**
+ * Stop protection, the metadata token setting and a burstable instance's
+ * credit mode, read from AWS when the dialog opens. Only what differs from
+ * now is sent, so the change (and its approver) names exactly that.
+ */
+export function SettingsChange({ it, env, onClose, preset }: {
+  it: CloudItem; env: CloudEnvironment; onClose: () => void; preset?: SettingsDraft
+}) {
+  const r = it.resource
+  const cur = useQuery(cloudInstanceSettingsQuery(it))
+  const [draft, setDraft] = useState<SettingsDraft>(preset ?? {})
+  const [reason, setReason] = useState('')
+  const { submit, busy } = useSubmit(onClose)
+  const c = cur.data
+  const val = <K extends keyof SettingsDraft>(k: K): NonNullable<SettingsDraft[K]> | undefined =>
+    (draft[k] ?? c?.[k]) as NonNullable<SettingsDraft[K]> | undefined
+  const spec: SettingsDraft = {}
+  if (c) {
+    if (draft.stopProtect !== undefined && draft.stopProtect !== c.stopProtect) spec.stopProtect = draft.stopProtect
+    if (draft.requireTokens !== undefined && draft.requireTokens !== c.requireTokens) spec.requireTokens = draft.requireTokens
+    if (draft.creditMode && draft.creditMode !== c.creditMode) spec.creditMode = draft.creditMode
+  }
+  const changes = Object.keys(spec).length
+  return (
+    <ChangeModal title={`Settings of ${r.name}`} env={env} level="change" reason={reason} setReason={setReason}
+      onClose={onClose} busy={busy} submit={changes ? `Save ${changes} change${changes === 1 ? '' : 's'}` : 'Save'} disabled={!c || changes === 0}
+      onSubmit={() => void submit({ accountId: it.accountId, region: r.region, action: 'settings', resourceId: r.id, spec, reason }, 'Settings saved')}>
+      {cur.isPending && <Skeleton h={120} />}
+      {cur.error && <Alert color="rose" variant="light">{(cur.error as Error).message}</Alert>}
+      {c && (
+        <Stack gap="md" data-testid="instance-settings">
+          <Switch checked={!!val('stopProtect')} onChange={(e) => setDraft({ ...draft, stopProtect: e.currentTarget.checked })}
+            label="Stop protection"
+            description="Nobody can stop or hibernate it, from Argus, its schedules or AWS, until this is turned off. Rebooting still works." />
+          <Switch checked={!!val('requireTokens')} onChange={(e) => setDraft({ ...draft, requireTokens: e.currentTarget.checked })}
+            label="Require tokens for instance metadata (IMDSv2)"
+            description="A request forged through software on the server cannot read its role's keys. Software older than about 2020 that reads metadata without a token stops getting answers; check before turning it on." />
+          {c.creditMode ? (
+            <Stack gap={4}>
+              <Text size={FS.body} fw={500}>Processor credits</Text>
+              <SegmentedControl size="xs" w="fit-content" value={val('creditMode') ?? 'standard'}
+                onChange={(v) => setDraft({ ...draft, creditMode: v as CloudInstanceConfig['creditMode'] })}
+                data={[{ value: 'standard', label: 'Standard' }, { value: 'unlimited', label: 'Unlimited' }]} />
+              <Text size={FS.meta} c="dimmed">
+                {r.size} is burstable. Standard slows it to its baseline when its credits run out. Unlimited keeps it fast and bills the extra processor time.
+              </Text>
+            </Stack>
+          ) : null}
+          <Text size={FS.meta} c="dimmed">
+            Termination protection is {c.terminationProtect ? 'on' : 'off'}; change it from the menu.
+            {c.hibernation ? ' It was launched able to hibernate.' : ' It was not launched able to hibernate, which only a new launch can change.'}
+          </Text>
+        </Stack>
+      )}
     </ChangeModal>
   )
 }

@@ -404,7 +404,8 @@ func (f *finder) instance(r Resource) {
 		f.add(Finding{Check: "imds-v1", Group: GroupRisk, Severity: SeverityMedium, Source: SourceCloud, Title: "Old instance metadata allowed",
 			Why:      fmt.Sprintf("%s still answers metadata requests without a token (IMDSv1).", r.Name),
 			Matters:  "A server-side request forgery bug in anything it runs can read its role's keys.",
-			HowToFix: "In AWS, set the instance's metadata to require tokens (IMDSv2). Most software since 2020 already uses tokens."}, r, "optional")
+			HowToFix: "Require tokens (IMDSv2). Most software since 2020 already uses them; check anything old on it first.",
+			Fix:      ActionSettings}, r, "optional")
 	}
 	if r.State != "running" || !s.HasAgent() || s.CPUP95 == nil || s.HistoryFor < IdleMinHistory {
 		return

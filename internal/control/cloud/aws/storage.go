@@ -350,6 +350,7 @@ var actionNeeds = map[cloud.Action][]string{
 		"ec2:RevokeSecurityGroupIngress", "ec2:RevokeSecurityGroupEgress"},
 	cloud.ActionFirewallDelete:    {"ec2:DeleteSecurityGroup"},
 	cloud.ActionInstanceFirewalls: {"ec2:ModifyInstanceAttribute"},
+	cloud.ActionSettings:          {"ec2:ModifyInstanceAttribute", "ec2:ModifyInstanceMetadataOptions", "ec2:ModifyInstanceCreditSpecification"},
 	cloud.ActionTargetRegister:    {"elasticloadbalancing:RegisterTargets"},
 	cloud.ActionTargetDeregister:  {"elasticloadbalancing:DeregisterTargets"},
 }

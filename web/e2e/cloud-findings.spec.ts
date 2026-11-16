@@ -27,7 +27,7 @@ const FINDINGS = [
     howToFix: 'Sign in as root and add an MFA device under Security credentials.' },
   { ...base, id: 'imds-v1:i-2', check: 'imds-v1', group: 'risk', severity: 'medium', source: 'cloud', kind: 'instance', resourceId: 'i-2', name: 'web-02',
     title: 'Old instance metadata allowed', why: 'web-02 still answers metadata requests without a token (IMDSv1).',
-    howToFix: "In AWS, set the instance's metadata to require tokens (IMDSv2)." },
+    howToFix: 'Require tokens (IMDSv2).', fix: 'settings' },
   { ...base, region: 'global', id: 'user-no-mfa:arn:aws:iam::412788931204:user/ana', check: 'user-no-mfa', group: 'risk', severity: 'medium', source: 'cloud',
     kind: 'user', resourceId: 'arn:aws:iam::412788931204:user/ana', name: 'ana', title: 'Person signs in without MFA',
     why: 'IAM user ana has a console password and no MFA device.', howToFix: 'Add an MFA device for the user.' },
@@ -59,6 +59,7 @@ const item = (kind: string, id: string, name: string, extra: object = {}) => ({
 const RESOURCES: Record<string, object[]> = {
   firewall: [item('firewall', 'sg-web', 'sg-web-public', { network: 'vpc-1', rules: [SSH, { inbound: true, protocol: 'tcp', fromPort: 443, toPort: 443, source: '0.0.0.0/0' },
     { inbound: false, protocol: 'all', fromPort: 0, toPort: 65535, source: '0.0.0.0/0' }] })],
+  instance: [item('instance', 'i-2', 'web-02', { state: 'running', size: 't3.medium', details: { metadataTokens: 'optional', hibernation: 'yes' } })],
   snapshot: [item('snapshot', 'snap-0a14f1', 'db-primary nightly', { size: '80 GiB' }), item('snapshot', 'snap-03caa1', 'before resize', { size: '200 GiB' })],
 }
 
@@ -161,4 +162,32 @@ test('phone: one card per finding, and the Overview shows the High ones', async 
   await page.goto('/cloud')
   await expect(page.getByText('See all 9 in Risks & waste')).toBeVisible()
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/07-overview.png`, fullPage: true })
+})
+
+// The IMDSv1 finding fixes through the instance's settings, with tokens
+// already turned on, and asks for only that one change.
+test('old instance metadata is fixed from its finding', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await stub(page)
+  await page.route('**/api/v1/cloud/instance-settings?*', (r) => r.fulfill({ json: {
+    terminationProtect: true, stopProtect: false, requireTokens: false, hibernation: true, creditMode: 'standard' } }))
+  let asked: Record<string, unknown> | null = null
+  await page.route('**/api/v1/cloud/changes', async (r) => {
+    if (r.request().method() !== 'POST') return r.fallback()
+    asked = r.request().postDataJSON()
+    return r.fulfill({ status: 202, json: { id: 'c1', state: 'awaiting_approval', summary: 'Require tokens for instance metadata (IMDSv2) on web-02' } })
+  })
+  await signIn(page)
+  await page.goto('/cloud?tab=risks')
+  await page.getByText('Old instance metadata allowed').click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Require tokens' }).click()
+  const modal = page.getByRole('dialog', { name: /Settings of web-02/ })
+  await expect(modal.getByRole('switch', { name: /Require tokens/ })).toBeChecked()
+  await expect(modal.getByRole('switch', { name: 'Stop protection' })).not.toBeChecked()
+  await expect(modal.getByText('t3.medium is burstable')).toBeVisible()
+  await modal.getByLabel('Why').fill('Finding: IMDSv1 still allowed')
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/08-imds-fix.png` })
+  await modal.getByRole('button', { name: 'Ask for approval' }).click()
+  await expect.poll(() => asked).toMatchObject({ action: 'settings', resourceId: 'i-2', spec: { requireTokens: true } })
+  expect(Object.keys((asked as unknown as { spec: object }).spec)).toEqual(['requireTokens'])
 })
