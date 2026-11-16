@@ -41,3 +41,35 @@ func TestNetRates(t *testing.T) {
 		t.Errorf("rates = %d, want bounded at %d", len(got), maxNet)
 	}
 }
+
+func TestDiskRates(t *testing.T) {
+	var u UsageSampler
+	t0 := time.Unix(1_700_000_000, 0)
+	if got := u.diskRates(nil, t0); got != nil {
+		t.Fatalf("no disks read = %+v, want nil (not reported)", got)
+	}
+	first := u.diskRates([]diskCounters{{name: "nvme0n1", reads: 100, writes: 50, readBytes: 4096, wroteBytes: 8192}}, t0)
+	if len(first) != 1 || first[0].ReadOps != nil {
+		t.Fatalf("first = %+v, want no rate yet", first)
+	}
+	second := u.diskRates([]diskCounters{{name: "nvme0n1", reads: 700, writes: 40, readBytes: 4096 + 60*1024, wroteBytes: 8192}}, t0.Add(time.Minute))
+	d := second[0]
+	if d.ReadOps == nil || *d.ReadOps != 10 || d.ReadBps == nil || *d.ReadBps != 1024 {
+		t.Errorf("read = %v ops %v B/s, want 10 and 1024", d.ReadOps, d.ReadBps)
+	}
+	if d.WriteOps != nil {
+		t.Errorf("writes went backwards (counter wrapped), rate = %v, want none", *d.WriteOps)
+	}
+	if d.WriteBps == nil || *d.WriteBps != 0 {
+		t.Errorf("write bytes = %v, want 0", d.WriteBps)
+	}
+}
+
+func TestStealSince(t *testing.T) {
+	if stealSince(cpuTimes{}, cpuTimes{total: 10, steal: 5}) != nil {
+		t.Error("a first sample has steal")
+	}
+	if v := stealSince(cpuTimes{total: 100, steal: 0}, cpuTimes{total: 200, steal: 25}); v == nil || *v != 25 {
+		t.Errorf("steal = %v, want 25", v)
+	}
+}

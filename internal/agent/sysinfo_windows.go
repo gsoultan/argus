@@ -26,6 +26,9 @@ var (
 	procGetSystemTimes       = modKernel32Sys.NewProc("GetSystemTimes")
 	procGlobalMemoryStatusEx = modKernel32Sys.NewProc("GlobalMemoryStatusEx")
 	procGetTickCount64       = modKernel32Sys.NewProc("GetTickCount64")
+
+	modIphlpapiSys         = windows.NewLazySystemDLL("iphlpapi.dll")
+	procGetTcpStatisticsEx = modIphlpapiSys.NewProc("GetTcpStatisticsEx")
 )
 
 // memoryStatusEx is MEMORYSTATUSEX.
@@ -99,6 +102,8 @@ func (u *UsageSampler) platformSample() (Usage, bool) {
 	}
 	out.Disks = fixedDrives()
 	out.Net = u.netRates(interfaceCounters(), out.At)
+	out.TCPConns = tcpConnections()
+	out.DiskIO = u.diskRates(physicalDiskCounters(), out.At)
 	return out, true
 }
 
@@ -201,6 +206,80 @@ func interfaceCounters() []netCounters {
 		if len(out) == maxNet {
 			break
 		}
+	}
+	return out
+}
+
+// mibTCPStats is MIB_TCPSTATS: fifteen DWORDs.
+type mibTCPStats struct {
+	RtoAlgorithm, RtoMin, RtoMax, MaxConn   uint32
+	ActiveOpens, PassiveOpens, AttemptFails uint32
+	EstabResets, CurrEstab, InSegs, OutSegs uint32
+	RetransSegs, InErrs, OutRsts, NumConns  uint32
+}
+
+// tcpConnections is the TCP connection table's size for IPv4 and IPv6:
+// every connection and listener, as Linux's sockstat counts them. Nil when
+// neither family can be read.
+func tcpConnections() *uint64 {
+	if procGetTcpStatisticsEx.Find() != nil {
+		return nil
+	}
+	var total uint64
+	var any bool
+	for _, family := range []uintptr{windows.AF_INET, windows.AF_INET6} {
+		var st mibTCPStats
+		if r, _, _ := procGetTcpStatisticsEx.Call(uintptr(unsafe.Pointer(&st)), family); r == 0 {
+			total += uint64(st.NumConns)
+			any = true
+		}
+	}
+	if !any {
+		return nil
+	}
+	return &total
+}
+
+// ioctlDiskPerformance is IOCTL_DISK_PERFORMANCE.
+const ioctlDiskPerformance = 0x00070020
+
+// diskPerformance is DISK_PERFORMANCE.
+type diskPerformance struct {
+	BytesRead, BytesWritten int64
+	ReadTime, WriteTime     int64
+	IdleTime                int64
+	ReadCount, WriteCount   uint32
+	QueueDepth, SplitCount  uint32
+	QueryTime               int64
+	StorageDeviceNumber     uint32
+	StorageManagerName      [8]uint16
+}
+
+// physicalDiskCounters reads each physical disk's counters, the ones
+// Performance Monitor's PhysicalDisk shows. Opening a disk only to query it
+// needs no read access; a number with no disk behind it is skipped, since
+// numbers can be sparse after a disk is removed. Nil when no disk answers.
+func physicalDiskCounters() []diskCounters {
+	var out []diskCounters
+	for i := 0; i < maxDiskIO; i++ {
+		name := fmt.Sprintf(`\\.\PhysicalDrive%d`, i)
+		p, err := windows.UTF16PtrFromString(name)
+		if err != nil {
+			continue
+		}
+		h, err := windows.CreateFile(p, 0, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, 0, 0)
+		if err != nil {
+			continue
+		}
+		var dp diskPerformance
+		var n uint32
+		err = windows.DeviceIoControl(h, ioctlDiskPerformance, nil, 0, (*byte)(unsafe.Pointer(&dp)), uint32(unsafe.Sizeof(dp)), &n, nil)
+		windows.CloseHandle(h)
+		if err != nil || dp.BytesRead < 0 || dp.BytesWritten < 0 {
+			continue
+		}
+		out = append(out, diskCounters{name: fmt.Sprintf("disk%d", i), reads: uint64(dp.ReadCount), writes: uint64(dp.WriteCount),
+			readBytes: uint64(dp.BytesRead), wroteBytes: uint64(dp.BytesWritten)})
 	}
 	return out
 }

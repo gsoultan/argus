@@ -198,3 +198,57 @@ func TestCleanCPUModel(t *testing.T) {
 		}
 	}
 }
+
+func TestReadUsageStealAndConnections(t *testing.T) {
+	r := fixtureRoots(t, map[string]string{
+		"proc/stat":          "cpu  100 0 100 700 0 0 0 100 0 0\n",
+		"proc/meminfo":       "MemTotal: 1024 kB\nMemAvailable: 512 kB\n",
+		"proc/loadavg":       "0.50 0.40 0.30 1/100 123\n",
+		"proc/net/sockstat":  "sockets: used 73\nTCP: inuse 26 orphan 0 tw 4 alloc 26 mem 1\nUDP: inuse 3 mem 0\n",
+		"proc/net/sockstat6": "TCP6: inuse 4\nUDP6: inuse 1\n",
+	}, nil)
+	_, prev := readUsage(r, cpuTimes{})
+	writeTree(t, filepath.Dir(r.proc), map[string]string{"proc/stat": "cpu  150 0 150 800 0 0 0 200 0 0\n"})
+	u, _ := readUsage(r, prev)
+	// 300 ticks passed, 100 of them stolen.
+	if u.Steal == nil || *u.Steal != 33.3 {
+		t.Errorf("steal = %v, want 33.3", u.Steal)
+	}
+	if u.TCPConns == nil || *u.TCPConns != 30 {
+		t.Errorf("tcp = %v, want 26 + 4", u.TCPConns)
+	}
+
+	// No sockstat at all is not reported, never zero.
+	bare := fixtureRoots(t, map[string]string{"proc/stat": "cpu  1 0 1 1 0 0 0 0\n"}, nil)
+	if u, _ := readUsage(bare, cpuTimes{}); u.TCPConns != nil || u.Steal != nil {
+		t.Errorf("bare = tcp %v steal %v, want neither", u.TCPConns, u.Steal)
+	}
+}
+
+func TestReadDiskStatsWholeDisksOnly(t *testing.T) {
+	r := fixtureRoots(t, map[string]string{
+		"proc/diskstats": `   7       0 loop0 10 0 80 0 0 0 0 0 0 0 0
+ 259       0 nvme0n1 1000 5 20000 300 400 8 8000 90 0 400 390
+ 259       1 nvme0n1p1 900 5 18000 280 380 8 7600 80 0 380 360
+ 253       0 dm-0 900 0 18000 280 380 0 7600 80 0 380 360
+   8       0 sda 7 0 bad 0 0 0 0 0 0 0 0
+`,
+	}, nil)
+	// sysfs lists the whole disks (and dm-0 and loop0, which are still left out).
+	sys := r.sys
+	r.exists = func(p string) bool {
+		switch p {
+		case filepath.Join(sys, "block/nvme0n1"), filepath.Join(sys, "block/dm-0"), filepath.Join(sys, "block/loop0"), filepath.Join(sys, "block/sda"):
+			return true
+		}
+		return false
+	}
+	got := readDiskStats(r)
+	if len(got) != 1 {
+		t.Fatalf("disks = %+v, want nvme0n1 alone (no partition, mapper, loop or unreadable line)", got)
+	}
+	d := got[0]
+	if d.name != "nvme0n1" || d.reads != 1000 || d.readBytes != 20000*512 || d.writes != 400 || d.wroteBytes != 8000*512 {
+		t.Errorf("nvme0n1 = %+v", d)
+	}
+}

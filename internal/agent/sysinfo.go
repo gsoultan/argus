@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"math"
 	"runtime"
 	"strings"
 	"time"
@@ -72,6 +73,28 @@ type Usage struct {
 	// Net is the traffic through each interface that is up, since the
 	// previous sample. Nil where the platform reports none.
 	Net []NetRate `json:"net,omitempty"`
+	// Steal is the share of time the hypervisor ran something else while
+	// this machine had work, 0 to 100, since the previous sample: a noisy
+	// host, or a burstable instance out of credits. Nil where the platform
+	// keeps no such counter (Windows) and on the first sample.
+	Steal *float64 `json:"steal,omitempty"`
+	// TCPConns is the TCP connections open now, IPv4 and IPv6. Nil where
+	// it could not be read.
+	TCPConns *uint64 `json:"tcp_conns,omitempty"`
+	// DiskIO is each physical disk's operations and bytes per second since
+	// the previous sample. Nil where the platform reports none.
+	DiskIO []DiskIO `json:"disk_io,omitempty"`
+}
+
+// DiskIO is one physical disk's activity, averaged since the previous
+// sample. A rate is nil on a disk's first sighting, or when its counter
+// went backwards, which has no honest rate.
+type DiskIO struct {
+	Name     string   `json:"name"`
+	ReadOps  *float64 `json:"read_ops,omitempty"`
+	WriteOps *float64 `json:"write_ops,omitempty"`
+	ReadBps  *float64 `json:"read_bps,omitempty"`
+	WriteBps *float64 `json:"write_bps,omitempty"`
 }
 
 // NetRate is one interface's traffic, averaged since the previous sample.
@@ -101,6 +124,9 @@ type Disk struct {
 // maxNet bounds the interfaces in one report; a host with more is a
 // container host whose veths are not what anyone is asking about.
 const maxNet = 32
+
+// maxDiskIO bounds the physical disks in one report.
+const maxDiskIO = 16
 
 // maxDisks bounds the report. A host with more real filesystems than this is
 // unusual, and the console lists the fullest first anyway.
@@ -147,6 +173,45 @@ type UsageSampler struct {
 	// net is each interface's byte counters at the previous sample.
 	net   map[string]netCounters
 	netAt time.Time
+	// disk is each physical disk's counters at the previous sample.
+	disk   map[string]diskCounters
+	diskAt time.Time
+}
+
+// diskCounters is one physical disk as the platform reads it: completed
+// operations and bytes since boot.
+type diskCounters struct {
+	name                  string
+	reads, writes         uint64
+	readBytes, wroteBytes uint64
+}
+
+// diskRates turns two readings of the disk counters into per-second rates,
+// keeping the new reading for the next call. Like netRates, a disk seen for
+// the first time has no rate.
+func (u *UsageSampler) diskRates(now []diskCounters, at time.Time) []DiskIO {
+	if now == nil {
+		return nil
+	}
+	out := make([]DiskIO, 0, min(len(now), maxDiskIO))
+	secs := at.Sub(u.diskAt).Seconds()
+	next := make(map[string]diskCounters, len(now))
+	for _, c := range now {
+		if len(out) == maxDiskIO {
+			break
+		}
+		next[c.name] = c
+		d := DiskIO{Name: c.name}
+		if p, ok := u.disk[c.name]; ok && secs >= 1 {
+			d.ReadOps = rateSince(p.reads, c.reads, secs)
+			d.WriteOps = rateSince(p.writes, c.writes, secs)
+			d.ReadBps = rateSince(p.readBytes, c.readBytes, secs)
+			d.WriteBps = rateSince(p.wroteBytes, c.wroteBytes, secs)
+		}
+		out = append(out, d)
+	}
+	u.disk, u.diskAt = next, at
+	return out
 }
 
 // netCounters is one interface as the platform reads it.
@@ -205,6 +270,9 @@ func (u *UsageSampler) Sample() (out Usage, ok bool) {
 // cpuTimes is the aggregate processor counters from /proc/stat.
 type cpuTimes struct {
 	idle, total uint64
+	// steal is the hypervisor's share, counted in total; 0 where the
+	// platform keeps none.
+	steal uint64
 }
 
 // busySince is the non-idle share between two samples, or nil when there
@@ -223,6 +291,17 @@ func busySince(prev, now cpuTimes) *float64 {
 		v = 100
 	}
 	v = float64(int(v*10+0.5)) / 10
+	return &v
+}
+
+// stealSince is the stolen share between two samples, or nil when there is
+// no earlier sample or the counters did not move forward.
+func stealSince(prev, now cpuTimes) *float64 {
+	if prev.total == 0 || now.total <= prev.total || now.steal < prev.steal {
+		return nil
+	}
+	v := float64(now.steal-prev.steal) / float64(now.total-prev.total) * 100
+	v = math.Min(100, float64(int(v*10+0.5))/10)
 	return &v
 }
 

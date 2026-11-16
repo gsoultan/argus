@@ -31,6 +31,7 @@ func (u *UsageSampler) platformSample() (Usage, bool) {
 	out, now := readUsage(liveRoots, u.prev)
 	u.prev = now
 	out.Net = u.netRates(readNetDev(liveRoots), out.At)
+	out.DiskIO = u.diskRates(readDiskStats(liveRoots), out.At)
 	return out, true
 }
 
@@ -188,6 +189,9 @@ func readCPUTimes(path string) cpuTimes {
 		if i == 3 || i == 4 {
 			t.idle += n
 		}
+		if i == 7 {
+			t.steal = n
+		}
 	}
 	return t
 }
@@ -206,6 +210,8 @@ func readUsage(r sysRoots, prev cpuTimes) (Usage, cpuTimes) {
 	}
 	now := readCPUTimes(filepath.Join(r.proc, "stat"))
 	u.CPUBusy = busySince(prev, now)
+	u.Steal = stealSince(prev, now)
+	u.TCPConns = readTCPInUse(r)
 
 	mem := readMeminfo(filepath.Join(r.proc, "meminfo"))
 	u.MemTotal = mem["MemTotal"]
@@ -408,4 +414,85 @@ func fileFirstLine(path string) string {
 	}
 	line, _, _ := strings.Cut(string(b), "\n")
 	return strings.TrimSpace(line)
+}
+
+// readTCPInUse is the TCP sockets in use from /proc/net/sockstat and
+// sockstat6: every open connection and listener, without those in
+// TIME_WAIT, which the kernel counts apart. Nil when neither can be read.
+func readTCPInUse(r sysRoots) *uint64 {
+	var total uint64
+	var any bool
+	for _, f := range []struct{ file, label string }{{"net/sockstat", "TCP:"}, {"net/sockstat6", "TCP6:"}} {
+		b, err := os.ReadFile(filepath.Join(r.proc, f.file))
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 3 || fields[0] != f.label || fields[1] != "inuse" {
+				continue
+			}
+			if n, err := strconv.ParseUint(fields[2], 10, 64); err == nil {
+				total += n
+				any = true
+			}
+		}
+	}
+	if !any {
+		return nil
+	}
+	return &total
+}
+
+// readDiskStats reads each physical disk's counters from /proc/diskstats.
+// Only whole disks that sysfs lists under block/, and not loop, RAM,
+// optical or floppy devices; device-mapper and software RAID devices are
+// left out too, since their traffic is already counted on the disks under
+// them. Sectors are 512 bytes whatever the disk's own sector size.
+func readDiskStats(r sysRoots) []diskCounters {
+	f, err := os.Open(filepath.Join(r.proc, "diskstats"))
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	out := []diskCounters{}
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		fields := strings.Fields(sc.Text())
+		if len(fields) < 10 {
+			continue
+		}
+		name := fields[2]
+		if skipBlockDevice(name) || !r.exists(filepath.Join(r.sys, "block", name)) {
+			continue
+		}
+		var v [4]uint64
+		ok := true
+		// reads completed, sectors read, writes completed, sectors written
+		for i, col := range []int{3, 5, 7, 9} {
+			n, err := strconv.ParseUint(fields[col], 10, 64)
+			if err != nil {
+				ok = false
+				break
+			}
+			v[i] = n
+		}
+		if !ok {
+			continue
+		}
+		out = append(out, diskCounters{name: name, reads: v[0], readBytes: v[1] * 512, writes: v[2], wroteBytes: v[3] * 512})
+		if len(out) == maxDiskIO {
+			break
+		}
+	}
+	return out
+}
+
+func skipBlockDevice(name string) bool {
+	for _, p := range []string{"loop", "ram", "zram", "sr", "fd", "dm-", "md", "nbd"} {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
 }

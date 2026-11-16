@@ -18,7 +18,7 @@ import type { Asset, ResourceWarning, ServerSystem } from '~/types/domain'
  * would claim figures nobody measured.
  */
 
-export type MetricsRange = '6h' | '24h' | '7d' | '30d'
+export type MetricsRange = '6h' | '24h' | '7d' | '30d' | '90d' | '1y'
 
 export interface MetricsPoint {
   at: string
@@ -32,6 +32,24 @@ export interface MetricsPoint {
   tx: number | null
   rxMax: number | null
   txMax: number | null
+  /**
+   * The busiest 1-minute load average over the processors: above 1, work
+   * waited for a processor. These are missing from an older control plane
+   * and null where the agent does not report them.
+   */
+  loadPerCore?: number | null
+  /** Percent of time the hypervisor gave this machine's turn to another. */
+  steal?: number | null
+  stealMax?: number | null
+  /** The most TCP connections open at once. */
+  tcp?: number | null
+  /** Disk activity over all physical disks: operations and bytes per second. */
+  readOps?: number | null
+  writeOps?: number | null
+  readBps?: number | null
+  writeBps?: number | null
+  iopsMax?: number | null
+  ioBpsMax?: number | null
   samples: number
 }
 
@@ -50,6 +68,8 @@ const RANGES: { value: MetricsRange; label: string; span: number; step: number }
   { value: '24h', label: '24 h', span: 24 * 3600, step: 300 },
   { value: '7d', label: '7 days', span: 7 * 86400, step: 1800 },
   { value: '30d', label: '30 days', span: 30 * 86400, step: 7200 },
+  { value: '90d', label: '90 days', span: 90 * 86400, step: 6 * 3600 },
+  { value: '1y', label: '1 year', span: 365 * 86400, step: 86400 },
 ]
 
 // A plain options object rather than queryOptions(): importing that here
@@ -89,7 +109,14 @@ function fixtureMetrics(a: Asset, range: MetricsRange): AssetMetrics {
       mem: Math.round((58 + 6 * day + rnd() * 3) * 10) / 10, swap: 5 + Math.round(rnd() * 3),
       disks: { '/': Math.round((46 + f) * 10) / 10, '/var/lib/postgresql': Math.round((86 + 5 * f) * 10) / 10 },
       rx: Math.round((3e6 + 2e6 * day + rnd() * 1e6)), tx: Math.round((9e6 + 6e6 * day + rnd() * 3e6)),
-      rxMax: Math.round(6e6 + rnd() * 4e6), txMax: Math.round(16e6 + rnd() * 1e7), samples: r.step / 60,
+      rxMax: Math.round(6e6 + rnd() * 4e6), txMax: Math.round(16e6 + rnd() * 1e7),
+      loadPerCore: Math.round((cpu / 60 + rnd() * 0.3) * 100) / 100,
+      steal: Math.round(rnd() * 15) / 10, stealMax: Math.round(rnd() * 40) / 10,
+      tcp: Math.round(180 + 120 * day + rnd() * 40),
+      readOps: Math.round(400 + 300 * day + rnd() * 100), writeOps: Math.round(250 + 150 * day + rnd() * 80),
+      readBps: Math.round(18e6 + 9e6 * day), writeBps: Math.round(7e6 + 3e6 * day),
+      iopsMax: Math.round(1400 + rnd() * 900), ioBpsMax: Math.round(40e6 + rnd() * 2e7),
+      samples: r.step / 60,
     })
   }
   return { ...base, reported: true, mounts: ['/var/lib/postgresql', '/'], points }
@@ -130,7 +157,8 @@ export function MetricsTab({ asset }: { asset: Asset }) {
         )}
         <Text size={FS.micro} c="dimmed" px="md" py="sm" lh={1.5} style={{ borderTop: '1px solid var(--color-line)' }}>
           Each point averages what the agent reported in {stepLabel(m?.stepSeconds ?? 300)}; dashed lines are the busiest moment in it.
-          A shaded stretch is when the agent did not report: nothing is drawn there. Kept for 30 days.
+          A shaded stretch is when the agent did not report: nothing is drawn there. Kept 30 days in detail, and 13 months by the hour
+          for the 90-day and 1-year ranges.
         </Text>
       </Card>
     </Stack>
@@ -158,7 +186,8 @@ function NowTiles({ sys, fresh }: { sys: ServerSystem; fresh: boolean }) {
       </Group>
     <SimpleGrid cols={{ base: 2, md: 4 }} spacing="md" style={{ opacity: fresh ? 1 : 0.6 }}>
       <Tile label="Processor" value={u.cpuBusy !== null ? `${Math.round(u.cpuBusy)}% busy` : '—'} tone={warningTone(w('cpu'))}
-        sub={[sys.system?.cpus ? `${sys.system.cpus} CPUs` : '', u.load ? `load ${u.load[0].toFixed(2)}` : ''].filter(Boolean).join(' · ')} />
+        sub={[sys.system?.cpus ? `${sys.system.cpus} CPUs` : '', u.load ? `load ${u.load[0].toFixed(2)}` : '',
+          u.steal ? `steal ${u.steal.toFixed(1)}%` : ''].filter(Boolean).join(' · ')} />
       <Tile label="Memory" value={memUsed !== null ? `${memUsed}% used` : '—'} tone={warningTone(w('memory'))}
         sub={u.memTotal ? `${bytes(u.memAvailable)} of ${bytes(u.memTotal)} left` : ''} />
       <Tile label="Fullest disk" value={fullest ? `${diskFull(fullest)}% full` : '—'} tone={fullest ? warningTone(w('disk', fullest.mount)) : undefined}
@@ -235,6 +264,21 @@ export function MetricsHistory({ m }: { m: AssetMetrics }) {
   const cpuAvg = avg(cpu)
   // Every summary names its range, so it is not read against the Now tiles.
   const over = `last ${RANGES.find((r) => r.value === m.range)?.label ?? m.range}`
+  // The newer figures are drawn only once the agent has sent one, so an
+  // older agent, or Windows for load and steal, shows no empty charts.
+  const opt = (f: (p: MetricsPoint) => number | null | undefined) => pick((p) => f(p) ?? null)
+  const seen = (vs: (number | null)[]) => vs.some((v) => v !== null)
+  const load = opt((p) => p.loadPerCore)
+  const steal = opt((p) => p.steal)
+  const stealMax = opt((p) => p.stealMax)
+  const tcp = opt((p) => p.tcp)
+  const rops = opt((p) => p.readOps)
+  const wops = opt((p) => p.writeOps)
+  const rbps = opt((p) => p.readBps)
+  const wbps = opt((p) => p.writeBps)
+  const iopsPeak = Math.max(peak(opt((p) => p.iopsMax)), peak(rops), peak(wops))
+  const ioBpsPeak = Math.max(peak(opt((p) => p.ioBpsMax)), peak(rbps), peak(wbps))
+  const count = (v: number) => (v >= 10_000 ? `${Math.round(v / 1000)}k` : v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${Math.round(v)}`)
   return (
     <SimpleGrid cols={{ base: 1, lg: 2 }} spacing={0} className="metrics-history">
       <Chart title="Processor" testId="chart-cpu" {...common} max={100} fmt={pct} threshold={90}
@@ -249,8 +293,38 @@ export function MetricsHistory({ m }: { m: AssetMetrics }) {
       <Chart title="Network" testId="chart-net" {...common} max={niceMax(netPeak * 1.05)} fmt={bitRateShort}
         summary={netPeak > 0 ? `${over}: all interfaces · peak ${bitRate(netPeak / 8)}` : 'not reported'}
         lines={[{ label: 'in', color: C.teal, values: rx }, { label: 'out', color: C.sky, values: tx }]} />
+      {seen(load) && (
+        <Chart title="Load per processor" testId="chart-load" {...common} max={Math.max(2, niceMax(peak(load) * 1.05))}
+          fmt={(v) => v.toFixed(v < 10 ? 1 : 0)} threshold={1} thresholdLabel="waiting above 1"
+          summary={`${over}: busiest ${peak(load).toFixed(2)} per processor`}
+          lines={[{ label: 'busiest minute', color: C.azure, values: load }]} />
+      )}
+      {seen(steal) && (
+        <Chart title="Processor steal" testId="chart-steal" {...common} max={Math.max(10, niceMax(peak(stealMax) * 1.05))} fmt={pct1}
+          summary={`${over}: average ${pct1(avg(steal) ?? 0)} · peak ${pct1(peak(stealMax))}`}
+          lines={[{ label: 'average', color: C.amber, values: steal }, { label: 'peak', color: C.slate, dashed: true, values: stealMax }]} />
+      )}
+      {seen(tcp) && (
+        <Chart title="TCP connections" testId="chart-tcp" {...common} max={niceMax(peak(tcp) * 1.05)} fmt={count}
+          summary={`${over}: most open at once ${Math.round(peak(tcp))}`}
+          lines={[{ label: 'open', color: C.teal, values: tcp }]} />
+      )}
+      {seen(rops) && (
+        <Chart title="Disk operations" testId="chart-iops" {...common} max={niceMax(iopsPeak * 1.05)} fmt={(v) => `${count(v)}/s`}
+          summary={`${over}: all disks · busiest ${count(iopsPeak)} a second`}
+          lines={[{ label: 'reads', color: C.azure, values: rops }, { label: 'writes', color: C.rose, values: wops }]} />
+      )}
+      {seen(rbps) && (
+        <Chart title="Disk throughput" testId="chart-disk-bytes" {...common} max={niceMax(ioBpsPeak * 1.05)} fmt={(v) => `${bytes(v)}/s`}
+          summary={`${over}: all disks · busiest ${bytes(ioBpsPeak)}/s`}
+          lines={[{ label: 'read', color: C.azure, values: rbps }, { label: 'written', color: C.rose, values: wbps }]} />
+      )}
     </SimpleGrid>
   )
+}
+
+function pct1(v: number): string {
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)}%`
 }
 
 function niceMax(v: number): number {
@@ -272,7 +346,7 @@ function timeLabel(t: number, spanMs: number): string {
     : d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
 }
 
-function Chart({ title, summary, lines, times, from, to, step, max, fmt, threshold, testId }: {
+function Chart({ title, summary, lines, times, from, to, step, max, fmt, threshold, thresholdLabel, testId }: {
   title: string
   summary: string
   lines: Line[]
@@ -283,6 +357,8 @@ function Chart({ title, summary, lines, times, from, to, step, max, fmt, thresho
   max: number
   fmt: (v: number) => string
   threshold?: number
+  /** What the dashed line means; "low at" the value when not given. */
+  thresholdLabel?: string
   testId: string
 }) {
   const { ref, width } = useElementSize()
@@ -379,7 +455,7 @@ function Chart({ title, summary, lines, times, from, to, step, max, fmt, thresho
         {threshold !== undefined && (
           <g>
             <line x1={pl} x2={W - pr} y1={y(threshold)} y2={y(threshold)} stroke={C.amber} strokeDasharray="4 3" />
-            <text x={W - pr - 2} y={y(threshold) - 3} fontSize="10" textAnchor="end" fill="var(--mantine-color-amber-7)">low at {fmt(threshold)}</text>
+            <text x={W - pr - 2} y={y(threshold) - 3} fontSize="10" textAnchor="end" fill="var(--mantine-color-amber-7)">{thresholdLabel ?? `low at ${fmt(threshold)}`}</text>
           </g>
         )}
         {[0, 0.5, 1].map((f) => (

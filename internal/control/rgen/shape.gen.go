@@ -1183,6 +1183,52 @@ func _assertUsageHistoryShape(m m0.UsageHistory) {
 		m.NetN,
 		m.RxMax,
 		m.TxMax,
+		m.LoadMax,
+		m.StealSum,
+		m.StealN,
+		m.StealMax,
+		m.TcpMax,
+		m.RopsSum,
+		m.WopsSum,
+		m.RbpsSum,
+		m.WbpsSum,
+		m.IoN,
+		m.IopsMax,
+		m.IoBpsMax,
+	}
+}
+
+// _assertUsageHourlyShape fails to compile if m0.UsageHourly gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertUsageHourlyShape(m m0.UsageHourly) {
+	type shape m0.UsageHourly
+	_ = shape{
+		m.Hostname,
+		m.Bucket,
+		m.Samples,
+		m.CpuSum,
+		m.CpuN,
+		m.CpuMax,
+		m.MemPct,
+		m.SwapPct,
+		m.Disks,
+		m.RxSum,
+		m.TxSum,
+		m.NetN,
+		m.RxMax,
+		m.TxMax,
+		m.LoadMax,
+		m.StealSum,
+		m.StealN,
+		m.StealMax,
+		m.TcpMax,
+		m.RopsSum,
+		m.WopsSum,
+		m.RbpsSum,
+		m.WbpsSum,
+		m.IoN,
+		m.IopsMax,
+		m.IoBpsMax,
 	}
 }
 
