@@ -103,10 +103,12 @@ func TestAssetsUsageIsScopedToWhatEachRoleSees(t *testing.T) {
 		}
 	}
 
-	// Taken off the team, the server goes with it.
+	// Taken off the team, the server goes with it: on the next read once the
+	// shared answer has expired (assets_usage_cache.go), which this skips to.
 	if err := s.RemoveTeamMember(ctx, team, teamMate); err != nil {
 		t.Fatal(err)
 	}
+	a.assetsUsage = assetsUsageCache{}
 	if _, ok := get("team-token")[mine.ID]; ok {
 		t.Error("a member removed from the team still read the team's server")
 	}

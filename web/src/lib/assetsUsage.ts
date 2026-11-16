@@ -34,8 +34,11 @@ export const assetsUsageQuery = () => ({
   queryKey: ['assets-usage'] as const,
   queryFn: (): Promise<AssetsUsage> =>
     live.orFallback(() => get<AssetsUsage>('/api/v1/assets-usage'), async () => fixtureUsage(await api.assets({}))),
-  staleTime: 60_000,
-  refetchInterval: 60_000,
+  // Agents report about once a minute; asking every 15 s shows each report
+  // within about that. The control plane shares one read among everyone
+  // who may see the same answer, so this costs it little.
+  staleTime: 10_000,
+  refetchInterval: 15_000,
 })
 
 /** The colour a figure is drawn in, at the thresholds the warnings use. */
