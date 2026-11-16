@@ -70,3 +70,29 @@ swap, each real disk). Code: `internal/agent/sysinfo*.go`,
 - Console: `components/server/MetricsTab.tsx` (lazy), tab 'metrics' on
   servers and workstations only. Hand-drawn SVG charts; a gap of more than two
   steps breaks the line and is shaded "no reports".
+
+## Live usage (2026-11)
+
+- While a server's page is open the System card and the Metrics tab's Now
+  tiles update every 2 s, straight from the agent, and the Metrics tab draws
+  the last 5 minutes of those samples ("Live"). Nothing of it is stored:
+  history is still the heartbeat's once-a-minute usage.
+- Path: browser SSE `GET /api/v1/assets/{id}/usage/live` (fleet roles, same
+  check as getSystem, rechecked every 30 s) → `usageLiveHub`
+  (`internal/control/usage_live.go`) → tunnel service `usage.live`
+  (`internal/tunnel/usage.go`, `internal/agent/usage_live.go`) → 'u' frames.
+- One agent stream per server per replica, shared by every viewer; closed
+  15 s after the last viewer leaves. One DB read per viewer (asset → agent
+  name), none per sample. Slow viewers get the newest sample only.
+- The agent samples on its own UsageSampler (the heartbeat's minute rates
+  stay untouched), at most 4 streams, no grant (same figures as the
+  heartbeat). Not counted as a session, so an update never waits on it.
+- Live frames carry no processor warning: two busy seconds are not running
+  low. The console keeps the heartbeat's cpu warning and does not colour
+  the live processor tile with it.
+- The browser closes the stream while the tab is hidden. An agent too old,
+  not connected here (or held by another replica), or no agent: the stream
+  ends with a reason and the page keeps polling the heartbeat's figures
+  every 20 s (polling stops while live).
+- Cost: `BenchmarkUsageSample` ~0.85 ms / 124 KB per sample on a 4-CPU VM
+  after the process scan stopped allocating per process (was 1.1 ms / 392 KB).

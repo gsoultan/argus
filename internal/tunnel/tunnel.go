@@ -96,6 +96,8 @@ type Header struct {
 	Hold *TermHold `json:"hold,omitempty"`
 	// Resume names the held terminal a "terminal.resume" stream picks up.
 	Resume *TermResume `json:"resume,omitempty"`
+	// UsageEveryMS is how often a "usage.live" stream samples; see UsagePace.
+	UsageEveryMS int `json:"usage_every_ms,omitempty"`
 }
 
 // TermHold is how long an agent keeps a terminal whose stream dropped.

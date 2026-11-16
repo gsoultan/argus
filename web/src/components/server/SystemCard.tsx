@@ -1,8 +1,9 @@
-import { Alert, Anchor, Box, Button, Card, Group, Progress, SimpleGrid, Skeleton, Stack, Text } from '@mantine/core'
+import { Alert, Anchor, Badge, Box, Button, Card, Group, Progress, SimpleGrid, Skeleton, Stack, Text } from '@mantine/core'
 import { queryOptions, useQuery } from '@tanstack/react-query'
 import { Mono, absTime, now as clockNow, relTime } from '~/components/primitives'
 import type { ServerTab } from '~/components/server/tabs'
 import { live } from '~/lib/live'
+import { isLiveUsage, useLiveUsage, type LiveUsage } from '~/lib/liveUsage'
 import { bytes, trim, warningText, warningTone } from '~/lib/resourcesLow'
 import { FS, INK } from '~/theme'
 import type {
@@ -13,16 +14,18 @@ export { bytes }
 
 /**
  * Here rather than in lib/queries and lib/api, so the card's fixture and
- * fetch load with the server page and not on every first visit. Usage
- * arrives about once a minute, so the card refreshes on the same beat.
+ * fetch load with the server page and not on every first visit. While the
+ * page is open its usage arrives live (lib/liveUsage), every couple of
+ * seconds; this read is for the rest, and for when live figures cannot be had.
  */
 export const systemQuery = (asset: Asset) =>
   queryOptions({
     queryKey: ['asset', asset.id, 'system'] as const,
     queryFn: () => live.orFallback(() => live.system(asset.id), async () => fixtureSystem(asset)),
     // The agent reports about once a minute; reading every 20 s shows each
-    // report within 20 s of it arriving. Not read while the tab is hidden.
-    refetchInterval: 20_000,
+    // report within 20 s of it arriving. Not read while the tab is hidden,
+    // nor while live samples are keeping it current.
+    refetchInterval: () => (isLiveUsage(asset.id) ? false : 20_000),
     retry: false,
   })
 
@@ -114,6 +117,7 @@ export function SystemCard({ asset, onTab, canFreeSpace = false }: {
   canFreeSpace?: boolean
 }) {
   const { data, isError } = useQuery(systemQuery(asset))
+  const liveU = useLiveUsage(asset.id, !!data?.reported && asset.agentState !== 'absent' && asset.kind !== 'android')
   if (isError) return null
   if (!data) {
     return (
@@ -123,20 +127,23 @@ export function SystemCard({ asset, onTab, canFreeSpace = false }: {
       </Card>
     )
   }
-  return <SystemCardBody asset={asset} data={data} onTab={onTab} now={clockNow()} canFreeSpace={canFreeSpace} />
+  return <SystemCardBody asset={asset} data={data} onTab={onTab} now={clockNow()} canFreeSpace={canFreeSpace} live={liveU} />
 }
 
-export function SystemCardBody({ asset, data, onTab, now, canFreeSpace = false }: {
+export function SystemCardBody({ asset, data, onTab, now, canFreeSpace = false, live: liveU }: {
   asset: Asset
   data: ServerSystem
   onTab: (t: ServerTab) => void
   canFreeSpace?: boolean
+  /** Live samples, when the page is receiving them. */
+  live?: LiveUsage
   /** The moment "how old" is measured against; a prop so tests can fix it. */
   now: number
 }) {
   const os = data.os || asset.os
   const at = data.usageAt ?? null
-  const quiet = data.reported && (asset.agentState !== 'healthy' || !at || now - Date.parse(at) > QUIET_AFTER)
+  const isLive = liveU?.state === 'live'
+  const quiet = !isLive && data.reported && (asset.agentState !== 'healthy' || !at || now - Date.parse(at) > QUIET_AFTER)
 
   if (!data.reported) {
     const noAgent = asset.agentState === 'absent'
@@ -169,8 +176,8 @@ export function SystemCardBody({ asset, data, onTab, now, canFreeSpace = false }
   return (
     <Card padding={0} data-quiet={quiet || undefined}>
       <Header
-        when={at ? (
-          <Text size={FS.meta} c={quiet ? INK.pending : 'dimmed'} title={absTime(at)}>
+        when={isLive ? <LiveBadge every={liveU!.every} /> : at ? (
+          <Text size={FS.meta} c={quiet ? INK.pending : 'dimmed'} title={liveU?.reason ? `Not live: ${liveU.reason}.` : absTime(at)}>
             {quiet ? relTime(at) : `Reported by the agent ${relTime(at)}`}
           </Text>
         ) : undefined}
@@ -193,9 +200,22 @@ export function SystemCardBody({ asset, data, onTab, now, canFreeSpace = false }
         </Box>
       </SimpleGrid>
       <Box style={{ opacity: quiet ? 0.6 : 1 }}>
-        <Network ifaces={data.network ?? []} net={data.usage?.net ?? []} />
+        <Network ifaces={data.network ?? []} net={data.usage?.net ?? []} liveEvery={isLive ? liveU!.every : undefined} />
       </Box>
     </Card>
+  )
+}
+
+/**
+ * Says the figures beside it are arriving now, from the agent, and how
+ * often. The same badge a watched session wears.
+ */
+export function LiveBadge({ every }: { every: number }) {
+  return (
+    <Badge size="xs" color="sky" data-testid="usage-live" title="Straight from the agent while this page is open; not stored"
+      leftSection={<Box w={6} h={6} className="rounded-full animate-pulse" style={{ background: 'var(--color-live)' }} />}>
+      live · every {trim(every.toFixed(1))} s
+    </Badge>
   )
 }
 
@@ -283,7 +303,7 @@ function Facts({ rows }: { rows: Row[] }) {
  * behind NAT has a public address no interface holds, and the card must not
  * read as "this server has no public address".
  */
-function Network({ ifaces, net }: { ifaces: ServerInterface[]; net: ServerNetRate[] }) {
+function Network({ ifaces, net, liveEvery }: { ifaces: ServerInterface[]; net: ServerNetRate[]; liveEvery?: number }) {
   if (ifaces.length === 0 && net.length === 0) return null
   const anyPublic = ifaces.some((i) => i.addresses.some((a) => a.public))
   const byName = new Map(net.map((n) => [n.name, n]))
@@ -322,7 +342,7 @@ function Network({ ifaces, net }: { ifaces: ServerInterface[]; net: ServerNetRat
       ))}
       {net.length > 0 && (
         <Text size={FS.micro} c="dimmed" lh={1.5}>
-          Traffic is the average over the agent&apos;s last minute, from each interface&apos;s own counters.
+          Traffic is the average over {liveEvery ? `the last ${trim(liveEvery.toFixed(1))} seconds` : 'the agent\'s last minute'}, from each interface&apos;s own counters.
         </Text>
       )}
       {ifaces.length > 0 && !anyPublic && (

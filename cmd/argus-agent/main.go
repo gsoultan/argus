@@ -338,6 +338,9 @@ func runDaemon(args []string) int {
 			Log:       log,
 			Held:      agent.NewHeldTerminals(),
 		}
+		// Usage every couple of seconds while someone has the server's
+		// page open; nothing at all otherwise.
+		services[agent.UsageLiveService] = agent.UsageLive(agent.UsageLiveConfig{Log: log})
 		services[agent.TerminalService] = agent.Terminal(termCfg)
 		services[agent.TerminalResumeService] = agent.TerminalResume(termCfg)
 		// A read-only view of any session being recorded here, for the
