@@ -180,6 +180,9 @@ type API struct {
 	// usageLive shares one live usage stream per server among its viewers;
 	// see usage_live.go.
 	usageLive usageLiveHub
+	// assetsUsage shares the Assets cards' usage for a few seconds per
+	// organization and scope; see assets_usage_cache.go.
+	assetsUsage assetsUsageCache
 
 	// setup is the first-run page's one-time token; see setup.go.
 	setup setupGate

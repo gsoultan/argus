@@ -96,3 +96,8 @@ swap, each real disk). Code: `internal/agent/sysinfo*.go`,
   every 20 s (polling stops while live).
 - Cost: `BenchmarkUsageSample` ~0.85 ms / 124 KB per sample on a 4-CPU VM
   after the process scan stopped allocating per process (was 1.1 ms / 392 KB).
+- **Assets cards' usage** (`GET /api/v1/assets-usage`, #272) is polled every
+  15 s and shared on the control plane for 10 s (`assets_usage_cache.go`),
+  keyed by organization + "fleet" for whole-fleet roles, organization +
+  lowercased email for everyone else (never by role). A removed assignment
+  reaches that person's figures up to 10 s late.

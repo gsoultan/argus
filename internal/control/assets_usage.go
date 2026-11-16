@@ -145,7 +145,11 @@ func (a *API) getAssetsUsage(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, AssetsUsage{Assets: []AssetUsageRow{}, FreshSeconds: int(resourcesFresh / time.Second)})
 		return
 	}
-	v, err := a.store.AssetsUsage(r.Context(), time.Now(), scope)
+	// Shared for a few seconds with whoever may see the same answer; see
+	// assets_usage_cache.go.
+	v, err := a.assetsUsage.get(r.Context(), scope, func(ctx context.Context) (AssetsUsage, error) {
+		return a.store.AssetsUsage(ctx, time.Now(), scope)
+	})
 	if err != nil {
 		a.fail(w, "assets usage", err)
 		return
