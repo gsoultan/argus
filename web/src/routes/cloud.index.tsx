@@ -11,6 +11,7 @@ import { ChangesList } from '~/components/cloud/ChangesList'
 import { SchedulesList } from '~/components/cloud/Schedules'
 import { InstancesTable, NetworkTables, ScalingGroupsTable, StorageTables } from '~/components/cloud/CloudTables'
 import { NewBalancer, NewTargetGroup } from '~/components/cloud/BalancerActions'
+import { SuggestionsCard } from '~/components/cloud/Suggestion'
 import { NewFirewall } from '~/components/cloud/NetworkActions'
 import { NewAddress, NewDisk } from '~/components/cloud/StorageActions'
 import { FindingsPanel } from '~/components/cloud/Findings'
@@ -19,7 +20,7 @@ import { CLOUD_TABS, CLOUD_TAB_LABEL, parseCloudTab, type CloudTab } from '~/com
 import { ButtonLink } from '~/components/links'
 import { PageBody, PageHeader, Toolbar } from '~/components/page'
 import { relTime } from '~/components/primitives'
-import { cloudAccountsQuery, cloudChangesQuery, cloudItemsQuery, cloudSchedulesQuery, type CloudItem, type CloudKind } from '~/lib/cloud'
+import { cloudAccountsQuery, cloudChangesQuery, cloudItemsQuery, cloudSchedulesQuery, cloudSuggestionsQuery, type CloudItem, type CloudKind } from '~/lib/cloud'
 import { cloudAccessQuery } from '~/lib/cloudAccess'
 import { guard } from '~/lib/guard'
 import { isConfigured } from '~/lib/live'
@@ -54,6 +55,7 @@ function Cloud() {
   const access = useQuery(cloudAccessQuery({ waiting: true }))
   const waitingAccess = access.data?.grants.length ?? 0
   const findings = useQuery(cloudFindingsQuery())
+  const suggestions = useQuery(cloudSuggestionsQuery(tab === 'scaling'))
   const highRisks = findings.data?.items.filter((f) => f.group === 'risk' && f.severity === 'high').length ?? 0
   const waitingSchedules = schedules.data?.schedules.filter((s) => s.state === 'awaiting_approval' || s.pending).length ?? 0
   const q: Record<CloudKind, { data?: CloudItem[]; isPending: boolean }> = {
@@ -192,6 +194,7 @@ function Cloud() {
           )}
           {tab === 'scaling' && (
             <Stack gap="xs">
+              <SuggestionsCard items={suggestions.data} />
               <Text size={FS.meta} c="dimmed">
                 Auto Scaling groups in your AWS accounts. Each keeps how many servers it wants running, between its minimum and maximum, and replaces one that fails.
               </Text>

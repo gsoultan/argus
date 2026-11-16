@@ -249,10 +249,11 @@ export function SettingsChange({ it, env, onClose, preset }: {
   )
 }
 
-function ResizeChange({ it, env, onClose }: { it: CloudItem; env: CloudEnvironment; onClose: () => void }) {
+/** Changing an instance's size; a suggestion opens it with the size it names. */
+export function ResizeChange({ it, env, initial, onClose }: { it: CloudItem; env: CloudEnvironment; initial?: string; onClose: () => void }) {
   const r = it.resource
   const opts = useQuery(cloudLaunchOptionsQuery(it.accountId, r.region))
-  const [size, setSize] = useState<string | null>(null)
+  const [size, setSize] = useState<string | null>(initial ?? null)
   const [reason, setReason] = useState('')
   const { submit, busy } = useSubmit(onClose)
   const stopped = r.state === 'stopped'
@@ -269,7 +270,7 @@ function ResizeChange({ it, env, onClose }: { it: CloudItem; env: CloudEnvironme
       <Group grow align="flex-end">
         <Field label="Now"><Text ff="monospace" size={FS.body} mt={6}>{r.size}</Text></Field>
         <Select label="New size" searchable placeholder={opts.isPending ? 'Loading…' : 'Pick a size'} value={size} onChange={setSize}
-          data={(opts.data?.sizes ?? []).filter((x) => x !== r.size)} disabled={!stopped} nothingFoundMessage="No such size"
+          data={[...new Set([...(opts.data?.sizes ?? []), ...(initial ? [initial] : [])])].filter((x) => x !== r.size)} disabled={!stopped} nothingFoundMessage="No such size"
           styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }} />
       </Group>
     </ChangeModal>

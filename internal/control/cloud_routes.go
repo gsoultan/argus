@@ -68,6 +68,8 @@ func (a *API) registerCloudRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/cloud/accounts/{id}/manage", a.deleteCloudManage)
 	mux.HandleFunc("GET /api/v1/cloud/resources", a.getCloudResources)
 	mux.HandleFunc("GET /api/v1/assets/{id}/cloud", a.getAssetCloud)
+	mux.HandleFunc("GET /api/v1/assets/{id}/suggestion", a.getAssetSuggestion)
+	mux.HandleFunc("GET /api/v1/cloud/suggestions", a.getCloudSuggestions)
 }
 
 var reAWSAccount = regexp.MustCompile(`^[0-9]{12}$`)

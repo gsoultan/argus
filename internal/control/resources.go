@@ -246,6 +246,8 @@ func (a *API) RunResourceWatch(ctx context.Context, interval time.Duration) {
 			if prune {
 				// Hourly is often enough for reservations a month from ending.
 				a.watchReservations(tctx, now)
+				// Suggestions read hours, so hourly is often enough too.
+				a.watchSuggestions(tctx, now)
 				if err := a.store.pruneUsageHistory(tctx, now); err != nil {
 					a.log.Error("usage history prune", "error", err)
 				}
