@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -130,7 +131,7 @@ func (h diskHost) scan(ctx context.Context, req DiskScanRequest) (DiskReport, er
 	if req.Rescan {
 		any := false
 		for _, d := range t.devs {
-			if d.Kind == "disk" && busOf(d) == "scsi" && !d.Removable {
+			if d.Kind == "disk" && !d.Removable && (busOf(d) == "scsi" || busOf(d) == "nvme") {
 				if err := h.rescan(d.Name); err == nil {
 					any = true
 				}
@@ -146,10 +147,66 @@ func (h diskHost) scan(ctx context.Context, req DiskScanRequest) (DiskReport, er
 	return r, nil
 }
 
-// rescan asks a SCSI disk for its size again. It changes nothing on it.
+// rescan asks a disk for its size again. It changes nothing on it.
+//
+// A SCSI disk is asked directly. An NVMe disk is asked through its
+// controller: the kernel normally hears of a bigger namespace by itself,
+// but older kernels, and some hypervisors, never send or act on that
+// notice, and rescanning the controller reads every namespace's size
+// again.
 func (h diskHost) rescan(disk string) error {
+	if strings.HasPrefix(disk, "nvme") {
+		return h.rescanNVMe(disk)
+	}
 	return os.WriteFile(h.p("/sys/class/block/"+disk+"/device/rescan"), []byte("1"), 0o200)
 }
+
+// rescanNVMe rescans the controllers behind an NVMe disk. The disk's
+// device link names its controller, or, with native multipath, the
+// subsystem whose controllers each reach it.
+func (h diskHost) rescanNVMe(disk string) error {
+	link, err := os.Readlink(h.p("/sys/class/block/" + disk + "/device"))
+	if err != nil {
+		return err
+	}
+	ctrls := []string{filepath.Base(link)}
+	if strings.HasPrefix(ctrls[0], "nvme-subsys") {
+		ctrls = nil
+		ents, _ := os.ReadDir(h.p("/sys/class/nvme-subsystem/" + filepath.Base(link)))
+		for _, e := range ents {
+			if nvmeCtrl.MatchString(e.Name()) {
+				ctrls = append(ctrls, e.Name())
+			}
+		}
+	}
+	if len(ctrls) == 0 {
+		return errors.New(disk + " has no NVMe controller to rescan")
+	}
+	var first error
+	asked := false
+	for _, c := range ctrls {
+		if !nvmeCtrl.MatchString(c) {
+			continue
+		}
+		if err := os.WriteFile(h.p("/sys/class/nvme/"+c+"/rescan_controller"), []byte("1"), 0o200); err != nil {
+			if first == nil {
+				first = err
+			}
+			continue
+		}
+		asked = true
+	}
+	if asked {
+		return nil
+	}
+	if first == nil {
+		first = errors.New(disk + " has no NVMe controller to rescan")
+	}
+	return first
+}
+
+// nvmeCtrl is an NVMe controller's name.
+var nvmeCtrl = regexp.MustCompile(`^nvme[0-9]+$`)
 
 // topology reads everything the analysis needs.
 func (h diskHost) topology(ctx context.Context) linuxTopo {
@@ -654,7 +711,7 @@ func (o linuxDiskOps) table(ctx context.Context, p GrowPath) (diskCmd, bool) {
 }
 
 func (o linuxDiskOps) rescanDisk(p GrowPath) string {
-	if p.Disk != "" && strings.HasPrefix(p.Disk, "sd") {
+	if p.Disk != "" && (strings.HasPrefix(p.Disk, "sd") || strings.HasPrefix(p.Disk, "nvme")) {
 		return p.Disk
 	}
 	return ""
