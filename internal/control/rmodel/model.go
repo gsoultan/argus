@@ -1247,6 +1247,14 @@ type DatabaseReplica struct {
 	CreatedAt       time.Time
 	StartedAt       *time.Time
 	FinishedAt      *time.Time
+	Streaming       bool
+	LagS            *float64
+	LagBytes        *int64
+	RetainedBytes   *int64
+	WatchedAt       *time.Time
+	WatchError      string
+	BehindSince     *time.Time
+	BehindAlerted   bool
 }
 
 func (m *DatabaseReplica) Schema(t *storm.Table) {
@@ -1269,6 +1277,9 @@ func (m *DatabaseReplica) Schema(t *storm.Table) {
 	t.Col(&m.Detail).Default("''::text")
 	t.Col(&m.Error).Default("''::text")
 	t.Col(&m.CreatedAt).Default("now()")
+	t.Col(&m.Streaming).Default("false")
+	t.Col(&m.WatchError).Default("''::text")
+	t.Col(&m.BehindAlerted).Default("false")
 	t.UniqueNamed("database_replicas_database_id_name_key", &m.Database, &m.Name)
 	t.CheckNamed("database_replicas_name_check", "name ~ '^[a-z][a-z0-9_]{0,39}$'::text")
 	t.CheckNamed("database_replicas_state_check",

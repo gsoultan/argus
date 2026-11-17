@@ -1520,4 +1520,16 @@ export interface DatabaseReplica {
   createdAt: ISOTime
   startedAt?: ISOTime
   finishedAt?: ISOTime
+  /** The lag watch's last reading from the primary, once the replica is done. */
+  streaming?: boolean
+  /** Seconds behind: 0 caught up, -1 not streaming. */
+  lagS?: number
+  lagBytes?: number
+  /** WAL the replica's slot keeps on the primary. */
+  retainedBytes?: number
+  watchedAt?: ISOTime
+  /** Why the primary could not be asked last time; the reading above is older. */
+  watchError?: string
+  /** Since when it has been more than a minute behind, or not streaming. */
+  behindSince?: ISOTime
 }

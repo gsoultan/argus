@@ -114,6 +114,11 @@ func TestPGReplicaOnThePrimary(t *testing.T) {
 	if err != nil || string(got[0]) != "t" || string(got[1]) != "t" || string(got[2]) != "f" || string(got[3]) != "t" {
 		t.Fatalf("role and slot: %q %v", got, err)
 	}
+	// Nothing connected yet: the slot is there, idle, and the replica is behind.
+	var st tunnel.PGReplicaStatus
+	if res := run("replica-status", r, &st); !res.OK || !st.SlotExists || st.SlotActive || st.Streaming || st.LagBytes != -1 || st.Lag() != -1 {
+		t.Fatalf("status: %+v %+v", res, st)
+	}
 
 	// Someone else's role of that name is left alone.
 	if err := conn.Exec(ctx, `CREATE ROLE argus_repl_t_r2 LOGIN`).Close(); err != nil {

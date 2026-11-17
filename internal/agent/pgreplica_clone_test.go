@@ -199,6 +199,22 @@ func TestPGReplicaCloneEndToEnd(t *testing.T) {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
+	// The lag watch sees it streaming and caught up once a change arrives.
+	if err := primary.Exec(ctx, `CREATE TABLE argus_t_lag (x int); DROP TABLE argus_t_lag`).Close(); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		r := RunPGAdmin(ctx, primary, PGAdminRequest{Op: "replica-status", Database: "postgres", Replica: &rep})
+		var st tunnel.PGReplicaStatus
+		_ = json.Unmarshal(r.Data, &st)
+		if r.OK && st.Streaming && st.SlotActive && st.LagBytes == 0 && st.Lag() >= 0 && st.Lag() < 30 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("status: %+v %+v", r, st)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 	// Dropping while it streams is refused.
 	if r := RunPGAdmin(ctx, primary, PGAdminRequest{Op: "replica-drop", Database: "postgres", Replica: &rep}); r.OK {
 		t.Fatal("dropped the slot of a streaming replica")

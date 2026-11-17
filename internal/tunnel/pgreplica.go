@@ -93,6 +93,8 @@ const (
 	ReplicaPrepare = "prepare"
 	ReplicaAllow   = "allow"
 	ReplicaDrop    = "drop"
+	// ReplicaStatus reads how far behind the replica is, from the primary.
+	ReplicaStatus = "status"
 )
 
 // ReplicaStageVerifier is the progress stage in which a clone job hands the
@@ -136,7 +138,7 @@ func (r *GrantReplica) Validate(job string) error {
 		return nil
 	}
 	switch r.Op {
-	case ReplicaCheck, ReplicaDrop:
+	case ReplicaCheck, ReplicaDrop, ReplicaStatus:
 	case ReplicaPrepare:
 		if r.Verifier == "" {
 			return errors.New("the grant carries no verifier for the replication role")
@@ -161,4 +163,39 @@ type PGReplicaCloned struct {
 	Version    int    `json:"version"`
 	InRecovery bool   `json:"inRecovery"`
 	CopyMS     int64  `json:"copyMs"`
+}
+
+// PGReplicaStatus is how a replica is doing, as its primary sees it.
+type PGReplicaStatus struct {
+	// Streaming is whether the replica is connected and streaming; State is
+	// the WAL sender's state ("streaming", "catchup", "startup"), empty when
+	// it is not connected at all.
+	Streaming bool   `json:"streaming"`
+	State     string `json:"state,omitempty"`
+	Client    string `json:"client,omitempty"`
+	// ReplayLagS is how long ago the last change the replica has applied
+	// was made on the primary, in seconds. Nil when the replica is not
+	// connected, or is connected with nothing to apply (Postgres stops the
+	// clock once it has caught up and the primary is idle).
+	ReplayLagS *float64 `json:"replayLagS,omitempty"`
+	// LagBytes is how much WAL the replica has still to apply; -1 when it
+	// is not connected.
+	LagBytes int64 `json:"lagBytes"`
+	// The slot keeps WAL on the primary for the replica: RetainedBytes is
+	// how much, which grows without end while the replica is away.
+	SlotExists    bool  `json:"slotExists"`
+	SlotActive    bool  `json:"slotActive"`
+	RetainedBytes int64 `json:"retainedBytes"`
+}
+
+// Lag is the replica's lag in seconds for the watch: 0 when it has caught
+// up, and -1 when it is not streaming, which counts as behind.
+func (s PGReplicaStatus) Lag() float64 {
+	if !s.Streaming {
+		return -1
+	}
+	if s.ReplayLagS == nil || s.LagBytes == 0 {
+		return 0
+	}
+	return *s.ReplayLagS
 }

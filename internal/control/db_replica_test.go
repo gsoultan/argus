@@ -24,6 +24,8 @@ type replicaAgents struct {
 	// go.
 	check     tunnel.PGReplicaCheck
 	cloneFail string
+	// What the primary says when the lag watch asks.
+	status tunnel.PGReplicaStatus
 
 	mu       sync.Mutex
 	ops      []string // "<host> <job or op>"
@@ -81,6 +83,11 @@ func (f *replicaAgents) serve(c net.Conn, host string, b tunnel.GrantBackup) {
 				return
 			}
 			result(tunnel.BackupResult{OK: true})
+		case tunnel.ReplicaStatus:
+			f.mu.Lock()
+			data, _ := json.Marshal(f.status)
+			f.mu.Unlock()
+			result(tunnel.BackupResult{OK: true, Replica: data})
 		default:
 			result(tunnel.BackupResult{OK: true})
 		}
@@ -222,6 +229,51 @@ func TestDatabaseReplicaOnManagedServers(t *testing.T) {
 	got, _ := s.DBAssignments(ctx, added.ID)
 	if len(got) != 1 || got[0].Level != tunnel.LevelRead || deref(got[0].UserEmail) != dba {
 		t.Fatalf("access: %+v", got)
+	}
+
+	// The lag watch: behind for under five minutes is quiet, at five the
+	// bell rings once, and catching up closes it and says so.
+	f.mu.Lock()
+	f.ops = nil
+	lag := 300.0
+	f.status = tunnel.PGReplicaStatus{Streaming: true, State: "streaming", ReplayLagS: &lag, LagBytes: 64 << 20, SlotExists: true, SlotActive: true, RetainedBytes: 80 << 20}
+	f.mu.Unlock()
+	alerts := func(sev string) int {
+		var n int
+		_ = s.pool.QueryRow(ctx, `SELECT count(*) FROM console_alerts WHERE kind = 'backup' AND severity = $1 AND title LIKE '%replica on%'`, sev).Scan(&n)
+		return n
+	}
+	t0 := time.Now().UTC()
+	a.WatchReplicas(ctx, t0)
+	w1, _ := s.Replica(ctx, rep.ID)
+	if !w1.Streaming || w1.LagS == nil || *w1.LagS != 300 || w1.BehindSince == nil || w1.RetainedBytes == nil || alerts("warning") != 0 {
+		t.Fatalf("first reading: %+v, %d alerts", w1, alerts("warning"))
+	}
+	if got := f.seen(); len(got) != 1 || got[0] != primaryAsset.Hostname+" status" {
+		t.Fatalf("watch asked: %v", got)
+	}
+	a.WatchReplicas(ctx, t0.Add(6*time.Minute))
+	a.WatchReplicas(ctx, t0.Add(7*time.Minute))
+	if n := alerts("warning"); n != 1 {
+		t.Fatalf("behind alerts: %d", n)
+	}
+	f.mu.Lock()
+	f.status = tunnel.PGReplicaStatus{Streaming: true, State: "streaming", LagBytes: 0, SlotExists: true, SlotActive: true}
+	f.mu.Unlock()
+	a.WatchReplicas(ctx, t0.Add(8*time.Minute))
+	w2, _ := s.Replica(ctx, rep.ID)
+	if w2.LagS == nil || *w2.LagS != 0 || w2.BehindSince != nil || alerts("info") != 1 {
+		t.Fatalf("caught up: %+v, %d", w2, alerts("info"))
+	}
+	var open int
+	_ = s.pool.QueryRow(ctx, `SELECT count(*) FROM console_alerts WHERE subject = $1 AND closed = ''`, "replica-lag:"+rep.ID).Scan(&open)
+	if open != 0 {
+		t.Fatalf("the behind alert is still open")
+	}
+	// The list carries the reading.
+	lw := do(t, h, http.MethodGet, path, "admin-token", "")
+	if !strings.Contains(lw.Body.String(), `"lagS":0`) || !strings.Contains(lw.Body.String(), `"streaming":true`) {
+		t.Fatalf("list: %s", lw.Body)
 	}
 
 	// A primary that needs a restart stops it at the check.

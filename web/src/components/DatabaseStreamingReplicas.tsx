@@ -4,11 +4,11 @@ import { useQuery } from '@tanstack/react-query'
 import { IconLock } from '@tabler/icons-react'
 import { ButtonLink } from '~/components/links'
 import { AloneOr } from '~/components/ApproveOwn'
-import { relTime } from '~/components/primitives'
+import { bytes, relTime } from '~/components/primitives'
 import { notifyError, notifyOk } from '~/lib/notify'
 import { assetsQuery, databaseReplicasQuery, useAskReplica } from '~/lib/queries'
 import {
-  REPLICA_STATE_COLOR, isIP, replicaNameFor, replicaRefusal, replicaStage, serverAddresses, targetRefusal, validReplicaName,
+  REPLICA_STATE_COLOR, isIP, replicaHealth, replicaNameFor, replicaRefusal, replicaStage, serverAddresses, targetRefusal, validReplicaName,
 } from '~/lib/managedReplicas'
 import { assetName } from '~/lib/assetType'
 import { FS } from '~/theme'
@@ -61,6 +61,7 @@ export function StreamingReplicas({ database, narrow }: { database: Database; na
 
 function ReplicaRow({ r, narrow }: { r: DatabaseReplica; narrow: boolean }) {
   const words = r.state === 'running' && r.detail ? `${replicaStage(r)} · ${r.detail}` : replicaStage(r)
+  const health = replicaHealth(r)
   return (
     <Table.Tr data-testid="streaming-replica">
       <Table.Td>
@@ -73,7 +74,16 @@ function ReplicaRow({ r, narrow }: { r: DatabaseReplica; narrow: boolean }) {
           <Badge size="sm" variant="light" radius="sm" color={REPLICA_STATE_COLOR[r.state]}
             leftSection={r.state === 'running' ? <Loader size={8} color="azure" /> : undefined}>{r.state}</Badge>
           <Box>
-            <Text size={FS.meta} lineClamp={2}>{words}</Text>
+            {!health && <Text size={FS.meta} lineClamp={2}>{words}</Text>}
+            {health && (
+              <Text size={FS.meta} c={health.color === 'teal' ? undefined : health.color} fw={health.color === 'teal' ? undefined : 600}>
+                {health.words}{r.watchedAt ? ` · as of ${relTime(r.watchedAt)}` : ''}
+              </Text>
+            )}
+            {health && !r.streaming && r.retainedBytes !== undefined && r.retainedBytes > 0 && (
+              <Text size={FS.micro} c="amber">Its slot keeps {bytes(r.retainedBytes)} of WAL on {r.primaryHostname}, growing until the replica is back.</Text>
+            )}
+            {r.state === 'done' && r.watchError && <Text size={FS.micro} c="dimmed">Last check failed: {r.watchError}</Text>}
             {r.state === 'done' && r.detail && <Text size={FS.micro} c="dimmed">{r.detail}</Text>}
             {r.error && <Text size={FS.micro} c={r.state === 'failed' ? 'rose' : 'dimmed'}>{r.error}</Text>}
           </Box>

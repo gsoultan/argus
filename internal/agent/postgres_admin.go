@@ -156,7 +156,7 @@ func RunPGAdmin(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PG
 		return pgCreateOp(ctx, conn, req)
 	case "database-size", "create-test", "drop-test", "test-checks", "run-checks":
 		return pgTestOp(ctx, conn, req)
-	case "replica-check", "replica-prepare", "replica-allow", "replica-drop":
+	case "replica-check", "replica-prepare", "replica-allow", "replica-drop", "replica-status":
 		return pgReplicaOp(ctx, conn, req)
 	case "replica-local":
 		return pgReplicaLocal(ctx, conn)

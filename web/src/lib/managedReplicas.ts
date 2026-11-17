@@ -86,3 +86,19 @@ export function replicaStage(r: Pick<DatabaseReplica, 'state' | 'stage'>): strin
 export const REPLICA_STATE_COLOR: Record<DatabaseReplica['state'], string> = {
   pending: 'amber', running: 'azure', done: 'teal', failed: 'rose', denied: 'slate', cancelled: 'slate',
 }
+
+/** Seconds in words: "4 s", "3 min", "2 h 5 min". */
+export function lagWords(s: number): string {
+  const n = Math.floor(s)
+  if (n < 60) return `${n} s`
+  if (n < 3600) return `${Math.floor(n / 60)} min`
+  return `${Math.floor(n / 3600)} h ${Math.floor((n % 3600) / 60)} min`
+}
+
+/** How a finished replica is doing, from the lag watch: words and a colour. Null before the first reading. */
+export function replicaHealth(r: Pick<DatabaseReplica, 'state' | 'streaming' | 'lagS' | 'watchedAt'>): { words: string; color: string } | null {
+  if (r.state !== 'done' || !r.watchedAt) return null
+  if (!r.streaming || r.lagS === undefined || r.lagS < 0) return { words: 'Not streaming', color: 'rose' }
+  if (r.lagS === 0) return { words: 'Streaming, caught up', color: 'teal' }
+  return { words: `Streaming, ${lagWords(r.lagS)} behind`, color: r.lagS > 60 ? 'amber' : 'teal' }
+}

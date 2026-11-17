@@ -37,6 +37,14 @@ type Row struct {
 	CreatedAt         time.Time
 	StartedAt         runtime.Null[time.Time]
 	FinishedAt        runtime.Null[time.Time]
+	Streaming         bool
+	LagS              runtime.Null[float64]
+	LagBytes          runtime.Null[int64]
+	RetainedBytes     runtime.Null[int64]
+	WatchedAt         runtime.Null[time.Time]
+	WatchError        string
+	BehindSince       runtime.Null[time.Time]
+	BehindAlerted     bool
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -75,7 +83,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 17
+const nCols = 25
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -85,14 +93,18 @@ type Query struct {
 	nt   uint8
 	top  uint8 // top-level conjuncts, ANDed at compile time
 
-	strs        [6]string
-	raws        [4][16]byte
-	tims        [4]time.Time
-	ns, nr, ntm uint8
+	strs                     [6]string
+	nums                     [6]int64
+	raws                     [4][16]byte
+	tims                     [4]time.Time
+	f64s                     [4]float64
+	bools                    [4]bool
+	ns, nn, nr, ntm, nf, nbo uint8
 
-	anyRaw   [3][][16]byte
-	anyStr   [3][]string
-	nar, nas uint8
+	anyRaw          [3][][16]byte
+	anyStr          [3][]string
+	anyI64          [3][]int64
+	nar, nas, nai64 uint8
 
 	// Order terms live in their own buffer and are appended to the stream
 	// after the predicate tree. Sharing one buffer would let a Where after
@@ -306,6 +318,62 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.tims[q.ntm] = r.FinishedAt.V
 		q.ntm++
+	case 17:
+		if int(q.nbo) >= len(q.bools) {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = r.Streaming
+		q.nbo++
+	case 18:
+		if int(q.nf) >= len(q.f64s) {
+			q.over = true
+			return
+		}
+		q.f64s[q.nf] = float64(r.LagS.V)
+		q.nf++
+	case 19:
+		if int(q.nn) >= len(q.nums) {
+			q.over = true
+			return
+		}
+		q.nums[q.nn] = int64(r.LagBytes.V)
+		q.nn++
+	case 20:
+		if int(q.nn) >= len(q.nums) {
+			q.over = true
+			return
+		}
+		q.nums[q.nn] = int64(r.RetainedBytes.V)
+		q.nn++
+	case 21:
+		if int(q.ntm) >= len(q.tims) {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = r.WatchedAt.V
+		q.ntm++
+	case 22:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.WatchError
+		q.ns++
+	case 23:
+		if int(q.ntm) >= len(q.tims) {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = r.BehindSince.V
+		q.ntm++
+	case 24:
+		if int(q.nbo) >= len(q.bools) {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = r.BehindAlerted
+		q.nbo++
 	}
 }
 
@@ -453,11 +521,23 @@ func (q Query) stream(buf *[21]runtime.Tok) []runtime.Tok {
 type Pred struct {
 	col    uint8
 	op     runtime.Op
+	num    int64
 	str    string
 	raw    [16]byte
 	tim    time.Time
+	f64    float64
+	bol    bool
 	anyRaw [][16]byte
 	anyStr []string
+	anyI64 []int64
+}
+
+// b2i lets a bool ride in the numeric slot of a Pred.
+func b2i(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // Typed column handles. The type of the handle is what makes
@@ -480,6 +560,14 @@ var (
 	CreatedAt         = TimeCol{14}
 	StartedAt         = NullTimeCol{15}
 	FinishedAt        = NullTimeCol{16}
+	Streaming         = BoolCol{17}
+	LagS              = NullFloat64Col{18}
+	LagBytes          = NullInt64Col{19}
+	RetainedBytes     = NullInt64Col{20}
+	WatchedAt         = NullTimeCol{21}
+	WatchError        = TextCol{22}
+	BehindSince       = NullTimeCol{23}
+	BehindAlerted     = BoolCol{24}
 )
 
 // UUIDCol addresses a uuid column.
@@ -593,6 +681,69 @@ func (h NullTimeCol) Lt(v time.Time) Pred    { return Pred{col: h.c, op: opLt, t
 func (h NullTimeCol) Lte(v time.Time) Pred   { return Pred{col: h.c, op: opLte, tim: v} }
 func (h NullTimeCol) IsNull() Pred           { return Pred{col: h.c, op: opIsNull} }
 func (h NullTimeCol) IsNotNull() Pred        { return Pred{col: h.c, op: opIsNotNull} }
+
+// BoolCol addresses a bool column.
+type BoolCol struct{ c uint8 }
+
+func (h BoolCol) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
+func (h BoolCol) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
+func (h BoolCol) AscNullsFirst() Sort {
+	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
+}
+func (h BoolCol) DescNullsLast() Sort {
+	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
+}
+
+func (h BoolCol) Eq(v bool) Pred    { return Pred{col: h.c, op: opEq, bol: v} }
+func (h BoolCol) NotEq(v bool) Pred { return Pred{col: h.c, op: opNotEq, bol: v} }
+
+// NullFloat64Col addresses a float8 column.
+type NullFloat64Col struct{ c uint8 }
+
+func (h NullFloat64Col) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
+func (h NullFloat64Col) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
+func (h NullFloat64Col) AscNullsFirst() Sort {
+	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
+}
+func (h NullFloat64Col) DescNullsLast() Sort {
+	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
+}
+
+func (h NullFloat64Col) Eq(v float64) Pred    { return Pred{col: h.c, op: opEq, f64: float64(v)} }
+func (h NullFloat64Col) NotEq(v float64) Pred { return Pred{col: h.c, op: opNotEq, f64: float64(v)} }
+func (h NullFloat64Col) Gt(v float64) Pred    { return Pred{col: h.c, op: opGt, f64: float64(v)} }
+func (h NullFloat64Col) Gte(v float64) Pred   { return Pred{col: h.c, op: opGte, f64: float64(v)} }
+func (h NullFloat64Col) Lt(v float64) Pred    { return Pred{col: h.c, op: opLt, f64: float64(v)} }
+func (h NullFloat64Col) Lte(v float64) Pred   { return Pred{col: h.c, op: opLte, f64: float64(v)} }
+func (h NullFloat64Col) IsNull() Pred         { return Pred{col: h.c, op: opIsNull} }
+func (h NullFloat64Col) IsNotNull() Pred      { return Pred{col: h.c, op: opIsNotNull} }
+
+// NullInt64Col addresses a int8 column.
+type NullInt64Col struct{ c uint8 }
+
+func (h NullInt64Col) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
+func (h NullInt64Col) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
+func (h NullInt64Col) AscNullsFirst() Sort {
+	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
+}
+func (h NullInt64Col) DescNullsLast() Sort {
+	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
+}
+
+func (h NullInt64Col) Eq(v int64) Pred    { return Pred{col: h.c, op: opEq, num: int64(v)} }
+func (h NullInt64Col) NotEq(v int64) Pred { return Pred{col: h.c, op: opNotEq, num: int64(v)} }
+func (h NullInt64Col) Gt(v int64) Pred    { return Pred{col: h.c, op: opGt, num: int64(v)} }
+func (h NullInt64Col) Gte(v int64) Pred   { return Pred{col: h.c, op: opGte, num: int64(v)} }
+func (h NullInt64Col) Lt(v int64) Pred    { return Pred{col: h.c, op: opLt, num: int64(v)} }
+func (h NullInt64Col) Lte(v int64) Pred   { return Pred{col: h.c, op: opLte, num: int64(v)} }
+func (h NullInt64Col) In(v ...int64) Pred { return Pred{col: h.c, op: opIn, anyI64: v} }
+
+// NotIn is `<> ALL($1)`. A NULL anywhere in v makes the
+// comparison NULL for every row and the result empty —
+// PostgreSQL's rule for NOT IN, not storm's.
+func (h NullInt64Col) NotIn(v ...int64) Pred { return Pred{col: h.c, op: opNotIn, anyI64: v} }
+func (h NullInt64Col) IsNull() Pred          { return Pred{col: h.c, op: opIsNull} }
+func (h NullInt64Col) IsNotNull() Pred       { return Pred{col: h.c, op: opIsNotNull} }
 
 // Where applies predicates, ANDed together.
 func (q Query) Where(ps ...Pred) Query {
@@ -833,6 +984,27 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyRaw[q.nar] = p.anyRaw
 			q.nar++
+		case 19:
+			if int(q.nai64) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyI64[q.nai64] = p.anyI64
+			q.nai64++
+		case 20:
+			if int(q.nai64) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyI64[q.nai64] = p.anyI64
+			q.nai64++
+		case 22:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -961,6 +1133,62 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.tims[q.ntm] = p.tim
 		q.ntm++
+	case 17:
+		if int(q.nbo) >= 4 {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = p.bol
+		q.nbo++
+	case 18:
+		if int(q.nf) >= 4 {
+			q.over = true
+			return
+		}
+		q.f64s[q.nf] = p.f64
+		q.nf++
+	case 19:
+		if int(q.nn) >= 6 {
+			q.over = true
+			return
+		}
+		q.nums[q.nn] = p.num
+		q.nn++
+	case 20:
+		if int(q.nn) >= 6 {
+			q.over = true
+			return
+		}
+		q.nums[q.nn] = p.num
+		q.nn++
+	case 21:
+		if int(q.ntm) >= 4 {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = p.tim
+		q.ntm++
+	case 22:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 23:
+		if int(q.ntm) >= 4 {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = p.tim
+		q.ntm++
+	case 24:
+		if int(q.nbo) >= 4 {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = p.bol
+		q.nbo++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1089,32 +1317,91 @@ func (q Query) ReplicaDatabaseIDIn(v ...[16]byte) Query { return q.Where(Replica
 func (q Query) ReplicaDatabaseIDNotIn(v ...[16]byte) Query {
 	return q.Where(ReplicaDatabaseID.NotIn(v...))
 }
-func (q Query) ReplicaDatabaseIDIsNull() Query    { return q.Where(ReplicaDatabaseID.IsNull()) }
-func (q Query) ReplicaDatabaseIDIsNotNull() Query { return q.Where(ReplicaDatabaseID.IsNotNull()) }
-func (q Query) CreatedAtEq(v time.Time) Query     { return q.Where(CreatedAt.Eq(v)) }
-func (q Query) CreatedAtNotEq(v time.Time) Query  { return q.Where(CreatedAt.NotEq(v)) }
-func (q Query) CreatedAtGt(v time.Time) Query     { return q.Where(CreatedAt.Gt(v)) }
-func (q Query) CreatedAtGte(v time.Time) Query    { return q.Where(CreatedAt.Gte(v)) }
-func (q Query) CreatedAtLt(v time.Time) Query     { return q.Where(CreatedAt.Lt(v)) }
-func (q Query) CreatedAtLte(v time.Time) Query    { return q.Where(CreatedAt.Lte(v)) }
-func (q Query) StartedAtEq(v time.Time) Query     { return q.Where(StartedAt.Eq(v)) }
-func (q Query) StartedAtNotEq(v time.Time) Query  { return q.Where(StartedAt.NotEq(v)) }
-func (q Query) StartedAtGt(v time.Time) Query     { return q.Where(StartedAt.Gt(v)) }
-func (q Query) StartedAtGte(v time.Time) Query    { return q.Where(StartedAt.Gte(v)) }
-func (q Query) StartedAtLt(v time.Time) Query     { return q.Where(StartedAt.Lt(v)) }
-func (q Query) StartedAtLte(v time.Time) Query    { return q.Where(StartedAt.Lte(v)) }
-func (q Query) StartedAtIsNull() Query            { return q.Where(StartedAt.IsNull()) }
-func (q Query) StartedAtIsNotNull() Query         { return q.Where(StartedAt.IsNotNull()) }
-func (q Query) FinishedAtEq(v time.Time) Query    { return q.Where(FinishedAt.Eq(v)) }
-func (q Query) FinishedAtNotEq(v time.Time) Query { return q.Where(FinishedAt.NotEq(v)) }
-func (q Query) FinishedAtGt(v time.Time) Query    { return q.Where(FinishedAt.Gt(v)) }
-func (q Query) FinishedAtGte(v time.Time) Query   { return q.Where(FinishedAt.Gte(v)) }
-func (q Query) FinishedAtLt(v time.Time) Query    { return q.Where(FinishedAt.Lt(v)) }
-func (q Query) FinishedAtLte(v time.Time) Query   { return q.Where(FinishedAt.Lte(v)) }
-func (q Query) FinishedAtIsNull() Query           { return q.Where(FinishedAt.IsNull()) }
-func (q Query) FinishedAtIsNotNull() Query        { return q.Where(FinishedAt.IsNotNull()) }
+func (q Query) ReplicaDatabaseIDIsNull() Query      { return q.Where(ReplicaDatabaseID.IsNull()) }
+func (q Query) ReplicaDatabaseIDIsNotNull() Query   { return q.Where(ReplicaDatabaseID.IsNotNull()) }
+func (q Query) CreatedAtEq(v time.Time) Query       { return q.Where(CreatedAt.Eq(v)) }
+func (q Query) CreatedAtNotEq(v time.Time) Query    { return q.Where(CreatedAt.NotEq(v)) }
+func (q Query) CreatedAtGt(v time.Time) Query       { return q.Where(CreatedAt.Gt(v)) }
+func (q Query) CreatedAtGte(v time.Time) Query      { return q.Where(CreatedAt.Gte(v)) }
+func (q Query) CreatedAtLt(v time.Time) Query       { return q.Where(CreatedAt.Lt(v)) }
+func (q Query) CreatedAtLte(v time.Time) Query      { return q.Where(CreatedAt.Lte(v)) }
+func (q Query) StartedAtEq(v time.Time) Query       { return q.Where(StartedAt.Eq(v)) }
+func (q Query) StartedAtNotEq(v time.Time) Query    { return q.Where(StartedAt.NotEq(v)) }
+func (q Query) StartedAtGt(v time.Time) Query       { return q.Where(StartedAt.Gt(v)) }
+func (q Query) StartedAtGte(v time.Time) Query      { return q.Where(StartedAt.Gte(v)) }
+func (q Query) StartedAtLt(v time.Time) Query       { return q.Where(StartedAt.Lt(v)) }
+func (q Query) StartedAtLte(v time.Time) Query      { return q.Where(StartedAt.Lte(v)) }
+func (q Query) StartedAtIsNull() Query              { return q.Where(StartedAt.IsNull()) }
+func (q Query) StartedAtIsNotNull() Query           { return q.Where(StartedAt.IsNotNull()) }
+func (q Query) FinishedAtEq(v time.Time) Query      { return q.Where(FinishedAt.Eq(v)) }
+func (q Query) FinishedAtNotEq(v time.Time) Query   { return q.Where(FinishedAt.NotEq(v)) }
+func (q Query) FinishedAtGt(v time.Time) Query      { return q.Where(FinishedAt.Gt(v)) }
+func (q Query) FinishedAtGte(v time.Time) Query     { return q.Where(FinishedAt.Gte(v)) }
+func (q Query) FinishedAtLt(v time.Time) Query      { return q.Where(FinishedAt.Lt(v)) }
+func (q Query) FinishedAtLte(v time.Time) Query     { return q.Where(FinishedAt.Lte(v)) }
+func (q Query) FinishedAtIsNull() Query             { return q.Where(FinishedAt.IsNull()) }
+func (q Query) FinishedAtIsNotNull() Query          { return q.Where(FinishedAt.IsNotNull()) }
+func (q Query) StreamingEq(v bool) Query            { return q.Where(Streaming.Eq(v)) }
+func (q Query) StreamingNotEq(v bool) Query         { return q.Where(Streaming.NotEq(v)) }
+func (q Query) LagSEq(v float64) Query              { return q.Where(LagS.Eq(v)) }
+func (q Query) LagSNotEq(v float64) Query           { return q.Where(LagS.NotEq(v)) }
+func (q Query) LagSGt(v float64) Query              { return q.Where(LagS.Gt(v)) }
+func (q Query) LagSGte(v float64) Query             { return q.Where(LagS.Gte(v)) }
+func (q Query) LagSLt(v float64) Query              { return q.Where(LagS.Lt(v)) }
+func (q Query) LagSLte(v float64) Query             { return q.Where(LagS.Lte(v)) }
+func (q Query) LagSIsNull() Query                   { return q.Where(LagS.IsNull()) }
+func (q Query) LagSIsNotNull() Query                { return q.Where(LagS.IsNotNull()) }
+func (q Query) LagBytesEq(v int64) Query            { return q.Where(LagBytes.Eq(v)) }
+func (q Query) LagBytesNotEq(v int64) Query         { return q.Where(LagBytes.NotEq(v)) }
+func (q Query) LagBytesGt(v int64) Query            { return q.Where(LagBytes.Gt(v)) }
+func (q Query) LagBytesGte(v int64) Query           { return q.Where(LagBytes.Gte(v)) }
+func (q Query) LagBytesLt(v int64) Query            { return q.Where(LagBytes.Lt(v)) }
+func (q Query) LagBytesLte(v int64) Query           { return q.Where(LagBytes.Lte(v)) }
+func (q Query) LagBytesIn(v ...int64) Query         { return q.Where(LagBytes.In(v...)) }
+func (q Query) LagBytesNotIn(v ...int64) Query      { return q.Where(LagBytes.NotIn(v...)) }
+func (q Query) LagBytesIsNull() Query               { return q.Where(LagBytes.IsNull()) }
+func (q Query) LagBytesIsNotNull() Query            { return q.Where(LagBytes.IsNotNull()) }
+func (q Query) RetainedBytesEq(v int64) Query       { return q.Where(RetainedBytes.Eq(v)) }
+func (q Query) RetainedBytesNotEq(v int64) Query    { return q.Where(RetainedBytes.NotEq(v)) }
+func (q Query) RetainedBytesGt(v int64) Query       { return q.Where(RetainedBytes.Gt(v)) }
+func (q Query) RetainedBytesGte(v int64) Query      { return q.Where(RetainedBytes.Gte(v)) }
+func (q Query) RetainedBytesLt(v int64) Query       { return q.Where(RetainedBytes.Lt(v)) }
+func (q Query) RetainedBytesLte(v int64) Query      { return q.Where(RetainedBytes.Lte(v)) }
+func (q Query) RetainedBytesIn(v ...int64) Query    { return q.Where(RetainedBytes.In(v...)) }
+func (q Query) RetainedBytesNotIn(v ...int64) Query { return q.Where(RetainedBytes.NotIn(v...)) }
+func (q Query) RetainedBytesIsNull() Query          { return q.Where(RetainedBytes.IsNull()) }
+func (q Query) RetainedBytesIsNotNull() Query       { return q.Where(RetainedBytes.IsNotNull()) }
+func (q Query) WatchedAtEq(v time.Time) Query       { return q.Where(WatchedAt.Eq(v)) }
+func (q Query) WatchedAtNotEq(v time.Time) Query    { return q.Where(WatchedAt.NotEq(v)) }
+func (q Query) WatchedAtGt(v time.Time) Query       { return q.Where(WatchedAt.Gt(v)) }
+func (q Query) WatchedAtGte(v time.Time) Query      { return q.Where(WatchedAt.Gte(v)) }
+func (q Query) WatchedAtLt(v time.Time) Query       { return q.Where(WatchedAt.Lt(v)) }
+func (q Query) WatchedAtLte(v time.Time) Query      { return q.Where(WatchedAt.Lte(v)) }
+func (q Query) WatchedAtIsNull() Query              { return q.Where(WatchedAt.IsNull()) }
+func (q Query) WatchedAtIsNotNull() Query           { return q.Where(WatchedAt.IsNotNull()) }
+func (q Query) WatchErrorEq(v string) Query         { return q.Where(WatchError.Eq(v)) }
+func (q Query) WatchErrorNotEq(v string) Query      { return q.Where(WatchError.NotEq(v)) }
+func (q Query) WatchErrorGt(v string) Query         { return q.Where(WatchError.Gt(v)) }
+func (q Query) WatchErrorGte(v string) Query        { return q.Where(WatchError.Gte(v)) }
+func (q Query) WatchErrorLt(v string) Query         { return q.Where(WatchError.Lt(v)) }
+func (q Query) WatchErrorLte(v string) Query        { return q.Where(WatchError.Lte(v)) }
+func (q Query) WatchErrorEqLower(v string) Query    { return q.Where(WatchError.EqLower(v)) }
+func (q Query) WatchErrorLike(v string) Query       { return q.Where(WatchError.Like(v)) }
+func (q Query) WatchErrorILike(v string) Query      { return q.Where(WatchError.ILike(v)) }
+func (q Query) WatchErrorIn(v ...string) Query      { return q.Where(WatchError.In(v...)) }
+func (q Query) WatchErrorNotIn(v ...string) Query   { return q.Where(WatchError.NotIn(v...)) }
+func (q Query) BehindSinceEq(v time.Time) Query     { return q.Where(BehindSince.Eq(v)) }
+func (q Query) BehindSinceNotEq(v time.Time) Query  { return q.Where(BehindSince.NotEq(v)) }
+func (q Query) BehindSinceGt(v time.Time) Query     { return q.Where(BehindSince.Gt(v)) }
+func (q Query) BehindSinceGte(v time.Time) Query    { return q.Where(BehindSince.Gte(v)) }
+func (q Query) BehindSinceLt(v time.Time) Query     { return q.Where(BehindSince.Lt(v)) }
+func (q Query) BehindSinceLte(v time.Time) Query    { return q.Where(BehindSince.Lte(v)) }
+func (q Query) BehindSinceIsNull() Query            { return q.Where(BehindSince.IsNull()) }
+func (q Query) BehindSinceIsNotNull() Query         { return q.Where(BehindSince.IsNotNull()) }
+func (q Query) BehindAlertedEq(v bool) Query        { return q.Where(BehindAlerted.Eq(v)) }
+func (q Query) BehindAlertedNotEq(v bool) Query     { return q.Where(BehindAlerted.NotEq(v)) }
 
-const selectPrefix = `SELECT "id", "database_id", "asset_id", "name", "replica_address", "primary_address", "requested_by", "reason", "request_id", "state", "stage", "detail", "error", "replica_database_id", "created_at", "started_at", "finished_at" FROM "database_replicas"`
+const selectPrefix = `SELECT "id", "database_id", "asset_id", "name", "replica_address", "primary_address", "requested_by", "reason", "request_id", "state", "stage", "detail", "error", "replica_database_id", "created_at", "started_at", "finished_at", "streaming", "lag_s", "lag_bytes", "retained_bytes", "watched_at", "watch_error", "behind_since", "behind_alerted" FROM "database_replicas"`
 const countPrefix = `SELECT count(*) FROM "database_replicas"`
 const existsPrefix = `SELECT 1 FROM "database_replicas"`
 const existsSuffix = ` LIMIT 1`
@@ -1253,6 +1540,54 @@ var orderTable = [nCols][4]string{
 		"\"finished_at\" ASC NULLS FIRST",
 		"\"finished_at\" DESC NULLS LAST",
 	},
+	{ // streaming
+		"\"streaming\"",
+		"\"streaming\" DESC",
+		"\"streaming\" ASC NULLS FIRST",
+		"\"streaming\" DESC NULLS LAST",
+	},
+	{ // lag_s
+		"\"lag_s\"",
+		"\"lag_s\" DESC",
+		"\"lag_s\" ASC NULLS FIRST",
+		"\"lag_s\" DESC NULLS LAST",
+	},
+	{ // lag_bytes
+		"\"lag_bytes\"",
+		"\"lag_bytes\" DESC",
+		"\"lag_bytes\" ASC NULLS FIRST",
+		"\"lag_bytes\" DESC NULLS LAST",
+	},
+	{ // retained_bytes
+		"\"retained_bytes\"",
+		"\"retained_bytes\" DESC",
+		"\"retained_bytes\" ASC NULLS FIRST",
+		"\"retained_bytes\" DESC NULLS LAST",
+	},
+	{ // watched_at
+		"\"watched_at\"",
+		"\"watched_at\" DESC",
+		"\"watched_at\" ASC NULLS FIRST",
+		"\"watched_at\" DESC NULLS LAST",
+	},
+	{ // watch_error
+		"\"watch_error\"",
+		"\"watch_error\" DESC",
+		"\"watch_error\" ASC NULLS FIRST",
+		"\"watch_error\" DESC NULLS LAST",
+	},
+	{ // behind_since
+		"\"behind_since\"",
+		"\"behind_since\" DESC",
+		"\"behind_since\" ASC NULLS FIRST",
+		"\"behind_since\" DESC NULLS LAST",
+	},
+	{ // behind_alerted
+		"\"behind_alerted\"",
+		"\"behind_alerted\" DESC",
+		"\"behind_alerted\" ASC NULLS FIRST",
+		"\"behind_alerted\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1275,6 +1610,14 @@ var identTable = [nCols]string{
 	"\"created_at\"",
 	"\"started_at\"",
 	"\"finished_at\"",
+	"\"streaming\"",
+	"\"lag_s\"",
+	"\"lag_bytes\"",
+	"\"retained_bytes\"",
+	"\"watched_at\"",
+	"\"watch_error\"",
+	"\"behind_since\"",
+	"\"behind_alerted\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1307,7 +1650,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [17][28]runtime.Frag{
+var fragTable = [25][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -1818,6 +2161,246 @@ var fragTable = [17][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // streaming
+		{}, // opNone
+		{A: "\"streaming\" = $", B: ""},
+		{A: "\"streaming\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // lag_s
+		{}, // opNone
+		{A: "\"lag_s\" = $", B: ""},
+		{A: "\"lag_s\" <> $", B: ""},
+		{A: "\"lag_s\" > $", B: ""},
+		{A: "\"lag_s\" >= $", B: ""},
+		{A: "\"lag_s\" < $", B: ""},
+		{A: "\"lag_s\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"lag_s\" IS NULL", B: ""},
+		{A: "\"lag_s\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // lag_bytes
+		{}, // opNone
+		{A: "\"lag_bytes\" = $", B: ""},
+		{A: "\"lag_bytes\" <> $", B: ""},
+		{A: "\"lag_bytes\" > $", B: ""},
+		{A: "\"lag_bytes\" >= $", B: ""},
+		{A: "\"lag_bytes\" < $", B: ""},
+		{A: "\"lag_bytes\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"lag_bytes\" = ANY($", B: ")"},
+		{A: "\"lag_bytes\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"lag_bytes\" IS NULL", B: ""},
+		{A: "\"lag_bytes\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // retained_bytes
+		{}, // opNone
+		{A: "\"retained_bytes\" = $", B: ""},
+		{A: "\"retained_bytes\" <> $", B: ""},
+		{A: "\"retained_bytes\" > $", B: ""},
+		{A: "\"retained_bytes\" >= $", B: ""},
+		{A: "\"retained_bytes\" < $", B: ""},
+		{A: "\"retained_bytes\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"retained_bytes\" = ANY($", B: ")"},
+		{A: "\"retained_bytes\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"retained_bytes\" IS NULL", B: ""},
+		{A: "\"retained_bytes\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // watched_at
+		{}, // opNone
+		{A: "\"watched_at\" = $", B: ""},
+		{A: "\"watched_at\" <> $", B: ""},
+		{A: "\"watched_at\" > $", B: ""},
+		{A: "\"watched_at\" >= $", B: ""},
+		{A: "\"watched_at\" < $", B: ""},
+		{A: "\"watched_at\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"watched_at\" IS NULL", B: ""},
+		{A: "\"watched_at\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // watch_error
+		{}, // opNone
+		{A: "\"watch_error\" = $", B: ""},
+		{A: "\"watch_error\" <> $", B: ""},
+		{A: "\"watch_error\" > $", B: ""},
+		{A: "\"watch_error\" >= $", B: ""},
+		{A: "\"watch_error\" < $", B: ""},
+		{A: "\"watch_error\" <= $", B: ""},
+		{A: "lower(\"watch_error\") = lower($", B: ")"},
+		{A: "\"watch_error\" LIKE $", B: ""},
+		{A: "\"watch_error\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"watch_error\" = ANY($", B: ")"},
+		{A: "\"watch_error\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // behind_since
+		{}, // opNone
+		{A: "\"behind_since\" = $", B: ""},
+		{A: "\"behind_since\" <> $", B: ""},
+		{A: "\"behind_since\" > $", B: ""},
+		{A: "\"behind_since\" >= $", B: ""},
+		{A: "\"behind_since\" < $", B: ""},
+		{A: "\"behind_since\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"behind_since\" IS NULL", B: ""},
+		{A: "\"behind_since\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // behind_alerted
+		{}, // opNone
+		{A: "\"behind_alerted\" = $", B: ""},
+		{A: "\"behind_alerted\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -1991,16 +2574,28 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.CreatedAt = runtime.Timestamptz(rv[14])
 	r.StartedAt = runtime.Nullable(rv[15], runtime.Timestamptz)
 	r.FinishedAt = runtime.Nullable(rv[16], runtime.Timestamptz)
+	r.Streaming = runtime.Bool(rv[17])
+	r.LagS = runtime.Nullable(rv[18], runtime.Float8)
+	r.LagBytes = runtime.Nullable(rv[19], runtime.Int8)
+	r.RetainedBytes = runtime.Nullable(rv[20], runtime.Int8)
+	r.WatchedAt = runtime.Nullable(rv[21], runtime.Timestamptz)
+	r.WatchError = sl.Str(rv[22])
+	r.BehindSince = runtime.Nullable(rv[23], runtime.Timestamptz)
+	r.BehindAlerted = runtime.Bool(rv[24])
 	return nil
 }
 
 type binder struct {
 	vals   []any
 	strs   [6]string
+	nums   [6]int64
 	raws   [4][16]byte
 	tims   [4]time.Time
+	f64s   [4]float64
+	bools  [4]bool
 	anyRaw [3][][16]byte
 	anyStr [3][]string
+	anyI64 [3][]int64
 	limit  int64
 	offset int64
 }
@@ -2031,6 +2626,9 @@ func putBinder(b *binder) {
 	for i := range b.anyStr {
 		b.anyStr[i] = nil
 	}
+	for i := range b.anyI64 {
+		b.anyI64[i] = nil
+	}
 	binders.Put(b)
 }
 
@@ -2039,7 +2637,7 @@ func putBinder(b *binder) {
 // Count and Exists stop here: their statements carry no LIMIT or OFFSET.
 func (q Query) bindPreds(b *binder) []any {
 	v := b.vals[:0]
-	var ns, nr, ntm, nar, nas uint8
+	var ns, nn, nr, ntm, nf, nbo, nar, nas, nai64 uint8
 	for i := uint8(0); i < q.nt; i++ {
 		t := q.toks[i]
 		// KLeaf binds a predicate's value; KCol binds a keyset cursor's.
@@ -2111,6 +2709,18 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyRaw[nar] = q.anyRaw[nar]
 				v = append(v, &b.anyRaw[nar])
 				nar++
+			case 19:
+				b.anyI64[nai64] = q.anyI64[nai64]
+				v = append(v, &b.anyI64[nai64])
+				nai64++
+			case 20:
+				b.anyI64[nai64] = q.anyI64[nai64]
+				v = append(v, &b.anyI64[nai64])
+				nai64++
+			case 22:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -2183,6 +2793,38 @@ func (q Query) bindPreds(b *binder) []any {
 			b.tims[ntm] = q.tims[ntm]
 			v = append(v, &b.tims[ntm])
 			ntm++
+		case 17:
+			b.bools[nbo] = q.bools[nbo]
+			v = append(v, &b.bools[nbo])
+			nbo++
+		case 18:
+			b.f64s[nf] = q.f64s[nf]
+			v = append(v, &b.f64s[nf])
+			nf++
+		case 19:
+			b.nums[nn] = q.nums[nn]
+			v = append(v, &b.nums[nn])
+			nn++
+		case 20:
+			b.nums[nn] = q.nums[nn]
+			v = append(v, &b.nums[nn])
+			nn++
+		case 21:
+			b.tims[ntm] = q.tims[ntm]
+			v = append(v, &b.tims[ntm])
+			ntm++
+		case 22:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 23:
+			b.tims[ntm] = q.tims[ntm]
+			v = append(v, &b.tims[ntm])
+			ntm++
+		case 24:
+			b.bools[nbo] = q.bools[nbo]
+			v = append(v, &b.bools[nbo])
+			nbo++
 		}
 	}
 	b.vals = v
@@ -2320,7 +2962,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "database_replicas" ("id", "database_id", "asset_id", "name", "replica_address", "primary_address", "requested_by", "reason", "request_id", "state", "stage", "detail", "error", "replica_database_id", "created_at", "started_at", "finished_at") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING "id", "database_id", "asset_id", "name", "replica_address", "primary_address", "requested_by", "reason", "request_id", "state", "stage", "detail", "error", "replica_database_id", "created_at", "started_at", "finished_at"`
+const insertSQL = `INSERT INTO "database_replicas" ("id", "database_id", "asset_id", "name", "replica_address", "primary_address", "requested_by", "reason", "request_id", "state", "stage", "detail", "error", "replica_database_id", "created_at", "started_at", "finished_at", "streaming", "lag_s", "lag_bytes", "retained_bytes", "watched_at", "watch_error", "behind_since", "behind_alerted") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25) RETURNING "id", "database_id", "asset_id", "name", "replica_address", "primary_address", "requested_by", "reason", "request_id", "state", "stage", "detail", "error", "replica_database_id", "created_at", "started_at", "finished_at", "streaming", "lag_s", "lag_bytes", "retained_bytes", "watched_at", "watch_error", "behind_since", "behind_alerted"`
 
 const updatePrefix = `UPDATE "database_replicas" SET `
 const deletePrefix = `DELETE FROM "database_replicas"`
@@ -2344,9 +2986,17 @@ const (
 	dCreatedAt         uint64 = 1 << 13
 	dStartedAt         uint64 = 1 << 14
 	dFinishedAt        uint64 = 1 << 15
+	dStreaming         uint64 = 1 << 16
+	dLagS              uint64 = 1 << 17
+	dLagBytes          uint64 = 1 << 18
+	dRetainedBytes     uint64 = 1 << 19
+	dWatchedAt         uint64 = 1 << 20
+	dWatchError        uint64 = 1 << 21
+	dBehindSince       uint64 = 1 << 22
+	dBehindAlerted     uint64 = 1 << 23
 )
 
-const nUpdatable = 16
+const nUpdatable = 24
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -2366,6 +3016,14 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"created_at\" = $", B: ""},          // created_at
 	{A: "\"started_at\" = $", B: ""},          // started_at
 	{A: "\"finished_at\" = $", B: ""},         // finished_at
+	{A: "\"streaming\" = $", B: ""},           // streaming
+	{A: "\"lag_s\" = $", B: ""},               // lag_s
+	{A: "\"lag_bytes\" = $", B: ""},           // lag_bytes
+	{A: "\"retained_bytes\" = $", B: ""},      // retained_bytes
+	{A: "\"watched_at\" = $", B: ""},          // watched_at
+	{A: "\"watch_error\" = $", B: ""},         // watch_error
+	{A: "\"behind_since\" = $", B: ""},        // behind_since
+	{A: "\"behind_alerted\" = $", B: ""},      // behind_alerted
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -2388,6 +3046,14 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{A: "\"created_at\" = now()", B: ""},  // created_at = the database's clock
 	{A: "\"started_at\" = now()", B: ""},  // started_at = the database's clock
 	{A: "\"finished_at\" = now()", B: ""}, // finished_at = the database's clock
+	{},                                    // streaming has no server-side form
+	{},                                    // lag_s has no server-side form
+	{A: "\"lag_bytes\" = \"lag_bytes\" + 1", B: ""},           // lag_bytes = its own value plus one
+	{A: "\"retained_bytes\" = \"retained_bytes\" + 1", B: ""}, // retained_bytes = its own value plus one
+	{A: "\"watched_at\" = now()", B: ""},                      // watched_at = the database's clock
+	{},                                                        // watch_error has no server-side form
+	{A: "\"behind_since\" = now()", B: ""},                    // behind_since = the database's clock
+	{},                                                        // behind_alerted has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -2416,9 +3082,17 @@ const (
 	iCreatedAt         uint64 = 1 << 14
 	iStartedAt         uint64 = 1 << 15
 	iFinishedAt        uint64 = 1 << 16
+	iStreaming         uint64 = 1 << 17
+	iLagS              uint64 = 1 << 18
+	iLagBytes          uint64 = 1 << 19
+	iRetainedBytes     uint64 = 1 << 20
+	iWatchedAt         uint64 = 1 << 21
+	iWatchError        uint64 = 1 << 22
+	iBehindSince       uint64 = 1 << 23
+	iBehindAlerted     uint64 = 1 << 24
 )
 
-const nInsertable = 17
+const nInsertable = 25
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -2439,6 +3113,14 @@ var insCols = [nInsertable]string{
 	"\"created_at\"",
 	"\"started_at\"",
 	"\"finished_at\"",
+	"\"streaming\"",
+	"\"lag_s\"",
+	"\"lag_bytes\"",
+	"\"retained_bytes\"",
+	"\"watched_at\"",
+	"\"watch_error\"",
+	"\"behind_since\"",
+	"\"behind_alerted\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -2447,7 +3129,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"database_replicas\""
-const insReturning = " RETURNING \"id\", \"database_id\", \"asset_id\", \"name\", \"replica_address\", \"primary_address\", \"requested_by\", \"reason\", \"request_id\", \"state\", \"stage\", \"detail\", \"error\", \"replica_database_id\", \"created_at\", \"started_at\", \"finished_at\""
+const insReturning = " RETURNING \"id\", \"database_id\", \"asset_id\", \"name\", \"replica_address\", \"primary_address\", \"requested_by\", \"reason\", \"request_id\", \"state\", \"stage\", \"detail\", \"error\", \"replica_database_id\", \"created_at\", \"started_at\", \"finished_at\", \"streaming\", \"lag_s\", \"lag_bytes\", \"retained_bytes\", \"watched_at\", \"watch_error\", \"behind_since\", \"behind_alerted\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -2466,7 +3148,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"database_id\", \"asset_id\", \"name\", \"replica_address\", \"primary_address\", \"requested_by\", \"reason\", \"request_id\", \"state\", \"stage\", \"detail\", \"error\", \"replica_database_id\", \"created_at\", \"started_at\", \"finished_at\""
+const updReturning = " RETURNING \"id\", \"database_id\", \"asset_id\", \"name\", \"replica_address\", \"primary_address\", \"requested_by\", \"reason\", \"request_id\", \"state\", \"stage\", \"detail\", \"error\", \"replica_database_id\", \"created_at\", \"started_at\", \"finished_at\", \"streaming\", \"lag_s\", \"lag_bytes\", \"retained_bytes\", \"watched_at\", \"watch_error\", \"behind_since\", \"behind_alerted\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -2675,6 +3357,136 @@ func (m *Mut) SetFinishedAtNull() {
 	m.expr &^= dFinishedAt
 }
 
+func (m *Mut) SetStreaming(v bool) {
+	m.row.Streaming = v
+	m.dirty |= dStreaming
+	m.expr &^= dStreaming
+}
+
+func (m *Mut) SetLagS(v float64) {
+	m.row.LagS = runtime.Null[float64]{V: v, Valid: true}
+	m.dirty |= dLagS
+	m.expr &^= dLagS
+}
+
+// SetLagSNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetLagSNull() {
+	m.row.LagS = runtime.Null[float64]{}
+	m.dirty |= dLagS
+	m.expr &^= dLagS
+}
+
+func (m *Mut) SetLagBytes(v int64) {
+	m.row.LagBytes = runtime.Null[int64]{V: v, Valid: true}
+	m.dirty |= dLagBytes
+	m.expr &^= dLagBytes
+}
+
+// IncLagBytes adds one to the column's OWN value, in the database.
+//
+// Computing it in Go makes it a read-modify-write: two callers
+// who both read N both write N+1, and one increment is lost
+// with nothing to show that it happened.
+func (m *Mut) IncLagBytes() {
+	m.expr |= dLagBytes
+	m.dirty &^= dLagBytes
+}
+
+// SetLagBytesNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetLagBytesNull() {
+	m.row.LagBytes = runtime.Null[int64]{}
+	m.dirty |= dLagBytes
+	m.expr &^= dLagBytes
+}
+
+func (m *Mut) SetRetainedBytes(v int64) {
+	m.row.RetainedBytes = runtime.Null[int64]{V: v, Valid: true}
+	m.dirty |= dRetainedBytes
+	m.expr &^= dRetainedBytes
+}
+
+// IncRetainedBytes adds one to the column's OWN value, in the database.
+//
+// Computing it in Go makes it a read-modify-write: two callers
+// who both read N both write N+1, and one increment is lost
+// with nothing to show that it happened.
+func (m *Mut) IncRetainedBytes() {
+	m.expr |= dRetainedBytes
+	m.dirty &^= dRetainedBytes
+}
+
+// SetRetainedBytesNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetRetainedBytesNull() {
+	m.row.RetainedBytes = runtime.Null[int64]{}
+	m.dirty |= dRetainedBytes
+	m.expr &^= dRetainedBytes
+}
+
+func (m *Mut) SetWatchedAt(v time.Time) {
+	m.row.WatchedAt = runtime.Null[time.Time]{V: v, Valid: true}
+	m.dirty |= dWatchedAt
+	m.expr &^= dWatchedAt
+}
+
+// SetWatchedAtNow assigns the database's clock, not this process's.
+//
+// Binding time.Now() instead would record when THIS server
+// thought it was. Servers skew, so rows written seconds apart
+// can land out of order, and an event stamped by a fast clock
+// reads as preceding the thing that caused it.
+func (m *Mut) SetWatchedAtNow() {
+	m.expr |= dWatchedAt
+	m.dirty &^= dWatchedAt
+}
+
+// SetWatchedAtNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetWatchedAtNull() {
+	m.row.WatchedAt = runtime.Null[time.Time]{}
+	m.dirty |= dWatchedAt
+	m.expr &^= dWatchedAt
+}
+
+func (m *Mut) SetWatchError(v string) {
+	m.row.WatchError = v
+	m.dirty |= dWatchError
+	m.expr &^= dWatchError
+}
+
+func (m *Mut) SetBehindSince(v time.Time) {
+	m.row.BehindSince = runtime.Null[time.Time]{V: v, Valid: true}
+	m.dirty |= dBehindSince
+	m.expr &^= dBehindSince
+}
+
+// SetBehindSinceNow assigns the database's clock, not this process's.
+//
+// Binding time.Now() instead would record when THIS server
+// thought it was. Servers skew, so rows written seconds apart
+// can land out of order, and an event stamped by a fast clock
+// reads as preceding the thing that caused it.
+func (m *Mut) SetBehindSinceNow() {
+	m.expr |= dBehindSince
+	m.dirty &^= dBehindSince
+}
+
+// SetBehindSinceNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetBehindSinceNull() {
+	m.row.BehindSince = runtime.Null[time.Time]{}
+	m.dirty |= dBehindSince
+	m.expr &^= dBehindSince
+}
+
+func (m *Mut) SetBehindAlerted(v bool) {
+	m.row.BehindAlerted = v
+	m.dirty |= dBehindAlerted
+	m.expr &^= dBehindAlerted
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -2813,6 +3625,81 @@ func (n *Ins) SetFinishedAtNull() {
 	n.set |= iFinishedAt
 }
 
+func (n *Ins) SetStreaming(v bool) {
+	n.row.Streaming = v
+	n.set |= iStreaming
+}
+
+func (n *Ins) SetLagS(v float64) {
+	n.row.LagS = runtime.Null[float64]{V: v, Valid: true}
+	n.set |= iLagS
+}
+
+// SetLagSNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetLagSNull() {
+	n.row.LagS = runtime.Null[float64]{}
+	n.set |= iLagS
+}
+
+func (n *Ins) SetLagBytes(v int64) {
+	n.row.LagBytes = runtime.Null[int64]{V: v, Valid: true}
+	n.set |= iLagBytes
+}
+
+// SetLagBytesNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetLagBytesNull() {
+	n.row.LagBytes = runtime.Null[int64]{}
+	n.set |= iLagBytes
+}
+
+func (n *Ins) SetRetainedBytes(v int64) {
+	n.row.RetainedBytes = runtime.Null[int64]{V: v, Valid: true}
+	n.set |= iRetainedBytes
+}
+
+// SetRetainedBytesNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetRetainedBytesNull() {
+	n.row.RetainedBytes = runtime.Null[int64]{}
+	n.set |= iRetainedBytes
+}
+
+func (n *Ins) SetWatchedAt(v time.Time) {
+	n.row.WatchedAt = runtime.Null[time.Time]{V: v, Valid: true}
+	n.set |= iWatchedAt
+}
+
+// SetWatchedAtNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetWatchedAtNull() {
+	n.row.WatchedAt = runtime.Null[time.Time]{}
+	n.set |= iWatchedAt
+}
+
+func (n *Ins) SetWatchError(v string) {
+	n.row.WatchError = v
+	n.set |= iWatchError
+}
+
+func (n *Ins) SetBehindSince(v time.Time) {
+	n.row.BehindSince = runtime.Null[time.Time]{V: v, Valid: true}
+	n.set |= iBehindSince
+}
+
+// SetBehindSinceNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetBehindSinceNull() {
+	n.row.BehindSince = runtime.Null[time.Time]{}
+	n.set |= iBehindSince
+}
+
+func (n *Ins) SetBehindAlerted(v bool) {
+	n.row.BehindAlerted = v
+	n.set |= iBehindAlerted
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -2859,7 +3746,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 16)
+	set := make([]string, 0, 24)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -2910,6 +3797,30 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<16) != 0 {
 			set = append(set, "finished_at")
 		}
+		if mask&(1<<17) != 0 {
+			set = append(set, "streaming")
+		}
+		if mask&(1<<18) != 0 {
+			set = append(set, "lag_s")
+		}
+		if mask&(1<<19) != 0 {
+			set = append(set, "lag_bytes")
+		}
+		if mask&(1<<20) != 0 {
+			set = append(set, "retained_bytes")
+		}
+		if mask&(1<<21) != 0 {
+			set = append(set, "watched_at")
+		}
+		if mask&(1<<22) != 0 {
+			set = append(set, "watch_error")
+		}
+		if mask&(1<<23) != 0 {
+			set = append(set, "behind_since")
+		}
+		if mask&(1<<24) != 0 {
+			set = append(set, "behind_alerted")
+		}
 	case 1:
 		if mask&(1<<2) != 0 {
 			set = append(set, "asset_id")
@@ -2952,6 +3863,30 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<16) != 0 {
 			set = append(set, "finished_at")
+		}
+		if mask&(1<<17) != 0 {
+			set = append(set, "streaming")
+		}
+		if mask&(1<<18) != 0 {
+			set = append(set, "lag_s")
+		}
+		if mask&(1<<19) != 0 {
+			set = append(set, "lag_bytes")
+		}
+		if mask&(1<<20) != 0 {
+			set = append(set, "retained_bytes")
+		}
+		if mask&(1<<21) != 0 {
+			set = append(set, "watched_at")
+		}
+		if mask&(1<<22) != 0 {
+			set = append(set, "watch_error")
+		}
+		if mask&(1<<23) != 0 {
+			set = append(set, "behind_since")
+		}
+		if mask&(1<<24) != 0 {
+			set = append(set, "behind_alerted")
 		}
 	}
 	return set
@@ -3027,6 +3962,14 @@ var assignFor = map[string]string{
 	"created_at":          "\"created_at\" = EXCLUDED.\"created_at\"",
 	"started_at":          "\"started_at\" = EXCLUDED.\"started_at\"",
 	"finished_at":         "\"finished_at\" = EXCLUDED.\"finished_at\"",
+	"streaming":           "\"streaming\" = EXCLUDED.\"streaming\"",
+	"lag_s":               "\"lag_s\" = EXCLUDED.\"lag_s\"",
+	"lag_bytes":           "\"lag_bytes\" = EXCLUDED.\"lag_bytes\"",
+	"retained_bytes":      "\"retained_bytes\" = EXCLUDED.\"retained_bytes\"",
+	"watched_at":          "\"watched_at\" = EXCLUDED.\"watched_at\"",
+	"watch_error":         "\"watch_error\" = EXCLUDED.\"watch_error\"",
+	"behind_since":        "\"behind_since\" = EXCLUDED.\"behind_since\"",
+	"behind_alerted":      "\"behind_alerted\" = EXCLUDED.\"behind_alerted\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -3104,6 +4047,22 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.StartedAt.Arg())
 		case 16:
 			args = append(args, n.row.FinishedAt.Arg())
+		case 17:
+			args = append(args, n.row.Streaming)
+		case 18:
+			args = append(args, n.row.LagS.Arg())
+		case 19:
+			args = append(args, n.row.LagBytes.Arg())
+		case 20:
+			args = append(args, n.row.RetainedBytes.Arg())
+		case 21:
+			args = append(args, n.row.WatchedAt.Arg())
+		case 22:
+			args = append(args, n.row.WatchError)
+		case 23:
+			args = append(args, n.row.BehindSince.Arg())
+		case 24:
+			args = append(args, n.row.BehindAlerted)
 		}
 	}
 	var out Row
@@ -3141,7 +4100,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 17)
+	args := make([]any, 0, 25)
 	args = append(args, r.ID)
 	args = append(args, r.DatabaseID)
 	args = append(args, r.AssetID)
@@ -3159,6 +4118,14 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.CreatedAt)
 	args = append(args, r.StartedAt.Arg())
 	args = append(args, r.FinishedAt.Arg())
+	args = append(args, r.Streaming)
+	args = append(args, r.LagS.Arg())
+	args = append(args, r.LagBytes.Arg())
+	args = append(args, r.RetainedBytes.Arg())
+	args = append(args, r.WatchedAt.Arg())
+	args = append(args, r.WatchError)
+	args = append(args, r.BehindSince.Arg())
+	args = append(args, r.BehindAlerted)
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -3202,13 +4169,21 @@ var copyCols = []string{
 	"created_at",
 	"started_at",
 	"finished_at",
+	"streaming",
+	"lag_s",
+	"lag_bytes",
+	"retained_bytes",
+	"watched_at",
+	"watch_error",
+	"behind_since",
+	"behind_alerted",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [17]any
+	buf  [25]any
 }
 
 func (s *rowSource) Next() bool {
@@ -3243,6 +4218,14 @@ func (s *rowSource) Values() []any {
 	s.buf[14] = &r.CreatedAt
 	s.buf[15] = r.StartedAt.Ptr()
 	s.buf[16] = r.FinishedAt.Ptr()
+	s.buf[17] = &r.Streaming
+	s.buf[18] = r.LagS.Ptr()
+	s.buf[19] = r.LagBytes.Ptr()
+	s.buf[20] = r.RetainedBytes.Ptr()
+	s.buf[21] = r.WatchedAt.Ptr()
+	s.buf[22] = &r.WatchError
+	s.buf[23] = r.BehindSince.Ptr()
+	s.buf[24] = &r.BehindAlerted
 	return s.buf[:]
 }
 
@@ -3290,8 +4273,16 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 14
 	mask |= 1 << 15
 	mask |= 1 << 16
+	mask |= 1 << 17
+	mask |= 1 << 18
+	mask |= 1 << 19
+	mask |= 1 << 20
+	mask |= 1 << 21
+	mask |= 1 << 22
+	mask |= 1 << 23
+	mask |= 1 << 24
 	st := stmtForInsertNoReturn(mask, 0)
-	args := make([]any, 0, 17)
+	args := make([]any, 0, 25)
 	args = append(args, r.ID)
 	args = append(args, r.DatabaseID)
 	args = append(args, r.AssetID)
@@ -3309,6 +4300,14 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.CreatedAt)
 	args = append(args, r.StartedAt.Arg())
 	args = append(args, r.FinishedAt.Arg())
+	args = append(args, r.Streaming)
+	args = append(args, r.LagS.Arg())
+	args = append(args, r.LagBytes.Arg())
+	args = append(args, r.RetainedBytes.Arg())
+	args = append(args, r.WatchedAt.Arg())
+	args = append(args, r.WatchError)
+	args = append(args, r.BehindSince.Arg())
+	args = append(args, r.BehindAlerted)
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -3376,6 +4375,22 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.StartedAt.Arg())
 		case 16:
 			args = append(args, n.row.FinishedAt.Arg())
+		case 17:
+			args = append(args, n.row.Streaming)
+		case 18:
+			args = append(args, n.row.LagS.Arg())
+		case 19:
+			args = append(args, n.row.LagBytes.Arg())
+		case 20:
+			args = append(args, n.row.RetainedBytes.Arg())
+		case 21:
+			args = append(args, n.row.WatchedAt.Arg())
+		case 22:
+			args = append(args, n.row.WatchError)
+		case 23:
+			args = append(args, n.row.BehindSince.Arg())
+		case 24:
+			args = append(args, n.row.BehindAlerted)
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -3454,6 +4469,22 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.StartedAt.Arg())
 		case 15:
 			args = append(args, m.row.FinishedAt.Arg())
+		case 16:
+			args = append(args, m.row.Streaming)
+		case 17:
+			args = append(args, m.row.LagS.Arg())
+		case 18:
+			args = append(args, m.row.LagBytes.Arg())
+		case 19:
+			args = append(args, m.row.RetainedBytes.Arg())
+		case 20:
+			args = append(args, m.row.WatchedAt.Arg())
+		case 21:
+			args = append(args, m.row.WatchError)
+		case 22:
+			args = append(args, m.row.BehindSince.Arg())
+		case 23:
+			args = append(args, m.row.BehindAlerted)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -3568,6 +4599,22 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.StartedAt.Arg())
 		case 15:
 			args = append(args, m.row.FinishedAt.Arg())
+		case 16:
+			args = append(args, m.row.Streaming)
+		case 17:
+			args = append(args, m.row.LagS.Arg())
+		case 18:
+			args = append(args, m.row.LagBytes.Arg())
+		case 19:
+			args = append(args, m.row.RetainedBytes.Arg())
+		case 20:
+			args = append(args, m.row.WatchedAt.Arg())
+		case 21:
+			args = append(args, m.row.WatchError)
+		case 22:
+			args = append(args, m.row.BehindSince.Arg())
+		case 23:
+			args = append(args, m.row.BehindAlerted)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -3748,6 +4795,22 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.StartedAt.Arg())
 		case 15:
 			args = append(args, m.row.FinishedAt.Arg())
+		case 16:
+			args = append(args, m.row.Streaming)
+		case 17:
+			args = append(args, m.row.LagS.Arg())
+		case 18:
+			args = append(args, m.row.LagBytes.Arg())
+		case 19:
+			args = append(args, m.row.RetainedBytes.Arg())
+		case 20:
+			args = append(args, m.row.WatchedAt.Arg())
+		case 21:
+			args = append(args, m.row.WatchError)
+		case 22:
+			args = append(args, m.row.BehindSince.Arg())
+		case 23:
+			args = append(args, m.row.BehindAlerted)
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

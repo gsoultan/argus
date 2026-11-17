@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ReactNode } from 'react'
 import { AskReplica, StreamingReplicas } from '~/components/DatabaseStreamingReplicas'
 import { renderWithProviders } from '~/test/render'
-import { replicaNameFor, replicaRefusal, replicaStage, serverAddresses, targetRefusal, validReplicaName } from '~/lib/managedReplicas'
+import { replicaHealth, replicaNameFor, replicaRefusal, replicaStage, serverAddresses, targetRefusal, validReplicaName } from '~/lib/managedReplicas'
 import type { Asset, Database, DatabaseReplica } from '~/types/domain'
 
 /**
@@ -83,6 +83,14 @@ describe('streaming replica words', () => {
     } as Partial<Asset>))).toEqual(['10.0.2.15', 'fd00::5'])
   })
 
+  it('says how a finished replica is doing, from the lag watch', () => {
+    const at = '2026-11-17T08:00:00Z'
+    expect(replicaHealth({ state: 'done' })).toBeNull()
+    expect(replicaHealth({ state: 'done', watchedAt: at, streaming: true, lagS: 0 })).toEqual({ words: 'Streaming, caught up', color: 'teal' })
+    expect(replicaHealth({ state: 'done', watchedAt: at, streaming: true, lagS: 200 })).toEqual({ words: 'Streaming, 3 min behind', color: 'amber' })
+    expect(replicaHealth({ state: 'done', watchedAt: at, streaming: false, lagS: -1 })?.words).toBe('Not streaming')
+  })
+
   it('puts a run’s stage in words', () => {
     expect(replicaStage({ state: 'pending', stage: '' })).toBe('Waiting for an approver')
     expect(replicaStage({ state: 'running', stage: 'copying' })).toBe('Copying with pg_basebackup')
@@ -96,7 +104,7 @@ describe('streaming replicas tab', () => {
     live.databaseReplicas.mockResolvedValue([
       replica(),
       replica({ id: 'r2', hostname: 'orders-db-03', assetId: 'a3', state: 'done', stage: 'done', replicaDatabaseId: 'db9',
-        detail: 'Postgres 16, streaming from orders-db-01' }),
+        detail: 'Postgres 16, streaming from orders-db-01', streaming: false, lagS: -1, retainedBytes: 3 * 2 ** 30, watchedAt: new Date().toISOString() }),
       replica({ id: 'r3', hostname: 'orders-db-04', assetId: 'a4', state: 'failed', stage: 'checking',
         error: 'orders-db-01 needs these first, and Argus never restarts a primary: wal_level' }),
     ])
@@ -105,6 +113,8 @@ describe('streaming replicas tab', () => {
     expect(screen.getByText('Copying with pg_basebackup · 120 GiB of 210 GiB')).toBeInTheDocument()
     expect(screen.getByText('Failed while checking both servers')).toBeInTheDocument()
     expect(screen.getByText(/never restarts a primary/)).toBeInTheDocument()
+    expect(screen.getByText(/^Not streaming/)).toBeInTheDocument()
+    expect(screen.getByText(/Its slot keeps 3.00 GB of WAL on orders-db-01/)).toBeInTheDocument()
     const rows = screen.getAllByTestId('streaming-replica')
     expect(within(rows[1]!).getByText('Open')).toBeInTheDocument()
     expect(within(rows[0]!).queryByText('Open')).toBeNull()
