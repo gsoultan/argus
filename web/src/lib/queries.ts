@@ -602,15 +602,11 @@ export function useAddSharedAccount() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: api.addSharedAccount,
-    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.users }),
-  })
-}
-
-export function useSetShareable() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (v: { email: string; shareable: boolean }) => api.setShareable(v.email, v.shareable),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.users }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.users })
+      void qc.invalidateQueries({ queryKey: ['from-organizations'] })
+      void qc.invalidateQueries({ queryKey: ['teams'] })
+    },
   })
 }
 

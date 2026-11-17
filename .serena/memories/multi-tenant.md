@@ -90,12 +90,41 @@ one organization (home); other organizations get a `users` row with
 `home_tenant` set and no password. `Store.Credentials(ctx, email)` returns the
 local row merged with the home row's secrets plus the home context; every
 credential write (`SetPassword`, MFA enrolment, recovery codes) goes through
-`homeContext`. `users.shareable` (home-only) gates `AddSharedMember`; refusals
-are all `ErrNoShareable` → 404. Index: `argus_platform.memberships(email,
-tenant_id, home_tenant)`, maintained by `recordMembership` in every account
-insert and rebuilt by `backfillMemberships` at start. `POST /auth/switch`
-issues the target organization's cookie after `MemberOf` (same email, same
-home, enabled in both). `/auth/me` carries `orgs`, `shared`, `multiOrg`.
+`homeContext`. Index: `argus_platform.memberships(email, tenant_id,
+home_tenant)`, maintained by `recordMembership` in every account insert and
+rebuilt by `backfillMemberships` at start.
+
+**Sharing is per organization (2026-11).** `argus_platform.share_allowances
+(email, home_tenant, tenant_id)` names each organization a home allows to have
+one of its people. There is no "any organization" setting: `users.shareable`
+is only a legacy marker (People shows "pick where they may work"), never an
+allowance. The table was created once with every existing shared membership
+carried over (a `DO` block in `platformDDL` that runs only when the table is
+missing); it is never re-filled, or an allowance a home took away would come
+back at the next start. The allowance is checked wherever an identity is
+used, not only when added: `AddSharedMember`, `Credentials` (sign-in, switch
+via `MemberOf`), `SessionState` (every request) and `OrganizationsFor` (the
+header menu). So `RevokeShare` at home refuses the person in that organization
+at their next request without writing its tables.
+
+Routes: `GET/POST /api/v1/users/{email}/organizations`, `DELETE
+.../organizations/{org}` (home side, "Where they work"); `GET
+/api/v1/users/from-organizations` and `POST /api/v1/users/shared` (adding
+side). An admin or owner of both organizations (`ManagesOrganization`) allows
+and adds in one step; both chains get `user.share_allowed`/`user.shared_in`/
+`user.shared_out`, and `user.share_revoked` on taking away. Creating an
+organization allows only that organization for its creator.
+`AnyAccountExists` counts shared rows, so an organization of only shared
+people is not shown first-run setup.
+
+**What a person can reach** is `person_access.go`: `accessKinds` (servers,
+databases, brokers, cloud) feeds `GET /api/v1/users/{email}/access`, the
+"What they can do" window and the "Give them what they need here" step after
+adding someone. A new feature that grants people or teams something adds a
+kind; `TestEveryGrantTableHasAnAccessKind` fails on any migration table with
+`user_email`/`team_id` that no kind reads and `notGrantTables` does not
+explain. Grants are per organization by construction (each is a row in that
+organization's schema), so a shared person needs nothing special per feature.
 
 ## What is still platform-wide
 

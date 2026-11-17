@@ -143,8 +143,15 @@ const BUDGET_KB = {
    * 313.0 kB on main after the Cloud Scaling tab and its names joined the
    * shell's route table (load balancers, Auto Scaling groups): over by a few
    * bytes, so the budget moves to 314.
+   * 314.1 kB with people shared per organization (313.7 on main, same
+   * build): the header menu reading the account again each minute so an
+   * organization someone was just added to appears, saying why a switch
+   * failed, and adding someone with a team. Where they work, what they can
+   * reach and the add-from-another-organization list are in their own
+   * module (sharedPeople.ts), kept out of live and queries; in them it
+   * measured 314.6.
    */
-  overview: 314,
+  overview: 315,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most

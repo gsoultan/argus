@@ -6,6 +6,7 @@ import {
 import { useDisclosure } from '@mantine/hooks'
 import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { notifyError } from '~/lib/notify'
 import {
   IconAlertTriangle, IconBuilding, IconCheck, IconSettings, IconChevronDown, IconInfoCircle, IconKey, IconLogout,
   IconSearch, IconShieldLock,
@@ -207,7 +208,10 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   const [sshKeyOpen, sshKeyModal] = useDisclosure(false)
   const [twoFactorOpen, twoFactorModal] = useDisclosure(false)
   const [passwordOpen, passwordModal] = useDisclosure(false)
-  const { data: me } = useQuery(meQuery())
+  // Read again every minute, so an organization someone was just added to
+  // appears in their menu without signing out (refetching on focus is off
+  // app-wide).
+  const { data: me } = useQuery({ ...meQuery(), refetchInterval: 60_000 })
   const queryClient = useQueryClient()
   // A key is only asked of people a team lets SSH straight to a server; the
   // rest connect from the console and have no use for one. Someone who lost
@@ -707,6 +711,7 @@ function OrgSwitcher({ current, orgs, canManage }: {
   canManage: boolean
 }) {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [switching, setSwitching] = useState<string | null>(null)
   return (
     <Menu position="bottom-end" withinPortal width={280}>
@@ -738,8 +743,12 @@ function OrgSwitcher({ current, orgs, canManage }: {
               try {
                 await switchOrganization(o.slug)
                 window.location.replace('/')
-              } catch {
+              } catch (err) {
+                // Said, not swallowed: the usual reason is that the
+                // organization no longer has them, and the menu is stale.
                 setSwitching(null)
+                notifyError(`Could not switch to ${o.name}`, err)
+                void queryClient.invalidateQueries({ queryKey: meQuery().queryKey })
               }
             }}
           >

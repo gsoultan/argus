@@ -772,3 +772,78 @@ func (s *Store) CreateDatabaseRequest(ctx context.Context, email, dbID, level, j
 	r.State = "pending"
 	return r, nil
 }
+
+// PersonDatabase is one database or broker a person holds a level on, by name
+// or through a team, for the "what can they do" window.
+type PersonDatabase struct {
+	ID       string `json:"id"`
+	Name     string `json:"dbname"`
+	Engine   string `json:"engine"`
+	Hostname string `json:"hostname"`
+	// Level is what they may open now without asking; Approvable what they
+	// may ask for. Either may be empty, not both.
+	Level      string `json:"level"`
+	Approvable string `json:"approvable"`
+	// Own is set when they have a row of their own; Teams names every team
+	// that gives them something here.
+	Own   bool     `json:"own"`
+	Teams []string `json:"teams"`
+}
+
+// PersonDatabases lists every database email holds a level on, with the same
+// highest-row rule DatabaseAccess uses. An approved request in its window is
+// not counted: this says what was given, not what is open this minute.
+func (s *Store) PersonDatabases(ctx context.Context, email string) ([]PersonDatabase, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	rows, err := s.db(ctx).Query(ctx, `
+		SELECT d.id::text, d.dbname, d.engine, a.hostname, COALESCE(t.name, ''), g.level, g.needs_approval
+		  FROM database_assignments g
+		  JOIN databases d ON d.id = g.database_id
+		  JOIN assets a ON a.id = d.asset_id
+		  LEFT JOIN teams t ON t.id = g.team_id
+		 WHERE g.user_email = $1
+		    OR g.team_id IN (SELECT team_id FROM team_members WHERE user_email = $1)
+		 ORDER BY a.hostname, d.dbname, t.name NULLS FIRST`, email)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []PersonDatabase{}
+	byID := map[string]int{}
+	for rows.Next() {
+		var id, name, engine, host, team, level string
+		var approval bool
+		if err := rows.Scan(&id, &name, &engine, &host, &team, &level, &approval); err != nil {
+			return nil, err
+		}
+		i, ok := byID[id]
+		if !ok {
+			out = append(out, PersonDatabase{ID: id, Name: name, Engine: engine, Hostname: host, Teams: []string{}})
+			i = len(out) - 1
+			byID[id] = i
+		}
+		p := &out[i]
+		if team == "" {
+			p.Own = true
+		} else {
+			p.Teams = append(p.Teams, team)
+		}
+		if approval {
+			if tunnel.LevelRank(level) > tunnel.LevelRank(p.Approvable) {
+				p.Approvable = level
+			}
+		} else if tunnel.LevelRank(level) > tunnel.LevelRank(p.Level) {
+			p.Level = level
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		// Asking for no more than one already has is not an ask.
+		if tunnel.LevelRank(out[i].Approvable) <= tunnel.LevelRank(out[i].Level) {
+			out[i].Approvable = ""
+		}
+	}
+	return out, nil
+}

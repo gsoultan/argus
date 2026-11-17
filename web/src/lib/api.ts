@@ -41,7 +41,6 @@ import {
   createAccount,
   sendTemporaryPassword,
   createSharedAccount,
-  setAccountShareable,
   personServers as livePersonServers,
   resetAccountMFA, signOutAccount,
 } from '~/lib/live'
@@ -397,24 +396,10 @@ export const api = {
     return { email, emailed: true, temporaryPasswordExpiresAt: expires }
   },
 
-  async addSharedAccount(input: { email: string; displayName: string; role: User['role']; homeOrg?: string }): Promise<void> {
-    if (isConfigured()) {
-      await createSharedAccount(input)
-      return
-    }
+  async addSharedAccount(input: { email: string; displayName: string; role: User['role']; homeOrg?: string; teamId?: string }): Promise<{ team: string }> {
+    if (isConfigured()) return createSharedAccount(input)
     await latency(250)
-    throw new Error('no account that can be shared uses this address')
-  },
-
-  async setShareable(email: string, shareable: boolean): Promise<void> {
-    if (isConfigured()) {
-      await setAccountShareable(email, shareable)
-      return
-    }
-    await latency(150)
-    const u = users.find((x) => x.email === email)
-    if (!u) throw new Error(`no account for ${email}`)
-    u.shareable = shareable
+    throw new Error('no account that can be added here uses this address')
   },
 
   async stats(): Promise<FleetStats> {

@@ -589,6 +589,12 @@ type consoleUser struct {
 	// one of ours whom another organization may add.
 	Shared    bool `json:"shared"`
 	Shareable bool `json:"shareable"`
+	// AlsoIn names the other organizations one of ours has been added to,
+	// for this organization's admins. PickWhere marks someone who was
+	// "shareable with any organization" before organizations were chosen
+	// one by one, and has none chosen yet.
+	AlsoIn    []string `json:"alsoIn,omitempty"`
+	PickWhere bool     `json:"pickWhere,omitempty"`
 	// TemporaryPassword is set while they have not yet chosen a password of
 	// their own, and TemporaryPasswordExpiresAt is when the one they were
 	// given stops working.
@@ -622,8 +628,20 @@ func (a *API) getUsers(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "users", err)
 		return
 	}
+	// Where else our own people work is for this organization's admins.
+	var alsoIn map[string][]string
+	var chosen map[string]bool
+	if sess.Role == "admin" || sess.Role == "owner" {
+		if alsoIn, err = a.store.OtherOrganizationsOf(r.Context()); err != nil {
+			a.log.Warn("other organizations of people unavailable", "error", err)
+		}
+		if chosen, err = a.store.HasShareAllowances(r.Context()); err != nil {
+			a.log.Warn("share allowances unavailable", "error", err)
+		}
+	}
 	out := make([]consoleUser, 0, len(accounts))
 	for _, acct := range accounts {
+		key := normaliseEmail(acct.Email)
 		out = append(out, consoleUser{
 			ID:          acct.ID,
 			Email:       acct.Email,
@@ -637,6 +655,8 @@ func (a *API) getUsers(w http.ResponseWriter, r *http.Request) {
 			HasSSHKey:   acct.HasSSHKey,
 			Shared:      acct.Shared(),
 			Shareable:   acct.Shareable,
+			AlsoIn:      alsoIn[key],
+			PickWhere:   acct.Shareable && !acct.Shared() && chosen != nil && !chosen[key],
 
 			TemporaryPassword:          acct.PasswordChangeRequired,
 			TemporaryPasswordExpiresAt: acct.PasswordExpiresAt,

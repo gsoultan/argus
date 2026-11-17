@@ -1429,21 +1429,19 @@ export async function sendTemporaryPassword(email: string): Promise<TemporaryPas
 
 /**
  * Adds a person who already signs in to another organization. No password:
- * they keep the one they have, and their home organization must have marked
- * them shareable. homeOrg is needed only when more than one has.
+ * they keep the one they have. Their home must have allowed this
+ * organization, or the caller must run their home too, in which case naming
+ * it (homeOrg) allows and adds in one step. team says what happened to the
+ * optional team: "added", or why not.
  */
 export async function createSharedAccount(input: {
   email: string
   displayName: string
   role: string
   homeOrg?: string
-}): Promise<{ email: string; role: string; displayName: string; shared: true }> {
+  teamId?: string
+}): Promise<{ email: string; role: string; displayName: string; shared: true; team: string }> {
   return post('/api/v1/users/shared', input)
-}
-
-/** Lets, or stops letting, other organizations add one of our people. */
-export async function setAccountShareable(email: string, shareable: boolean): Promise<{ email: string; shareable: boolean }> {
-  return send('PUT', `/api/v1/users/${encodeURIComponent(email)}/shareable`, { shareable })
 }
 
 /**
