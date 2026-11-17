@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import {
-  ActionIcon, Alert, Avatar, Badge, Box, Button, Card, Code, CopyButton, Group, Menu, Modal, MultiSelect,
-  SegmentedControl, Select, SimpleGrid, Stack, Switch, Table, Tabs, Text, TextInput, Tooltip, UnstyledButton,
+  ActionIcon, Alert, Anchor, Avatar, Badge, Box, Button, Card, Code, CopyButton, Group, Menu, Modal, MultiSelect,
+  Radio, SegmentedControl, Select, SimpleGrid, Stack, Table, Tabs, Text, TextInput, Tooltip, UnstyledButton,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
@@ -17,12 +17,13 @@ import { notifyError, notifyOk } from '~/lib/notify'
 import {
   meQuery, teamsQuery, useAddAccount, useAddSharedAccount, useAddTeamMember, useCreateTeam, useDeleteTeam,
   useRemoveTeamMember, useRenameTeam, useResetMFA, useSetDisabled, useSetLoginName, useSetRole,
-  useSendTemporaryPassword, useSetShareable, useSignOutAccount, usersQuery,
+  useSendTemporaryPassword, useSignOutAccount, usersQuery, fromOrganizationsQuery, personOrganizationsQuery,
+  useAllowPersonOrganization, useRemovePersonOrganization,
 } from '~/lib/queries'
 import { canSee, roleLabel } from '~/lib/roles'
 import { FS, SP } from '~/theme'
 import type { Team, TemporaryPasswordOutcome, User, UserRole } from '~/types/domain'
-import { PersonServersModal } from '~/components/PersonServers'
+import { GiveAccess, PersonServersModal } from '~/components/PersonServers'
 
 /**
  * Teams, and the people in them.
@@ -359,24 +360,11 @@ function People({ admin, me }: { admin: boolean; me: User | undefined }) {
   const { data: teams } = useQuery(teamsQuery())
   const setRole = useSetRole()
   const setDisabled = useSetDisabled()
-  const setShareable = useSetShareable()
-  const toggleShareable = async (u: User) => {
-    try {
-      await setShareable.mutateAsync({ email: u.email, shareable: !u.shareable })
-      notifyOk(
-        u.shareable ? 'Sharing stopped' : 'Sharing allowed',
-        u.shareable
-          ? `Other organizations can no longer add ${u.displayName}. Any that already have them keep them.`
-          : `Another organization's owner can now add ${u.displayName} by email. They keep their password and second step.`,
-      )
-    } catch (err) {
-      notifyError('Not changed', err)
-    }
-  }
   const [search, setSearch] = useState('')
   const [show, setShow] = useState<'active' | 'removed'>('active')
   const [renaming, setRenaming] = useState<User | null>(null)
   const [viewing, setViewing] = useState<User | null>(null)
+  const [placing, setPlacing] = useState<User | null>(null)
 
   const teamsOf = useMemo(() => {
     const m = new Map<string, string[]>()
@@ -526,9 +514,14 @@ function People({ admin, me }: { admin: boolean; me: User | undefined }) {
                             <Badge color="violet" variant="light">shared</Badge>
                           </Tooltip>
                         )}
-                        {u.shareable && !u.shared && (
-                          <Tooltip label="Other organizations may add this person without giving them a new password.">
-                            <Badge color="violet" variant="outline">shareable</Badge>
+                        {(u.alsoIn ?? []).map((o) => (
+                          <Tooltip key={o} label={`Also works in ${o}, signing in here. Organizations, on this row, says where else.`}>
+                            <Badge color="violet" variant="light">also in {o}</Badge>
+                          </Tooltip>
+                        ))}
+                        {u.pickWhere && (
+                          <Tooltip label="Was open to every organization before. No organization can add them now until you pick which, under Organizations.">
+                            <Badge color="amber" variant="light">pick where they may work</Badge>
                           </Tooltip>
                         )}
                         {u.disabled && <Badge color="rose" variant="light">cannot sign in</Badge>}
@@ -573,22 +566,12 @@ function People({ admin, me }: { admin: boolean; me: User | undefined }) {
                     </Table.Td>
                     <Table.Td ta="right">
                       <Button size="compact-sm" variant="subtle" onClick={() => setViewing(u)}>
-                        Servers
+                        What they can do
                       </Button>
                       {admin && me?.multiOrg && !u.shared && !u.disabled && (
-                        <Tooltip
-                          label={u.shareable
-                            ? 'Stop other organizations adding this person. Those that already have them keep them.'
-                            : 'Let other organizations add this person with the password they already have.'}
-                        >
-                          <Button
-                            size="compact-sm"
-                            variant="subtle"
-                            color="violet"
-                            loading={setShareable.isPending && setShareable.variables?.email === u.email}
-                            onClick={() => void toggleShareable(u)}
-                          >
-                            {u.shareable ? 'Stop sharing' : 'Allow sharing'}
+                        <Tooltip label="Which other organizations may have this person, and add them to one you run.">
+                          <Button size="compact-sm" variant="subtle" color="violet" onClick={() => setPlacing(u)}>
+                            Organizations
                           </Button>
                         </Tooltip>
                       )}
@@ -648,6 +631,7 @@ function People({ admin, me }: { admin: boolean; me: User | undefined }) {
       </Text>
       {renaming && <RenameLoginModal user={renaming} onClose={() => setRenaming(null)} />}
       {viewing && <PersonServersModal user={viewing} onClose={() => setViewing(null)} />}
+      {placing && <WhereTheyWorkModal user={placing} onClose={() => setPlacing(null)} />}
     </Stack>
   )
 }
@@ -694,34 +678,56 @@ function NewPersonModal({ opened, onClose }: { opened: boolean; onClose: () => v
   const add = useAddAccount()
   const addShared = useAddSharedAccount()
   const { data: me } = useQuery(meQuery())
+  const { data: teams } = useQuery(teamsQuery())
   const [email, setEmail] = useState('')
   const [name, setName] = useState('')
   const [role, setRole] = useState<UserRole>('operator')
   const [handOver, setHandOver] = useState<TemporaryPasswordOutcome | null>(null)
   // A person who already signs in to another organization on this control
-  // plane keeps their password and second step; only their home has to have
-  // allowed it. Offered only where there is another organization to share from.
-  const [shared, setShared] = useState(false)
-  const [homeOrg, setHomeOrg] = useState('')
+  // plane keeps their password and second step. From an organization the
+  // caller runs, they are picked from a list and added in one step; from any
+  // other, by email, once their own organization has allowed this one.
   const canShare = me?.multiOrg === true
+  const [mode, setMode] = useState<'new' | 'other'>('new')
+  const [picked, setPicked] = useState<{ email: string; displayName: string; org: string } | null>(null)
+  const [byEmail, setByEmail] = useState(false)
+  const [teamId, setTeamId] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
+  const [added, setAdded] = useState<{ email: string; name: string; role: UserRole; team: string } | null>(null)
+  const from = useQuery({ ...fromOrganizationsQuery(), enabled: opened && canShare && mode === 'other' })
   const canEmail = me?.canEmailPeople === true
+  const here = me?.org?.name ?? 'this organization'
   const reset = () => {
     setEmail('')
     setName('')
     setRole('operator')
-    setShared(false)
-    setHomeOrg('')
+    setMode('new')
+    setPicked(null)
+    setByEmail(false)
+    setTeamId(null)
+    setSearch('')
+    setAdded(null)
   }
   const close = () => {
     reset()
     onClose()
   }
+  const orgs = from.data?.organizations ?? []
+  const needle = search.trim().toLowerCase()
+  const shared = mode === 'other'
+  const listMode = shared && !byEmail && orgs.length > 0
   const submit = async () => {
     try {
       if (shared) {
-        await addShared.mutateAsync({ email, displayName: name, role, ...(homeOrg.trim() ? { homeOrg: homeOrg.trim() } : {}) })
-        notifyOk('Person added', `${email} can switch to this organization from the one they sign in to. Nothing to send them.`)
-        close()
+        const who = listMode ? picked : null
+        const out = await addShared.mutateAsync({
+          email: who ? who.email : email,
+          displayName: who ? who.displayName : name,
+          role,
+          ...(who ? { homeOrg: who.org } : {}),
+          ...(teamId ? { teamId } : {}),
+        })
+        setAdded({ email: who ? who.email : email, name: who ? who.displayName : (name || email), role, team: out.team })
         return
       }
       const out = await add.mutateAsync({ email, displayName: name, role })
@@ -741,38 +747,138 @@ function NewPersonModal({ opened, onClose }: { opened: boolean; onClose: () => v
   if (handOver) {
     return <HandOverPassword outcome={handOver} onClose={() => { setHandOver(null); onClose() }} />
   }
+  if (added) {
+    return (
+      <Modal opened={opened} onClose={close} title={`${added.name} is in ${here}`}>
+        <Stack gap="md">
+          <Text size={FS.body} c="dimmed">
+            They are a {roleLabel(added.role)} here, and keep signing in where they always have. Nothing was sent to them.
+          </Text>
+          {added.team && added.team !== 'added' && (
+            <Alert color="amber" variant="light" icon={<IconAlertTriangle size={16} />} p="xs">
+              <Text size={FS.body}>They were added, but not to the team: {added.team.replace(/^not added to the team: /, '')}</Text>
+            </Alert>
+          )}
+          <Box>
+            <Text fw={600} size="sm">Give them what they need here</Text>
+            <Text size={FS.meta} c="dimmed" mb={SP.tight}>
+              Nothing in {here} is theirs yet{added.team === 'added' ? ' beyond what their team has' : ''}. What they have in another organization does not carry over.
+            </Text>
+            <GiveAccess email={added.email} onGo={close} />
+          </Box>
+          <Box>
+            <Text fw={600} size="sm">They switch from the organization menu</Text>
+            <Text size={FS.meta} c="dimmed">
+              {here} is in the menu at the top right of their console now. A page they already have open picks it up within a minute.
+            </Text>
+          </Box>
+          <Group justify="flex-end">
+            <Button onClick={close}>Done</Button>
+          </Group>
+        </Stack>
+      </Modal>
+    )
+  }
+  const ready = shared ? (listMode ? picked !== null : email.includes('@')) : email.includes('@')
   return (
-    <Modal opened={opened} onClose={close} title="Add person">
+    <Modal opened={opened} onClose={close} title={`Add person to ${here}`} size={shared ? 'lg' : 'md'}>
       <Stack gap="md">
-        <TextInput label="Email" type="email" data-autofocus value={email} onChange={(e) => setEmail(e.currentTarget.value)} />
-        <TextInput label="Name" description="Optional" value={name} onChange={(e) => setName(e.currentTarget.value)} />
         {canShare && (
-          <Switch
-            label="They already sign in to another organization here"
-            description="They keep their password and second step. Their own organization must have allowed sharing them; if it has not, this says no such account exists."
-            checked={shared}
-            onChange={(e) => setShared(e.currentTarget.checked)}
+          <SegmentedControl
+            fullWidth
+            value={mode}
+            onChange={(v) => { setMode(v as 'new' | 'other'); setPicked(null) }}
+            data={[{ value: 'new', label: 'New to Argus' }, { value: 'other', label: 'From another organization' }]}
           />
         )}
-        <Select
-          label="Role"
-          allowDeselect={false}
-          data={ROLES.filter((r) => r.value !== 'owner' || me?.role === 'owner').map((r) => ({
-            value: r.value,
-            label: `${r.label}: ${r.what}`,
-          }))}
-          value={role}
-          onChange={(v) => setRole((v ?? 'operator') as UserRole)}
-        />
-        {shared ? (
-          <TextInput
-            label="Organization they sign in with"
-            description="Leave blank unless they have accounts in more than one organization."
-            value={homeOrg}
-            onChange={(e) => setHomeOrg(e.currentTarget.value.toLowerCase())}
-            styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }}
+        {shared && (
+          <Text size={FS.body} c="dimmed">
+            They keep the password and second step they already have, and switch here from the organization menu. Nothing to send them.
+          </Text>
+        )}
+        {shared && from.isLoading && <Text size={FS.meta} c="dimmed">Loading the organizations you run…</Text>}
+        {listMode ? (
+          <>
+            <TextInput placeholder="Search by name or email" leftSection={<IconSearch size={14} />}
+              value={search} onChange={(e) => setSearch(e.currentTarget.value)} />
+            <Box style={{ border: '1px solid var(--mantine-color-default-border)', borderRadius: 8, maxHeight: 300, overflowY: 'auto' }}>
+              {orgs.map((o) => {
+                const people = o.people.filter((p) => !needle || `${p.displayName} ${p.email}`.toLowerCase().includes(needle))
+                return (
+                  <Box key={o.slug}>
+                    <Text size={FS.micro} fw={600} c="dimmed" tt="uppercase" px="sm" py={6}
+                      style={{ background: 'var(--mantine-color-default-hover)', letterSpacing: '.05em' }}>
+                      {o.name} · you are {roleLabel(o.yourRole as UserRole).toLowerCase()}
+                    </Text>
+                    {people.length === 0 && (
+                      <Text size={FS.meta} c="dimmed" px="sm" py={8}>
+                        {o.people.length === 0 ? `Everyone in ${o.name} is already here.` : 'Nobody matches.'}
+                      </Text>
+                    )}
+                    {people.map((p) => {
+                      const on = picked?.email === p.email && picked.org === o.slug
+                      return (
+                        <UnstyledButton key={p.email} w="100%" px="sm" py={8} aria-pressed={on}
+                          onClick={() => setPicked({ email: p.email, displayName: p.displayName, org: o.slug })}
+                          style={{ display: 'block', borderTop: '1px solid var(--mantine-color-default-border)',
+                            background: on ? 'var(--mantine-color-blue-light)' : undefined }}>
+                          <Group gap="sm" wrap="nowrap">
+                            <Radio checked={on} readOnly tabIndex={-1} aria-hidden />
+                            <Avatar size="sm" radius="xl">{initials(p.displayName || p.email)}</Avatar>
+                            <Box style={{ minWidth: 0, flex: 1 }}>
+                              <Text size="sm" fw={500} truncate>{p.displayName || p.email}</Text>
+                              <Text size={FS.meta} c="dimmed" truncate>{p.email}</Text>
+                            </Box>
+                            <Badge variant="light" color="slate">{roleLabel(p.role as UserRole)}</Badge>
+                          </Group>
+                        </UnstyledButton>
+                      )
+                    })}
+                  </Box>
+                )
+              })}
+            </Box>
+          </>
+        ) : (
+          <>
+            <TextInput label="Email" type="email" data-autofocus value={email} onChange={(e) => setEmail(e.currentTarget.value)} />
+            <TextInput label="Name" description="Optional" value={name} onChange={(e) => setName(e.currentTarget.value)} />
+          </>
+        )}
+        <SimpleGrid cols={shared ? 2 : 1}>
+          <Select
+            label={`Role in ${here}`}
+            allowDeselect={false}
+            data={ROLES.filter((r) => r.value !== 'owner' || me?.role === 'owner').map((r) => ({
+              value: r.value,
+              label: shared ? r.label : `${r.label}: ${r.what}`,
+            }))}
+            value={role}
+            onChange={(v) => setRole((v ?? 'operator') as UserRole)}
           />
-        ) : canEmail ? (
+          {shared && (
+            <Select label="Team" placeholder="Optional" clearable value={teamId}
+              data={(teams ?? []).map((t) => ({ value: t.id, label: t.name }))}
+              onChange={setTeamId} />
+          )}
+        </SimpleGrid>
+        {shared && listMode && picked && (
+          <Text size={FS.meta} c="dimmed">
+            {orgs.find((o) => o.slug === picked.org)?.name} will list {here} under where {picked.displayName || picked.email} works,
+            and both audit logs record that you added them.
+          </Text>
+        )}
+        {shared && (
+          <Text size={FS.meta} c="dimmed">
+            {listMode ? (
+              <>Someone from an organization you don&rsquo;t run? <Anchor size={FS.meta} onClick={() => { setByEmail(true); setPicked(null) }}>Enter their email</Anchor>. </>
+            ) : orgs.length > 0 ? (
+              <><Anchor size={FS.meta} onClick={() => setByEmail(false)}>Pick from the organizations you run</Anchor>. </>
+            ) : null}
+            {!listMode && <>Their own organization has to have allowed {here} first, under Teams, People, Organizations.</>}
+          </Text>
+        )}
+        {!shared && (canEmail ? (
           <Alert color="azure" variant="light" icon={<IconMail size={16} />} p="xs">
             <Text size={FS.body}>
               Argus emails them a temporary password. At their first sign-in they choose a strong
@@ -786,11 +892,11 @@ function NewPersonModal({ opened, onClose }: { opened: boolean; onClose: () => v
               Set up email in Settings, Alerts to send it to them instead.
             </Text>
           </Alert>
-        )}
+        ))}
         <Group justify="flex-end">
           <Button variant="default" onClick={close}>Cancel</Button>
-          <Button loading={pending} disabled={!email.includes('@')} onClick={() => void submit()}>
-            Add person
+          <Button loading={pending} disabled={!ready} onClick={() => void submit()}>
+            {shared && listMode && picked ? `Add ${picked.displayName || picked.email}` : 'Add person'}
           </Button>
         </Group>
       </Stack>
@@ -798,7 +904,159 @@ function NewPersonModal({ opened, onClose }: { opened: boolean; onClose: () => v
   )
 }
 
-/** "Invited": they have not chosen a password yet, and when theirs runs out. */
+function initials(s: string): string {
+  const parts = s.replace(/@.*/, '').split(/[\s._-]+/).filter(Boolean)
+  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || '?'
+}
+
+/**
+ * Where one of this organization's own people works: home, and each other
+ * organization allowed to have them, by name. There is no "any organization"
+ * setting. Taking one away refuses them there at their next click. An
+ * organization the caller runs too is added in the same step.
+ */
+function WhereTheyWorkModal({ user, onClose }: { user: User; onClose: () => void }) {
+  const { data, isLoading, error } = useQuery(personOrganizationsQuery(user.email))
+  const allow = useAllowPersonOrganization()
+  const remove = useRemovePersonOrganization()
+  const [org, setOrg] = useState<string | null>(null)
+  const [role, setRole] = useState<UserRole>('operator')
+  const [byId, setById] = useState(false)
+  const [slug, setSlug] = useState('')
+  const name = user.displayName || user.email
+  const target = data?.canAddTo.find((o) => o.slug === org) ?? data?.canAddTo[0]
+  const addHere = async () => {
+    if (!target) return
+    try {
+      const out = await allow.mutateAsync({ email: user.email, org: target.slug, role })
+      notifyOk(out.added ? `Added to ${target.name}` : `${target.name} allowed`,
+        out.added
+          ? `${name} is a ${roleLabel(role)} in ${target.name} now, with the password they already have. Give them what they need there from ${target.name}.`
+          : `${target.name}'s admin can add ${name} now.`)
+      setOrg(null)
+    } catch (err) {
+      notifyError('Not added', err)
+    }
+  }
+  const allowById = async () => {
+    try {
+      await allow.mutateAsync({ email: user.email, org: slug.trim().toLowerCase() })
+      notifyOk('Organization allowed', `Its admin can add ${name} now, from Add person, by email.`)
+      setSlug('')
+      setById(false)
+    } catch (err) {
+      notifyError('Not allowed', err)
+    }
+  }
+  const takeAway = async (o: { slug: string; name: string; added: boolean }) => {
+    const what = o.added
+      ? `Take ${o.name} away from ${name}? They are signed out of it at their next click, and can no longer switch to it. ${o.name} keeps its records of them.`
+      : `Stop allowing ${o.name} to add ${name}?`
+    if (!window.confirm(what)) return
+    try {
+      await remove.mutateAsync({ email: user.email, org: o.slug })
+      notifyOk(`${o.name} taken away`, `${name} can no longer sign in to ${o.name}.`)
+    } catch (err) {
+      notifyError('Not changed', err)
+    }
+  }
+  return (
+    <Modal opened onClose={onClose} title={`Where ${name} works`} size="lg">
+      <Stack gap="sm">
+        {isLoading && <Text size="sm" c="dimmed">Loading…</Text>}
+        {error && <Text size="sm" c="rose">{error instanceof Error ? error.message : 'Could not load.'}</Text>}
+        {data && (
+          <>
+            <Text size={FS.body} c="dimmed">
+              {name} signs in here, at {data.home.name}, with their own password and second step. Only the
+              organizations below may have them. Taking one away stops them signing in there at once.
+            </Text>
+            {data.wasShareable && (
+              <Alert color="amber" variant="light" icon={<IconAlertTriangle size={16} />} p="xs">
+                <Text size={FS.body}>
+                  They were open to every organization before. No organization can add them now until you pick one here.
+                </Text>
+              </Alert>
+            )}
+            <OrgLine initials={initials(data.home.name)} name={data.home.name}
+              detail="Home: their password and second step are kept here"
+              right={<Badge variant="light" color="slate">{roleLabel(data.home.role as UserRole)}</Badge>} />
+            {data.organizations.map((o) => (
+              <OrgLine key={o.slug} initials={initials(o.name)} name={o.name}
+                detail={o.added
+                  ? `${o.disabled ? 'Removed by that organization' : 'Added'} · allowed by ${o.grantedBy}, ${new Date(o.grantedAt).toLocaleDateString()}`
+                  : `Allowed by ${o.grantedBy}, ${new Date(o.grantedAt).toLocaleDateString()}. Waiting for its admin to add them.`}
+                right={
+                  <Group gap="xs" wrap="nowrap">
+                    {o.added
+                      ? <Badge variant="light" color={o.disabled ? 'rose' : 'slate'}>{o.disabled ? 'removed there' : roleLabel((o.role ?? 'operator') as UserRole)}</Badge>
+                      : <Badge variant="light" color="amber">not added yet</Badge>}
+                    <Button size="compact-sm" variant="default" color="rose" c="rose"
+                      loading={remove.isPending && remove.variables?.org === o.slug}
+                      onClick={() => void takeAway(o)}>
+                      Take away
+                    </Button>
+                  </Group>
+                } />
+            ))}
+            {data.canAddTo.length > 0 && target && (
+              <Card withBorder radius="md" p="md" mt="xs">
+                <Text fw={600} size="sm" mb={SP.tight}>Add them to another organization</Text>
+                <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                  <Select label="Organization" allowDeselect={false} value={target.slug}
+                    data={data.canAddTo.map((o) => ({ value: o.slug, label: o.name }))}
+                    onChange={setOrg} />
+                  <Select label="Role there" allowDeselect={false} value={role}
+                    data={ROLES.filter((r) => r.value !== 'owner' || target.yourRole === 'owner').map((r) => ({ value: r.value, label: r.label }))}
+                    onChange={(v) => setRole((v ?? 'operator') as UserRole)} />
+                </SimpleGrid>
+                <Text size={FS.meta} c="dimmed" mt={SP.tight}>
+                  You are {roleLabel(target.yourRole as UserRole).toLowerCase() === 'owner' ? 'an owner' : 'an admin'} of {target.name}, so they are added now.
+                  They keep their password and second step, and nothing is sent to them.
+                </Text>
+                <Group justify="flex-end" mt="sm">
+                  <Button loading={allow.isPending && allow.variables?.org === target.slug} onClick={() => void addHere()}>
+                    Add to {target.name}
+                  </Button>
+                </Group>
+              </Card>
+            )}
+            {byId ? (
+              <Group align="flex-end" gap="xs">
+                <TextInput label="Organization ID" description="The short name its people sign in with"
+                  value={slug} onChange={(e) => setSlug(e.currentTarget.value.toLowerCase())}
+                  styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }} style={{ flex: 1 }} />
+                <Button variant="default" onClick={() => setById(false)}>Cancel</Button>
+                <Button disabled={!slug.trim()} loading={allow.isPending && !allow.variables?.role} onClick={() => void allowById()}>Allow</Button>
+              </Group>
+            ) : (
+              <Text size={FS.meta} c="dimmed">
+                An organization you do not run? <Anchor size={FS.meta} onClick={() => setById(true)}>Allow it by its ID</Anchor>, and its admin adds them there.
+              </Text>
+            )}
+          </>
+        )}
+      </Stack>
+    </Modal>
+  )
+}
+
+function OrgLine({ initials, name, detail, right }: { initials: string; name: string; detail: string; right: React.ReactNode }) {
+  return (
+    <Group justify="space-between" wrap="nowrap" gap="sm" py={SP.tight}
+      style={{ borderTop: '1px solid var(--mantine-color-default-border)' }}>
+      <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
+        <Avatar size="sm" radius="sm" color="violet">{initials}</Avatar>
+        <Box style={{ minWidth: 0 }}>
+          <Text size="sm" fw={600} truncate>{name}</Text>
+          <Text size={FS.meta} c="dimmed">{detail}</Text>
+        </Box>
+      </Group>
+      {right}
+    </Group>
+  )
+}
+
 function InvitedBadge({ expiresAt }: { expiresAt?: string | null | undefined }) {
   const expired = !!expiresAt && new Date(expiresAt).getTime() <= Date.now()
   const when = expiresAt ? new Date(expiresAt).toLocaleString() : ''

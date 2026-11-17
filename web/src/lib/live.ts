@@ -5,6 +5,9 @@ import type { MyServer,
   Asset,
   AssetAssignment,
   PersonOwnSetting,
+  AccessSection,
+  ManagedOrganization,
+  PersonOrganizations,
   PersonServer,
   AssetInput,
   AssetKind,
@@ -1429,21 +1432,47 @@ export async function sendTemporaryPassword(email: string): Promise<TemporaryPas
 
 /**
  * Adds a person who already signs in to another organization. No password:
- * they keep the one they have, and their home organization must have marked
- * them shareable. homeOrg is needed only when more than one has.
+ * they keep the one they have. Their home must have allowed this
+ * organization, or the caller must run their home too, in which case naming
+ * it (homeOrg) allows and adds in one step. team says what happened to the
+ * optional team: "added", or why not.
  */
 export async function createSharedAccount(input: {
   email: string
   displayName: string
   role: string
   homeOrg?: string
-}): Promise<{ email: string; role: string; displayName: string; shared: true }> {
+  teamId?: string
+}): Promise<{ email: string; role: string; displayName: string; shared: true; team: string }> {
   return post('/api/v1/users/shared', input)
 }
 
-/** Lets, or stops letting, other organizations add one of our people. */
-export async function setAccountShareable(email: string, shareable: boolean): Promise<{ email: string; shareable: boolean }> {
-  return send('PUT', `/api/v1/users/${encodeURIComponent(email)}/shareable`, { shareable })
+/** Where one of our own people works, and the organizations the caller could add them to. */
+export async function personOrganizations(email: string): Promise<PersonOrganizations> {
+  return get<PersonOrganizations>(`/api/v1/users/${encodeURIComponent(email)}/organizations`)
+}
+
+/**
+ * Allows an organization to have one of our people. With a role, and when the
+ * caller runs that organization too, adds them there in the same step.
+ */
+export async function allowPersonOrganization(email: string, org: string, role?: string): Promise<{ org: string; allowed: true; added: boolean }> {
+  return post(`/api/v1/users/${encodeURIComponent(email)}/organizations`, role ? { org, role } : { org })
+}
+
+/** Takes an organization away from one of our people; they are refused there at once. */
+export async function removePersonOrganization(email: string, org: string): Promise<void> {
+  await send('DELETE', `/api/v1/users/${encodeURIComponent(email)}/organizations/${encodeURIComponent(org)}`)
+}
+
+/** People of the other organizations the caller runs who are not here yet. */
+export async function fromOrganizations(): Promise<{ organizations: ManagedOrganization[] }> {
+  return get('/api/v1/users/from-organizations')
+}
+
+/** Everything one person may reach here, one section per kind of thing. */
+export async function personAccess(email: string): Promise<AccessSection[]> {
+  return get<AccessSection[]>(`/api/v1/users/${encodeURIComponent(email)}/access`)
 }
 
 /**

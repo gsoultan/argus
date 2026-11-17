@@ -65,6 +65,13 @@ func (s *Store) SessionState(ctx context.Context, email, sid string) (*SessionAc
 	if t.Disabled() {
 		return nil, ErrNoAccount
 	}
+	// Checked on every request, so a home taking this organization away
+	// ends the person's sessions here at their next click.
+	if ok, err := s.shareAllowed(ctx, email, t.ID, tenantIDOf(ctx)); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, ErrNoAccount
+	}
 	h, hh, err := s.sessionRow(WithTenant(ctx, t), email, "")
 	if err != nil {
 		return nil, err

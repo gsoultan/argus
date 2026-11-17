@@ -34,11 +34,22 @@ func TestSharedPersonSignsInWithHomeCredentialsOnlyWhereAllowed(t *testing.T) {
 		t.Fatalf("sharing an unknown address: %v, want the same ErrNoShareable", err)
 	}
 
+	// The old "shareable with any organization" flag is not an allowance.
 	if err := s.SetAccountShareable(hctx, alice, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetAccountShareable(octx, alice, true); err != ErrNoAccount {
-		t.Errorf("another organization set shareable on a person it does not have: %v", err)
+	if _, _, err := s.AddSharedMember(octx, SharedMember{Email: alice, Role: "approver"}); err != ErrNoShareable {
+		t.Fatalf("shared on the blanket flag alone: %v, want ErrNoShareable", err)
+	}
+	// Home names other, and only other.
+	if ok, err := s.AllowShare(hctx, "owner@northwind.id", alice, other); err != nil || !ok {
+		t.Fatalf("AllowShare: %v %v", ok, err)
+	}
+	if got, _ := s.Account(hctx, alice); got.Shareable {
+		t.Errorf("choosing an organization left the blanket flag on")
+	}
+	if _, err := s.AllowShare(octx, "owner@northwind.id", alice, home); err != ErrNoAccount {
+		t.Errorf("another organization allowed sharing of a person it does not have: %v", err)
 	}
 	row, h, err := s.AddSharedMember(octx, SharedMember{Email: alice, Role: "approver"})
 	if err != nil {
@@ -102,6 +113,29 @@ func TestSharedPersonSignsInWithHomeCredentialsOnlyWhereAllowed(t *testing.T) {
 	if err != nil || len(orgs) != 2 {
 		t.Fatalf("OrganizationsFor = %v, %v; want two", orgs, err)
 	}
+	// Home taking other away refuses her there at once, and drops it from her
+	// menu, without touching other's table; allowing it again restores her.
+	if err := s.RevokeShare(hctx, alice, other); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Authenticate(octx, alice, "a new and different passphrase"); err == nil {
+		t.Errorf("signed in to an organization her home took away")
+	}
+	if _, err := s.MemberOf(hctx, alice, other); err != ErrNotMember {
+		t.Errorf("may switch to an organization her home took away: %v", err)
+	}
+	if _, err := s.SessionState(octx, alice, ""); err != ErrNoAccount {
+		t.Errorf("a cookie in other still works after home took it away: %v", err)
+	}
+	if orgs, _ := s.OrganizationsFor(hctx, alice); len(orgs) != 1 {
+		t.Errorf("menu after taking other away = %v, want home only", orgs)
+	}
+	if _, err := s.AllowShare(hctx, "owner@northwind.id", alice, other); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Authenticate(octx, alice, "a new and different passphrase"); err != nil {
+		t.Errorf("allowed again and still refused: %v", err)
+	}
 	if err := s.SetAccountDisabled(octx, alice, true); err != nil {
 		t.Fatal(err)
 	}
@@ -151,8 +185,8 @@ func TestSameAddressInTwoOrganizationsIsTwoIdentities(t *testing.T) {
 		t.Errorf("X's bob is a member of Y: %v", err)
 	}
 	// Z wants to share bob. Both X and Y allow it: Z must say which.
-	_ = s.SetAccountShareable(xctx, bob, true)
-	_ = s.SetAccountShareable(yctx, bob, true)
+	_, _ = s.AllowShare(xctx, "x@northwind.id", bob, z)
+	_, _ = s.AllowShare(yctx, "y@northwind.id", bob, z)
 	if _, _, err := s.AddSharedMember(zctx, SharedMember{Email: bob, Role: "operator"}); err != ErrAmbiguousHome {
 		t.Fatalf("two shareable homes: %v, want ErrAmbiguousHome", err)
 	}
@@ -204,8 +238,9 @@ func TestSwitchingOrganizationsOverHTTP(t *testing.T) {
 	// The owner of home allows sharing of their own account; other's owner
 	// adds them as an auditor through the console route.
 	in := h.signIn(t, home.Slug, owner, pw)
-	if code, body := h.call(t, in, "", http.MethodPut, "/api/v1/users/"+owner+"/shareable", `{"shareable":true}`); code != http.StatusOK {
-		t.Fatalf("shareable = %d: %s", code, body)
+	if code, body := h.call(t, in, "", http.MethodPost, "/api/v1/users/"+owner+"/organizations",
+		`{"org":"`+other.Slug+`"}`); code != http.StatusOK {
+		t.Fatalf("allow other = %d: %s", code, body)
 	}
 	otherIn := h.signIn(t, other.Slug, otherOwner, otherPw)
 	if code, body := h.call(t, otherIn, "", http.MethodPost, "/api/v1/users/shared",

@@ -30,8 +30,12 @@ export interface User {
   multiOrg?: boolean
   /** They sign in through another organization; their password is not held here. */
   shared?: boolean
-  /** One of ours whom another organization may add without a new password. */
+  /** Marked "shareable with any organization" before organizations were chosen one by one. */
   shareable?: boolean
+  /** Other organizations one of ours has been added to, by name. */
+  alsoIn?: string[]
+  /** Was shareable with any organization and has none chosen yet: their home should pick. */
+  pickWhere?: boolean
   /**
    * Revoked rather than deleted. The audit log refers to people by address, so
    * an account is disabled and kept — and a disabled one must not be offered as
@@ -633,6 +637,64 @@ export interface PersonOwnSetting {
   personalAccounts: boolean
   sudo: boolean
   directSsh: TeamDirectSsh
+}
+
+/** One thing a person may reach; see AccessSection. */
+export interface AccessItem {
+  id: string
+  name: string
+  /** What it is on, and what it is: "db-01 · Postgres". */
+  where?: string
+  /** What they may do there, in words. */
+  what: string
+  /** A grant of their own here, besides any from teams. */
+  own: boolean
+  teams: string[]
+  /** When a time-limited grant ends. */
+  until?: string
+}
+
+/**
+ * One kind of thing a person can be given (servers, databases, brokers,
+ * cloud, and any kind added later), with theirs. The console draws these
+ * without knowing the kinds; give is the page where the kind is given.
+ */
+export interface AccessSection {
+  kind: string
+  label: string
+  give: string
+  empty: string
+  items: AccessItem[]
+}
+
+/** An organization a person's home allows to have them. */
+export interface ShareAllowance {
+  slug: string
+  name: string
+  grantedBy: string
+  grantedAt: string
+  /** That organization has added them; role is theirs there. */
+  added: boolean
+  role?: string
+  /** It added them and has since removed them. */
+  disabled?: boolean
+}
+
+/** Where one of our own people works, and where the caller could add them. */
+export interface PersonOrganizations {
+  home: { slug: string; name: string; role: string }
+  organizations: ShareAllowance[]
+  canAddTo: Array<{ slug: string; name: string; yourRole: string }>
+  /** Was "shareable with any organization" before; none chosen yet. */
+  wasShareable: boolean
+}
+
+/** Another organization the caller runs, and its people who are not here yet. */
+export interface ManagedOrganization {
+  slug: string
+  name: string
+  yourRole: string
+  people: Array<{ email: string; displayName: string; role: string }>
 }
 
 /** What one person may do on one server, and where it comes from. */

@@ -260,6 +260,33 @@ CREATE TABLE IF NOT EXISTS argus_platform.memberships (
 	PRIMARY KEY (email, tenant_id)
 );
 CREATE INDEX IF NOT EXISTS memberships_identity ON argus_platform.memberships (email, home_tenant);
+-- Which organizations a person's home allows to have them, one row each
+-- (shared_people.go). Replaces the old "shareable with any organization"
+-- switch. Created once: on that first creation every organization a person
+-- was already shared into is carried over, so nobody loses an organization
+-- they are in, and nobody gains one. Never re-filled after that, or an
+-- allowance a home took away would come back at the next start.
+DO $$
+BEGIN
+	PERFORM pg_advisory_xact_lock(hashtext('argus_platform.share_allowances'));
+	IF to_regclass('argus_platform.share_allowances') IS NULL THEN
+		CREATE TABLE argus_platform.share_allowances (
+			email       TEXT NOT NULL,
+			home_tenant TEXT NOT NULL REFERENCES argus_platform.tenants(id) ON DELETE CASCADE,
+			tenant_id   TEXT NOT NULL REFERENCES argus_platform.tenants(id) ON DELETE CASCADE,
+			granted_by  TEXT NOT NULL,
+			granted_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+			PRIMARY KEY (email, home_tenant, tenant_id),
+			CHECK (home_tenant <> tenant_id)
+		);
+		INSERT INTO argus_platform.share_allowances (email, home_tenant, tenant_id, granted_by)
+		SELECT email, home_tenant, tenant_id, 'carried over at upgrade'
+		  FROM argus_platform.memberships
+		 WHERE tenant_id <> home_tenant
+		ON CONFLICT DO NOTHING;
+	END IF;
+END
+$$;
 -- Each control server, saying it is alive every minute, and the windows in
 -- which none did (control_liveness.go). Platform-wide: one deployment, many
 -- organizations, the same control servers.

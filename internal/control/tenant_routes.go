@@ -412,8 +412,9 @@ func (a *API) postTenantDisabled(disabled bool) http.HandlerFunc {
 // from the default organization.
 func (a *API) joinCreatedTenant(r *http.Request, sess auth.Session, t *Tenant) error {
 	ctx := r.Context()
-	if err := a.store.SetAccountShareable(ctx, sess.Email, true); err != nil &&
-		!errors.Is(err, ErrAlreadyInState) {
+	// Allow this one organization for them, not every organization: the
+	// creator used to be marked shareable with anyone as a side effect.
+	if _, err := a.store.AllowShare(ctx, sess.Email, sess.Email, t); err != nil {
 		return err
 	}
 	tctx := WithTenant(ctx, t)

@@ -41,8 +41,9 @@ import {
   createAccount,
   sendTemporaryPassword,
   createSharedAccount,
-  setAccountShareable,
   personServers as livePersonServers,
+  personAccess as livePersonAccess,
+  fromOrganizations as liveFromOrganizations,
   resetAccountMFA, signOutAccount,
 } from '~/lib/live'
 import type { AuditPage } from '~/lib/live'
@@ -51,7 +52,7 @@ import type {
   AuditEvent,
   AccessRequest, Asset, AssetAssignment, AssetGroup, AssetInput, DirectLogin, DirectSsh, MyServer,
   ServerLoginAccount, ServerLoginAccounts, ServerApplications, RequestableHost, ServerLogin,
-  FleetStats, GatewayPolicy, HomeSnapshot, PersonOwnSetting, PersonServer, ServerAccount, Session, Team, TeamAccess,
+  FleetStats, GatewayPolicy, HomeSnapshot, AccessSection, ManagedOrganization, PersonOwnSetting, PersonServer, ServerAccount, Session, Team, TeamAccess,
   TeamAssignment, TemporaryPasswordOutcome, User,
 } from '~/types/domain'
 
@@ -397,24 +398,10 @@ export const api = {
     return { email, emailed: true, temporaryPasswordExpiresAt: expires }
   },
 
-  async addSharedAccount(input: { email: string; displayName: string; role: User['role']; homeOrg?: string }): Promise<void> {
-    if (isConfigured()) {
-      await createSharedAccount(input)
-      return
-    }
+  async addSharedAccount(input: { email: string; displayName: string; role: User['role']; homeOrg?: string; teamId?: string }): Promise<{ team: string }> {
+    if (isConfigured()) return createSharedAccount(input)
     await latency(250)
-    throw new Error('no account that can be shared uses this address')
-  },
-
-  async setShareable(email: string, shareable: boolean): Promise<void> {
-    if (isConfigured()) {
-      await setAccountShareable(email, shareable)
-      return
-    }
-    await latency(150)
-    const u = users.find((x) => x.email === email)
-    if (!u) throw new Error(`no account for ${email}`)
-    u.shareable = shareable
+    throw new Error('no account that can be added here uses this address')
   },
 
   async stats(): Promise<FleetStats> {
@@ -711,6 +698,41 @@ export const api = {
       id,
       (db.assignments.get(id) ?? []).filter((g) => g.userEmail !== email),
     )
+  },
+
+  /** People of the other organizations the caller runs who are not here yet; none in the demo. */
+  async fromOrganizations(): Promise<{ organizations: ManagedOrganization[] }> {
+    if (isConfigured()) return liveFromOrganizations()
+    return { organizations: [] }
+  },
+
+  /**
+   * Everything one person may reach, by kind. The demo has servers only, built
+   * from the same assignments as personServers.
+   */
+  async personAccess(email: string): Promise<AccessSection[]> {
+    if (isConfigured()) return livePersonAccess(email)
+    const servers = await this.personServers(email)
+    const empty = (kind: string, label: string, give: string, noun: string): AccessSection =>
+      ({ kind, label, give, items: [], empty: `No ${noun} yet. Give one to a team of theirs, or to them, on its page.` })
+    return [
+      {
+        kind: 'servers', label: 'Servers', give: '/assets',
+        empty: "No servers yet. Give one to a team of theirs, or to them, on the server's page.",
+        items: servers.map((s) => ({
+          id: s.assetId, name: s.hostname, own: s.ownSetting, teams: s.ownSetting ? [] : s.teams,
+          what: [
+            s.personalAccount ? `their own account${s.sudo ? ' with sudo' : ''}` : '',
+            s.principals.length ? `as ${s.principals.join(', ')}` : '',
+            s.personalAccount && s.directSsh === 'allow' ? 'direct SSH' : '',
+            s.personalAccount && s.directSsh === 'approve' ? 'direct SSH after approval' : '',
+          ].filter(Boolean).join(' · ') || 'no access of their own here',
+        })),
+      },
+      empty('databases', 'Databases', '/databases', 'databases'),
+      empty('brokers', 'Brokers', '/brokers', 'brokers'),
+      empty('cloud', 'Cloud', '/cloud', 'cloud access'),
+    ]
   },
 
   /** What one person may do on each server: their own setting replaces their teams'. */

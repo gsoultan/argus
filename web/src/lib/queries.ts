@@ -16,6 +16,9 @@ import {
   changeApproval as liveChangeApproval,
   databasePoolerSetup as liveDatabasePoolerSetup,
   dbAssignments as liveDBAssignments,
+  personOrganizations as livePersonOrganizations,
+  allowPersonOrganization as liveAllowPersonOrganization,
+  removePersonOrganization as liveRemovePersonOrganization,
   createDatabase as liveCreateDatabase,
   updateDatabase as liveUpdateDatabase,
   deleteDatabase as liveDeleteDatabase,
@@ -477,6 +480,52 @@ export function useRemoveAssignment() {
 export const personServersQuery = (email: string) =>
   queryOptions({ queryKey: ['person-servers', email], queryFn: () => api.personServers(email) })
 
+/** Everything one person may reach here, by kind. */
+export const personAccessQuery = (email: string) =>
+  queryOptions({
+    queryKey: ['person-access', email],
+    queryFn: () => api.personAccess(email),
+  })
+
+/** Where one of our own people works; only home in the demo. */
+export const personOrganizationsQuery = (email: string) =>
+  queryOptions({
+    queryKey: ['person-organizations', email],
+    queryFn: () => isConfigured()
+      ? livePersonOrganizations(email)
+      : Promise.resolve({ home: { slug: 'default', name: 'Default organization', role: '' }, organizations: [], canAddTo: [], wasShareable: false }),
+  })
+
+/** People of the other organizations the caller runs who are not here yet. */
+export const fromOrganizationsQuery = () =>
+  queryOptions({
+    queryKey: ['from-organizations'],
+    queryFn: () => api.fromOrganizations(),
+  })
+
+export function useAllowPersonOrganization() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { email: string; org: string; role?: string }) => liveAllowPersonOrganization(v.email, v.org, v.role),
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: ['person-organizations', v.email] })
+      void qc.invalidateQueries({ queryKey: qk.users })
+      void qc.invalidateQueries({ queryKey: qk.me })
+    },
+  })
+}
+
+export function useRemovePersonOrganization() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { email: string; org: string }) => liveRemovePersonOrganization(v.email, v.org),
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: ['person-organizations', v.email] })
+      void qc.invalidateQueries({ queryKey: qk.users })
+    },
+  })
+}
+
 export const teamsQuery = () => queryOptions({ queryKey: ['teams'], queryFn: api.teams })
 
 export const teamAssignmentsQuery = (assetId: string) =>
@@ -602,15 +651,11 @@ export function useAddSharedAccount() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: api.addSharedAccount,
-    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.users }),
-  })
-}
-
-export function useSetShareable() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (v: { email: string; shareable: boolean }) => api.setShareable(v.email, v.shareable),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.users }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.users })
+      void qc.invalidateQueries({ queryKey: ['from-organizations'] })
+      void qc.invalidateQueries({ queryKey: ['teams'] })
+    },
   })
 }
 

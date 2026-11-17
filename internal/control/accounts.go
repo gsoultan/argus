@@ -442,7 +442,12 @@ func (s *Store) SetTemporaryPassword(ctx context.Context, email, password string
 func (s *Store) AnyAccountExists(ctx context.Context) (bool, error) {
 	var exists bool
 	err := s.db(ctx).QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM users WHERE password_hash IS NOT NULL AND disabled_at IS NULL)`).
+		// A person shared in from another organization is an account here
+		// too, though their password is held at home. Without them an
+		// organization made only of shared people read as a fresh install,
+		// and a signed-out browser there was sent to the first-run page.
+		`SELECT EXISTS(SELECT 1 FROM users
+		                WHERE (password_hash IS NOT NULL OR home_tenant IS NOT NULL) AND disabled_at IS NULL)`).
 		Scan(&exists)
 	return exists, err
 }

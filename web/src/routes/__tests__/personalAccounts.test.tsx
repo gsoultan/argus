@@ -139,7 +139,7 @@ describe('one person, on one server', () => {
     ])
   }, 20_000)
 
-  it('lists what someone can do on each server, and where it comes from', async () => {
+  it('lists what someone can do on each server and database, and where it comes from', async () => {
     signedInAs('admin')
     const citra = users.find((u) => u.email !== currentUser.email)!
     vi.spyOn(api, 'personServers').mockResolvedValue([
@@ -148,14 +148,42 @@ describe('one person, on one server', () => {
       { assetId: 'a2', hostname: 'web-01', principals: [], personalAccount: true, sudo: true,
         directSsh: 'allow', source: 'teams', teams: ['Deploy'], ownSetting: false },
     ])
+    const live = vi.spyOn(api, 'personAccess')
     await renderRoute('/teams?tab=people')
 
     const row = (await screen.findByText(citra.email)).closest('tr')!
-    fireEvent.click(within(row).getByRole('button', { name: /^servers$/i }))
+    fireEvent.click(within(row).getByRole('button', { name: /what they can do/i }))
     const dialog = await screen.findByRole('dialog')
     expect(await within(dialog).findByText('prod-01')).toBeInTheDocument()
-    expect(within(dialog).getByText(/set for them/i)).toBeInTheDocument()
-    expect(within(dialog).getByText(/from Deploy/)).toBeInTheDocument()
+    expect(within(dialog).getAllByText(/set for them/i).length).toBeGreaterThan(0)
+    expect(within(dialog).getAllByText(/from Deploy/).length).toBeGreaterThan(0)
     expect(within(dialog).getByText(/own account with sudo · direct SSH/)).toBeInTheDocument()
+    // Every kind has a heading, so a database given to them is never missing
+    // from their page; an empty kind says how to give one.
+    for (const k of [/^servers$/i, /^databases$/i, /^brokers$/i, /^cloud$/i]) {
+      expect(within(dialog).getByText(k)).toBeInTheDocument()
+    }
+    expect(within(dialog).getByText(/no databases yet/i)).toBeInTheDocument()
+    expect(live).toHaveBeenCalledWith(citra.email)
+  }, 20_000)
+
+  it('shows a database given to someone, under their own name or a team', async () => {
+    signedInAs('admin')
+    const citra = users.find((u) => u.email !== currentUser.email)!
+    vi.spyOn(api, 'personAccess').mockResolvedValue([
+      { kind: 'servers', label: 'Servers', give: '/assets', empty: 'No servers yet.', items: [] },
+      { kind: 'databases', label: 'Databases', give: '/databases', empty: 'No databases yet.', items: [
+        { id: 'd1', name: 'orders', where: 'sg-db-01 · Postgres', what: 'Read, or Write with an approved request',
+          own: false, teams: ['Database team'] },
+      ] },
+    ])
+    await renderRoute('/teams?tab=people')
+    const row = (await screen.findByText(citra.email)).closest('tr')!
+    fireEvent.click(within(row).getByRole('button', { name: /what they can do/i }))
+    const dialog = await screen.findByRole('dialog')
+    expect(await within(dialog).findByText('orders')).toBeInTheDocument()
+    expect(within(dialog).getByText(/on sg-db-01 · Postgres/)).toBeInTheDocument()
+    expect(within(dialog).getByText('Read, or Write with an approved request')).toBeInTheDocument()
+    expect(within(dialog).getByText(/from Database team/)).toBeInTheDocument()
   }, 20_000)
 })
