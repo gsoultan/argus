@@ -43,6 +43,8 @@ import {
   backupTest as liveBackupTest,
   cancelBackupTest as liveCancelBackupTest,
   tryBackupChecks as liveTryBackupChecks,
+  databaseReplicas as liveDatabaseReplicas,
+  askReplica as liveAskReplica,
   savedQueries as liveSavedQueries,
   saveQuery as liveSaveQuery,
   updateSavedQuery as liveUpdateSavedQuery,
@@ -53,7 +55,7 @@ import {
   checkControlUpdate as liveCheckControlUpdate,
   removeRecording as removeRecordingLive,
 } from '~/lib/live'
-import type { AccessRequest, AssetInput, BackupsView, DirectSsh, PersonOwnSetting, Session, TeamAccess, User } from '~/types/domain'
+import type { AccessRequest, AssetInput, BackupsView, DatabaseReplica, DirectSsh, PersonOwnSetting, Session, TeamAccess, User } from '~/types/domain'
 
 export const qk = {
   me: ['me'] as const,
@@ -883,6 +885,27 @@ export const useCancelBackupTest = () =>
   useBackupMutation((v: { id: string; testId: string }) => liveCancelBackupTest(v.id, v.testId), (v) => v.id)
 export const useTryBackupChecks = () =>
   useMutation({ mutationFn: (v: { id: string; checks: Parameters<typeof liveTryBackupChecks>[1] }) => liveTryBackupChecks(v.id, v.checks) })
+/** Streaming replicas of a database's server: every 3 s while one waits or runs, otherwise every 30 s. */
+export const databaseReplicasQuery = (id: string, enabled = true) =>
+  queryOptions({
+    queryKey: ['database', id, 'replicas'] as const,
+    queryFn: () => liveDatabaseReplicas(id),
+    enabled: isConfigured() && enabled,
+    refetchInterval: (q) => ((q.state.data as DatabaseReplica[] | undefined)?.some((r) => r.state === 'running' || r.state === 'pending')
+      ? 3_000 : 30_000),
+  })
+
+export function useAskReplica() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...input }: { id: string } & Parameters<typeof liveAskReplica>[1]) => liveAskReplica(id, input),
+    onSettled: (_d, _e, v) => {
+      void qc.invalidateQueries({ queryKey: ['database', v.id, 'replicas'] })
+      void qc.invalidateQueries({ queryKey: ['requests'] })
+    },
+  })
+}
+
 export const useSetBackupSchedule = () =>
   useBackupMutation((v: { id: string } & Parameters<typeof liveSetBackupSchedule>[1]) =>
     liveSetBackupSchedule(v.id, v), (v) => v.id)

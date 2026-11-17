@@ -30,7 +30,7 @@ import type { MyServer,
   ServerAccount,
   TemporaryPasswordOutcome,
   User,
-  BackupCatalog, BackupDestination, BackupSchedule, BackupTest, BackupsView, CheckResult, DatabaseBackup, DatabaseRestore, TestCheck,
+  BackupCatalog, BackupDestination, BackupSchedule, BackupTest, BackupsView, CheckResult, DatabaseBackup, DatabaseReplica, DatabaseRestore, TestCheck,
   Database, DBAccess, DBAssignment, DBEngine, DBLabel, DBLevel, DBPolicy, DBPoolerSetup,
   StatementAsk, StatementItem, ChangeApproval,
 } from '~/types/domain'
@@ -2038,6 +2038,19 @@ export async function cancelRestore(id: string, restoreId: string): Promise<void
 /** Puts the copy a replace kept back in place of the restored database. */
 export async function undoRestore(id: string, restoreId: string, confirm: string): Promise<DatabaseRestore> {
   return post<DatabaseRestore>(`${dbPath(id)}/restores/${encodeURIComponent(restoreId)}/undo`, { confirm })
+}
+
+/* ── Streaming replicas on managed servers ──────────────────────────────── */
+
+export async function databaseReplicas(id: string): Promise<DatabaseReplica[]> {
+  return get(`${dbPath(id)}/replicas`)
+}
+
+/** Asks for a streaming replica of the database's server on another server; it waits for an approver. */
+export async function askReplica(id: string, input: {
+  assetId: string; name: string; replicaAddress?: string; primaryAddress?: string; reason: string
+}): Promise<DatabaseReplica> {
+  return post<DatabaseReplica>(`${dbPath(id)}/replicas`, input)
 }
 
 export async function backupSchedule(id: string): Promise<BackupSchedule> {

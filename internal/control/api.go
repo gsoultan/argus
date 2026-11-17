@@ -81,6 +81,9 @@ type API struct {
 
 	// jobs is the backups and restores running through this replica.
 	jobs backupJobs
+	// openAgent replaces the tunnel hub for a database replica's jobs; set
+	// by tests that play the agents. See db_replica.go.
+	openAgent openAgentFunc
 
 	// cloud is the cloud providers and the syncs in flight; see cloud_routes.go.
 	cloud cloudState
@@ -370,6 +373,9 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/databases/{id}/backups/{backup}/restore", a.withDatabase(tunnel.LevelOwner, a.postRestore))
 	mux.HandleFunc("POST /api/v1/databases/{id}/restores/{restore}/undo", a.withDatabase(tunnel.LevelDBA, a.postRestoreUndo))
 	mux.HandleFunc("POST /api/v1/databases/{id}/restores/{restore}/cancel", a.withDatabase(tunnel.LevelOwner, a.postRestoreCancel))
+	// Streaming replicas of a managed Postgres; see db_replica.go.
+	mux.HandleFunc("GET /api/v1/databases/{id}/replicas", a.withPostgres("replicas", tunnel.LevelRead, a.getReplicas))
+	mux.HandleFunc("POST /api/v1/databases/{id}/replicas", a.withPostgres("replicas", tunnel.LevelDBA, a.postReplica))
 	// Saved queries; see saved_queries.go.
 	mux.HandleFunc("POST /api/v1/databases/{id}/statements", a.withEngines("statement approvals", tunnel.LevelWrite, approvalEngines, a.postStatementAsk))
 	mux.HandleFunc("GET /api/v1/databases/{id}/approval", a.withEngines("approvals", tunnel.LevelRead, approvalEngines, a.getChangeApproval))

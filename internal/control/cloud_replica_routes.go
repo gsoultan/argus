@@ -239,10 +239,21 @@ func (a *API) copyReplicaAccess(ctx context.Context, db Database, actor string) 
 	if err != nil {
 		return
 	}
+	given := a.copyAccess(ctx, fromID, db, actor)
+	if len(given) > 0 {
+		a.auditDB(ctx, "db.assigned", "notice", actor, db.Hostname, fmt.Sprintf("%s (%s) is a read replica of %s, so it took %s's access in Argus, capped at read: %s.",
+			db.Name, rep.Name, primary.Name, primary.Name, strings.Join(given, ", ")))
+	}
+}
+
+// copyAccess gives db the access database fromID has in Argus, with write
+// and owner made read, leaving alone whoever db names already. It returns
+// what it gave, in words.
+func (a *API) copyAccess(ctx context.Context, fromID string, db Database, actor string) []string {
 	from, err := a.store.DBAssignments(ctx, fromID)
 	if err != nil {
 		a.log.Error("replica access not copied", "database", db.ID, "error", err)
-		return
+		return nil
 	}
 	have, _ := a.store.DBAssignments(ctx, db.ID)
 	taken := map[string]bool{}
@@ -261,10 +272,7 @@ func (a *API) copyReplicaAccess(ctx context.Context, db Database, actor string) 
 		}
 		given = append(given, assignWho(g)+" "+g.Level)
 	}
-	if len(given) > 0 {
-		a.auditDB(ctx, "db.assigned", "notice", actor, db.Hostname, fmt.Sprintf("%s (%s) is a read replica of %s, so it took %s's access in Argus, capped at read: %s.",
-			db.Name, rep.Name, primary.Name, primary.Name, strings.Join(given, ", ")))
-	}
+	return given
 }
 
 func assignKey(g DBAssignment) string {

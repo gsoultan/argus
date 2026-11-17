@@ -1227,6 +1227,56 @@ func (m *DatabaseBackup) Schema(t *storm.Table) {
 	t.Index(&m.Database).Unique().Where("state = 'running'::text").Named("database_backups_one_running")
 }
 
+// DatabaseReplica is table database_replicas: a streaming replica of a
+// Postgres on a server Argus manages, onto another (migration 093).
+type DatabaseReplica struct {
+	ID              [16]byte
+	Database        Database
+	Asset           Asset
+	Name            string
+	ReplicaAddress  string
+	PrimaryAddress  string
+	RequestedBy     string
+	Reason          string
+	Request         *AccessRequest
+	State           string
+	Stage           string
+	Detail          string
+	Error           string
+	ReplicaDatabase *Database
+	CreatedAt       time.Time
+	StartedAt       *time.Time
+	FinishedAt      *time.Time
+}
+
+func (m *DatabaseReplica) Schema(t *storm.Table) {
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Database).ConstraintName("database_replicas_database_id_fkey")
+	t.Col(&m.Database).OnDelete(storm.Cascade)
+	t.Col(&m.Database).NoIndex()
+	t.Col(&m.Asset).ConstraintName("database_replicas_asset_id_fkey")
+	t.Col(&m.Asset).OnDelete(storm.Cascade)
+	t.Col(&m.Asset).NoIndex()
+	t.Col(&m.Request).ConstraintName("database_replicas_request_id_fkey")
+	t.Col(&m.Request).OnDelete(storm.SetNull)
+	t.Col(&m.Request).NoIndex()
+	t.Col(&m.ReplicaDatabase).ConstraintName("database_replicas_replica_database_id_fkey")
+	t.Col(&m.ReplicaDatabase).OnDelete(storm.SetNull)
+	t.Col(&m.ReplicaDatabase).NoIndex()
+	t.Col(&m.Reason).Default("''::text")
+	t.Col(&m.State).Default("'pending'::text")
+	t.Col(&m.Stage).Default("''::text")
+	t.Col(&m.Detail).Default("''::text")
+	t.Col(&m.Error).Default("''::text")
+	t.Col(&m.CreatedAt).Default("now()")
+	t.UniqueNamed("database_replicas_database_id_name_key", &m.Database, &m.Name)
+	t.CheckNamed("database_replicas_name_check", "name ~ '^[a-z][a-z0-9_]{0,39}$'::text")
+	t.CheckNamed("database_replicas_state_check",
+		"state = ANY (ARRAY['pending'::text, 'denied'::text, 'cancelled'::text, 'running'::text, 'done'::text, 'failed'::text])")
+	t.Index(&m.Asset).Named("database_replicas_asset_idx")
+	t.Index(&m.Request).Named("database_replicas_request_idx")
+}
+
 // DatabaseRestore is table database_restores: one restore, into a new
 // database or over the existing one, and the copy a replace kept
 // (migration 032).
@@ -1367,6 +1417,7 @@ func All() []any {
 		&DatabaseBackupSchedule{},
 		&DatabaseBackupTest{},
 		&DatabaseChange{},
+		&DatabaseReplica{},
 		&DatabaseRestore{},
 		&DatabaseStatement{},
 		&DatabaseStatementItem{},

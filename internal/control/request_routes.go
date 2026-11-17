@@ -259,6 +259,9 @@ func (a *API) postDecision(w http.ResponseWriter, r *http.Request) {
 			a.restoreDenied(r.Context(), out.ID, sess.Email, in.Note)
 		}
 	}
+	if out.Principal == replicaPrincipal {
+		a.replicaDecided(r.Context(), out.ID, in.Decision, sess.Email, in.Note)
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -313,6 +316,9 @@ func (a *API) postCancel(w http.ResponseWriter, r *http.Request) {
 	a.closeRequestAlerts(r.Context(), out)
 	if out.Principal == "db:restore" {
 		a.restoreCancelled(r.Context(), out.ID, sess.Email)
+	}
+	if out.Principal == replicaPrincipal {
+		a.replicaDecided(r.Context(), out.ID, "cancelled", sess.Email, "")
 	}
 	if out.Principal == statementPrincipal {
 		if asks, err := a.store.StatementAsks(r.Context(), []string{out.ID}); err == nil {
