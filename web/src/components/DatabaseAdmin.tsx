@@ -68,6 +68,12 @@ export interface AdminOp {
   binary?: boolean
   disableOnError?: boolean
   publisherGone?: boolean
+  /** network.set: who may connect, and how (see DatabaseNetwork). */
+  reach?: string
+  addresses?: string[]
+  sources?: string[]
+  confirm?: string
+  restart?: boolean
 }
 export interface AdminFailure { error?: string; code?: string; detail?: string; hint?: string }
 export interface AdminResult<T = unknown> { data?: T; tag?: string; ms?: number; error?: AdminFailure }
@@ -84,6 +90,8 @@ export interface AdminPanelProps {
   narrow: boolean
   onBack?: () => void
   onAskForAccess?: () => void
+  /** The server the database runs on, for the network panel. */
+  assetId?: string
 }
 
 const REFRESH_MS = 10_000

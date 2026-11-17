@@ -336,8 +336,8 @@ function AddFound({ app, engine, added, onAdd }: {
                 In Argus{engine === 'redis' ? '' : ` as ${db.dbname}`}
               </ButtonLink>
             )}
-            {db && engine === 'redis' && localOnly && (
-              <Tooltip multiline w={260} label="It listens on the loopback only, so other machines get “connection refused”. Choose which machines may connect, and Argus changes its bind and this server's firewall.">
+            {db && (engine === 'redis' || engine === 'postgres') && localOnly && (
+              <Tooltip multiline w={260} label="It listens on the loopback only, so other machines get “connection refused”. Choose which machines may connect, and Argus changes where it listens and this server's firewall.">
                 <ButtonLink to="/databases/$dbId" params={{ dbId: db.id }} search={{ panel: 'network' }} size="compact-xs" variant="default">
                   Let other machines connect…
                 </ButtonLink>

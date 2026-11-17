@@ -67,6 +67,13 @@ type PostgresConfig struct {
 	// PGRoot is where pgbouncer.ini is looked for, for a Postgres on another
 	// server (pgremote.go); empty is "/".
 	PGRoot string
+	// Executable and StateDir run and remember the server's firewall rules
+	// (firewall.go); Firewall and Restart stand in for the firewall and for
+	// restarting Postgres's service, in tests.
+	Executable string
+	StateDir   string
+	Firewall   func(context.Context, tunnel.FirewallRequest) tunnel.FirewallResult
+	Restart    func(ctx context.Context, unit string) error
 }
 
 // Defaults when the grant names none.
@@ -1084,6 +1091,9 @@ func (s *pgSession) adminOp(ctx context.Context, req tunnel.PGRequest) error {
 	if s.db.Level != tunnel.LevelDBA {
 		return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Code: "42501",
 			Error: "extensions and replication are DBA work; this session is at " + s.db.Level})
+	}
+	if op.Kind == tunnel.AdminNetwork || op.Kind == tunnel.AdminNetworkSet {
+		return s.network(ctx, req)
 	}
 	built, err := buildAdminSQL(op, s.g.Email)
 	if err != nil {

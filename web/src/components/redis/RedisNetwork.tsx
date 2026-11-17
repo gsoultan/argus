@@ -1,21 +1,19 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
-  ActionIcon, Alert, Badge, Box, Button, Checkbox, Code, CopyButton, Group, Modal, PasswordInput, Radio, Select, SimpleGrid,
-  Stack, Table, Text, TextInput, Tooltip,
+  Alert, Badge, Box, Button, Checkbox, Code, Group, Modal, PasswordInput, Radio, SimpleGrid, Stack, Table, Text, TextInput,
 } from '@mantine/core'
-import { IconAlertTriangle, IconCheck, IconCopy, IconNetwork, IconX } from '@tabler/icons-react'
+import { IconAlertTriangle, IconCheck, IconNetwork, IconX } from '@tabler/icons-react'
 import { FS, SP } from '~/theme'
 import { SectionCard } from '~/components/page'
 import type { StoreRequest, StoreSession } from '~/components/useStoreSession'
 import {
-  ADDRESS_STATE, REACH, connectCommand, inPrefix, listenFor, networkSummary, parseSource, privateNetworks, reachPlan,
-  type PlanStep, type Reach, type RedisLoginResult, type RedisNetworkData, type RedisNetworkResult, type RedisSecureResult,
+  ADDRESS_STATE, REACH, connectCommand, listenFor, networkSummary, privateNetworks, reachPlan,
+  type Reach, type RedisLoginResult, type RedisNetworkData, type RedisNetworkResult, type RedisSecureResult,
 } from '~/lib/redisManage'
 import { assetsQuery } from '~/lib/queries'
-import { isConfigured, reachCheck, type ReachCheckAnswer } from '~/lib/live'
-import { assetName } from '~/lib/assetType'
-import type { Asset } from '~/types/domain'
+import { isConfigured } from '~/lib/live'
+import { ClientTest, Copy, PlanSteps, SourcePicker, knownServers, plural } from '~/components/network/ReachParts'
 import { dataOf, type ChangeAnswer } from '~/components/redis/useRedisChange'
 
 /*
@@ -32,41 +30,6 @@ Where a machine that may connect is itself an Argus server, its agent can
 connect for real: the one check that sees the firewall from the client's side.
 */
 
-function Copy({ value, label }: { value: string; label: string }) {
-  return (
-    <CopyButton value={value}>
-      {({ copied, copy }) => (
-        <Tooltip label={copied ? 'Copied' : label}>
-          <ActionIcon variant="subtle" size="sm" onClick={copy} aria-label={label}>{copied ? <IconCheck size={12} /> : <IconCopy size={12} />}</ActionIcon>
-        </Tooltip>
-      )}
-    </CopyButton>
-  )
-}
-
-const STEP_MARK: Record<PlanStep['state'], { icon: string; color: string }> = {
-  ok: { icon: '✓', color: 'teal' },
-  change: { icon: '+', color: 'azure' },
-  skip: { icon: '–', color: 'slate' },
-  blocked: { icon: '✕', color: 'rose' },
-  warn: { icon: '!', color: 'amber' },
-}
-
-/** An Argus server, with one of its private IPv4 addresses. */
-interface KnownServer { id: string; name: string; address: string }
-
-function knownServers(assets: Asset[] | undefined, self: string): KnownServer[] {
-  const out: KnownServer[] = []
-  for (const a of assets ?? []) {
-    if (a.id === self) continue
-    for (const ad of a.addresses ?? []) {
-      if (ad.family === 'ipv4' && !ad.public) out.push({ id: a.id, name: assetName(a), address: ad.address })
-    }
-  }
-  return out
-}
-
-function plural(n: number, one: string, many: string): string { return n === 1 ? one : many }
 
 /** Who can connect now, in one line. */
 function nowText(n: RedisNetworkData): { tone: string; text: string } {
@@ -93,9 +56,6 @@ export function RedisNetwork({ s, canChange, change, assetId, onNetwork }: {
   const [err, setErr] = useState<string | null>(null)
   const [reach, setReach] = useState<Reach>('local')
   const [sources, setSources] = useState<string[]>([])
-  const [names, setNames] = useState<Record<string, string>>({})
-  const [typed, setTyped] = useState('')
-  const [typedErr, setTypedErr] = useState<string | null>(null)
   const [confirmName, setConfirmName] = useState('')
   const [understood, setUnderstood] = useState(false)
   const [secure, setSecure] = useState(false)
@@ -143,16 +103,8 @@ export function RedisNetwork({ s, canChange, change, assetId, onNetwork }: {
     (reach !== 'any' || confirmName.trim().toLowerCase() === host.toLowerCase()) &&
     (reach !== 'network' || understood)
   const now = nowText(n)
-  const suggest = servers.filter((k) => !sources.includes(k.address) && n.addresses.some((a) => a.private && inPrefix(k.address, a.prefix)))
   const publicIPs = n.addresses.filter((a) => !a.private).map((a) => a.ip)
 
-  const add = (raw: string) => {
-    const p = parseSource(raw)
-    if ('error' in p) { setTypedErr(p.error); return }
-    setTypedErr(null)
-    setTyped('')
-    setSources((x) => x.includes(p.source) ? x : [...x, p.source].slice(0, 32))
-  }
 
   const apply = async () => {
     setBusy(true)
@@ -203,40 +155,7 @@ export function RedisNetwork({ s, canChange, change, assetId, onNetwork }: {
     </Box>
   )
 
-  const picker = (
-    <Stack gap={6}>
-      {sources.map((src) => {
-        const k = servers.find((x) => x.address === src)
-        return (
-          <Group key={src} gap={SP.snug} wrap="nowrap" px={8} py={4} style={{ border: '1px solid var(--color-line)', borderRadius: 8 }}>
-            <Badge size="xs" variant="light" color={k ? 'azure' : 'slate'}>{k ? 'Argus server' : src.includes('/') ? 'Network' : 'Address'}</Badge>
-            <Text size="xs" ff="monospace">{src}</Text>
-            <TextInput size="xs" variant="unstyled" placeholder={k ? k.name : 'what is it? (optional)'} value={k ? k.name : names[src] ?? ''}
-              readOnly={!!k} aria-label={`Name for ${src}`} style={{ flex: 1 }}
-              onChange={(e) => { const v = e.currentTarget.value; setNames((m) => ({ ...m, [src]: v })) }} />
-            <ActionIcon variant="subtle" size="sm" aria-label={`Remove ${src}`} onClick={() => setSources((x) => x.filter((y) => y !== src))}><IconX size={12} /></ActionIcon>
-          </Group>
-        )
-      })}
-      <Group gap={6} wrap="nowrap" align="flex-start">
-        <TextInput size="xs" style={{ flex: 1 }} placeholder="Add an address or range, like 10.0.0.72 or 10.0.4.0/24"
-          aria-label="Add an address or range" value={typed} error={typedErr}
-          onChange={(e) => { setTyped(e.currentTarget.value); setTypedErr(null) }}
-          onKeyDown={(e) => { if (e.key === 'Enter' && typed.trim()) { e.preventDefault(); add(typed) } }} />
-        <Button size="xs" variant="default" disabled={!typed.trim()} onClick={() => add(typed)}>Add</Button>
-      </Group>
-      {suggest.length > 0 && (
-        <Group gap={4}>
-          <Text size={FS.micro} c="dimmed">Argus servers on the same network:</Text>
-          {suggest.slice(0, 6).map((k) => (
-            <Button key={k.id + k.address} size="compact-xs" variant="default" onClick={() => setSources((x) => [...x, k.address])}>
-              + {k.name} · {k.address}
-            </Button>
-          ))}
-        </Group>
-      )}
-    </Stack>
-  )
+  const picker = <SourcePicker n={n} sources={sources} setSources={setSources} servers={servers} />
 
   const firewallNote = n.firewall
     ? `${n.firewall} (${n.firewallActive ? 'on' : 'off'})`
@@ -291,19 +210,7 @@ export function RedisNetwork({ s, canChange, change, assetId, onNetwork }: {
 
           <Box>
             <Text size="sm" fw={600} mb={6}>What Argus will change on {host}</Text>
-            <Stack gap={0}>
-              {plan.steps.map((st, i) => (
-                <Group key={i} gap="sm" wrap="nowrap" align="flex-start" py={8} style={{ borderTop: i ? '1px solid var(--color-line)' : undefined }}>
-                  <Badge size="sm" circle variant={st.state === 'skip' ? 'outline' : 'light'} color={STEP_MARK[st.state].color}>{STEP_MARK[st.state].icon}</Badge>
-                  <Box style={{ flex: 1, minWidth: 0 }}>
-                    <Text size={FS.meta} fw={600}>{st.title}</Text>
-                    {st.detail && <Text size={FS.micro} c="dimmed" lh={1.45}>{st.detail}</Text>}
-                    {st.diff && <Code block mt={4} style={{ fontSize: 11 }}>{`- ${st.diff.from}\n+ ${st.diff.to}`}</Code>}
-                    {st.lines && st.lines.length > 0 && <Code block mt={4} style={{ fontSize: 11, whiteSpace: 'pre-wrap' }}>{st.lines.join('\n')}</Code>}
-                  </Box>
-                </Group>
-              ))}
-            </Stack>
+            <PlanSteps steps={plan.steps} />
             {plan.blocked && !same && <Text size={FS.micro} c="rose" mt={4}>Not yet: {plan.blocked}.</Text>}
             {waits && !same && (
               <Text size={FS.micro} c="dimmed" mt={4}>
@@ -347,7 +254,8 @@ export function RedisNetwork({ s, canChange, change, assetId, onNetwork }: {
         </Table>
         <Text size={FS.micro} c="dimmed">Checked from {host} itself, which its own firewall does not stop. Test from the client’s side below.</Text>
 
-        {current !== 'local' && <ClientTest n={n} sources={current === 'selected' ? n.firewallSources ?? [] : []} servers={servers} />}
+        {current !== 'local' && <ClientTest n={n} engine="redis" sources={current === 'selected' ? n.firewallSources ?? [] : []} servers={servers}
+          command={(ip) => `redis-cli -h ${ip} -p ${n.port} --user <user> --askpass PING`} />}
       </Stack>
 
       <Modal opened={secure} onClose={() => setSecure(false)} title="Give the default user a password" size="md">
@@ -362,67 +270,6 @@ export function RedisNetwork({ s, canChange, change, assetId, onNetwork }: {
         </Stack>
       </Modal>
     </SectionCard>
-  )
-}
-
-/**
- * Connect from the client's side: an Argus server among the machines that
- * may connect tries through its own agent; any other machine gets the
- * command to run there.
- */
-function ClientTest({ n, sources, servers }: { n: RedisNetworkData; sources: string[]; servers: KnownServer[] }) {
-  const target = n.addresses.find((a) => a.state === 'signin' || a.state === 'open')?.ip
-  const [results, setResults] = useState<Record<string, ReachCheckAnswer | 'busy'>>({})
-  const [pick, setPick] = useState<string | null>(null)
-  if (!target) return null
-  const listed = sources.map((src) => ({ src, k: servers.find((x) => x.address === src) }))
-  const others = servers.filter((k) => n.addresses.some((a) => a.private && inPrefix(k.address, a.prefix)))
-  const picked = others.find((x) => x.id === pick)
-
-  const run = async (k: KnownServer) => {
-    setResults((r) => ({ ...r, [k.id]: 'busy' }))
-    try {
-      const ans = await reachCheck(k.id, { host: target, port: n.port, engine: 'redis' })
-      setResults((r) => ({ ...r, [k.id]: ans }))
-    } catch (e) {
-      setResults((r) => ({ ...r, [k.id]: { state: 'failed', error: e instanceof Error ? e.message : String(e) } }))
-    }
-  }
-  const row = (key: string, label: ReactNode, k: KnownServer | undefined) => {
-    const r = k ? results[k.id] : undefined
-    const res = r && r !== 'busy' ? r : null
-    const good = res?.state === 'ok' && res.connected && res.answer !== 'protected'
-    let detail: string | undefined
-    if (!k) detail = 'not an Argus server: run the command below there'
-    else if (!res) detail = `can try ${target}:${n.port} from there`
-    else if (res.state !== 'ok') detail = res.error
-    else if (!res.connected) detail = res.detail
-    else if (res.answer === 'signin') detail = `connected in ${res.ms} ms; Redis asked for a sign-in`
-    else if (res.answer === 'open') detail = `connected in ${res.ms} ms; Redis answered with no sign-in`
-    else detail = res.detail ?? 'connected'
-    return (
-      <Group key={key} gap={SP.snug} wrap="nowrap" px={8} py={6} style={{ border: '1px solid var(--color-line)', borderRadius: 8 }}>
-        <Text size="xs" fw={700} c={!res ? 'dimmed' : good ? 'teal' : 'rose'} w={14}>{!res ? '?' : good ? '✓' : '✕'}</Text>
-        <Box style={{ flex: 1, minWidth: 0 }}>
-          <Text size="xs">{label}</Text>
-          <Text size={FS.micro} c="dimmed">{detail}</Text>
-        </Box>
-        {k && <Button size="compact-xs" variant="subtle" loading={r === 'busy'} onClick={() => void run(k)}>{res ? 'Test again' : 'Test'}</Button>}
-      </Group>
-    )
-  }
-  const cmd = `redis-cli -h ${target} -p ${n.port} --user <user> --askpass PING`
-  return (
-    <Stack gap={6}>
-      <Text size="sm" fw={600}>Test from another machine</Text>
-      {listed.map(({ src, k }) => row(src, <><Text span ff="monospace" size="xs">{src}</Text>{k && ` · ${k.name}`}</>, k))}
-      {listed.length === 0 && others.length > 0 && (
-        <Select size="xs" placeholder="Test from an Argus server" data={others.map((k) => ({ value: k.id, label: `${k.name} · ${k.address}` }))}
-          value={pick} onChange={setPick} aria-label="Test from an Argus server" style={{ maxWidth: 360 }} />
-      )}
-      {listed.length === 0 && picked && row(picked.id, `${picked.name} · ${picked.address}`, picked)}
-      <Group gap={4} wrap="nowrap"><Code style={{ flex: 1, fontSize: 11.5 }}>{cmd}</Code><Copy value={cmd} label="Copy command" /></Group>
-    </Stack>
   )
 }
 

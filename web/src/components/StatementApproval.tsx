@@ -54,7 +54,7 @@ interface Open {
 }
 
 /** ask(items) resolves with an approved request's id, or null if none came. */
-export type AskApproval = (items: StatementItem[], opts?: { summary?: Record<string, unknown>; why?: string }) => Promise<string | null>
+export type AskApproval = (items: StatementItem[], opts?: { summary?: Record<string, unknown>; why?: string; noCheck?: boolean }) => Promise<string | null>
 
 /** Runs one statement and rolls it back, with a preview; null when it cannot be checked. */
 export type CheckStatement = (sql: string, params?: (string | null)[]) => Promise<CheckLike | null>
@@ -88,7 +88,7 @@ export function useStatementApproval(databaseId: string, databaseName: string, o
     setOpen({ items, summary: o?.summary, why: o?.why, resolve })
     // A big import is asked for with what it says it is, not checked
     // statement by statement.
-    const check = items.length <= MAX_CHECKED ? checkRef.current : undefined
+    const check = items.length <= MAX_CHECKED && !o?.noCheck ? checkRef.current : undefined
     setCounted(check ? undefined : null)
     if (check) {
       void (async () => {

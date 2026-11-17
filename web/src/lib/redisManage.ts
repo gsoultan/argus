@@ -407,7 +407,21 @@ export function inPrefix(source: string, prefix: string): boolean {
  * private ones when none is, as for a machine reached through a router); for
  * the private network, every private address.
  */
-export function listenFor(n: RedisNetworkData, reach: Reach, sources: string[]): string[] {
+/** What every engine's "which machines can connect" view shares. */
+export interface ReachView {
+  port: number
+  addresses: RedisAddress[]
+  firewall: '' | 'ufw' | 'firewalld'
+  firewallActive?: boolean
+  firewallSources?: string[]
+  firewallAllowAll?: boolean
+  firewallOthers?: string[]
+  firewallOpenToAll?: boolean
+  firewallError?: string
+  host?: string
+}
+
+export function listenFor(n: ReachView, reach: Reach, sources: string[]): string[] {
   const priv = n.addresses.filter((a) => a.private && !a.ip.includes(':'))
   if (reach === 'network') return priv.map((a) => a.ip)
   if (reach !== 'selected') return []
@@ -416,7 +430,7 @@ export function listenFor(n: RedisNetworkData, reach: Reach, sources: string[]):
 }
 
 /** The networks "the private network" lets in. */
-export function privateNetworks(n: RedisNetworkData): string[] {
+export function privateNetworks(n: ReachView): string[] {
   return [...new Set(n.addresses.filter((a) => a.private && !a.ip.includes(':')).map((a) => a.prefix))]
 }
 
@@ -427,7 +441,7 @@ export function bindFor(reach: Reach, listen: string[]): string {
 }
 
 /** The firewall commands a choice runs, for the firewall the agent found. */
-export function firewallLines(n: RedisNetworkData, reach: Reach, sources: string[]): string[] {
+export function firewallLines(n: ReachView, reach: Reach, sources: string[]): string[] {
   const p = n.port
   const mine = (n.firewallSources?.length ?? 0) + (n.firewallAllowAll ? 1 : 0)
   const out: string[] = []

@@ -267,13 +267,15 @@ type statementAskInput struct {
 
 // POST /api/v1/databases/{id}/statements
 func (a *API) postStatementAsk(w http.ResponseWriter, r *http.Request, email string, db Database, _ string) {
-	if !db.WritesNeedApproval() {
-		writeErr(w, http.StatusBadRequest, "statements on "+db.Name+" run without approval")
-		return
-	}
 	var in statementAskInput
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// Opening a database to anywhere waits for approval on every database,
+	// so it may be asked for where nothing else is.
+	if !db.WritesNeedApproval() && !opensToAnywhere(in.Items) {
+		writeErr(w, http.StatusBadRequest, "statements on "+db.Name+" run without approval")
 		return
 	}
 	for i := range in.Items {
@@ -346,6 +348,9 @@ func approvalWhy(db Database) string {
 // clears whatever the browser sent there.
 func (a *API) statementGate(ctx context.Context, email string, db Database, level string, req *tunnel.PGRequest) *tunnel.PGAnswer {
 	req.RowCap = nil
+	if req.Op == "admin" && req.Admin != nil && req.Admin.Kind == tunnel.AdminNetworkSet {
+		return a.pgNetworkGate(ctx, email, db, req)
+	}
 	if req.Op != "run" || !db.WritesNeedApproval() || level == "" || level == tunnel.LevelRead {
 		return nil
 	}
@@ -374,4 +379,59 @@ func (a *API) statementGate(ctx context.Context, email string, db Database, leve
 			Error: "could not check the approval; try again"}
 	}
 	return &tunnel.PGAnswer{ID: req.ID, Type: "error", Code: tunnel.GuardNeedsApproval, Error: why.why}
+}
+
+// pgNetworkGate decides whether a change of which machines can connect to a
+// Postgres may pass: after approval where the database's changes wait, and
+// always after approval when it opens Postgres to anywhere. The approval is
+// for the change's own text, which the agent records.
+func (a *API) pgNetworkGate(ctx context.Context, email string, db Database, req *tunnel.PGRequest) *tunnel.PGAnswer {
+	op := req.Admin
+	if op.Preview {
+		return nil
+	}
+	if err := tunnel.ValidatePGNetwork(op); err != nil {
+		return &tunnel.PGAnswer{ID: req.ID, Type: "error", Error: err.Error()}
+	}
+	text := tunnel.PGNetworkText(*op)
+	always := tunnel.PGAlwaysApproval(op)
+	if !db.WritesNeedApproval() && !always {
+		req.Approval = ""
+		a.auditDB(ctx, "db.network_change", "notice", email, db.Hostname,
+			"Changed which machines can connect to "+db.Noun()+" "+db.Hostname+": "+oneLine(text)+".")
+		return nil
+	}
+	if req.Approval == "" {
+		why := db.Name + approvalWhy(db)
+		if always && !db.WritesNeedApproval() {
+			why = "opening " + db.Hostname + " to anywhere"
+		}
+		return &tunnel.PGAnswer{ID: req.ID, Type: "error", Code: tunnel.GuardNeedsApproval,
+			Error: why + ": this change runs once someone else approves it", Approve: text}
+	}
+	if _, err := a.store.UseStatementApproval(ctx, req.Approval, email, db.ID, text, nil); err != nil {
+		var why errNoApproval
+		if errors.As(err, &why) {
+			return &tunnel.PGAnswer{ID: req.ID, Type: "error", Code: tunnel.GuardNeedsApproval, Error: why.why}
+		}
+		a.log.Error("checking a network approval failed", "database", db.Name, "email", email, "error", err)
+		return &tunnel.PGAnswer{ID: req.ID, Type: "error", Code: tunnel.GuardNeedsApproval, Error: "could not check the approval; try again"}
+	}
+	a.auditDB(ctx, "db.network_change", "notice", email, db.Hostname,
+		"Changed which machines can connect to "+db.Noun()+" "+db.Hostname+" under approval "+req.Approval+": "+oneLine(text)+".")
+	return nil
+}
+
+// opensToAnywhere says every item is a change that opens a database to
+// anywhere: the ones that wait for approval whatever the database's rules.
+func opensToAnywhere(items []StatementItem) bool {
+	if len(items) == 0 {
+		return false
+	}
+	for _, it := range items {
+		if !tunnel.OpensToAnywhere(it.SQL) {
+			return false
+		}
+	}
+	return true
 }

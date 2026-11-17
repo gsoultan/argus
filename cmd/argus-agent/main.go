@@ -367,9 +367,11 @@ func runDaemon(args []string) int {
 		// Postgres on this server, as the person's own role, every statement
 		// recorded before it runs.
 		services[agent.PostgresService] = agent.Postgres(agent.PostgresConfig{
-			Verifier:  &tunnel.GrantVerifier{Host: hostname},
-			RecordDir: *dir,
-			Log:       log,
+			Verifier:   &tunnel.GrantVerifier{Host: hostname},
+			RecordDir:  *dir,
+			Log:        log,
+			Executable: exe,
+			StateDir:   *stateDir,
 		})
 		// Redis and RabbitMQ on this server, as the person's own user for the
 		// session, every command recorded before it runs.
