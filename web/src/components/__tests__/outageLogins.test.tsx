@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { OutageLoginsCard } from '~/components/OutageLogins'
 import { readinessChecks, type ReadinessView } from '~/lib/controlReadiness'
-import { outageAfterLabel, outageGroupsError } from '~/lib/outageLogins'
+import { checked, outageAfterLabel, outageGroupsError } from '~/lib/outageLogins'
 import { renderWithProviders } from '~/test/render'
 
 const live = vi.hoisted(() => ({ get: vi.fn(), send: vi.fn(), isConfigured: () => true }))
@@ -55,5 +55,15 @@ describe('the readiness page', () => {
   it('counts the servers that still refuse everyone', () => {
     expect(ssh(v(7)).tone).toBe('warn')
     expect(ssh(v(7)).title).toMatch(/^3 of 12/)
+  })
+})
+
+describe('the answer the card draws from', () => {
+  it('fails the query, not the page, when it is not the setting', () => {
+    for (const bad of [[], {}, null, { afterMinutes: 15 }]) {
+      expect(() => checked(bad as never)).toThrow(/while it is down/)
+    }
+    const ok = { afterMinutes: 0, groups: ['sudo'] }
+    expect(checked(ok)).toBe(ok)
   })
 })

@@ -44,12 +44,23 @@ export function outageAfterLabel(minutes: number): string {
 }
 
 const key = ['policy', 'outage-logins'] as const
+
+/**
+ * The answer, if it is one. An older control plane, or a proxy, answering
+ * with something else fails the query instead of the page that draws it.
+ */
+export function checked<T extends { afterMinutes: number; groups: string[] }>(v: T): T {
+  if (!v || typeof v !== 'object' || typeof v.afterMinutes !== 'number' || !Array.isArray(v.groups)) {
+    throw new Error('argus-control did not say how logins work while it is down')
+  }
+  return v
+}
 const assetKey = (id: string) => ['assets', id, 'outage-logins'] as const
 
 export function useOutageLogins() {
   return useQuery({
     queryKey: key,
-    queryFn: () => get<OutageLogins>('/api/v1/policy/outage-logins'),
+    queryFn: async () => checked(await get<OutageLogins>('/api/v1/policy/outage-logins')),
     enabled: isConfigured(),
   })
 }
@@ -69,7 +80,7 @@ export function useSaveOutageLogins() {
 export function useAssetOutageLogins(id: string) {
   return useQuery({
     queryKey: assetKey(id),
-    queryFn: () => get<AssetOutageLogins>(`/api/v1/assets/${encodeURIComponent(id)}/outage-logins`),
+    queryFn: async () => checked(await get<AssetOutageLogins>(`/api/v1/assets/${encodeURIComponent(id)}/outage-logins`)),
     enabled: isConfigured(),
   })
 }
