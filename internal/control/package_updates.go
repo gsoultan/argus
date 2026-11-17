@@ -93,6 +93,9 @@ type ReleaseInfo struct {
 	// Stranded is what is installed that no apt source offers, which the
 	// upgrade cannot carry over; absent from an older agent.
 	Stranded *StrandedPackages `json:"stranded,omitempty"`
+	// PrepareRabbitMQ is RabbitMQ standing in the way in a way a
+	// prepare_rabbitmq run can fix; absent from an older agent.
+	PrepareRabbitMQ bool `json:"prepare_rabbitmq,omitempty"`
 }
 
 // StrandedPackages is what the agent found installed that no apt source
@@ -474,6 +477,11 @@ const PackagesReboot = "reboot"
 // release. The run's expect is the version a person said yes to; the agent
 // stops if the server offers another by the time it starts.
 const PackagesRelease = "release_upgrade"
+
+// PackagesPrepareRabbitMQ readies RabbitMQ for the next Ubuntu release, as
+// Ubuntu's upgrader requires: 3.13 from Canonical's PPA and its feature
+// flags on. Offered only when the agent says it can (PrepareRabbitMQ).
+const PackagesPrepareRabbitMQ = "prepare_rabbitmq"
 
 // PackageRule says what happens on servers with a tag.
 type PackageRule struct {

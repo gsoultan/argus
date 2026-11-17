@@ -119,6 +119,20 @@ simulates the removal on the server and shows every package before you
 confirm. It keeps configuration, and removes no data. The rest are listed
 with the reason each one stays.
 
+Ubuntu's upgrader also stops, before changing anything, on a server with
+RabbitMQ that is not ready for the new release: from 22.04 always, and to
+26.04 unless RabbitMQ is 3.13 with its feature flags enabled (26.04's 4.0
+cannot read older data; see [Ubuntu's guide](https://discourse.ubuntu.com/t/77271)).
+The agent checks this before the run and lists it as a blocker with the
+steps. On 24.04, **Prepare RabbitMQ…** takes them for you after the server's
+name is typed: it refuses a node in a cluster (do those one node at a time,
+by hand), keeps the broker's definitions in `/var/lib/argus/packages/`,
+installs RabbitMQ 3.13 from `ppa:canonical-server/rabbitmq-3.13-noble` (the
+broker restarts), runs `rabbitmqctl enable_feature_flag all`, and checks the
+upgrader would now let the server by. Feature flags cannot be turned off
+again, so take a snapshot first. If nothing uses RabbitMQ, removing it
+(`sudo apt remove rabbitmq-server`) clears the blocker too.
+
 While the upgrader runs, it holds apt's lock. A check for updates then says
 an operating system upgrade is running, rather than failing. If the agent's
 helper stops while the upgrader itself goes on, the run stays open until the

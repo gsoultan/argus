@@ -114,6 +114,7 @@ export function changedOf(r: PackageRun): RunOutcome['changed'] {
   if (r.outcome) return r.outcome.changed
   if (r.state === 'done') {
     if (r.mode === 'release_upgrade' || r.mode === 'reboot') return 'yes'
+    if (r.mode === 'prepare_rabbitmq') return r.message?.includes('nothing was changed') ? 'no' : 'yes'
     if (r.upgraded.length > 0 || (r.mode === 'install' || r.mode === 'remove')) return 'yes'
     if (r.mode === 'all' || r.mode === 'security' || r.mode === 'selected') return 'no'
   }
@@ -132,6 +133,9 @@ export function headline(r: PackageRun): string {
     }
     case 'reboot':
       return ok ? 'The server rebooted and is back' : `The reboot ${stopped}`
+    case 'prepare_rabbitmq':
+      if (ok) return 'RabbitMQ is ready for the next release'
+      return changedOf(r) === 'no' ? 'RabbitMQ was not prepared' : `Preparing RabbitMQ ${stopped}`
     default: {
       if (ok) {
         const n = r.upgraded.length
@@ -152,9 +156,11 @@ function changedDetail(r: PackageRun, c: RunOutcome['changed']): string | null {
   if (r.state === 'done') {
     if (r.mode === 'release_upgrade') return r.rebooted ? `Every package moved to ${r.release ?? 'the new release'}, and the server rebooted into it.` : null
     if (r.mode === 'reboot') return 'Nothing was installed; the server restarted.'
+    if (r.mode === 'prepare_rabbitmq') return c === 'no' ? 'RabbitMQ was ready already.' : 'RabbitMQ was upgraded and its feature flags enabled. The release upgrade can go ahead.'
     if (r.upgraded.length > 0) return `${r.upgraded.length} package${r.upgraded.length === 1 ? '' : 's'} replaced${r.restarted.length ? `, ${r.restarted.join(', ')} restarted` : ''}.`
     return null
   }
+  if (c === 'yes' && r.mode === 'prepare_rabbitmq') return 'RabbitMQ may have been upgraded before it stopped. Follow the steps below.'
   if (c === 'yes') return 'Some packages were replaced before it stopped, so the server may be part way. Follow the steps below before rebooting.'
   if (c === 'no' && r.mode === 'release_upgrade') return 'No package was installed or removed, so the server is still on the release it was on.'
   return null

@@ -84,6 +84,9 @@ type ReleaseInfo struct {
 	// Stranded is what is installed that no apt source offers, which the
 	// upgrade cannot carry over and may stop on (packages_stranded.go).
 	Stranded *StrandedPackages `json:"stranded,omitempty"`
+	// PrepareRabbitMQ is RabbitMQ standing in the way of the upgrade in a
+	// way a prepare_rabbitmq run can fix (packages_rabbitmq.go).
+	PrepareRabbitMQ bool `json:"prepare_rabbitmq,omitempty"`
 }
 
 // ReleaseChange is the upgrade a run is making.
@@ -262,6 +265,12 @@ func (c PackageChecker) release(ctx context.Context, r PackageReport) *ReleaseIn
 		return info
 	}
 	info.Blockers = releaseBlockers(r)
+	if info.Tool == releaseToolUbuntu {
+		if b, prep := c.rabbitMQ(ctx, info.Version, info.Next); b != "" {
+			info.Blockers = append(info.Blockers, b)
+			info.PrepareRabbitMQ = prep
+		}
+	}
 	if info.Tool == releaseToolUbuntu || info.Tool == releaseToolDebian {
 		info.Stranded = c.stranded(ctx)
 	}

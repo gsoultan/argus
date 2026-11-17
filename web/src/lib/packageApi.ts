@@ -27,7 +27,7 @@ export async function checkPackages(assetId: string): Promise<{ checkId: string 
 export async function startPackageRun(
   assetId: string,
   body: {
-    mode: 'all' | 'security' | 'selected' | 'reboot' | 'release_upgrade'
+    mode: 'all' | 'security' | 'selected' | 'reboot' | 'release_upgrade' | 'prepare_rabbitmq'
     packages?: string[]
     reboot: PackageReboot
     release?: string

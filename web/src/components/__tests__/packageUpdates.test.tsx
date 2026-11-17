@@ -353,6 +353,31 @@ describe('Release upgrade', () => {
     expect((screen.getByRole('button', { name: 'Upgrade to Ubuntu 24.04.1 LTS…' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
+  it('prepares RabbitMQ from its blocker, only after the server name is typed', async () => {
+    live.assetPackages.mockResolvedValue(ready({ version: '24.04', next: '26.04', next_name: 'Ubuntu 26.04.1 LTS',
+      prepare_rabbitmq: true,
+      blockers: ["RabbitMQ 3.12.1 is installed, and Ubuntu's upgrader stops unless it is 3.13 with all its feature flags enabled"] }))
+    live.startPackageRun.mockResolvedValue(runOf({ mode: 'prepare_rabbitmq' }))
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    expect(await screen.findByText(/RabbitMQ 3.12.1 is installed/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Prepare RabbitMQ…' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText(/cannot be turned off again/)).toBeTruthy()
+    expect(within(dialog).getByText(/not part of a cluster/)).toBeTruthy()
+    const go = within(dialog).getByRole('button', { name: 'Prepare RabbitMQ' }) as HTMLButtonElement
+    expect(go.disabled).toBe(true)
+    fireEvent.change(within(dialog).getByLabelText('Type the server name to confirm'), { target: { value: 'web-01' } })
+    fireEvent.click(go)
+    await waitFor(() => expect(live.startPackageRun).toHaveBeenCalledWith('a1', { mode: 'prepare_rabbitmq', reboot: 'never' }))
+  })
+
+  it('offers no RabbitMQ button where the agent cannot prepare it', async () => {
+    live.assetPackages.mockResolvedValue(ready({ blockers: ['RabbitMQ 3.9.27 is installed, and Ubuntu\'s upgrader will not move it to 24.04 by itself'] }))
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    expect(await screen.findByText(/RabbitMQ 3.9.27 is installed/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Prepare RabbitMQ…' })).toBeNull()
+  })
+
   it('installs what is waiting for the current release from the blocker itself', async () => {
     live.assetPackages.mockResolvedValue(view({
       report: { checked_at: new Date().toISOString(), manager: 'apt', supported: true, utc_offset_minutes: 0,

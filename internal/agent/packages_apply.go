@@ -191,6 +191,9 @@ func (a *PackageApplier) Apply(ctx context.Context) PackageRunStatus {
 	if a.Plan.Mode == PackagesRelease {
 		return a.applyRelease(ctx)
 	}
+	if a.Plan.Mode == PackagesPrepareRabbitMQ {
+		return a.applyPrepareRabbitMQ(ctx)
+	}
 
 	m := detectManager(a.Look)
 	if m == nil {

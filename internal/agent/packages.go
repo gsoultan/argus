@@ -144,6 +144,9 @@ const (
 	// release (packages_release.go): Expect names the release a person
 	// said yes to, and the run stops if the server now offers another.
 	PackagesRelease = "release_upgrade"
+	// PackagesPrepareRabbitMQ readies RabbitMQ for the next Ubuntu release,
+	// as Ubuntu's upgrader requires (packages_rabbitmq.go).
+	PackagesPrepareRabbitMQ = "prepare_rabbitmq"
 )
 
 // PackageRunRequest is an install the console asked for.
@@ -512,7 +515,7 @@ func (p *Packages) startLocked(ctx context.Context, req PackageRunRequest) {
 		return
 	}
 	switch req.Mode {
-	case PackagesAll, PackagesSecurity, PackagesReboot:
+	case PackagesAll, PackagesSecurity, PackagesReboot, PackagesPrepareRabbitMQ:
 	case PackagesRelease:
 		if !reOSVersion.MatchString(req.Expect) {
 			fail("the run does not say which release it was approved for")
