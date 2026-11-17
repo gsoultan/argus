@@ -153,7 +153,7 @@ func answers(t *testing.T, st *bufStream) (ans []tunnel.PGAnswer, recs []tunnel.
 func TestPGNetworkSelectedNarrowsTheFirewallFirstAndRestarts(t *testing.T) {
 	oldAddrs, oldSvc := hostAddresses, serviceOf
 	hostAddresses = func() []RedisAddress { return nil }
-	serviceOf = func(int) string { return "postgresql@16-main.service" }
+	serviceOf = func(int, ...string) string { return "postgresql@16-main.service" }
 	t.Cleanup(func() { hostAddresses, serviceOf = oldAddrs, oldSvc })
 
 	var log, restarted []string

@@ -4,6 +4,7 @@ import { renderWithProviders as ui } from '~/test/render'
 import { NetworkPanel } from '~/components/DatabaseNetwork'
 import type { Admin, AdminOp, Collect } from '~/components/DatabaseAdmin'
 import { pgHBALines, pgListenFor, pgReachPlan, type PGNetworkData } from '~/lib/pgNetwork'
+import { mysqlReachPlan, type MySQLNetworkData } from '~/lib/mysqlNetwork'
 
 /*
 Which machines can connect to a Postgres: the panel sends the agent fixed
@@ -93,5 +94,38 @@ describe('Postgres network plan', () => {
     expect(noRestart.steps.at(-1)).toMatchObject({ state: 'warn', title: 'Not restarted' })
     const noService = pgReachPlan({ ...net, service: undefined }, 'network', [], true)
     expect(noService.steps.at(-1)).toMatchObject({ state: 'warn', title: 'Restart Postgres on the server' })
+  })
+})
+
+describe('MySQL network panel', () => {
+  const my: MySQLNetworkData = {
+    bind: '127.0.0.1', next: '127.0.0.1', pendingRestart: false, port: 3306, version: '10.11.14-MariaDB', mariadb: true,
+    listOK: true, ssl: false, remoteUsers: ["'app'@'10.0.0.%'"], keptIn: '/etc/mysql/mariadb.conf.d/zz-argus-network.cnf',
+    clients: 3, remote: 0, reach: 'local', host: 'db-02', service: 'mariadb.service', firewall: 'ufw', firewallActive: true,
+    addresses: [{ ip: '10.0.0.184', iface: 'eth0', prefix: '10.0.0.0/24', private: true, state: 'closed' }],
+  }
+  it('keeps bind_address for the next start and restarts', async () => {
+    const ops: AdminOp[] = []
+    const admin = (async (op: AdminOp) => {
+      ops.push(op)
+      return op.kind === 'network' ? { data: my } : { data: { network: { ...my, reach: 'selected', firewallSources: op.sources }, restarted: true } }
+    }) as Admin
+    ui(<NetworkPanel {...base} admin={admin} level="dba" engine="mysql" />)
+    await screen.findByText(/Only programs on db-02 can connect. MariaDB listens on 127.0.0.1/)
+    fireEvent.click(screen.getByRole('radio', { name: /Selected machines/ }))
+    fireEvent.change(screen.getByLabelText('Add an address or range'), { target: { value: '10.0.0.61' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    expect(screen.getByText(/bind_address = 127\.0\.0\.1,10\.0\.0\.184/)).toBeInTheDocument()
+    expect(screen.getByText("'app'@'10.0.0.%'")).toBeInTheDocument()
+    expect(screen.getByText('Restart mariadb.service')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await screen.findByText('Now: selected machines. MariaDB was restarted and listens anew.')
+    expect(ops.at(-1)).toMatchObject({ kind: 'network.set', reach: 'selected', addresses: ['10.0.0.184'], sources: ['10.0.0.61'], restart: true })
+  })
+  it('says what stops it', () => {
+    expect(mysqlReachPlan({ ...my, listOK: false, version: '10.6.18-MariaDB' }, 'selected', ['10.0.0.61'], true).blocked).toMatch(/one address or on every one/)
+    expect(mysqlReachPlan({ ...my, noPassRemote: ["'legacy'@'%'"] }, 'any', [], true).blocked).toMatch(/legacy/)
+    expect(mysqlReachPlan({ ...my, skipNetworking: true }, 'network', [], true).blocked).toMatch(/skip-networking/)
+    expect(mysqlReachPlan({ ...my, remoteUsers: [] }, 'network', [], true).steps.some((s) => s.title === 'No user may sign in from another machine yet')).toBe(true)
   })
 })

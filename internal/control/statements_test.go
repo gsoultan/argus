@@ -342,4 +342,9 @@ func TestPostgresNetworkChangeWaits(t *testing.T) {
 	if no := gate(anyOp, ask.RequestID); no != nil {
 		t.Fatalf("the approved change was stopped: %+v", no)
 	}
+	// On MySQL the approval is for MySQL's own text.
+	db.Engine = tunnel.EngineMySQL
+	if no := gate(anyOp, ""); no == nil || !strings.Contains(no.Approve, "SET bind_address = '*'") {
+		t.Fatalf("MySQL's change: %+v", no)
+	}
 }
