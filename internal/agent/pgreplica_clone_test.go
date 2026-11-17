@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -33,7 +34,7 @@ func TestUnitFromCgroup(t *testing.T) {
 }
 
 func TestReplicaRefusesAServerInUse(t *testing.T) {
-	ok := pgLocal{DataDir: "/var/lib/postgresql/16/main", VersionNum: 160004}
+	ok := pgLocal{DataDir: filepath.Join(os.TempDir(), "pg", "main"), VersionNum: 160004}
 	if why := ok.refuse(16); why != "" {
 		t.Fatal(why)
 	}
