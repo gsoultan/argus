@@ -92,6 +92,9 @@ type homeHub struct {
 	closed bool
 	src    homeSource
 	logErr func(msg string, args ...any)
+	// running is every organization's builder, so closeAll returns only
+	// once none reads anything any more.
+	running sync.WaitGroup
 	// now is the clock; tests replace it.
 	now func() time.Time
 }
@@ -125,7 +128,11 @@ func (h *homeHub) subscribe(ctx context.Context) (*homeSub, func(), error) {
 		}
 		g = &homeGroup{tenant: t, subs: map[*homeSub]struct{}{}, stop: make(chan struct{}), wake: make(chan struct{}, 1)}
 		h.groups[tid] = g
-		go h.run(tid, g)
+		h.running.Add(1)
+		go func() {
+			defer h.running.Done()
+			h.run(tid, g)
+		}()
 	}
 	s := &homeSub{ch: make(chan homeFrame, 8), needFull: true}
 	g.subs[s] = struct{}{}
@@ -172,6 +179,8 @@ func (h *homeHub) nudge(tid string) {
 
 // closeAll ends every subscription and every group, for a shutdown.
 func (h *homeHub) closeAll() {
+	// Wait for the builders after letting go of the lock they take.
+	defer h.running.Wait()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.closed = true
