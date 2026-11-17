@@ -44,6 +44,7 @@ export interface ReadinessView {
   directSsh: { refusing: number; total: number; letIn?: number }
   confirmations: Record<ReadinessItem, ReadinessConfirmation | null>
   lastOutage?: { startedAt: string; endedAt: string; foundBy: string }
+  recovery?: { set: boolean; holding: number; total: number }
   confirmDays: number
 }
 
@@ -160,6 +161,17 @@ export function readinessChecks(v: ReadinessView, now = Date.now()): ReadinessLi
   } else if (d.total > 0) {
     out.push({ id: 'ssh', tone: 'ok', title: 'Every server lets plain SSH in, recorded',
       detail: 'While Argus is down, people can still log in, and the agent records them on the server.' })
+  }
+  const r = v.recovery
+  if (r && !r.set) {
+    out.push({ id: 'recovery', tone: 'warn', title: 'There is no fleet recovery key',
+      detail: 'If this server is taken over, moving every agent to a new signing key means deleting a file on each one by hand. Make one in Account security.' })
+  } else if (r && r.total > 0 && r.holding < r.total) {
+    out.push({ id: 'recovery', tone: 'warn', title: `${r.total - r.holding} of ${r.total} servers do not hold the recovery key yet`,
+      detail: 'They pick it up at their next check-in. An agent too old to hold one needs updating.' })
+  } else if (r) {
+    out.push({ id: 'recovery', tone: 'ok', title: 'Every server holds the fleet recovery key',
+      detail: 'A rebuilt control plane can take the fleet back with it, without touching each server.' })
   }
   return out
 }

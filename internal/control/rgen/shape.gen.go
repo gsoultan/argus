@@ -172,6 +172,7 @@ func _assertAssetShape(m m0.Asset) {
 		m.ControlHost,
 		m.Alias,
 		m.OutageLoginsOff,
+		m.AgentRecoveryKey,
 	}
 }
 

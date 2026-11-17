@@ -62,6 +62,7 @@ type Row struct {
 	ControlHost           bool
 	Alias                 string
 	OutageLoginsOff       bool
+	AgentRecoveryKey      runtime.Null[string]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -100,7 +101,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 42
+const nCols = 43
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -482,6 +483,13 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.bools[q.nbo] = r.OutageLoginsOff
 		q.nbo++
+	case 42:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.AgentRecoveryKey.V
+		q.ns++
 	}
 }
 
@@ -693,6 +701,7 @@ var (
 	ControlHost           = BoolCol{39}
 	Alias                 = TextCol{40}
 	OutageLoginsOff       = BoolCol{41}
+	AgentRecoveryKey      = NullTextCol{42}
 )
 
 // UUIDCol addresses a uuid column.
@@ -1325,6 +1334,13 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 42:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1614,6 +1630,13 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.bools[q.nbo] = p.bol
 		q.nbo++
+	case 42:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1961,71 +1984,84 @@ func (q Query) DirectSshAccountsHasAnyKey(v ...string) Query {
 func (q Query) DirectSshAccountsHasAllKeys(v ...string) Query {
 	return q.Where(DirectSshAccounts.HasAllKeys(v...))
 }
-func (q Query) DesktopModeEq(v string) Query           { return q.Where(DesktopMode.Eq(v)) }
-func (q Query) DesktopModeNotEq(v string) Query        { return q.Where(DesktopMode.NotEq(v)) }
-func (q Query) DesktopModeGt(v string) Query           { return q.Where(DesktopMode.Gt(v)) }
-func (q Query) DesktopModeGte(v string) Query          { return q.Where(DesktopMode.Gte(v)) }
-func (q Query) DesktopModeLt(v string) Query           { return q.Where(DesktopMode.Lt(v)) }
-func (q Query) DesktopModeLte(v string) Query          { return q.Where(DesktopMode.Lte(v)) }
-func (q Query) DesktopModeEqLower(v string) Query      { return q.Where(DesktopMode.EqLower(v)) }
-func (q Query) DesktopModeLike(v string) Query         { return q.Where(DesktopMode.Like(v)) }
-func (q Query) DesktopModeILike(v string) Query        { return q.Where(DesktopMode.ILike(v)) }
-func (q Query) DesktopModeIn(v ...string) Query        { return q.Where(DesktopMode.In(v...)) }
-func (q Query) DesktopModeNotIn(v ...string) Query     { return q.Where(DesktopMode.NotIn(v...)) }
-func (q Query) KindEq(v string) Query                  { return q.Where(Kind.Eq(v)) }
-func (q Query) KindNotEq(v string) Query               { return q.Where(Kind.NotEq(v)) }
-func (q Query) KindGt(v string) Query                  { return q.Where(Kind.Gt(v)) }
-func (q Query) KindGte(v string) Query                 { return q.Where(Kind.Gte(v)) }
-func (q Query) KindLt(v string) Query                  { return q.Where(Kind.Lt(v)) }
-func (q Query) KindLte(v string) Query                 { return q.Where(Kind.Lte(v)) }
-func (q Query) KindEqLower(v string) Query             { return q.Where(Kind.EqLower(v)) }
-func (q Query) KindLike(v string) Query                { return q.Where(Kind.Like(v)) }
-func (q Query) KindILike(v string) Query               { return q.Where(Kind.ILike(v)) }
-func (q Query) KindIn(v ...string) Query               { return q.Where(Kind.In(v...)) }
-func (q Query) KindNotIn(v ...string) Query            { return q.Where(Kind.NotIn(v...)) }
-func (q Query) ControlModeEq(v string) Query           { return q.Where(ControlMode.Eq(v)) }
-func (q Query) ControlModeNotEq(v string) Query        { return q.Where(ControlMode.NotEq(v)) }
-func (q Query) ControlModeGt(v string) Query           { return q.Where(ControlMode.Gt(v)) }
-func (q Query) ControlModeGte(v string) Query          { return q.Where(ControlMode.Gte(v)) }
-func (q Query) ControlModeLt(v string) Query           { return q.Where(ControlMode.Lt(v)) }
-func (q Query) ControlModeLte(v string) Query          { return q.Where(ControlMode.Lte(v)) }
-func (q Query) ControlModeEqLower(v string) Query      { return q.Where(ControlMode.EqLower(v)) }
-func (q Query) ControlModeLike(v string) Query         { return q.Where(ControlMode.Like(v)) }
-func (q Query) ControlModeILike(v string) Query        { return q.Where(ControlMode.ILike(v)) }
-func (q Query) ControlModeIn(v ...string) Query        { return q.Where(ControlMode.In(v...)) }
-func (q Query) ControlModeNotIn(v ...string) Query     { return q.Where(ControlMode.NotIn(v...)) }
-func (q Query) ControlNeedsApprovalEq(v bool) Query    { return q.Where(ControlNeedsApproval.Eq(v)) }
-func (q Query) ControlNeedsApprovalNotEq(v bool) Query { return q.Where(ControlNeedsApproval.NotEq(v)) }
-func (q Query) ConnectAskEq(v string) Query            { return q.Where(ConnectAsk.Eq(v)) }
-func (q Query) ConnectAskNotEq(v string) Query         { return q.Where(ConnectAsk.NotEq(v)) }
-func (q Query) ConnectAskGt(v string) Query            { return q.Where(ConnectAsk.Gt(v)) }
-func (q Query) ConnectAskGte(v string) Query           { return q.Where(ConnectAsk.Gte(v)) }
-func (q Query) ConnectAskLt(v string) Query            { return q.Where(ConnectAsk.Lt(v)) }
-func (q Query) ConnectAskLte(v string) Query           { return q.Where(ConnectAsk.Lte(v)) }
-func (q Query) ConnectAskEqLower(v string) Query       { return q.Where(ConnectAsk.EqLower(v)) }
-func (q Query) ConnectAskLike(v string) Query          { return q.Where(ConnectAsk.Like(v)) }
-func (q Query) ConnectAskILike(v string) Query         { return q.Where(ConnectAsk.ILike(v)) }
-func (q Query) ConnectAskIn(v ...string) Query         { return q.Where(ConnectAsk.In(v...)) }
-func (q Query) ConnectAskNotIn(v ...string) Query      { return q.Where(ConnectAsk.NotIn(v...)) }
-func (q Query) ConnectAskIsNull() Query                { return q.Where(ConnectAsk.IsNull()) }
-func (q Query) ConnectAskIsNotNull() Query             { return q.Where(ConnectAsk.IsNotNull()) }
-func (q Query) ControlHostEq(v bool) Query             { return q.Where(ControlHost.Eq(v)) }
-func (q Query) ControlHostNotEq(v bool) Query          { return q.Where(ControlHost.NotEq(v)) }
-func (q Query) AliasEq(v string) Query                 { return q.Where(Alias.Eq(v)) }
-func (q Query) AliasNotEq(v string) Query              { return q.Where(Alias.NotEq(v)) }
-func (q Query) AliasGt(v string) Query                 { return q.Where(Alias.Gt(v)) }
-func (q Query) AliasGte(v string) Query                { return q.Where(Alias.Gte(v)) }
-func (q Query) AliasLt(v string) Query                 { return q.Where(Alias.Lt(v)) }
-func (q Query) AliasLte(v string) Query                { return q.Where(Alias.Lte(v)) }
-func (q Query) AliasEqLower(v string) Query            { return q.Where(Alias.EqLower(v)) }
-func (q Query) AliasLike(v string) Query               { return q.Where(Alias.Like(v)) }
-func (q Query) AliasILike(v string) Query              { return q.Where(Alias.ILike(v)) }
-func (q Query) AliasIn(v ...string) Query              { return q.Where(Alias.In(v...)) }
-func (q Query) AliasNotIn(v ...string) Query           { return q.Where(Alias.NotIn(v...)) }
-func (q Query) OutageLoginsOffEq(v bool) Query         { return q.Where(OutageLoginsOff.Eq(v)) }
-func (q Query) OutageLoginsOffNotEq(v bool) Query      { return q.Where(OutageLoginsOff.NotEq(v)) }
+func (q Query) DesktopModeEq(v string) Query            { return q.Where(DesktopMode.Eq(v)) }
+func (q Query) DesktopModeNotEq(v string) Query         { return q.Where(DesktopMode.NotEq(v)) }
+func (q Query) DesktopModeGt(v string) Query            { return q.Where(DesktopMode.Gt(v)) }
+func (q Query) DesktopModeGte(v string) Query           { return q.Where(DesktopMode.Gte(v)) }
+func (q Query) DesktopModeLt(v string) Query            { return q.Where(DesktopMode.Lt(v)) }
+func (q Query) DesktopModeLte(v string) Query           { return q.Where(DesktopMode.Lte(v)) }
+func (q Query) DesktopModeEqLower(v string) Query       { return q.Where(DesktopMode.EqLower(v)) }
+func (q Query) DesktopModeLike(v string) Query          { return q.Where(DesktopMode.Like(v)) }
+func (q Query) DesktopModeILike(v string) Query         { return q.Where(DesktopMode.ILike(v)) }
+func (q Query) DesktopModeIn(v ...string) Query         { return q.Where(DesktopMode.In(v...)) }
+func (q Query) DesktopModeNotIn(v ...string) Query      { return q.Where(DesktopMode.NotIn(v...)) }
+func (q Query) KindEq(v string) Query                   { return q.Where(Kind.Eq(v)) }
+func (q Query) KindNotEq(v string) Query                { return q.Where(Kind.NotEq(v)) }
+func (q Query) KindGt(v string) Query                   { return q.Where(Kind.Gt(v)) }
+func (q Query) KindGte(v string) Query                  { return q.Where(Kind.Gte(v)) }
+func (q Query) KindLt(v string) Query                   { return q.Where(Kind.Lt(v)) }
+func (q Query) KindLte(v string) Query                  { return q.Where(Kind.Lte(v)) }
+func (q Query) KindEqLower(v string) Query              { return q.Where(Kind.EqLower(v)) }
+func (q Query) KindLike(v string) Query                 { return q.Where(Kind.Like(v)) }
+func (q Query) KindILike(v string) Query                { return q.Where(Kind.ILike(v)) }
+func (q Query) KindIn(v ...string) Query                { return q.Where(Kind.In(v...)) }
+func (q Query) KindNotIn(v ...string) Query             { return q.Where(Kind.NotIn(v...)) }
+func (q Query) ControlModeEq(v string) Query            { return q.Where(ControlMode.Eq(v)) }
+func (q Query) ControlModeNotEq(v string) Query         { return q.Where(ControlMode.NotEq(v)) }
+func (q Query) ControlModeGt(v string) Query            { return q.Where(ControlMode.Gt(v)) }
+func (q Query) ControlModeGte(v string) Query           { return q.Where(ControlMode.Gte(v)) }
+func (q Query) ControlModeLt(v string) Query            { return q.Where(ControlMode.Lt(v)) }
+func (q Query) ControlModeLte(v string) Query           { return q.Where(ControlMode.Lte(v)) }
+func (q Query) ControlModeEqLower(v string) Query       { return q.Where(ControlMode.EqLower(v)) }
+func (q Query) ControlModeLike(v string) Query          { return q.Where(ControlMode.Like(v)) }
+func (q Query) ControlModeILike(v string) Query         { return q.Where(ControlMode.ILike(v)) }
+func (q Query) ControlModeIn(v ...string) Query         { return q.Where(ControlMode.In(v...)) }
+func (q Query) ControlModeNotIn(v ...string) Query      { return q.Where(ControlMode.NotIn(v...)) }
+func (q Query) ControlNeedsApprovalEq(v bool) Query     { return q.Where(ControlNeedsApproval.Eq(v)) }
+func (q Query) ControlNeedsApprovalNotEq(v bool) Query  { return q.Where(ControlNeedsApproval.NotEq(v)) }
+func (q Query) ConnectAskEq(v string) Query             { return q.Where(ConnectAsk.Eq(v)) }
+func (q Query) ConnectAskNotEq(v string) Query          { return q.Where(ConnectAsk.NotEq(v)) }
+func (q Query) ConnectAskGt(v string) Query             { return q.Where(ConnectAsk.Gt(v)) }
+func (q Query) ConnectAskGte(v string) Query            { return q.Where(ConnectAsk.Gte(v)) }
+func (q Query) ConnectAskLt(v string) Query             { return q.Where(ConnectAsk.Lt(v)) }
+func (q Query) ConnectAskLte(v string) Query            { return q.Where(ConnectAsk.Lte(v)) }
+func (q Query) ConnectAskEqLower(v string) Query        { return q.Where(ConnectAsk.EqLower(v)) }
+func (q Query) ConnectAskLike(v string) Query           { return q.Where(ConnectAsk.Like(v)) }
+func (q Query) ConnectAskILike(v string) Query          { return q.Where(ConnectAsk.ILike(v)) }
+func (q Query) ConnectAskIn(v ...string) Query          { return q.Where(ConnectAsk.In(v...)) }
+func (q Query) ConnectAskNotIn(v ...string) Query       { return q.Where(ConnectAsk.NotIn(v...)) }
+func (q Query) ConnectAskIsNull() Query                 { return q.Where(ConnectAsk.IsNull()) }
+func (q Query) ConnectAskIsNotNull() Query              { return q.Where(ConnectAsk.IsNotNull()) }
+func (q Query) ControlHostEq(v bool) Query              { return q.Where(ControlHost.Eq(v)) }
+func (q Query) ControlHostNotEq(v bool) Query           { return q.Where(ControlHost.NotEq(v)) }
+func (q Query) AliasEq(v string) Query                  { return q.Where(Alias.Eq(v)) }
+func (q Query) AliasNotEq(v string) Query               { return q.Where(Alias.NotEq(v)) }
+func (q Query) AliasGt(v string) Query                  { return q.Where(Alias.Gt(v)) }
+func (q Query) AliasGte(v string) Query                 { return q.Where(Alias.Gte(v)) }
+func (q Query) AliasLt(v string) Query                  { return q.Where(Alias.Lt(v)) }
+func (q Query) AliasLte(v string) Query                 { return q.Where(Alias.Lte(v)) }
+func (q Query) AliasEqLower(v string) Query             { return q.Where(Alias.EqLower(v)) }
+func (q Query) AliasLike(v string) Query                { return q.Where(Alias.Like(v)) }
+func (q Query) AliasILike(v string) Query               { return q.Where(Alias.ILike(v)) }
+func (q Query) AliasIn(v ...string) Query               { return q.Where(Alias.In(v...)) }
+func (q Query) AliasNotIn(v ...string) Query            { return q.Where(Alias.NotIn(v...)) }
+func (q Query) OutageLoginsOffEq(v bool) Query          { return q.Where(OutageLoginsOff.Eq(v)) }
+func (q Query) OutageLoginsOffNotEq(v bool) Query       { return q.Where(OutageLoginsOff.NotEq(v)) }
+func (q Query) AgentRecoveryKeyEq(v string) Query       { return q.Where(AgentRecoveryKey.Eq(v)) }
+func (q Query) AgentRecoveryKeyNotEq(v string) Query    { return q.Where(AgentRecoveryKey.NotEq(v)) }
+func (q Query) AgentRecoveryKeyGt(v string) Query       { return q.Where(AgentRecoveryKey.Gt(v)) }
+func (q Query) AgentRecoveryKeyGte(v string) Query      { return q.Where(AgentRecoveryKey.Gte(v)) }
+func (q Query) AgentRecoveryKeyLt(v string) Query       { return q.Where(AgentRecoveryKey.Lt(v)) }
+func (q Query) AgentRecoveryKeyLte(v string) Query      { return q.Where(AgentRecoveryKey.Lte(v)) }
+func (q Query) AgentRecoveryKeyEqLower(v string) Query  { return q.Where(AgentRecoveryKey.EqLower(v)) }
+func (q Query) AgentRecoveryKeyLike(v string) Query     { return q.Where(AgentRecoveryKey.Like(v)) }
+func (q Query) AgentRecoveryKeyILike(v string) Query    { return q.Where(AgentRecoveryKey.ILike(v)) }
+func (q Query) AgentRecoveryKeyIn(v ...string) Query    { return q.Where(AgentRecoveryKey.In(v...)) }
+func (q Query) AgentRecoveryKeyNotIn(v ...string) Query { return q.Where(AgentRecoveryKey.NotIn(v...)) }
+func (q Query) AgentRecoveryKeyIsNull() Query           { return q.Where(AgentRecoveryKey.IsNull()) }
+func (q Query) AgentRecoveryKeyIsNotNull() Query        { return q.Where(AgentRecoveryKey.IsNotNull()) }
 
-const selectPrefix = `SELECT "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "agent_console_only", "direct_ssh", "agent_direct_ssh", "agent_personal_accounts", "direct_ssh_accounts", "desktop_mode", "kind", "control_mode", "control_needs_approval", "connect_ask", "control_host", "alias", "outage_logins_off" FROM "assets"`
+const selectPrefix = `SELECT "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "agent_console_only", "direct_ssh", "agent_direct_ssh", "agent_personal_accounts", "direct_ssh_accounts", "desktop_mode", "kind", "control_mode", "control_needs_approval", "connect_ask", "control_host", "alias", "outage_logins_off", "agent_recovery_key" FROM "assets"`
 const countPrefix = `SELECT count(*) FROM "assets"`
 const existsPrefix = `SELECT 1 FROM "assets"`
 const existsSuffix = ` LIMIT 1`
@@ -2314,6 +2350,12 @@ var orderTable = [nCols][4]string{
 		"\"outage_logins_off\" ASC NULLS FIRST",
 		"\"outage_logins_off\" DESC NULLS LAST",
 	},
+	{ // agent_recovery_key
+		"\"agent_recovery_key\"",
+		"\"agent_recovery_key\" DESC",
+		"\"agent_recovery_key\" ASC NULLS FIRST",
+		"\"agent_recovery_key\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -2361,6 +2403,7 @@ var identTable = [nCols]string{
 	"\"control_host\"",
 	"\"alias\"",
 	"\"outage_logins_off\"",
+	"\"agent_recovery_key\"",
 }
 
 var lowering = runtime.Lowering{
@@ -2393,7 +2436,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [42][28]runtime.Frag{
+var fragTable = [43][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -3654,6 +3697,36 @@ var fragTable = [42][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // agent_recovery_key
+		{}, // opNone
+		{A: "\"agent_recovery_key\" = $", B: ""},
+		{A: "\"agent_recovery_key\" <> $", B: ""},
+		{A: "\"agent_recovery_key\" > $", B: ""},
+		{A: "\"agent_recovery_key\" >= $", B: ""},
+		{A: "\"agent_recovery_key\" < $", B: ""},
+		{A: "\"agent_recovery_key\" <= $", B: ""},
+		{A: "lower(\"agent_recovery_key\") = lower($", B: ")"},
+		{A: "\"agent_recovery_key\" LIKE $", B: ""},
+		{A: "\"agent_recovery_key\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"agent_recovery_key\" = ANY($", B: ")"},
+		{A: "\"agent_recovery_key\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"agent_recovery_key\" IS NULL", B: ""},
+		{A: "\"agent_recovery_key\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -3859,6 +3932,7 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.ControlHost = runtime.Bool(rv[39])
 	r.Alias = sl.Str(rv[40])
 	r.OutageLoginsOff = runtime.Bool(rv[41])
+	r.AgentRecoveryKey = runtime.NullText(rv[42], sl)
 	return decErr
 }
 
@@ -4054,6 +4128,10 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 42:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -4218,6 +4296,10 @@ func (q Query) bindPreds(b *binder) []any {
 			b.bools[nbo] = q.bools[nbo]
 			v = append(v, &b.bools[nbo])
 			nbo++
+		case 42:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
 		}
 	}
 	b.vals = v
@@ -4355,7 +4437,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "assets" ("id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "agent_console_only", "direct_ssh", "agent_direct_ssh", "agent_personal_accounts", "direct_ssh_accounts", "desktop_mode", "kind", "control_mode", "control_needs_approval", "connect_ask", "control_host", "alias", "outage_logins_off") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42) RETURNING "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "agent_console_only", "direct_ssh", "agent_direct_ssh", "agent_personal_accounts", "direct_ssh_accounts", "desktop_mode", "kind", "control_mode", "control_needs_approval", "connect_ask", "control_host", "alias", "outage_logins_off"`
+const insertSQL = `INSERT INTO "assets" ("id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "agent_console_only", "direct_ssh", "agent_direct_ssh", "agent_personal_accounts", "direct_ssh_accounts", "desktop_mode", "kind", "control_mode", "control_needs_approval", "connect_ask", "control_host", "alias", "outage_logins_off", "agent_recovery_key") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43) RETURNING "id", "created_at", "updated_at", "hostname", "address", "port", "os", "tags", "group_name", "credential_mode", "credential_rotated_at", "rotation_interval_days", "host_key_state", "host_key_fingerprint", "host_key_pinned_at", "health", "last_checked_at", "principals", "agent_state", "agent_last_seen_at", "bypass_posture", "unmanaged_key_count", "agent_hostname", "discovered_by", "protocol", "source", "credential_ref", "domain", "archived_at", "agent_console_only", "direct_ssh", "agent_direct_ssh", "agent_personal_accounts", "direct_ssh_accounts", "desktop_mode", "kind", "control_mode", "control_needs_approval", "connect_ask", "control_host", "alias", "outage_logins_off", "agent_recovery_key"`
 
 const updatePrefix = `UPDATE "assets" SET `
 const deletePrefix = `DELETE FROM "assets"`
@@ -4403,9 +4485,10 @@ const (
 	dControlHost           uint64 = 1 << 37
 	dAlias                 uint64 = 1 << 38
 	dOutageLoginsOff       uint64 = 1 << 39
+	dAgentRecoveryKey      uint64 = 1 << 40
 )
 
-const nUpdatable = 40
+const nUpdatable = 41
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -4449,6 +4532,7 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"control_host\" = $", B: ""},            // control_host
 	{A: "\"alias\" = $", B: ""},                   // alias
 	{A: "\"outage_logins_off\" = $", B: ""},       // outage_logins_off
+	{A: "\"agent_recovery_key\" = $", B: ""},      // agent_recovery_key
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -4495,6 +4579,7 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{},                                    // control_host has no server-side form
 	{},                                    // alias has no server-side form
 	{},                                    // outage_logins_off has no server-side form
+	{},                                    // agent_recovery_key has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -4548,9 +4633,10 @@ const (
 	iControlHost           uint64 = 1 << 39
 	iAlias                 uint64 = 1 << 40
 	iOutageLoginsOff       uint64 = 1 << 41
+	iAgentRecoveryKey      uint64 = 1 << 42
 )
 
-const nInsertable = 42
+const nInsertable = 43
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -4596,6 +4682,7 @@ var insCols = [nInsertable]string{
 	"\"control_host\"",
 	"\"alias\"",
 	"\"outage_logins_off\"",
+	"\"agent_recovery_key\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -4604,7 +4691,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"assets\""
-const insReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"hostname\", \"address\", \"port\", \"os\", \"tags\", \"group_name\", \"credential_mode\", \"credential_rotated_at\", \"rotation_interval_days\", \"host_key_state\", \"host_key_fingerprint\", \"host_key_pinned_at\", \"health\", \"last_checked_at\", \"principals\", \"agent_state\", \"agent_last_seen_at\", \"bypass_posture\", \"unmanaged_key_count\", \"agent_hostname\", \"discovered_by\", \"protocol\", \"source\", \"credential_ref\", \"domain\", \"archived_at\", \"agent_console_only\", \"direct_ssh\", \"agent_direct_ssh\", \"agent_personal_accounts\", \"direct_ssh_accounts\", \"desktop_mode\", \"kind\", \"control_mode\", \"control_needs_approval\", \"connect_ask\", \"control_host\", \"alias\", \"outage_logins_off\""
+const insReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"hostname\", \"address\", \"port\", \"os\", \"tags\", \"group_name\", \"credential_mode\", \"credential_rotated_at\", \"rotation_interval_days\", \"host_key_state\", \"host_key_fingerprint\", \"host_key_pinned_at\", \"health\", \"last_checked_at\", \"principals\", \"agent_state\", \"agent_last_seen_at\", \"bypass_posture\", \"unmanaged_key_count\", \"agent_hostname\", \"discovered_by\", \"protocol\", \"source\", \"credential_ref\", \"domain\", \"archived_at\", \"agent_console_only\", \"direct_ssh\", \"agent_direct_ssh\", \"agent_personal_accounts\", \"direct_ssh_accounts\", \"desktop_mode\", \"kind\", \"control_mode\", \"control_needs_approval\", \"connect_ask\", \"control_host\", \"alias\", \"outage_logins_off\", \"agent_recovery_key\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -4623,7 +4710,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"hostname\", \"address\", \"port\", \"os\", \"tags\", \"group_name\", \"credential_mode\", \"credential_rotated_at\", \"rotation_interval_days\", \"host_key_state\", \"host_key_fingerprint\", \"host_key_pinned_at\", \"health\", \"last_checked_at\", \"principals\", \"agent_state\", \"agent_last_seen_at\", \"bypass_posture\", \"unmanaged_key_count\", \"agent_hostname\", \"discovered_by\", \"protocol\", \"source\", \"credential_ref\", \"domain\", \"archived_at\", \"agent_console_only\", \"direct_ssh\", \"agent_direct_ssh\", \"agent_personal_accounts\", \"direct_ssh_accounts\", \"desktop_mode\", \"kind\", \"control_mode\", \"control_needs_approval\", \"connect_ask\", \"control_host\", \"alias\", \"outage_logins_off\""
+const updReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"hostname\", \"address\", \"port\", \"os\", \"tags\", \"group_name\", \"credential_mode\", \"credential_rotated_at\", \"rotation_interval_days\", \"host_key_state\", \"host_key_fingerprint\", \"host_key_pinned_at\", \"health\", \"last_checked_at\", \"principals\", \"agent_state\", \"agent_last_seen_at\", \"bypass_posture\", \"unmanaged_key_count\", \"agent_hostname\", \"discovered_by\", \"protocol\", \"source\", \"credential_ref\", \"domain\", \"archived_at\", \"agent_console_only\", \"direct_ssh\", \"agent_direct_ssh\", \"agent_personal_accounts\", \"direct_ssh_accounts\", \"desktop_mode\", \"kind\", \"control_mode\", \"control_needs_approval\", \"connect_ask\", \"control_host\", \"alias\", \"outage_logins_off\", \"agent_recovery_key\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -5111,6 +5198,20 @@ func (m *Mut) SetOutageLoginsOff(v bool) {
 	m.expr &^= dOutageLoginsOff
 }
 
+func (m *Mut) SetAgentRecoveryKey(v string) {
+	m.row.AgentRecoveryKey = runtime.Null[string]{V: v, Valid: true}
+	m.dirty |= dAgentRecoveryKey
+	m.expr &^= dAgentRecoveryKey
+}
+
+// SetAgentRecoveryKeyNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetAgentRecoveryKeyNull() {
+	m.row.AgentRecoveryKey = runtime.Null[string]{}
+	m.dirty |= dAgentRecoveryKey
+	m.expr &^= dAgentRecoveryKey
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -5473,6 +5574,18 @@ func (n *Ins) SetOutageLoginsOff(v bool) {
 	n.set |= iOutageLoginsOff
 }
 
+func (n *Ins) SetAgentRecoveryKey(v string) {
+	n.row.AgentRecoveryKey = runtime.Null[string]{V: v, Valid: true}
+	n.set |= iAgentRecoveryKey
+}
+
+// SetAgentRecoveryKeyNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetAgentRecoveryKeyNull() {
+	n.row.AgentRecoveryKey = runtime.Null[string]{}
+	n.set |= iAgentRecoveryKey
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -5524,7 +5637,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 40)
+	set := make([]string, 0, 41)
 	switch i {
 	case 0:
 		if mask&(1<<2) != 0 {
@@ -5647,6 +5760,9 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<41) != 0 {
 			set = append(set, "outage_logins_off")
 		}
+		if mask&(1<<42) != 0 {
+			set = append(set, "agent_recovery_key")
+		}
 	case 1:
 		if mask&(1<<2) != 0 {
 			set = append(set, "updated_at")
@@ -5765,6 +5881,9 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<41) != 0 {
 			set = append(set, "outage_logins_off")
 		}
+		if mask&(1<<42) != 0 {
+			set = append(set, "agent_recovery_key")
+		}
 	case 2:
 		if mask&(1<<2) != 0 {
 			set = append(set, "updated_at")
@@ -5882,6 +6001,9 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<41) != 0 {
 			set = append(set, "outage_logins_off")
+		}
+		if mask&(1<<42) != 0 {
+			set = append(set, "agent_recovery_key")
 		}
 	}
 	return set
@@ -6009,6 +6131,7 @@ var assignFor = map[string]string{
 	"control_host":            "\"control_host\" = EXCLUDED.\"control_host\"",
 	"alias":                   "\"alias\" = EXCLUDED.\"alias\"",
 	"outage_logins_off":       "\"outage_logins_off\" = EXCLUDED.\"outage_logins_off\"",
+	"agent_recovery_key":      "\"agent_recovery_key\" = EXCLUDED.\"agent_recovery_key\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -6143,6 +6266,8 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.Alias)
 		case 41:
 			args = append(args, n.row.OutageLoginsOff)
+		case 42:
+			args = append(args, n.row.AgentRecoveryKey.Arg())
 		}
 	}
 	var out Row
@@ -6180,7 +6305,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 42)
+	args := make([]any, 0, 43)
 	args = append(args, r.ID)
 	args = append(args, r.CreatedAt)
 	args = append(args, r.UpdatedAt)
@@ -6223,6 +6348,7 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.ControlHost)
 	args = append(args, r.Alias)
 	args = append(args, r.OutageLoginsOff)
+	args = append(args, r.AgentRecoveryKey.Arg())
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -6291,13 +6417,14 @@ var copyCols = []string{
 	"control_host",
 	"alias",
 	"outage_logins_off",
+	"agent_recovery_key",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [42]any
+	buf  [43]any
 }
 
 func (s *rowSource) Next() bool {
@@ -6357,6 +6484,7 @@ func (s *rowSource) Values() []any {
 	s.buf[39] = &r.ControlHost
 	s.buf[40] = &r.Alias
 	s.buf[41] = &r.OutageLoginsOff
+	s.buf[42] = r.AgentRecoveryKey.Ptr()
 	return s.buf[:]
 }
 
@@ -6429,8 +6557,9 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 39
 	mask |= 1 << 40
 	mask |= 1 << 41
+	mask |= 1 << 42
 	st := stmtForInsertNoReturn(mask, 0, 0)
-	args := make([]any, 0, 42)
+	args := make([]any, 0, 43)
 	args = append(args, r.ID)
 	args = append(args, r.CreatedAt)
 	args = append(args, r.UpdatedAt)
@@ -6473,6 +6602,7 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.ControlHost)
 	args = append(args, r.Alias)
 	args = append(args, r.OutageLoginsOff)
+	args = append(args, r.AgentRecoveryKey.Arg())
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -6590,6 +6720,8 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.Alias)
 		case 41:
 			args = append(args, n.row.OutageLoginsOff)
+		case 42:
+			args = append(args, n.row.AgentRecoveryKey.Arg())
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -6725,6 +6857,8 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.Alias)
 		case 39:
 			args = append(args, m.row.OutageLoginsOff)
+		case 40:
+			args = append(args, m.row.AgentRecoveryKey.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -6887,6 +7021,8 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.Alias)
 		case 39:
 			args = append(args, m.row.OutageLoginsOff)
+		case 40:
+			args = append(args, m.row.AgentRecoveryKey.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -7115,6 +7251,8 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.Alias)
 		case 39:
 			args = append(args, m.row.OutageLoginsOff)
+		case 40:
+			args = append(args, m.row.AgentRecoveryKey.Arg())
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

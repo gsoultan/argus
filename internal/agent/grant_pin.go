@@ -68,3 +68,29 @@ func (p *GrantPin) Check(sent ed25519.PublicKey) (ed25519.PublicKey, error) {
 	}
 	return p.key, nil
 }
+
+// Repin replaces the pinned key. Only a rekey order signed with the fleet
+// recovery key calls it (Recovery.Apply).
+func (p *GrantPin) Repin(key ed25519.PublicKey) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := writePrivate(p.Path, []byte(tunnel.EncodeGrantKey(key)+"\n")); err != nil {
+		return fmt.Errorf("cannot pin the new grant key: %w", err)
+	}
+	p.key = key
+	return nil
+}
+
+// Pinned is the pinned key, or nil before one is.
+func (p *GrantPin) Pinned() ed25519.PublicKey {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.key == nil {
+		if b, err := os.ReadFile(p.Path); err == nil {
+			if k, derr := tunnel.DecodeGrantKey(string(b)); derr == nil {
+				p.key = k
+			}
+		}
+	}
+	return p.key
+}

@@ -283,6 +283,12 @@ func serveTunnel(ctx context.Context, sess tunnel.Session, cfg TunnelConfig, log
 			_ = st.Close()
 			continue
 		}
+		// A key refused at connect may have been re-pinned since, by a rekey
+		// signed with the fleet recovery key (recovery.go): look again
+		// rather than wait for the next connection.
+		if keyErr != nil && cfg.GrantPin != nil {
+			key, keyErr = grantKeyFor(sess, cfg.GrantPin)
+		}
 		go func() {
 			defer func() { <-sem }()
 			handleStream(ctx, &Call{Stream: st, GrantKey: key, GrantKeyErr: keyErr},

@@ -45,6 +45,10 @@ asks you to confirm what Argus cannot see. In short:
 - [ ] **Backups run, and are copied off the control server.**
       [install.md, step 4](install.md#4-backups). A backup on the server it
       protects covers mistakes, not the loss of the server.
+- [ ] **A fleet recovery key is made and kept offline.** Settings › Account
+      security. Argus keeps only its public half; agents pin it. It is what
+      takes the fleet back if this server is ever taken over (last section).
+      Replace it with `argus-control recovery-key replace -old OLD.key -out NEW.key`.
 - [ ] **The signing key is kept somewhere else.** `signing_secret` in
       `/var/lib/argus-control/secrets/`. Without it, the encrypted database
       backups Argus takes of your Postgres servers cannot be opened.
@@ -132,9 +136,25 @@ holds the key the agents trust.
    checks them without Argus. Copy the audit log and recordings off the
    control server before rebuilding it.
 3. **Rebuild on a clean server** from a backup taken before the compromise,
-   with a **new** `signing_secret`, then re-pin each agent: delete
-   `/var/lib/argus/grant-key.pub` and restart `argus-agent`. Until it has
-   pinned the new key, an agent acts on no order from argus-control.
+   then move the fleet to a new signing key with the **fleet recovery key**
+   (Settings › Account security, made beforehand and kept offline):
+
+   ```
+   sudo argus-control rekey -recovery-key /media/usb/argus-recovery.key
+   sudo systemctl restart argus-control
+   ```
+
+   It writes a new `signing_secret` (keeping the old one beside it, which
+   older database backups still need) and an order signed with the recovery
+   key. Each agent checks the order against the recovery key it already
+   holds and re-pins to the new signing key at its next check-in; anything
+   signed with the old key is refused from then on. Copy the new secret to
+   any other control server and restart it too. Everyone signs in again.
+
+   Without a recovery key, or for an agent too old to hold one, re-pin by
+   hand: delete `/var/lib/argus/grant-key.pub` and restart `argus-agent`.
+   Until it has pinned the new key, an agent acts on no order from
+   argus-control.
 4. **Rotate** every console password and second factor
    ([admin-recovery.md](admin-recovery.md)), cloud credentials stored in
    Argus, and SSH keys of personal accounts Argus created.

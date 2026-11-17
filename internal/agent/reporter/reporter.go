@@ -142,6 +142,13 @@ type HeartbeatReply struct {
 	// control plane. Nil from a control plane older than the setting, or one
 	// that could not read it: the agent keeps what it last heard.
 	OutageLogins *OutageLogins `json:"outage_logins"`
+	// RecoveryKey is the fleet recovery key's public half, pinned the first
+	// time. RecoveryReplace and Rekey are orders signed with it, acted on
+	// whatever the control plane's own signature says. All absent from a
+	// control plane older than the recovery key, or that has none.
+	RecoveryKey     string `json:"recovery_key"`
+	RecoveryReplace string `json:"recovery_replace"`
+	Rekey           string `json:"rekey"`
 	// PersonalAccounts is the personal accounts this host should hold, as
 	// the agent decodes them. Absent from a control plane older than them,
 	// or one that could not read them: the agent keeps what it has.

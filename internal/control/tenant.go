@@ -284,6 +284,21 @@ CREATE TABLE IF NOT EXISTS argus_platform.control_readiness (
 	confirmed_by TEXT NOT NULL,
 	confirmed_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- The fleet recovery key's public half, and orders signed with its private
+-- half, which never reaches this database (recovery_key.go). One key for
+-- the deployment; one standing rekey per organization.
+CREATE TABLE IF NOT EXISTS argus_platform.recovery_key (
+	id            BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
+	public_key    TEXT NOT NULL,
+	created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+	created_by    TEXT NOT NULL,
+	replace_token TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS argus_platform.rekey_orders (
+	tenant_id  TEXT PRIMARY KEY,
+	token      TEXT NOT NULL,
+	issued_at  TIMESTAMPTZ NOT NULL
+);
 `
 
 func (s *Store) migratePlatform(ctx context.Context) error {

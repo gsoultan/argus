@@ -53,6 +53,7 @@ export function ControlReadinessPanel({ v, onOpen, now = Date.now() }: {
     outside: { label: 'Alerts', section: 'alerts' },
     backups: { label: 'Backups', section: 'control-backups' },
     ssh: { label: 'Logins', section: 'access' },
+    recovery: { label: 'Account security', section: 'security' },
   }
 
   return (

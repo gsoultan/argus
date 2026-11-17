@@ -414,6 +414,8 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/assets/{id}/direct-ssh", a.putAssetDirectSSH)
 	mux.HandleFunc("GET /api/v1/assets/{id}/outage-logins", a.getAssetOutageLogins)
 	mux.HandleFunc("PUT /api/v1/assets/{id}/outage-logins", a.putAssetOutageLogins)
+	mux.HandleFunc("GET /api/v1/platform/recovery-key", a.getRecoveryKey)
+	mux.HandleFunc("POST /api/v1/platform/recovery-key", a.postRecoveryKey)
 	mux.HandleFunc("GET /api/v1/policy/outage-logins", a.getOutageLogins)
 	mux.HandleFunc("PUT /api/v1/policy/outage-logins", a.putOutageLogins)
 	a.registerPackageRoutes(mux)
@@ -993,6 +995,9 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// Disks is each filesystem's stack and how a grow it was sent is
 		// going. Absent from an agent older than disk growing.
 		Disks *DiskBeat `json:"disks"`
+		// RecoveryKey is the fingerprint of the fleet recovery key the
+		// agent holds, "" for none. Absent from an agent older than it.
+		RecoveryKey *string `json:"recovery_key"`
 	}
 	if err := decodeReport(r, &in, a.log, "report/heartbeat"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -1049,6 +1054,13 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		reply["direct_ssh_accounts"] = accounts
 	} else {
 		a.log.Error("heartbeat: cannot read the direct ssh setting", "error", merr)
+	}
+	// The fleet recovery key, and anything signed with it.
+	a.recoveryReply(r.Context(), reply)
+	if in.RecoveryKey != nil && len(*in.RecoveryKey) <= 64 && !errors.Is(err, ErrAgentUnmatched) {
+		if rerr := a.store.NoteAgentRecoveryKey(r.Context(), in.Hostname, *in.RecoveryKey); rerr != nil {
+			a.log.Error("heartbeat: cannot record the recovery key held", "error", rerr)
+		}
 	}
 	// Who may log in while this server cannot reach Argus. Left out on a
 	// failed read, so the agent keeps what it last heard.

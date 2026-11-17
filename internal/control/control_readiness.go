@@ -65,7 +65,9 @@ type ReadinessView struct {
 	// never confirmed.
 	Confirmations map[string]*ReadinessConfirmation `json:"confirmations"`
 	LastOutage    *ControlOutage                    `json:"lastOutage,omitempty"`
-	ConfirmDays   int                               `json:"confirmDays"`
+	// Recovery is the fleet recovery key, in short (recovery_key.go).
+	Recovery    *ReadinessRecovery `json:"recovery,omitempty"`
+	ConfirmDays int                `json:"confirmDays"`
 }
 
 // ReadinessOutside is the outside check-in as the running servers report it.
@@ -85,6 +87,14 @@ type ReadinessBackups struct {
 	LastAt    *time.Time `json:"lastAt,omitempty"`
 	LastOK    bool       `json:"lastOk"`
 	LastError string     `json:"lastError,omitempty"`
+}
+
+// ReadinessRecovery is whether a fleet recovery key is held, and by how many
+// servers.
+type ReadinessRecovery struct {
+	Set     bool `json:"set"`
+	Holding int  `json:"holding"`
+	Total   int  `json:"total"`
 }
 
 // ReadinessDirectSSH counts servers by what their agents apply to a login
@@ -212,6 +222,11 @@ func (a *API) readiness(ctx context.Context) (ReadinessView, error) {
 		v.Confirmations[item] = &c
 	}
 
+	if rk, err := a.recoveryView(ctx); err == nil {
+		v.Recovery = &ReadinessRecovery{Set: rk.Set, Holding: rk.Holding, Total: rk.Total}
+	} else {
+		a.log.Warn("readiness: cannot read the fleet recovery key", "error", err)
+	}
 	if v.LastOutage, err = a.store.LastControlOutage(ctx); err != nil {
 		return v, fmt.Errorf("outages: %w", err)
 	}

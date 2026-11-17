@@ -31,6 +31,7 @@ import { ControlUpdateSection } from '~/components/ControlUpdate'
 import { ControlBackupsSection } from '~/components/ControlBackups'
 import { ControlReadinessSection, useReadinessNeeds } from '~/components/ControlReadiness'
 import { OutageLoginsCard } from '~/components/OutageLogins'
+import { FleetRecoveryKey } from '~/components/FleetRecoveryKey'
 import {
   CONTROL_SECTIONS, ControlSection, useControlSettings, type ControlSectionId,
   type ControlSettingsState,
@@ -396,6 +397,9 @@ function Settings() {
                   <Skeleton h={240} />
                 ) : (
                   <ControlSection id={active as ControlSectionId} ctl={ctl} />
+                )}
+                {active === 'security' && me?.platformOwner && (
+                  <FleetRecoveryKey />
                 )}
               </>
             )}
