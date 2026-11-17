@@ -402,6 +402,10 @@ func instance(r raw, ids map[string]cloud.Ref, firewalls []raw) cloud.Resource {
 			l.Name = d.DeviceName
 			res.Links = append(res.Links, l)
 		}
+		if d.Boot {
+			// The name the console already reads for the disk that boots it.
+			res.Details["rootDeviceName"] = d.DeviceName
+		}
 	}
 	set(res.Details, "networkTags", strings.Join(r.Tags.Items, ", "))
 	set(res.Details, "serviceAccount", strings.Join(sas, ", "))

@@ -24,6 +24,18 @@ export function accountIdText(provider: CloudProvider, id: string): string {
 
 /** A Google Cloud project id: 6 to 30 lower case letters, digits and dashes, starting with a letter. */
 export const GCP_PROJECT = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/
+/** A Compute Engine name (disk, snapshot): 1 to 63 lower case letters, digits and dashes, starting with a letter. */
+export const GCP_NAME = /^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$/
+/** The persistent disk types Argus makes in Google Cloud. */
+export const GCP_DISK_TYPES = [
+  { value: 'pd-balanced', label: 'Balanced (pd-balanced)' },
+  { value: 'pd-ssd', label: 'SSD (pd-ssd)' },
+  { value: 'pd-standard', label: 'Standard, HDD (pd-standard)' },
+]
+/** Where a Google Cloud disk shows up on a Linux VM: Argus names its device after the disk. */
+export function gcpDevicePath(disk: string): string {
+  return `/dev/disk/by-id/google-${disk}`
+}
 export type CloudKind = 'instance' | 'volume' | 'firewall' | 'network' | 'subnet' | 'address' | 'snapshot' | 'image'
   | 'load-balancer' | 'target-group' | 'scaling-group' | 'database'
 

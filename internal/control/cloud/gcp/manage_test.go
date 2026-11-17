@@ -72,7 +72,27 @@ func (g *fakeManage) handler() http.Handler {
 		}
 	}))
 	mux.HandleFunc("GET /compute/v1/projects/{p}/zones/{z}/instances/{id}", auth(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"labels":{"team":"payments","environment":"production"},"labelFingerprint":"fp-101"}`))
+		_, _ = w.Write([]byte(`{"labels":{"team":"payments","environment":"production"},"labelFingerprint":"fp-101",
+			"disks":[{"source":"` + link + `/zones/us-central1-a/disks/web-1-boot","deviceName":"persistent-disk-0"},
+			{"source":"` + link + `/zones/us-central1-a/disks/web-1","deviceName":"data"}]}`))
+	}))
+	mux.HandleFunc("GET /compute/v1/projects/{p}/zones/{z}/disks/{id}", auth(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"users":["` + link + `/zones/us-central1-a/instances/web-1"]}`))
+	}))
+	mux.HandleFunc("GET /compute/v1/projects/{p}/global/snapshots/{id}", auth(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"selfLink":"` + link + `/global/snapshots/nightly-1"}`))
+	}))
+	mux.HandleFunc("GET /compute/v1/projects/{p}/zones/{z}/operations/{op}", auth(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"name":"` + r.PathValue("op") + `","status":"DONE"}`))
+	}))
+	mux.HandleFunc("DELETE /compute/v1/", auth(func(w http.ResponseWriter, r *http.Request) {
+		g.mu.Lock()
+		g.posts = append(g.posts, "DELETE "+r.URL.Path)
+		g.bodies = append(g.bodies, "")
+		g.agents = append(g.agents, r.Header.Get("User-Agent"))
+		g.queries = append(g.queries, r.URL.RawQuery)
+		g.mu.Unlock()
+		_, _ = w.Write([]byte(`{"name":"operation-d","status":"RUNNING"}`))
 	}))
 	mux.HandleFunc("GET /compute/v1/projects/{p}/regions/{rg}/disks/{id}", auth(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"labelFingerprint":"fp-202"}`))
@@ -94,6 +114,11 @@ func (g *fakeManage) handler() http.Handler {
 		g.mu.Unlock()
 		if strings.Contains(r.URL.Path, "/zones/us-central1-a/instances/101/reset") {
 			_, _ = w.Write([]byte(`{"name":"operation-9","status":"DONE","error":{"errors":[{"message":"The resource is not ready"}]}}`))
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/zones/us-central1-a/disks") {
+			_, _ = w.Write([]byte(`{"name":"operation-c","status":"RUNNING","targetId":"301",
+				"selfLink":"` + link + `/zones/us-central1-a/operations/operation-c"}`))
 			return
 		}
 		_, _ = w.Write([]byte(`{"name":"operation-1","status":"RUNNING"}`))
@@ -189,7 +214,7 @@ func TestOnlyBuiltChangesAreSupported(t *testing.T) {
 			t.Errorf("%s should be supported", a)
 		}
 	}
-	for _, a := range []cloud.Action{cloud.ActionLaunch, cloud.ActionRemove, cloud.ActionHibernate, cloud.ActionVolumeDelete, cloud.ActionSnapshotCreate} {
+	for _, a := range []cloud.Action{cloud.ActionLaunch, cloud.ActionRemove, cloud.ActionHibernate, cloud.ActionImageCreate, cloud.ActionAddressAllocate} {
 		if cloud.Supports(p, a) {
 			t.Errorf("%s is not built for Google Cloud yet", a)
 		}
@@ -320,5 +345,83 @@ func TestProtectSetsDeletionProtection(t *testing.T) {
 	}
 	if g.queries[0] != "deletionProtection=true" || g.queries[1] != "deletionProtection=false" {
 		t.Fatalf("queries = %v", g.queries)
+	}
+}
+
+func TestADiskIsMadeFromASnapshotAndAttachedOnceItExists(t *testing.T) {
+	p, g, acct := newManageFake(t, "argus-0123", ManageDescription("argus-0123"))
+	res, err := p.CreateVolume(context.Background(), acct, "alice@example.com", "us-central1", cloud.VolumeSpec{
+		Name: "web-1-logs", Zone: "us-central1-a", SizeGB: 50, Type: "pd-ssd", Snapshot: "401", AttachTo: "101", Device: "web-1-logs",
+		Tags: map[string]string{"argus:change": "ABC-1", "team": "payments"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ResourceID != "301" || !strings.Contains(res.Detail, "attached it to web-1 as web-1-logs") {
+		t.Fatalf("result = %+v", res)
+	}
+	want := []string{"/compute/v1/projects/payments-prod-4182/zones/us-central1-a/disks",
+		"/compute/v1/projects/payments-prod-4182/zones/us-central1-a/instances/101/attachDisk"}
+	if len(g.posts) != 2 || g.posts[0] != want[0] || g.posts[1] != want[1] {
+		t.Fatalf("posts = %v", g.posts)
+	}
+	for _, part := range []string{`"name":"web-1-logs"`, `"sizeGb":"50"`, `"type":"zones/us-central1-a/diskTypes/pd-ssd"`,
+		`"sourceSnapshot":"/compute/v1/projects/payments-prod-4182/global/snapshots/nightly-1"`, `"argus-change":"abc-1"`, `"team":"payments"`} {
+		if !strings.Contains(g.bodies[0], part) {
+			t.Errorf("missing %s in %s", part, g.bodies[0])
+		}
+	}
+	if g.bodies[1] != `{"deviceName":"web-1-logs","mode":"READ_WRITE","source":"projects/payments-prod-4182/zones/us-central1-a/disks/web-1-logs"}` {
+		t.Errorf("attach body = %s", g.bodies[1])
+	}
+	for _, bad := range []cloud.VolumeSpec{
+		{Name: "Logs", Zone: "us-central1-a", SizeGB: 50, Type: "pd-ssd"},
+		{Name: "logs", Zone: "us-central1-a", SizeGB: 50, Type: "gp3"},
+		{Name: "logs", Zone: "europe-west1-b", SizeGB: 50, Type: "pd-ssd"},
+	} {
+		if _, err := p.CreateVolume(context.Background(), acct, "alice@example.com", "us-central1", bad); err == nil {
+			t.Errorf("%+v should be refused", bad)
+		}
+	}
+	if len(g.posts) != 2 {
+		t.Fatalf("nothing more should be made: %v", g.posts)
+	}
+}
+
+func TestADiskIsDetachedByTheDeviceItHasOnItsInstance(t *testing.T) {
+	p, g, acct := newManageFake(t, "argus-0123", ManageDescription("argus-0123"))
+	if _, err := p.DetachVolume(context.Background(), acct, "alice@example.com", "us-central1", "201"); err != nil {
+		t.Fatal(err)
+	}
+	if len(g.posts) != 1 || g.posts[0] != "/compute/v1/projects/payments-prod-4182/zones/us-central1-a/instances/web-1/detachDisk" || g.queries[0] != "deviceName=data" {
+		t.Fatalf("posts = %v %v", g.posts, g.queries)
+	}
+}
+
+func TestDisksAndSnapshotsAreDeletedAndSnapshotsTaken(t *testing.T) {
+	p, g, acct := newManageFake(t, "argus-0123", ManageDescription("argus-0123"))
+	if _, err := p.DeleteVolume(context.Background(), acct, "alice@example.com", "us-central1", "202", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.DeleteVolume(context.Background(), acct, "alice@example.com", "us-central1", "201", true); !errors.Is(err, cloud.ErrUnsupported) {
+		t.Fatalf("a final snapshot is its own change in Google Cloud: %v", err)
+	}
+	if _, err := p.DeleteSnapshot(context.Background(), acct, "alice@example.com", GlobalRegion, "401"); err != nil {
+		t.Fatal(err)
+	}
+	res, err := p.CreateSnapshot(context.Background(), acct, "alice@example.com", "us-central1", "201", "web-1-20261117-0400")
+	if err != nil || res.ResourceID != "web-1-20261117-0400" {
+		t.Fatalf("snapshot: %+v %v", res, err)
+	}
+	if _, err := p.CreateSnapshot(context.Background(), acct, "alice@example.com", "us-central1", "201", "web-1 2026-11-17"); err == nil {
+		t.Fatal("a snapshot name is a Compute Engine name")
+	}
+	want := []string{"DELETE /compute/v1/projects/payments-prod-4182/regions/us-central1/disks/202",
+		"DELETE /compute/v1/projects/payments-prod-4182/global/snapshots/401",
+		"/compute/v1/projects/payments-prod-4182/zones/us-central1-a/disks/201/createSnapshot"}
+	if strings.Join(g.posts, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("calls = %v", g.posts)
+	}
+	if g.bodies[2] != `{"name":"web-1-20261117-0400"}` {
+		t.Errorf("snapshot body = %s", g.bodies[2])
 	}
 }

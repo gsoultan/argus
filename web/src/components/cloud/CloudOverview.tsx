@@ -271,7 +271,7 @@ function AllowChanges({ a, update, onClose }: { a: CloudAccount; update?: boolea
           <Button loading={allow.isPending}
             onClick={() => void run(() => allow.mutateAsync({ id: a.id, roleArn: arn }), { failure: 'Argus could not use that role',
               success: update ? ['Checking the role', `Argus is reading what the role in ${a.name} may do now.`]
-                : ['Changes allowed', gcp ? `Admins can now start, stop and reset VMs, change their machine type, labels and deletion protection, and grow disks in ${a.name}.`
+                : ['Changes allowed', gcp ? `Admins can now start, stop and reset VMs, change their machine type, labels and deletion protection, and make, grow, attach, detach, snapshot and delete disks in ${a.name}.`
                   : `Admins can now launch and change instances, disks and addresses in ${a.name}.`] }).then((ok) => ok && onClose())}>
             {update ? 'Check again' : 'Check and allow'}
           </Button>

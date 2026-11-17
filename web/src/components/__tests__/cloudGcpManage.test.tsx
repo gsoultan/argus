@@ -2,7 +2,7 @@ import { fireEvent, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { TagsChange } from '~/components/cloud/ChangeModal'
 import { GcpSetup } from '~/components/cloud/GcpSetup'
-import { allows, allowsTags, labelProblem, type CloudItem, type CloudPrepared } from '~/lib/cloud'
+import { GCP_NAME, allows, allowsTags, gcpDevicePath, labelProblem, type CloudItem, type CloudPrepared } from '~/lib/cloud'
 import { renderWithProviders } from '~/test/render'
 
 /**
@@ -49,6 +49,12 @@ describe('Changes in a Google Cloud project', () => {
     expect(allowsTags(gcp, 'snapshot')).toBe(false)
     expect(allowsTags({ actions: ['start'] }, 'instance')).toBe(false)
     expect(allowsTags({}, 'firewall')).toBe(true)
+  })
+
+  it('knows what Google takes as a disk or snapshot name, and where the disk shows up', () => {
+    for (const ok of ['logs', 'etl-data-1', 'a']) expect(GCP_NAME.test(ok)).toBe(true)
+    for (const bad of ['Logs', '1logs', 'logs-', 'etl data', 'a'.repeat(64)]) expect(GCP_NAME.test(bad)).toBe(false)
+    expect(gcpDevicePath('logs')).toBe('/dev/disk/by-id/google-logs')
   })
 
   it('knows what Google takes as a label', () => {

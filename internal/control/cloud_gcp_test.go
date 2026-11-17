@@ -236,10 +236,6 @@ func TestCloudGoogleProjectGrowsADisk(t *testing.T) {
 		`{"accountId":"`+c.ID+`","region":"us-central1","action":"hibernate","resourceId":"101"}`); w.Code != http.StatusNotImplemented {
 		t.Fatalf("what is not built for Google must be refused as such: %d %s", w.Code, w.Body)
 	}
-	if w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes", "admin-token",
-		`{"accountId":"`+c.ID+`","region":"us-central1","action":"volume-delete","resourceId":"201","confirm":"web-1"}`); w.Code != http.StatusNotImplemented {
-		t.Fatalf("deleting a disk is not built for Google yet: %d %s", w.Code, w.Body)
-	}
 }
 
 func TestCloudGoogleProjectChangesMachineTypeLabelsAndProtection(t *testing.T) {
@@ -326,5 +322,111 @@ func TestCloudGoogleProjectChangesMachineTypeLabelsAndProtection(t *testing.T) {
 	// Environment tag does in AWS.
 	if ch := ask(`"action":"tags","resourceId":"101","spec":{"set":{"environment":"production"}}`, http.StatusOK); ch.Level != cloud.LevelChange {
 		t.Fatalf("an environment label is a bigger change: %+v", ch)
+	}
+}
+
+func TestCloudGoogleProjectMakesAttachesAndDeletesDisksAndSnapshots(t *testing.T) {
+	e, fake, project := gcpEnv(t)
+	w := do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts/prepare", "admin-token", `{"provider":"gcp","accountId":"`+project+`","manage":true}`)
+	var p CloudPrepared
+	_ = json.Unmarshal(w.Body.Bytes(), &p)
+	fake.Roles[p.ReadRoleARN] = p.ExternalID
+	fake.Roles[p.ManageRoleARN] = p.ExternalID
+	fake.Resources["us-central1"] = []cloud.Resource{
+		{Kind: cloud.KindInstance, ID: "101", Name: "web-1", Region: "us-central1", Zone: "us-central1-a", State: "running", Size: "e2-small",
+			Details: map[string]string{"rootDeviceName": "persistent-disk-0"},
+			Links:   []cloud.Ref{{Kind: cloud.KindVolume, ID: "200", Name: "persistent-disk-0"}}},
+		{Kind: cloud.KindVolume, ID: "200", Name: "web-1", Region: "us-central1", Zone: "us-central1-a", State: "in-use", Size: "10 GiB",
+			Links: []cloud.Ref{{Kind: cloud.KindInstance, ID: "101", Name: "persistent-disk-0"}}},
+		{Kind: cloud.KindVolume, ID: "201", Name: "spare", Region: "us-central1", Zone: "us-central1-a", State: "available", Size: "30 GiB"},
+	}
+	fake.Resources[gcp.GlobalRegion] = []cloud.Resource{
+		{Kind: cloud.KindSnapshot, ID: "401", Name: "nightly-1", Region: gcp.GlobalRegion, State: "ready", Size: "40 GiB"},
+	}
+	w = do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts", "admin-token",
+		`{"provider":"gcp","name":"web-gcp","accountId":"`+project+`","environment":"development","manage":true}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("connect with changes: %d %s", w.Code, w.Body)
+	}
+	var c CloudAccount
+	_ = json.Unmarshal(w.Body.Bytes(), &c)
+	deadline := time.Now().Add(5 * time.Second)
+	for !e.a.SyncCloudAccount(context.Background(), c) {
+		if time.Now().After(deadline) {
+			t.Fatal("the project was being read for too long")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	ask := func(region, body string, want int) CloudChange {
+		t.Helper()
+		w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes", "admin-token",
+			`{"accountId":"`+c.ID+`","region":"`+region+`",`+body+`}`)
+		if w.Code != want {
+			t.Fatalf("%s: %d %s, want %d", body, w.Code, w.Body, want)
+		}
+		var ch CloudChange
+		_ = json.Unmarshal(w.Body.Bytes(), &ch)
+		return ch
+	}
+
+	// A new disk is named as Google names things, sized as Google sizes
+	// them, and from a snapshot is at least the snapshot's size.
+	ask("us-central1", `"action":"volume-create","spec":{"zone":"us-central1-a","sizeGb":50,"type":"pd-ssd"}`, http.StatusBadRequest)
+	ask("us-central1", `"action":"volume-create","spec":{"name":"Logs","zone":"us-central1-a","sizeGb":50}`, http.StatusBadRequest)
+	ask("us-central1", `"action":"volume-create","spec":{"name":"logs","zone":"us-central1-a","sizeGb":50,"type":"gp3"}`, http.StatusBadRequest)
+	ask("us-central1", `"action":"volume-create","spec":{"name":"logs","zone":"us-central1-a","sizeGb":5}`, http.StatusBadRequest)
+	ask("us-central1", `"action":"volume-create","spec":{"name":"spare","zone":"us-central1-a","sizeGb":50}`, http.StatusConflict)
+	ask("us-central1", `"action":"volume-create","spec":{"name":"logs","zone":"us-central1-a","sizeGb":20,"snapshot":"401"}`, http.StatusBadRequest)
+	ch := ask("us-central1", `"action":"volume-create","spec":{"name":"logs","zone":"us-central1-a","snapshot":"401","attachTo":"101"}`, http.StatusOK)
+	if ch.State != "applied" || ch.Summary != "Make the disk logs: 40 GB pd-balanced in us-central1-a, from nightly-1, attached to web-1" {
+		t.Fatalf("create: %+v", ch)
+	}
+	var made cloudVolumeCreateSpec
+	_ = json.Unmarshal(ch.Spec, &made)
+	if made.Device != "logs" {
+		t.Fatalf("the device is the disk's name in Google Cloud: %+v", made)
+	}
+
+	// A final snapshot before a delete is its own change in Google Cloud.
+	ask("us-central1", `"action":"volume-delete","resourceId":"201","confirm":"spare","spec":{"finalSnapshot":true}`, http.StatusBadRequest)
+
+	// Attaching names the device after the disk; the boot disk of a
+	// running VM stays where it is.
+	ch = ask("us-central1", `"action":"volume-attach","resourceId":"201","spec":{"instance":"101"}`, http.StatusOK)
+	if ch.Summary != "Attach spare to web-1 as spare" {
+		t.Fatalf("attach: %+v", ch)
+	}
+	if w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes", "admin-token",
+		`{"accountId":"`+c.ID+`","region":"us-central1","action":"volume-detach","resourceId":"200"}`); w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "root disk") {
+		t.Fatalf("detaching a running VM's boot disk: %d %s", w.Code, w.Body)
+	}
+
+	// A snapshot gets a Compute Engine name when none is given.
+	ch = ask("us-central1", `"action":"snapshot-create","resourceId":"200"`, http.StatusOK)
+	var named cloudNameSpec
+	_ = json.Unmarshal(ch.Spec, &named)
+	if !gcp.ValidName(named.Name) || !strings.HasPrefix(named.Name, "web-1-") {
+		t.Fatalf("snapshot name = %q", named.Name)
+	}
+	ask("us-central1", `"action":"snapshot-create","resourceId":"200","spec":{"name":"Web 1 nightly"}`, http.StatusBadRequest)
+
+	// Deleting a snapshot, which belongs to the whole project.
+	ch = ask(gcp.GlobalRegion, `"action":"snapshot-delete","resourceId":"401","confirm":"nightly-1"`, http.StatusOK)
+	if ch.State != "applied" || ch.Summary != "Delete the snapshot nightly-1 (401, 40 GiB)" {
+		t.Fatalf("snapshot delete: %+v", ch)
+	}
+}
+
+func TestGCPSnapshotNames(t *testing.T) {
+	at := time.Date(2026, 11, 17, 4, 5, 0, 0, time.UTC)
+	for disk, want := range map[string]string{
+		"web-1":                 "web-1-20261117-0405",
+		"Web_1 Data":            "web-1-data-20261117-0405",
+		"9lives":                "disk-9lives-20261117-0405",
+		strings.Repeat("a", 70): strings.Repeat("a", 49) + "-20261117-0405",
+	} {
+		if got := gcpSnapshotName(disk, at); got != want || !gcp.ValidName(got) {
+			t.Errorf("%q: %q, want %q", disk, got, want)
+		}
 	}
 }
