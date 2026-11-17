@@ -27,7 +27,7 @@ const ICON: Record<CloudAction, typeof IconTrash> = {
   'capacity-create': IconBox, 'capacity-cancel': IconBoxOff, 'ri-buy': IconReceipt, 'sp-buy': IconReceipt,
   'target-group-create': IconTargetArrow, 'health-check': IconHeartbeat, 'balancer-create': IconArrowsSplit, 'group-size': IconStack2,
   'scale-group-create': IconStack3, 'scale-group-change': IconStack3, 'scale-add': IconCirclePlus, 'scale-remove': IconCircleMinus,
-  'replica-create': IconDatabasePlus, 'replica-remove': IconDatabaseMinus,
+  'replica-create': IconDatabasePlus, 'replica-remove': IconDatabaseMinus, 'read-endpoint': IconArrowsSplit,
 }
 const ICON_COLOR: Partial<Record<CloudAction, string>> = {
   launch: 'teal', remove: 'rose', stop: 'amber', hibernate: 'amber', 'volume-create': 'teal', 'address-allocate': 'teal',

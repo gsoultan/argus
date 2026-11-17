@@ -374,6 +374,8 @@ export type CloudReplicaAction = 'replica-create' | 'replica-remove'
 export const isBuy = (a: CloudAction) => a === 'ri-buy' || a === 'sp-buy'
 export type CloudAction = 'launch' | 'start' | 'stop' | 'hibernate' | 'reboot' | 'resize' | 'tags' | 'protect' | 'unprotect' | 'settings' | 'remove'
   | CloudStorageAction | CloudNetworkAction | CloudCapacityAction | CloudBalancingAction | CloudScaleAction | CloudReplicaAction
+  /** A database's read endpoint, where setting it waits for a second person (production). */
+  | 'read-endpoint'
 export type CloudChangeState = 'awaiting_approval' | 'applying' | 'applied' | 'failed' | 'declined' | 'cancelled' | 'lapsed'
 
 export interface CloudChange {
@@ -889,7 +891,7 @@ export const ACTION_LEVEL: Record<CloudAction, CloudChange['level']> = {
   'capacity-create': 'change', 'capacity-cancel': 'change', 'ri-buy': 'remove', 'sp-buy': 'remove',
   'target-group-create': 'change', 'health-check': 'change', 'balancer-create': 'change', 'group-size': 'change',
   'scale-group-create': 'change', 'scale-group-change': 'change', 'scale-add': 'change', 'scale-remove': 'change',
-  'replica-create': 'change', 'replica-remove': 'remove',
+  'replica-create': 'change', 'replica-remove': 'remove', 'read-endpoint': 'change',
 }
 
 /** The permissions each storage change takes, as the manage role must grant them. */

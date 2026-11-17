@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -68,6 +69,8 @@ type ReadEndpointChoice struct {
 type readEndpointView struct {
 	Endpoint *ReadEndpoint        `json:"endpoint"`
 	Choices  []ReadEndpointChoice `json:"choices"`
+	// Pending is setting it, asked and waiting for a second person.
+	Pending *CloudChange `json:"pending,omitempty"`
 }
 
 /* ── Store ──────────────────────────────────────────────────────────────── */
@@ -151,7 +154,28 @@ func (a *API) getReadEndpoint(w http.ResponseWriter, r *http.Request, _ string, 
 		a.fail(w, "read endpoint", err)
 		return
 	}
+	view.Pending, err = a.pendingReadEndpoint(ctx, db.ID)
+	if err != nil {
+		a.fail(w, "read endpoint", err)
+		return
+	}
 	writeJSON(w, http.StatusOK, view)
+}
+
+// pendingReadEndpoint is the change setting db's endpoint that waits for
+// approval, or nil.
+func (a *API) pendingReadEndpoint(ctx context.Context, databaseID string) (*CloudChange, error) {
+	list, err := a.store.CloudChanges(ctx, true, "", "", 500)
+	if err != nil {
+		return nil, err
+	}
+	for _, ch := range list {
+		var s readEndpointSpec
+		if ch.Action == cloud.ActionReadEndpoint && json.Unmarshal(ch.Spec, &s) == nil && s.DatabaseID == databaseID {
+			return &ch, nil
+		}
+	}
+	return nil, nil
 }
 
 // readEndpointChoices is every target group on db's port in a connected
@@ -212,8 +236,19 @@ func targetGroupProblem(g cloud.Resource, port int) string {
 	return ""
 }
 
+// readEndpointSpec is a cloud change that sets a read endpoint, for an
+// account where it waits for a second person.
+type readEndpointSpec struct {
+	DatabaseID     string `json:"databaseId"`
+	Database       string `json:"database"`
+	Hostname       string `json:"hostname"`
+	IncludePrimary bool   `json:"includePrimary"`
+}
+
 // PUT /api/v1/databases/{id}/read-endpoint: make a target group db's read
-// endpoint. A DBA on db who is an admin or owner of the organization.
+// endpoint. A DBA on db who is an admin or owner of the organization. On an
+// account whose changes wait for approval (production), it is asked as a
+// cloud change and set once someone else approves it in Approvals.
 func (a *API) putReadEndpoint(w http.ResponseWriter, r *http.Request, email string, db Database, _ string) {
 	sess, _ := a.authenticate(r)
 	if !a.privileged(w, sess, "setting a read endpoint", "admin", "owner") {
@@ -224,6 +259,7 @@ func (a *API) putReadEndpoint(w http.ResponseWriter, r *http.Request, email stri
 		Region         string `json:"region"`
 		TargetGroup    string `json:"targetGroup"`
 		IncludePrimary bool   `json:"includePrimary"`
+		Reason         string `json:"reason"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -235,47 +271,134 @@ func (a *API) putReadEndpoint(w http.ResponseWriter, r *http.Request, email stri
 		writeErr(w, code, err.Error())
 		return
 	}
-	if _, ok := m.manager.(cloud.Network); !ok {
-		writeErr(w, http.StatusNotImplemented, m.acct.Provider+" cannot change load balancers yet")
-		return
-	}
-	g, err := a.store.CloudResourceOf(ctx, m.acct.ID, in.Region, cloud.KindTargetGroup, in.TargetGroup)
+	g, code, err := a.readEndpointTarget(ctx, m, in.Region, in.TargetGroup, db)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "no target group "+in.TargetGroup+" in "+m.acct.Name+" "+in.Region+" as last read")
+		writeErr(w, code, err.Error())
 		return
 	}
-	if p := targetGroupProblem(g, db.Port); p != "" {
-		writeErr(w, http.StatusBadRequest, g.Name+" cannot be a read endpoint for "+db.Name+": "+p)
+	if cloudNeedsApproval(m.acct.Environment, cloud.LevelOf(cloud.ActionReadEndpoint)) {
+		a.askReadEndpoint(w, r, m, g, db, email, in.IncludePrimary, in.Reason)
 		return
 	}
-	// A different target group: take out what Argus put in the old one.
-	old, err := a.store.readEndpoint(ctx, db.ID)
-	if err == nil && (old.TargetGroup != g.ID || old.AccountID != m.acct.ID || old.Region != in.Region) {
-		a.clearReadEndpoint(ctx, old, db)
-	} else if err != nil && !errors.Is(err, ErrNoReadEndpoint) {
+	if err := a.setReadEndpointNow(ctx, m, g, db, in.IncludePrimary, email, ""); err != nil {
 		a.fail(w, "read endpoint", err)
 		return
 	}
-	e := ReadEndpoint{DatabaseID: db.ID, AccountID: m.acct.ID, Region: in.Region, TargetGroup: g.ID,
-		TargetName: g.Name, IncludePrimary: in.IncludePrimary, SetBy: email}
-	if err := a.store.setReadEndpoint(ctx, e); err != nil {
-		a.fail(w, "read endpoint", err)
-		return
-	}
-	with := "its replicas"
-	if in.IncludePrimary {
-		with = "the primary and its replicas"
-	}
-	a.auditDB(ctx, "db.read_endpoint_set", "notice", email, db.Hostname,
-		fmt.Sprintf("Read endpoint for %s: target group %s in %s %s, with %s that are not behind", db.Name, g.Name, m.acct.Name, in.Region, with))
-	a.tendReadEndpoint(ctx, db)
-	e, err = a.store.readEndpoint(ctx, db.ID)
+	e, err := a.store.readEndpoint(ctx, db.ID)
 	if err != nil {
 		a.fail(w, "read endpoint", err)
 		return
 	}
 	e.Health = a.targetHealth(ctx, e.AccountID, e.Region, e.TargetGroup)
 	writeJSON(w, http.StatusOK, e)
+}
+
+// readEndpointTarget is the target group a read endpoint would be, checked.
+func (a *API) readEndpointTarget(ctx context.Context, m cloudManaged, region, id string, db Database) (cloud.Resource, int, error) {
+	if _, ok := m.manager.(cloud.Network); !ok {
+		return cloud.Resource{}, http.StatusNotImplemented, errors.New(m.acct.Provider + " cannot change load balancers yet")
+	}
+	g, err := a.store.CloudResourceOf(ctx, m.acct.ID, region, cloud.KindTargetGroup, id)
+	if err != nil {
+		return g, http.StatusBadRequest, errors.New("no target group " + id + " in " + m.acct.Name + " " + region + " as last read")
+	}
+	if p := targetGroupProblem(g, db.Port); p != "" {
+		return g, http.StatusBadRequest, errors.New(g.Name + " cannot be a read endpoint for " + db.Name + ": " + p)
+	}
+	return g, http.StatusOK, nil
+}
+
+// askReadEndpoint records setting the endpoint as a cloud change waiting
+// for someone other than the person who asked.
+func (a *API) askReadEndpoint(w http.ResponseWriter, r *http.Request, m cloudManaged, g cloud.Resource, db Database,
+	email string, includePrimary bool, reason string) {
+	reason = strings.TrimSpace(reason)
+	if len(reason) > 500 {
+		writeErr(w, http.StatusBadRequest, "keep the reason under 500 characters")
+		return
+	}
+	spec, _ := json.Marshal(readEndpointSpec{DatabaseID: db.ID, Database: db.Name, Hostname: db.Hostname, IncludePrimary: includePrimary})
+	with := "its replicas that are not behind"
+	if includePrimary {
+		with = db.Hostname + " and " + with
+	}
+	ch := CloudChange{AccountID: m.acct.ID, Region: g.Region, Action: cloud.ActionReadEndpoint,
+		Level: cloud.LevelOf(cloud.ActionReadEndpoint), Environment: m.acct.Environment, ResourceID: g.ID, ResourceName: g.Name,
+		Spec: spec, Reason: reason, RequestedBy: email, State: "awaiting_approval",
+		Summary: fmt.Sprintf("Make %s the read endpoint of %s on %s: Argus keeps %s in it", g.Name, db.Name, db.Hostname, with)}
+	ch, err := a.store.CreateCloudChange(r.Context(), ch)
+	if errors.Is(err, ErrCloudChangeBusy) {
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	if err != nil {
+		a.fail(w, "read endpoint", err)
+		return
+	}
+	detail := ch.Summary + ". Waits for approval (" + ch.Environment + ")."
+	if ch.Reason != "" {
+		detail += " Reason: " + ch.Reason
+	}
+	a.auditCloudChange(r, ch, "requested", email, detail)
+	writeJSON(w, http.StatusAccepted, ch)
+}
+
+// applyReadEndpoint sets the endpoint an approved change asked for, after
+// checking the database and target group again.
+func (a *API) applyReadEndpoint(ctx context.Context, m cloudManaged, ch CloudChange) (cloud.Result, error) {
+	var s readEndpointSpec
+	if err := json.Unmarshal(ch.Spec, &s); err != nil {
+		return cloud.Result{}, err
+	}
+	db, err := a.store.Database(ctx, s.DatabaseID)
+	if err != nil {
+		return cloud.Result{}, fmt.Errorf("database %s: %w", s.Database, err)
+	}
+	g, _, err := a.readEndpointTarget(ctx, m, ch.Region, ch.ResourceID, db)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	approved := ""
+	if ch.DecidedBy != nil {
+		approved = *ch.DecidedBy
+	}
+	if err := a.setReadEndpointNow(ctx, m, g, db, s.IncludePrimary, ch.RequestedBy, approved); err != nil {
+		return cloud.Result{}, err
+	}
+	res := cloud.Result{ResourceID: g.ID, Detail: "Argus keeps " + g.Name + " from now on"}
+	if e, err := a.store.readEndpoint(ctx, db.ID); err == nil && e.Note != "" {
+		res.Detail += "; " + e.Note
+	}
+	return res, nil
+}
+
+// setReadEndpointNow makes g db's read endpoint and puts its members in.
+// approvedBy is the second person, when one approved it.
+func (a *API) setReadEndpointNow(ctx context.Context, m cloudManaged, g cloud.Resource, db Database, includePrimary bool,
+	by, approvedBy string) error {
+	// A different target group: take out what Argus put in the old one.
+	old, err := a.store.readEndpoint(ctx, db.ID)
+	if err == nil && (old.TargetGroup != g.ID || old.AccountID != m.acct.ID || old.Region != g.Region) {
+		a.clearReadEndpoint(ctx, old, db)
+	} else if err != nil && !errors.Is(err, ErrNoReadEndpoint) {
+		return err
+	}
+	e := ReadEndpoint{DatabaseID: db.ID, AccountID: m.acct.ID, Region: g.Region, TargetGroup: g.ID,
+		TargetName: g.Name, IncludePrimary: includePrimary, SetBy: by}
+	if err := a.store.setReadEndpoint(ctx, e); err != nil {
+		return err
+	}
+	with := "its replicas"
+	if includePrimary {
+		with = "the primary and its replicas"
+	}
+	detail := fmt.Sprintf("Read endpoint for %s: target group %s in %s %s, with %s that are not behind", db.Name, g.Name, m.acct.Name, g.Region, with)
+	if approvedBy != "" {
+		detail += "; approved by " + approvedBy
+	}
+	a.auditDB(ctx, "db.read_endpoint_set", "notice", by, db.Hostname, detail)
+	a.tendReadEndpoint(ctx, db)
+	return nil
 }
 
 // DELETE /api/v1/databases/{id}/read-endpoint: take out what Argus put in

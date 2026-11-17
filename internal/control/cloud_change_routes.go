@@ -453,6 +453,9 @@ func (a *API) getCloudChange(w http.ResponseWriter, r *http.Request) {
 func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *cloudChangeIn) (CloudChange, int, error) {
 	ch := CloudChange{AccountID: m.acct.ID, Region: in.Region, Action: in.Action, Level: cloud.LevelOf(in.Action),
 		Reason: strings.TrimSpace(in.Reason), RequestedBy: actor}
+	if in.Action == cloud.ActionReadEndpoint {
+		return ch, http.StatusBadRequest, errors.New("a read endpoint is set from its database's Streaming replicas tab")
+	}
 	if ch.Level == "" {
 		return ch, http.StatusBadRequest, fmt.Errorf("%q is not a change Argus makes", in.Action)
 	}
@@ -1076,6 +1079,8 @@ func (a *API) applyCloudChange(r *http.Request, m cloudManaged, ch CloudChange) 
 			res, err = a.applyBuy(ctx, m, ch)
 		} else if cloud.IsBalancing(ch.Action) {
 			res, err = a.applyBalancing(ctx, m, ch)
+		} else if ch.Action == cloud.ActionReadEndpoint {
+			res, err = a.applyReadEndpoint(ctx, m, ch)
 		} else if cloud.IsScale(ch.Action) {
 			res, err = a.applyScale(ctx, r, m, ch)
 		} else if cloud.IsStorage(ch.Action) {

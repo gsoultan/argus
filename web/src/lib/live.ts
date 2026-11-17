@@ -30,7 +30,7 @@ import type { MyServer,
   ServerAccount,
   TemporaryPasswordOutcome,
   User,
-  BackupCatalog, BackupDestination, BackupSchedule, BackupTest, BackupsView, CheckResult, DatabaseBackup, DatabaseReplica, DatabaseRestore, ReadEndpoint, ReadEndpointView, TestCheck,
+  BackupCatalog, BackupDestination, BackupSchedule, BackupTest, BackupsView, CheckResult, DatabaseBackup, DatabaseReplica, DatabaseRestore, ReadEndpoint, ReadEndpointAsk, ReadEndpointView, TestCheck,
   Database, DBAccess, DBAssignment, DBEngine, DBLabel, DBLevel, DBPolicy, DBPoolerSetup,
   StatementAsk, StatementItem, ChangeApproval,
 } from '~/types/domain'
@@ -2056,11 +2056,14 @@ export async function readEndpoint(id: string): Promise<ReadEndpointView> {
   return get(`${dbPath(id)}/read-endpoint`)
 }
 
-/** Makes a target group the read endpoint; Argus puts the members in at once. */
+/**
+ * Makes a target group the read endpoint. Argus puts the members in at once, or, on a production
+ * account, answers with the change that waits for a second person in Approvals.
+ */
 export async function setReadEndpoint(id: string, input: {
-  accountId: string; region: string; targetGroup: string; includePrimary: boolean
-}): Promise<ReadEndpoint> {
-  return send<ReadEndpoint>('PUT', `${dbPath(id)}/read-endpoint`, input)
+  accountId: string; region: string; targetGroup: string; includePrimary: boolean; reason?: string
+}): Promise<ReadEndpoint | ReadEndpointAsk> {
+  return send<ReadEndpoint | ReadEndpointAsk>('PUT', `${dbPath(id)}/read-endpoint`, input)
 }
 
 /** Takes out what Argus put in and stops keeping the target group. */

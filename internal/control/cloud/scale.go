@@ -49,6 +49,10 @@ const ScaleActor Actor = "argus-scale"
 // endpoint: a replica in or out of its target group.
 const ReplicaActor Actor = "argus-replicas"
 
+// ActionReadEndpoint makes a target group a database's read endpoint, which
+// Argus then keeps. It is a cloud change only where it waits for approval.
+const ActionReadEndpoint Action = "read-endpoint"
+
 // Safety limits no setting removes.
 const (
 	// ScaleAskLapse is how long an "Ask each time" question waits: a
