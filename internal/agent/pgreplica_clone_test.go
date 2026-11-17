@@ -131,7 +131,7 @@ func TestPGReplicaCloneEndToEnd(t *testing.T) {
 				},
 			},
 		},
-		log: slog.Default(), stream: pipeStream{a}, started: time.Now(), goOn: make(chan struct{}, 1),
+		log: slog.Default(), stream: a, started: time.Now(), goOn: make(chan struct{}, 1),
 		b: tunnel.GrantBackup{Job: tunnel.BackupJobReplicaClone, Name: "postgres", Host: "127.0.0.1", Port: p,
 			Replica: &tunnel.GrantReplica{PGReplica: rep, PrimaryHost: "127.0.0.1", PrimaryPort: int(pcfg.Port), PrimaryVersion: 16}},
 	}
