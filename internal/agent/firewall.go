@@ -378,7 +378,7 @@ func hostFirewall(executable, stateDir string) firewaller {
 		switch {
 		case os.Geteuid() != 0:
 			return tunnel.FirewallResult{Error: "the agent is not running as root, so it cannot read or change the firewall"}
-		case !systemdRunning():
+		case !hostSystemd():
 			return tunnel.FirewallResult{Error: "this server does not run systemd, which changing the firewall from the console needs"}
 		case executable == "":
 			return tunnel.FirewallResult{Error: "the agent does not know where its own program is"}
