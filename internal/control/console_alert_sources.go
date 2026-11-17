@@ -19,6 +19,8 @@ func describeAsk(req AccessRequest) string {
 		return brokerLevel(strings.TrimPrefix(principal, "db:")) + " access to a broker on " + on
 	case principal == "db:restore":
 		return "a restore of a database on " + on
+	case principal == replicaPrincipal:
+		return "a streaming replica of the Postgres on " + on
 	case principal == statementPrincipal:
 		return "approval to run a statement on a production database on " + on
 	case strings.HasPrefix(principal, "db:"):

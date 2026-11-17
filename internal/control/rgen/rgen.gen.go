@@ -32,6 +32,7 @@ import (
 	"github.com/gsoultan/argus/internal/control/rgen/databasebackupschedule"
 	"github.com/gsoultan/argus/internal/control/rgen/databasebackuptest"
 	"github.com/gsoultan/argus/internal/control/rgen/databasechange"
+	"github.com/gsoultan/argus/internal/control/rgen/databasereplica"
 	"github.com/gsoultan/argus/internal/control/rgen/databaserestore"
 	"github.com/gsoultan/argus/internal/control/rgen/databasestatement"
 	"github.com/gsoultan/argus/internal/control/rgen/databasestatementitem"
@@ -105,16 +106,17 @@ var FlushOrder = map[string]int{
 	"database_backup_schedules": 47,
 	"database_backups":          48,
 	"database_changes":          49,
-	"database_restores":         50,
-	"database_statements":       51,
-	"recovery_codes":            52,
-	"scale_group_activity":      53,
-	"scale_group_members":       54,
-	"software_script_versions":  55,
-	"team_members":              56,
-	"agent_credentials":         57,
-	"database_backup_tests":     58,
-	"database_statement_items":  59,
+	"database_replicas":         50,
+	"database_restores":         51,
+	"database_statements":       52,
+	"recovery_codes":            53,
+	"scale_group_activity":      54,
+	"scale_group_members":       55,
+	"software_script_versions":  56,
+	"team_members":              57,
+	"agent_credentials":         58,
+	"database_backup_tests":     59,
+	"database_statement_items":  60,
 }
 
 // NewUnit stages writes across this context and flushes them in foreign-key
@@ -3097,6 +3099,490 @@ func (p DatabaseChangeWithDatabaseQuery) All(ctx context.Context, ex runtime.Exe
 			return nil, fmt.Errorf("storm: %s references a missing %s row", "database_changes", "databases")
 		}
 		out[i].Database = targets[j]
+	}
+	return out, nil
+}
+
+// DatabaseReplicaWithAssetRow is database_replicas with its Asset loaded.
+type DatabaseReplicaWithAssetRow struct {
+	databasereplica.Row
+	Asset asset.Row
+}
+
+type DatabaseReplicaWithAssetQuery struct {
+	q databasereplica.Query
+}
+
+// DatabaseReplicaWithAsset starts the plan.
+func DatabaseReplicaWithAsset() DatabaseReplicaWithAssetQuery {
+	return DatabaseReplicaWithAssetQuery{q: databasereplica.New()}
+}
+
+func (p DatabaseReplicaWithAssetQuery) Where(ps ...databasereplica.Pred) DatabaseReplicaWithAssetQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p DatabaseReplicaWithAssetQuery) WhereIf(cond bool, pr databasereplica.Pred) DatabaseReplicaWithAssetQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p DatabaseReplicaWithAssetQuery) Any(ps ...databasereplica.Pred) DatabaseReplicaWithAssetQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p DatabaseReplicaWithAssetQuery) Not(pr databasereplica.Pred) DatabaseReplicaWithAssetQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p DatabaseReplicaWithAssetQuery) NotAny(ps ...databasereplica.Pred) DatabaseReplicaWithAssetQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p DatabaseReplicaWithAssetQuery) Order(ts ...databasereplica.Sort) DatabaseReplicaWithAssetQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p DatabaseReplicaWithAssetQuery) Limit(n int64) DatabaseReplicaWithAssetQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p DatabaseReplicaWithAssetQuery) Offset(n int64) DatabaseReplicaWithAssetQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p DatabaseReplicaWithAssetQuery) After(r DatabaseReplicaWithAssetRow) DatabaseReplicaWithAssetQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p DatabaseReplicaWithAssetQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p DatabaseReplicaWithAssetQuery) All(ctx context.Context, ex runtime.Executor) ([]DatabaseReplicaWithAssetRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]DatabaseReplicaWithAssetRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = DatabaseReplicaWithAssetRow{Row: r}
+		key := r.AssetID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := asset.New().Unordered().
+		Where(asset.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.AssetID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "database_replicas", "assets")
+		}
+		out[i].Asset = targets[j]
+	}
+	return out, nil
+}
+
+// DatabaseReplicaWithDatabaseRow is database_replicas with its Database loaded.
+type DatabaseReplicaWithDatabaseRow struct {
+	databasereplica.Row
+	Database database.Row
+}
+
+type DatabaseReplicaWithDatabaseQuery struct {
+	q databasereplica.Query
+}
+
+// DatabaseReplicaWithDatabase starts the plan.
+func DatabaseReplicaWithDatabase() DatabaseReplicaWithDatabaseQuery {
+	return DatabaseReplicaWithDatabaseQuery{q: databasereplica.New()}
+}
+
+func (p DatabaseReplicaWithDatabaseQuery) Where(ps ...databasereplica.Pred) DatabaseReplicaWithDatabaseQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p DatabaseReplicaWithDatabaseQuery) WhereIf(cond bool, pr databasereplica.Pred) DatabaseReplicaWithDatabaseQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p DatabaseReplicaWithDatabaseQuery) Any(ps ...databasereplica.Pred) DatabaseReplicaWithDatabaseQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p DatabaseReplicaWithDatabaseQuery) Not(pr databasereplica.Pred) DatabaseReplicaWithDatabaseQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p DatabaseReplicaWithDatabaseQuery) NotAny(ps ...databasereplica.Pred) DatabaseReplicaWithDatabaseQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p DatabaseReplicaWithDatabaseQuery) Order(ts ...databasereplica.Sort) DatabaseReplicaWithDatabaseQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p DatabaseReplicaWithDatabaseQuery) Limit(n int64) DatabaseReplicaWithDatabaseQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p DatabaseReplicaWithDatabaseQuery) Offset(n int64) DatabaseReplicaWithDatabaseQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p DatabaseReplicaWithDatabaseQuery) After(r DatabaseReplicaWithDatabaseRow) DatabaseReplicaWithDatabaseQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p DatabaseReplicaWithDatabaseQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p DatabaseReplicaWithDatabaseQuery) All(ctx context.Context, ex runtime.Executor) ([]DatabaseReplicaWithDatabaseRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]DatabaseReplicaWithDatabaseRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = DatabaseReplicaWithDatabaseRow{Row: r}
+		key := r.DatabaseID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := database.New().Unordered().
+		Where(database.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.DatabaseID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "database_replicas", "databases")
+		}
+		out[i].Database = targets[j]
+	}
+	return out, nil
+}
+
+// DatabaseReplicaWithReplicaDatabaseRow is database_replicas with its ReplicaDatabase loaded.
+type DatabaseReplicaWithReplicaDatabaseRow struct {
+	databasereplica.Row
+	// A pointer because the link is optional. nil means the row has no
+	// ReplicaDatabase, which is different from having one that failed to load.
+	ReplicaDatabase *database.Row
+}
+
+type DatabaseReplicaWithReplicaDatabaseQuery struct {
+	q databasereplica.Query
+}
+
+// DatabaseReplicaWithReplicaDatabase starts the plan.
+func DatabaseReplicaWithReplicaDatabase() DatabaseReplicaWithReplicaDatabaseQuery {
+	return DatabaseReplicaWithReplicaDatabaseQuery{q: databasereplica.New()}
+}
+
+func (p DatabaseReplicaWithReplicaDatabaseQuery) Where(ps ...databasereplica.Pred) DatabaseReplicaWithReplicaDatabaseQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p DatabaseReplicaWithReplicaDatabaseQuery) WhereIf(cond bool, pr databasereplica.Pred) DatabaseReplicaWithReplicaDatabaseQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p DatabaseReplicaWithReplicaDatabaseQuery) Any(ps ...databasereplica.Pred) DatabaseReplicaWithReplicaDatabaseQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p DatabaseReplicaWithReplicaDatabaseQuery) Not(pr databasereplica.Pred) DatabaseReplicaWithReplicaDatabaseQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p DatabaseReplicaWithReplicaDatabaseQuery) NotAny(ps ...databasereplica.Pred) DatabaseReplicaWithReplicaDatabaseQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p DatabaseReplicaWithReplicaDatabaseQuery) Order(ts ...databasereplica.Sort) DatabaseReplicaWithReplicaDatabaseQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p DatabaseReplicaWithReplicaDatabaseQuery) Limit(n int64) DatabaseReplicaWithReplicaDatabaseQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p DatabaseReplicaWithReplicaDatabaseQuery) Offset(n int64) DatabaseReplicaWithReplicaDatabaseQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p DatabaseReplicaWithReplicaDatabaseQuery) After(r DatabaseReplicaWithReplicaDatabaseRow) DatabaseReplicaWithReplicaDatabaseQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p DatabaseReplicaWithReplicaDatabaseQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p DatabaseReplicaWithReplicaDatabaseQuery) All(ctx context.Context, ex runtime.Executor) ([]DatabaseReplicaWithReplicaDatabaseRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]DatabaseReplicaWithReplicaDatabaseRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = DatabaseReplicaWithReplicaDatabaseRow{Row: r}
+		key, ok := r.ReplicaDatabaseID.Get()
+		if !ok {
+			continue
+		}
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := database.New().Unordered().
+		Where(database.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key, ok := out[i].Row.ReplicaDatabaseID.Get()
+		if !ok {
+			continue
+		}
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "database_replicas", "databases")
+		}
+		out[i].ReplicaDatabase = &targets[j]
+	}
+	return out, nil
+}
+
+// DatabaseReplicaWithRequestRow is database_replicas with its Request loaded.
+type DatabaseReplicaWithRequestRow struct {
+	databasereplica.Row
+	// A pointer because the link is optional. nil means the row has no
+	// Request, which is different from having one that failed to load.
+	Request *accessrequest.Row
+}
+
+type DatabaseReplicaWithRequestQuery struct {
+	q databasereplica.Query
+}
+
+// DatabaseReplicaWithRequest starts the plan.
+func DatabaseReplicaWithRequest() DatabaseReplicaWithRequestQuery {
+	return DatabaseReplicaWithRequestQuery{q: databasereplica.New()}
+}
+
+func (p DatabaseReplicaWithRequestQuery) Where(ps ...databasereplica.Pred) DatabaseReplicaWithRequestQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p DatabaseReplicaWithRequestQuery) WhereIf(cond bool, pr databasereplica.Pred) DatabaseReplicaWithRequestQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p DatabaseReplicaWithRequestQuery) Any(ps ...databasereplica.Pred) DatabaseReplicaWithRequestQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p DatabaseReplicaWithRequestQuery) Not(pr databasereplica.Pred) DatabaseReplicaWithRequestQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p DatabaseReplicaWithRequestQuery) NotAny(ps ...databasereplica.Pred) DatabaseReplicaWithRequestQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p DatabaseReplicaWithRequestQuery) Order(ts ...databasereplica.Sort) DatabaseReplicaWithRequestQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p DatabaseReplicaWithRequestQuery) Limit(n int64) DatabaseReplicaWithRequestQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p DatabaseReplicaWithRequestQuery) Offset(n int64) DatabaseReplicaWithRequestQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p DatabaseReplicaWithRequestQuery) After(r DatabaseReplicaWithRequestRow) DatabaseReplicaWithRequestQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p DatabaseReplicaWithRequestQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p DatabaseReplicaWithRequestQuery) All(ctx context.Context, ex runtime.Executor) ([]DatabaseReplicaWithRequestRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]DatabaseReplicaWithRequestRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = DatabaseReplicaWithRequestRow{Row: r}
+		key, ok := r.RequestID.Get()
+		if !ok {
+			continue
+		}
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := accessrequest.New().Unordered().
+		Where(accessrequest.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key, ok := out[i].Row.RequestID.Get()
+		if !ok {
+			continue
+		}
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "database_replicas", "access_requests")
+		}
+		out[i].Request = &targets[j]
 	}
 	return out, nil
 }
