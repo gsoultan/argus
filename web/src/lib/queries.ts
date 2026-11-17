@@ -45,6 +45,9 @@ import {
   tryBackupChecks as liveTryBackupChecks,
   databaseReplicas as liveDatabaseReplicas,
   askReplica as liveAskReplica,
+  readEndpoint as liveReadEndpoint,
+  setReadEndpoint as liveSetReadEndpoint,
+  removeReadEndpoint as liveRemoveReadEndpoint,
   savedQueries as liveSavedQueries,
   saveQuery as liveSaveQuery,
   updateSavedQuery as liveUpdateSavedQuery,
@@ -901,6 +904,31 @@ export function useAskReplica() {
     },
   })
 }
+
+/** A database's read endpoint and the target groups it could be; it follows the replicas' 30 s rhythm. */
+export const readEndpointQuery = (id: string, enabled = true) =>
+  queryOptions({
+    queryKey: ['database', id, 'read-endpoint'] as const,
+    queryFn: () => liveReadEndpoint(id),
+    enabled: isConfigured() && enabled,
+    refetchInterval: 30_000,
+  })
+
+function useReadEndpointMutation<V extends { id: string }, R>(fn: (v: V) => Promise<R>) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: fn,
+    onSettled: (_d, _e, v) => {
+      void qc.invalidateQueries({ queryKey: ['database', v.id, 'read-endpoint'] })
+      void qc.invalidateQueries({ queryKey: ['database', v.id, 'replicas'] })
+    },
+  })
+}
+
+export const useSetReadEndpoint = () =>
+  useReadEndpointMutation(({ id, ...input }: { id: string } & Parameters<typeof liveSetReadEndpoint>[1]) => liveSetReadEndpoint(id, input))
+export const useRemoveReadEndpoint = () =>
+  useReadEndpointMutation((v: { id: string }) => liveRemoveReadEndpoint(v.id))
 
 export const useSetBackupSchedule = () =>
   useBackupMutation((v: { id: string } & Parameters<typeof liveSetBackupSchedule>[1]) =>

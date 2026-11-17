@@ -640,6 +640,24 @@ func _assertDatabaseChangeShape(m m0.DatabaseChange) {
 	}
 }
 
+// _assertDatabaseReadEndpointShape fails to compile if m0.DatabaseReadEndpoint gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertDatabaseReadEndpointShape(m m0.DatabaseReadEndpoint) {
+	type shape m0.DatabaseReadEndpoint
+	_ = shape{
+		m.Database,
+		m.Account,
+		m.Region,
+		m.TargetGroup,
+		m.TargetName,
+		m.IncludePrimary,
+		m.PrimaryInstance,
+		m.Note,
+		m.SetBy,
+		m.SetAt,
+	}
+}
+
 // _assertDatabaseReplicaShape fails to compile if m0.DatabaseReplica gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertDatabaseReplicaShape(m m0.DatabaseReplica) {
@@ -670,6 +688,8 @@ func _assertDatabaseReplicaShape(m m0.DatabaseReplica) {
 		m.WatchError,
 		m.BehindSince,
 		m.BehindAlerted,
+		m.EndpointInstance,
+		m.EndpointNote,
 	}
 }
 

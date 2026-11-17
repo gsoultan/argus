@@ -32,6 +32,7 @@ import (
 	"github.com/gsoultan/argus/internal/control/rgen/databasebackupschedule"
 	"github.com/gsoultan/argus/internal/control/rgen/databasebackuptest"
 	"github.com/gsoultan/argus/internal/control/rgen/databasechange"
+	"github.com/gsoultan/argus/internal/control/rgen/databasereadendpoint"
 	"github.com/gsoultan/argus/internal/control/rgen/databasereplica"
 	"github.com/gsoultan/argus/internal/control/rgen/databaserestore"
 	"github.com/gsoultan/argus/internal/control/rgen/databasestatement"
@@ -106,17 +107,18 @@ var FlushOrder = map[string]int{
 	"database_backup_schedules": 47,
 	"database_backups":          48,
 	"database_changes":          49,
-	"database_replicas":         50,
-	"database_restores":         51,
-	"database_statements":       52,
-	"recovery_codes":            53,
-	"scale_group_activity":      54,
-	"scale_group_members":       55,
-	"software_script_versions":  56,
-	"team_members":              57,
-	"agent_credentials":         58,
-	"database_backup_tests":     59,
-	"database_statement_items":  60,
+	"database_read_endpoints":   50,
+	"database_replicas":         51,
+	"database_restores":         52,
+	"database_statements":       53,
+	"recovery_codes":            54,
+	"scale_group_activity":      55,
+	"scale_group_members":       56,
+	"software_script_versions":  57,
+	"team_members":              58,
+	"agent_credentials":         59,
+	"database_backup_tests":     60,
+	"database_statement_items":  61,
 }
 
 // NewUnit stages writes across this context and flushes them in foreign-key
@@ -3097,6 +3099,240 @@ func (p DatabaseChangeWithDatabaseQuery) All(ctx context.Context, ex runtime.Exe
 			// A foreign key pointing at a row that is not there. The database
 			// forbids it, so reaching this means the constraint was dropped.
 			return nil, fmt.Errorf("storm: %s references a missing %s row", "database_changes", "databases")
+		}
+		out[i].Database = targets[j]
+	}
+	return out, nil
+}
+
+// DatabaseReadEndpointWithAccountRow is database_read_endpoints with its Account loaded.
+type DatabaseReadEndpointWithAccountRow struct {
+	databasereadendpoint.Row
+	Account cloudaccount.Row
+}
+
+type DatabaseReadEndpointWithAccountQuery struct {
+	q databasereadendpoint.Query
+}
+
+// DatabaseReadEndpointWithAccount starts the plan.
+func DatabaseReadEndpointWithAccount() DatabaseReadEndpointWithAccountQuery {
+	return DatabaseReadEndpointWithAccountQuery{q: databasereadendpoint.New()}
+}
+
+func (p DatabaseReadEndpointWithAccountQuery) Where(ps ...databasereadendpoint.Pred) DatabaseReadEndpointWithAccountQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p DatabaseReadEndpointWithAccountQuery) WhereIf(cond bool, pr databasereadendpoint.Pred) DatabaseReadEndpointWithAccountQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p DatabaseReadEndpointWithAccountQuery) Any(ps ...databasereadendpoint.Pred) DatabaseReadEndpointWithAccountQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p DatabaseReadEndpointWithAccountQuery) Not(pr databasereadendpoint.Pred) DatabaseReadEndpointWithAccountQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p DatabaseReadEndpointWithAccountQuery) NotAny(ps ...databasereadendpoint.Pred) DatabaseReadEndpointWithAccountQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p DatabaseReadEndpointWithAccountQuery) Order(ts ...databasereadendpoint.Sort) DatabaseReadEndpointWithAccountQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p DatabaseReadEndpointWithAccountQuery) Limit(n int64) DatabaseReadEndpointWithAccountQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p DatabaseReadEndpointWithAccountQuery) Offset(n int64) DatabaseReadEndpointWithAccountQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p DatabaseReadEndpointWithAccountQuery) After(r DatabaseReadEndpointWithAccountRow) DatabaseReadEndpointWithAccountQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p DatabaseReadEndpointWithAccountQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p DatabaseReadEndpointWithAccountQuery) All(ctx context.Context, ex runtime.Executor) ([]DatabaseReadEndpointWithAccountRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]DatabaseReadEndpointWithAccountRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = DatabaseReadEndpointWithAccountRow{Row: r}
+		key := r.AccountID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := cloudaccount.New().Unordered().
+		Where(cloudaccount.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.AccountID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "database_read_endpoints", "cloud_accounts")
+		}
+		out[i].Account = targets[j]
+	}
+	return out, nil
+}
+
+// DatabaseReadEndpointWithDatabaseRow is database_read_endpoints with its Database loaded.
+type DatabaseReadEndpointWithDatabaseRow struct {
+	databasereadendpoint.Row
+	Database database.Row
+}
+
+type DatabaseReadEndpointWithDatabaseQuery struct {
+	q databasereadendpoint.Query
+}
+
+// DatabaseReadEndpointWithDatabase starts the plan.
+func DatabaseReadEndpointWithDatabase() DatabaseReadEndpointWithDatabaseQuery {
+	return DatabaseReadEndpointWithDatabaseQuery{q: databasereadendpoint.New()}
+}
+
+func (p DatabaseReadEndpointWithDatabaseQuery) Where(ps ...databasereadendpoint.Pred) DatabaseReadEndpointWithDatabaseQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p DatabaseReadEndpointWithDatabaseQuery) WhereIf(cond bool, pr databasereadendpoint.Pred) DatabaseReadEndpointWithDatabaseQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p DatabaseReadEndpointWithDatabaseQuery) Any(ps ...databasereadendpoint.Pred) DatabaseReadEndpointWithDatabaseQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p DatabaseReadEndpointWithDatabaseQuery) Not(pr databasereadendpoint.Pred) DatabaseReadEndpointWithDatabaseQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p DatabaseReadEndpointWithDatabaseQuery) NotAny(ps ...databasereadendpoint.Pred) DatabaseReadEndpointWithDatabaseQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p DatabaseReadEndpointWithDatabaseQuery) Order(ts ...databasereadendpoint.Sort) DatabaseReadEndpointWithDatabaseQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p DatabaseReadEndpointWithDatabaseQuery) Limit(n int64) DatabaseReadEndpointWithDatabaseQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p DatabaseReadEndpointWithDatabaseQuery) Offset(n int64) DatabaseReadEndpointWithDatabaseQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p DatabaseReadEndpointWithDatabaseQuery) After(r DatabaseReadEndpointWithDatabaseRow) DatabaseReadEndpointWithDatabaseQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p DatabaseReadEndpointWithDatabaseQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p DatabaseReadEndpointWithDatabaseQuery) All(ctx context.Context, ex runtime.Executor) ([]DatabaseReadEndpointWithDatabaseRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]DatabaseReadEndpointWithDatabaseRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = DatabaseReadEndpointWithDatabaseRow{Row: r}
+		key := r.DatabaseID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := database.New().Unordered().
+		Where(database.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.DatabaseID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "database_read_endpoints", "databases")
 		}
 		out[i].Database = targets[j]
 	}

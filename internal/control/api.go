@@ -376,6 +376,11 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	// Streaming replicas of a managed Postgres; see db_replica.go.
 	mux.HandleFunc("GET /api/v1/databases/{id}/replicas", a.withPostgres("replicas", tunnel.LevelRead, a.getReplicas))
 	mux.HandleFunc("POST /api/v1/databases/{id}/replicas", a.withPostgres("replicas", tunnel.LevelDBA, a.postReplica))
+	// Its read endpoint, kept to the replicas that are not behind; see
+	// db_read_endpoint.go.
+	mux.HandleFunc("GET /api/v1/databases/{id}/read-endpoint", a.withPostgres("read endpoints", tunnel.LevelRead, a.getReadEndpoint))
+	mux.HandleFunc("PUT /api/v1/databases/{id}/read-endpoint", a.withPostgres("read endpoints", tunnel.LevelDBA, a.putReadEndpoint))
+	mux.HandleFunc("DELETE /api/v1/databases/{id}/read-endpoint", a.withPostgres("read endpoints", tunnel.LevelDBA, a.deleteReadEndpoint))
 	// Saved queries; see saved_queries.go.
 	mux.HandleFunc("POST /api/v1/databases/{id}/statements", a.withEngines("statement approvals", tunnel.LevelWrite, approvalEngines, a.postStatementAsk))
 	mux.HandleFunc("GET /api/v1/databases/{id}/approval", a.withEngines("approvals", tunnel.LevelRead, approvalEngines, a.getChangeApproval))

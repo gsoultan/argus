@@ -45,6 +45,8 @@ type Row struct {
 	WatchError        string
 	BehindSince       runtime.Null[time.Time]
 	BehindAlerted     bool
+	EndpointInstance  string
+	EndpointNote      string
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -83,7 +85,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 25
+const nCols = 27
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -374,6 +376,20 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.bools[q.nbo] = r.BehindAlerted
 		q.nbo++
+	case 25:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.EndpointInstance
+		q.ns++
+	case 26:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.EndpointNote
+		q.ns++
 	}
 }
 
@@ -568,6 +584,8 @@ var (
 	WatchError        = TextCol{22}
 	BehindSince       = NullTimeCol{23}
 	BehindAlerted     = BoolCol{24}
+	EndpointInstance  = TextCol{25}
+	EndpointNote      = TextCol{26}
 )
 
 // UUIDCol addresses a uuid column.
@@ -1005,6 +1023,20 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 25:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 26:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1189,6 +1221,20 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.bools[q.nbo] = p.bol
 		q.nbo++
+	case 25:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 26:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1317,91 +1363,113 @@ func (q Query) ReplicaDatabaseIDIn(v ...[16]byte) Query { return q.Where(Replica
 func (q Query) ReplicaDatabaseIDNotIn(v ...[16]byte) Query {
 	return q.Where(ReplicaDatabaseID.NotIn(v...))
 }
-func (q Query) ReplicaDatabaseIDIsNull() Query      { return q.Where(ReplicaDatabaseID.IsNull()) }
-func (q Query) ReplicaDatabaseIDIsNotNull() Query   { return q.Where(ReplicaDatabaseID.IsNotNull()) }
-func (q Query) CreatedAtEq(v time.Time) Query       { return q.Where(CreatedAt.Eq(v)) }
-func (q Query) CreatedAtNotEq(v time.Time) Query    { return q.Where(CreatedAt.NotEq(v)) }
-func (q Query) CreatedAtGt(v time.Time) Query       { return q.Where(CreatedAt.Gt(v)) }
-func (q Query) CreatedAtGte(v time.Time) Query      { return q.Where(CreatedAt.Gte(v)) }
-func (q Query) CreatedAtLt(v time.Time) Query       { return q.Where(CreatedAt.Lt(v)) }
-func (q Query) CreatedAtLte(v time.Time) Query      { return q.Where(CreatedAt.Lte(v)) }
-func (q Query) StartedAtEq(v time.Time) Query       { return q.Where(StartedAt.Eq(v)) }
-func (q Query) StartedAtNotEq(v time.Time) Query    { return q.Where(StartedAt.NotEq(v)) }
-func (q Query) StartedAtGt(v time.Time) Query       { return q.Where(StartedAt.Gt(v)) }
-func (q Query) StartedAtGte(v time.Time) Query      { return q.Where(StartedAt.Gte(v)) }
-func (q Query) StartedAtLt(v time.Time) Query       { return q.Where(StartedAt.Lt(v)) }
-func (q Query) StartedAtLte(v time.Time) Query      { return q.Where(StartedAt.Lte(v)) }
-func (q Query) StartedAtIsNull() Query              { return q.Where(StartedAt.IsNull()) }
-func (q Query) StartedAtIsNotNull() Query           { return q.Where(StartedAt.IsNotNull()) }
-func (q Query) FinishedAtEq(v time.Time) Query      { return q.Where(FinishedAt.Eq(v)) }
-func (q Query) FinishedAtNotEq(v time.Time) Query   { return q.Where(FinishedAt.NotEq(v)) }
-func (q Query) FinishedAtGt(v time.Time) Query      { return q.Where(FinishedAt.Gt(v)) }
-func (q Query) FinishedAtGte(v time.Time) Query     { return q.Where(FinishedAt.Gte(v)) }
-func (q Query) FinishedAtLt(v time.Time) Query      { return q.Where(FinishedAt.Lt(v)) }
-func (q Query) FinishedAtLte(v time.Time) Query     { return q.Where(FinishedAt.Lte(v)) }
-func (q Query) FinishedAtIsNull() Query             { return q.Where(FinishedAt.IsNull()) }
-func (q Query) FinishedAtIsNotNull() Query          { return q.Where(FinishedAt.IsNotNull()) }
-func (q Query) StreamingEq(v bool) Query            { return q.Where(Streaming.Eq(v)) }
-func (q Query) StreamingNotEq(v bool) Query         { return q.Where(Streaming.NotEq(v)) }
-func (q Query) LagSEq(v float64) Query              { return q.Where(LagS.Eq(v)) }
-func (q Query) LagSNotEq(v float64) Query           { return q.Where(LagS.NotEq(v)) }
-func (q Query) LagSGt(v float64) Query              { return q.Where(LagS.Gt(v)) }
-func (q Query) LagSGte(v float64) Query             { return q.Where(LagS.Gte(v)) }
-func (q Query) LagSLt(v float64) Query              { return q.Where(LagS.Lt(v)) }
-func (q Query) LagSLte(v float64) Query             { return q.Where(LagS.Lte(v)) }
-func (q Query) LagSIsNull() Query                   { return q.Where(LagS.IsNull()) }
-func (q Query) LagSIsNotNull() Query                { return q.Where(LagS.IsNotNull()) }
-func (q Query) LagBytesEq(v int64) Query            { return q.Where(LagBytes.Eq(v)) }
-func (q Query) LagBytesNotEq(v int64) Query         { return q.Where(LagBytes.NotEq(v)) }
-func (q Query) LagBytesGt(v int64) Query            { return q.Where(LagBytes.Gt(v)) }
-func (q Query) LagBytesGte(v int64) Query           { return q.Where(LagBytes.Gte(v)) }
-func (q Query) LagBytesLt(v int64) Query            { return q.Where(LagBytes.Lt(v)) }
-func (q Query) LagBytesLte(v int64) Query           { return q.Where(LagBytes.Lte(v)) }
-func (q Query) LagBytesIn(v ...int64) Query         { return q.Where(LagBytes.In(v...)) }
-func (q Query) LagBytesNotIn(v ...int64) Query      { return q.Where(LagBytes.NotIn(v...)) }
-func (q Query) LagBytesIsNull() Query               { return q.Where(LagBytes.IsNull()) }
-func (q Query) LagBytesIsNotNull() Query            { return q.Where(LagBytes.IsNotNull()) }
-func (q Query) RetainedBytesEq(v int64) Query       { return q.Where(RetainedBytes.Eq(v)) }
-func (q Query) RetainedBytesNotEq(v int64) Query    { return q.Where(RetainedBytes.NotEq(v)) }
-func (q Query) RetainedBytesGt(v int64) Query       { return q.Where(RetainedBytes.Gt(v)) }
-func (q Query) RetainedBytesGte(v int64) Query      { return q.Where(RetainedBytes.Gte(v)) }
-func (q Query) RetainedBytesLt(v int64) Query       { return q.Where(RetainedBytes.Lt(v)) }
-func (q Query) RetainedBytesLte(v int64) Query      { return q.Where(RetainedBytes.Lte(v)) }
-func (q Query) RetainedBytesIn(v ...int64) Query    { return q.Where(RetainedBytes.In(v...)) }
-func (q Query) RetainedBytesNotIn(v ...int64) Query { return q.Where(RetainedBytes.NotIn(v...)) }
-func (q Query) RetainedBytesIsNull() Query          { return q.Where(RetainedBytes.IsNull()) }
-func (q Query) RetainedBytesIsNotNull() Query       { return q.Where(RetainedBytes.IsNotNull()) }
-func (q Query) WatchedAtEq(v time.Time) Query       { return q.Where(WatchedAt.Eq(v)) }
-func (q Query) WatchedAtNotEq(v time.Time) Query    { return q.Where(WatchedAt.NotEq(v)) }
-func (q Query) WatchedAtGt(v time.Time) Query       { return q.Where(WatchedAt.Gt(v)) }
-func (q Query) WatchedAtGte(v time.Time) Query      { return q.Where(WatchedAt.Gte(v)) }
-func (q Query) WatchedAtLt(v time.Time) Query       { return q.Where(WatchedAt.Lt(v)) }
-func (q Query) WatchedAtLte(v time.Time) Query      { return q.Where(WatchedAt.Lte(v)) }
-func (q Query) WatchedAtIsNull() Query              { return q.Where(WatchedAt.IsNull()) }
-func (q Query) WatchedAtIsNotNull() Query           { return q.Where(WatchedAt.IsNotNull()) }
-func (q Query) WatchErrorEq(v string) Query         { return q.Where(WatchError.Eq(v)) }
-func (q Query) WatchErrorNotEq(v string) Query      { return q.Where(WatchError.NotEq(v)) }
-func (q Query) WatchErrorGt(v string) Query         { return q.Where(WatchError.Gt(v)) }
-func (q Query) WatchErrorGte(v string) Query        { return q.Where(WatchError.Gte(v)) }
-func (q Query) WatchErrorLt(v string) Query         { return q.Where(WatchError.Lt(v)) }
-func (q Query) WatchErrorLte(v string) Query        { return q.Where(WatchError.Lte(v)) }
-func (q Query) WatchErrorEqLower(v string) Query    { return q.Where(WatchError.EqLower(v)) }
-func (q Query) WatchErrorLike(v string) Query       { return q.Where(WatchError.Like(v)) }
-func (q Query) WatchErrorILike(v string) Query      { return q.Where(WatchError.ILike(v)) }
-func (q Query) WatchErrorIn(v ...string) Query      { return q.Where(WatchError.In(v...)) }
-func (q Query) WatchErrorNotIn(v ...string) Query   { return q.Where(WatchError.NotIn(v...)) }
-func (q Query) BehindSinceEq(v time.Time) Query     { return q.Where(BehindSince.Eq(v)) }
-func (q Query) BehindSinceNotEq(v time.Time) Query  { return q.Where(BehindSince.NotEq(v)) }
-func (q Query) BehindSinceGt(v time.Time) Query     { return q.Where(BehindSince.Gt(v)) }
-func (q Query) BehindSinceGte(v time.Time) Query    { return q.Where(BehindSince.Gte(v)) }
-func (q Query) BehindSinceLt(v time.Time) Query     { return q.Where(BehindSince.Lt(v)) }
-func (q Query) BehindSinceLte(v time.Time) Query    { return q.Where(BehindSince.Lte(v)) }
-func (q Query) BehindSinceIsNull() Query            { return q.Where(BehindSince.IsNull()) }
-func (q Query) BehindSinceIsNotNull() Query         { return q.Where(BehindSince.IsNotNull()) }
-func (q Query) BehindAlertedEq(v bool) Query        { return q.Where(BehindAlerted.Eq(v)) }
-func (q Query) BehindAlertedNotEq(v bool) Query     { return q.Where(BehindAlerted.NotEq(v)) }
+func (q Query) ReplicaDatabaseIDIsNull() Query          { return q.Where(ReplicaDatabaseID.IsNull()) }
+func (q Query) ReplicaDatabaseIDIsNotNull() Query       { return q.Where(ReplicaDatabaseID.IsNotNull()) }
+func (q Query) CreatedAtEq(v time.Time) Query           { return q.Where(CreatedAt.Eq(v)) }
+func (q Query) CreatedAtNotEq(v time.Time) Query        { return q.Where(CreatedAt.NotEq(v)) }
+func (q Query) CreatedAtGt(v time.Time) Query           { return q.Where(CreatedAt.Gt(v)) }
+func (q Query) CreatedAtGte(v time.Time) Query          { return q.Where(CreatedAt.Gte(v)) }
+func (q Query) CreatedAtLt(v time.Time) Query           { return q.Where(CreatedAt.Lt(v)) }
+func (q Query) CreatedAtLte(v time.Time) Query          { return q.Where(CreatedAt.Lte(v)) }
+func (q Query) StartedAtEq(v time.Time) Query           { return q.Where(StartedAt.Eq(v)) }
+func (q Query) StartedAtNotEq(v time.Time) Query        { return q.Where(StartedAt.NotEq(v)) }
+func (q Query) StartedAtGt(v time.Time) Query           { return q.Where(StartedAt.Gt(v)) }
+func (q Query) StartedAtGte(v time.Time) Query          { return q.Where(StartedAt.Gte(v)) }
+func (q Query) StartedAtLt(v time.Time) Query           { return q.Where(StartedAt.Lt(v)) }
+func (q Query) StartedAtLte(v time.Time) Query          { return q.Where(StartedAt.Lte(v)) }
+func (q Query) StartedAtIsNull() Query                  { return q.Where(StartedAt.IsNull()) }
+func (q Query) StartedAtIsNotNull() Query               { return q.Where(StartedAt.IsNotNull()) }
+func (q Query) FinishedAtEq(v time.Time) Query          { return q.Where(FinishedAt.Eq(v)) }
+func (q Query) FinishedAtNotEq(v time.Time) Query       { return q.Where(FinishedAt.NotEq(v)) }
+func (q Query) FinishedAtGt(v time.Time) Query          { return q.Where(FinishedAt.Gt(v)) }
+func (q Query) FinishedAtGte(v time.Time) Query         { return q.Where(FinishedAt.Gte(v)) }
+func (q Query) FinishedAtLt(v time.Time) Query          { return q.Where(FinishedAt.Lt(v)) }
+func (q Query) FinishedAtLte(v time.Time) Query         { return q.Where(FinishedAt.Lte(v)) }
+func (q Query) FinishedAtIsNull() Query                 { return q.Where(FinishedAt.IsNull()) }
+func (q Query) FinishedAtIsNotNull() Query              { return q.Where(FinishedAt.IsNotNull()) }
+func (q Query) StreamingEq(v bool) Query                { return q.Where(Streaming.Eq(v)) }
+func (q Query) StreamingNotEq(v bool) Query             { return q.Where(Streaming.NotEq(v)) }
+func (q Query) LagSEq(v float64) Query                  { return q.Where(LagS.Eq(v)) }
+func (q Query) LagSNotEq(v float64) Query               { return q.Where(LagS.NotEq(v)) }
+func (q Query) LagSGt(v float64) Query                  { return q.Where(LagS.Gt(v)) }
+func (q Query) LagSGte(v float64) Query                 { return q.Where(LagS.Gte(v)) }
+func (q Query) LagSLt(v float64) Query                  { return q.Where(LagS.Lt(v)) }
+func (q Query) LagSLte(v float64) Query                 { return q.Where(LagS.Lte(v)) }
+func (q Query) LagSIsNull() Query                       { return q.Where(LagS.IsNull()) }
+func (q Query) LagSIsNotNull() Query                    { return q.Where(LagS.IsNotNull()) }
+func (q Query) LagBytesEq(v int64) Query                { return q.Where(LagBytes.Eq(v)) }
+func (q Query) LagBytesNotEq(v int64) Query             { return q.Where(LagBytes.NotEq(v)) }
+func (q Query) LagBytesGt(v int64) Query                { return q.Where(LagBytes.Gt(v)) }
+func (q Query) LagBytesGte(v int64) Query               { return q.Where(LagBytes.Gte(v)) }
+func (q Query) LagBytesLt(v int64) Query                { return q.Where(LagBytes.Lt(v)) }
+func (q Query) LagBytesLte(v int64) Query               { return q.Where(LagBytes.Lte(v)) }
+func (q Query) LagBytesIn(v ...int64) Query             { return q.Where(LagBytes.In(v...)) }
+func (q Query) LagBytesNotIn(v ...int64) Query          { return q.Where(LagBytes.NotIn(v...)) }
+func (q Query) LagBytesIsNull() Query                   { return q.Where(LagBytes.IsNull()) }
+func (q Query) LagBytesIsNotNull() Query                { return q.Where(LagBytes.IsNotNull()) }
+func (q Query) RetainedBytesEq(v int64) Query           { return q.Where(RetainedBytes.Eq(v)) }
+func (q Query) RetainedBytesNotEq(v int64) Query        { return q.Where(RetainedBytes.NotEq(v)) }
+func (q Query) RetainedBytesGt(v int64) Query           { return q.Where(RetainedBytes.Gt(v)) }
+func (q Query) RetainedBytesGte(v int64) Query          { return q.Where(RetainedBytes.Gte(v)) }
+func (q Query) RetainedBytesLt(v int64) Query           { return q.Where(RetainedBytes.Lt(v)) }
+func (q Query) RetainedBytesLte(v int64) Query          { return q.Where(RetainedBytes.Lte(v)) }
+func (q Query) RetainedBytesIn(v ...int64) Query        { return q.Where(RetainedBytes.In(v...)) }
+func (q Query) RetainedBytesNotIn(v ...int64) Query     { return q.Where(RetainedBytes.NotIn(v...)) }
+func (q Query) RetainedBytesIsNull() Query              { return q.Where(RetainedBytes.IsNull()) }
+func (q Query) RetainedBytesIsNotNull() Query           { return q.Where(RetainedBytes.IsNotNull()) }
+func (q Query) WatchedAtEq(v time.Time) Query           { return q.Where(WatchedAt.Eq(v)) }
+func (q Query) WatchedAtNotEq(v time.Time) Query        { return q.Where(WatchedAt.NotEq(v)) }
+func (q Query) WatchedAtGt(v time.Time) Query           { return q.Where(WatchedAt.Gt(v)) }
+func (q Query) WatchedAtGte(v time.Time) Query          { return q.Where(WatchedAt.Gte(v)) }
+func (q Query) WatchedAtLt(v time.Time) Query           { return q.Where(WatchedAt.Lt(v)) }
+func (q Query) WatchedAtLte(v time.Time) Query          { return q.Where(WatchedAt.Lte(v)) }
+func (q Query) WatchedAtIsNull() Query                  { return q.Where(WatchedAt.IsNull()) }
+func (q Query) WatchedAtIsNotNull() Query               { return q.Where(WatchedAt.IsNotNull()) }
+func (q Query) WatchErrorEq(v string) Query             { return q.Where(WatchError.Eq(v)) }
+func (q Query) WatchErrorNotEq(v string) Query          { return q.Where(WatchError.NotEq(v)) }
+func (q Query) WatchErrorGt(v string) Query             { return q.Where(WatchError.Gt(v)) }
+func (q Query) WatchErrorGte(v string) Query            { return q.Where(WatchError.Gte(v)) }
+func (q Query) WatchErrorLt(v string) Query             { return q.Where(WatchError.Lt(v)) }
+func (q Query) WatchErrorLte(v string) Query            { return q.Where(WatchError.Lte(v)) }
+func (q Query) WatchErrorEqLower(v string) Query        { return q.Where(WatchError.EqLower(v)) }
+func (q Query) WatchErrorLike(v string) Query           { return q.Where(WatchError.Like(v)) }
+func (q Query) WatchErrorILike(v string) Query          { return q.Where(WatchError.ILike(v)) }
+func (q Query) WatchErrorIn(v ...string) Query          { return q.Where(WatchError.In(v...)) }
+func (q Query) WatchErrorNotIn(v ...string) Query       { return q.Where(WatchError.NotIn(v...)) }
+func (q Query) BehindSinceEq(v time.Time) Query         { return q.Where(BehindSince.Eq(v)) }
+func (q Query) BehindSinceNotEq(v time.Time) Query      { return q.Where(BehindSince.NotEq(v)) }
+func (q Query) BehindSinceGt(v time.Time) Query         { return q.Where(BehindSince.Gt(v)) }
+func (q Query) BehindSinceGte(v time.Time) Query        { return q.Where(BehindSince.Gte(v)) }
+func (q Query) BehindSinceLt(v time.Time) Query         { return q.Where(BehindSince.Lt(v)) }
+func (q Query) BehindSinceLte(v time.Time) Query        { return q.Where(BehindSince.Lte(v)) }
+func (q Query) BehindSinceIsNull() Query                { return q.Where(BehindSince.IsNull()) }
+func (q Query) BehindSinceIsNotNull() Query             { return q.Where(BehindSince.IsNotNull()) }
+func (q Query) BehindAlertedEq(v bool) Query            { return q.Where(BehindAlerted.Eq(v)) }
+func (q Query) BehindAlertedNotEq(v bool) Query         { return q.Where(BehindAlerted.NotEq(v)) }
+func (q Query) EndpointInstanceEq(v string) Query       { return q.Where(EndpointInstance.Eq(v)) }
+func (q Query) EndpointInstanceNotEq(v string) Query    { return q.Where(EndpointInstance.NotEq(v)) }
+func (q Query) EndpointInstanceGt(v string) Query       { return q.Where(EndpointInstance.Gt(v)) }
+func (q Query) EndpointInstanceGte(v string) Query      { return q.Where(EndpointInstance.Gte(v)) }
+func (q Query) EndpointInstanceLt(v string) Query       { return q.Where(EndpointInstance.Lt(v)) }
+func (q Query) EndpointInstanceLte(v string) Query      { return q.Where(EndpointInstance.Lte(v)) }
+func (q Query) EndpointInstanceEqLower(v string) Query  { return q.Where(EndpointInstance.EqLower(v)) }
+func (q Query) EndpointInstanceLike(v string) Query     { return q.Where(EndpointInstance.Like(v)) }
+func (q Query) EndpointInstanceILike(v string) Query    { return q.Where(EndpointInstance.ILike(v)) }
+func (q Query) EndpointInstanceIn(v ...string) Query    { return q.Where(EndpointInstance.In(v...)) }
+func (q Query) EndpointInstanceNotIn(v ...string) Query { return q.Where(EndpointInstance.NotIn(v...)) }
+func (q Query) EndpointNoteEq(v string) Query           { return q.Where(EndpointNote.Eq(v)) }
+func (q Query) EndpointNoteNotEq(v string) Query        { return q.Where(EndpointNote.NotEq(v)) }
+func (q Query) EndpointNoteGt(v string) Query           { return q.Where(EndpointNote.Gt(v)) }
+func (q Query) EndpointNoteGte(v string) Query          { return q.Where(EndpointNote.Gte(v)) }
+func (q Query) EndpointNoteLt(v string) Query           { return q.Where(EndpointNote.Lt(v)) }
+func (q Query) EndpointNoteLte(v string) Query          { return q.Where(EndpointNote.Lte(v)) }
+func (q Query) EndpointNoteEqLower(v string) Query      { return q.Where(EndpointNote.EqLower(v)) }
+func (q Query) EndpointNoteLike(v string) Query         { return q.Where(EndpointNote.Like(v)) }
+func (q Query) EndpointNoteILike(v string) Query        { return q.Where(EndpointNote.ILike(v)) }
+func (q Query) EndpointNoteIn(v ...string) Query        { return q.Where(EndpointNote.In(v...)) }
+func (q Query) EndpointNoteNotIn(v ...string) Query     { return q.Where(EndpointNote.NotIn(v...)) }
 
-const selectPrefix = `SELECT "id", "database_id", "asset_id", "name", "replica_address", "primary_address", "requested_by", "reason", "request_id", "state", "stage", "detail", "error", "replica_database_id", "created_at", "started_at", "finished_at", "streaming", "lag_s", "lag_bytes", "retained_bytes", "watched_at", "watch_error", "behind_since", "behind_alerted" FROM "database_replicas"`
+const selectPrefix = `SELECT "id", "database_id", "asset_id", "name", "replica_address", "primary_address", "requested_by", "reason", "request_id", "state", "stage", "detail", "error", "replica_database_id", "created_at", "started_at", "finished_at", "streaming", "lag_s", "lag_bytes", "retained_bytes", "watched_at", "watch_error", "behind_since", "behind_alerted", "endpoint_instance", "endpoint_note" FROM "database_replicas"`
 const countPrefix = `SELECT count(*) FROM "database_replicas"`
 const existsPrefix = `SELECT 1 FROM "database_replicas"`
 const existsSuffix = ` LIMIT 1`
@@ -1588,6 +1656,18 @@ var orderTable = [nCols][4]string{
 		"\"behind_alerted\" ASC NULLS FIRST",
 		"\"behind_alerted\" DESC NULLS LAST",
 	},
+	{ // endpoint_instance
+		"\"endpoint_instance\"",
+		"\"endpoint_instance\" DESC",
+		"\"endpoint_instance\" ASC NULLS FIRST",
+		"\"endpoint_instance\" DESC NULLS LAST",
+	},
+	{ // endpoint_note
+		"\"endpoint_note\"",
+		"\"endpoint_note\" DESC",
+		"\"endpoint_note\" ASC NULLS FIRST",
+		"\"endpoint_note\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1618,6 +1698,8 @@ var identTable = [nCols]string{
 	"\"watch_error\"",
 	"\"behind_since\"",
 	"\"behind_alerted\"",
+	"\"endpoint_instance\"",
+	"\"endpoint_note\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1650,7 +1732,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [25][28]runtime.Frag{
+var fragTable = [27][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -2401,6 +2483,66 @@ var fragTable = [25][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // endpoint_instance
+		{}, // opNone
+		{A: "\"endpoint_instance\" = $", B: ""},
+		{A: "\"endpoint_instance\" <> $", B: ""},
+		{A: "\"endpoint_instance\" > $", B: ""},
+		{A: "\"endpoint_instance\" >= $", B: ""},
+		{A: "\"endpoint_instance\" < $", B: ""},
+		{A: "\"endpoint_instance\" <= $", B: ""},
+		{A: "lower(\"endpoint_instance\") = lower($", B: ")"},
+		{A: "\"endpoint_instance\" LIKE $", B: ""},
+		{A: "\"endpoint_instance\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"endpoint_instance\" = ANY($", B: ")"},
+		{A: "\"endpoint_instance\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // endpoint_note
+		{}, // opNone
+		{A: "\"endpoint_note\" = $", B: ""},
+		{A: "\"endpoint_note\" <> $", B: ""},
+		{A: "\"endpoint_note\" > $", B: ""},
+		{A: "\"endpoint_note\" >= $", B: ""},
+		{A: "\"endpoint_note\" < $", B: ""},
+		{A: "\"endpoint_note\" <= $", B: ""},
+		{A: "lower(\"endpoint_note\") = lower($", B: ")"},
+		{A: "\"endpoint_note\" LIKE $", B: ""},
+		{A: "\"endpoint_note\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"endpoint_note\" = ANY($", B: ")"},
+		{A: "\"endpoint_note\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -2582,6 +2724,8 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.WatchError = sl.Str(rv[22])
 	r.BehindSince = runtime.Nullable(rv[23], runtime.Timestamptz)
 	r.BehindAlerted = runtime.Bool(rv[24])
+	r.EndpointInstance = sl.Str(rv[25])
+	r.EndpointNote = sl.Str(rv[26])
 	return nil
 }
 
@@ -2721,6 +2865,14 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 25:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 26:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -2825,6 +2977,14 @@ func (q Query) bindPreds(b *binder) []any {
 			b.bools[nbo] = q.bools[nbo]
 			v = append(v, &b.bools[nbo])
 			nbo++
+		case 25:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 26:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
 		}
 	}
 	b.vals = v
@@ -2962,7 +3122,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "database_replicas" ("id", "database_id", "asset_id", "name", "replica_address", "primary_address", "requested_by", "reason", "request_id", "state", "stage", "detail", "error", "replica_database_id", "created_at", "started_at", "finished_at", "streaming", "lag_s", "lag_bytes", "retained_bytes", "watched_at", "watch_error", "behind_since", "behind_alerted") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25) RETURNING "id", "database_id", "asset_id", "name", "replica_address", "primary_address", "requested_by", "reason", "request_id", "state", "stage", "detail", "error", "replica_database_id", "created_at", "started_at", "finished_at", "streaming", "lag_s", "lag_bytes", "retained_bytes", "watched_at", "watch_error", "behind_since", "behind_alerted"`
+const insertSQL = `INSERT INTO "database_replicas" ("id", "database_id", "asset_id", "name", "replica_address", "primary_address", "requested_by", "reason", "request_id", "state", "stage", "detail", "error", "replica_database_id", "created_at", "started_at", "finished_at", "streaming", "lag_s", "lag_bytes", "retained_bytes", "watched_at", "watch_error", "behind_since", "behind_alerted", "endpoint_instance", "endpoint_note") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27) RETURNING "id", "database_id", "asset_id", "name", "replica_address", "primary_address", "requested_by", "reason", "request_id", "state", "stage", "detail", "error", "replica_database_id", "created_at", "started_at", "finished_at", "streaming", "lag_s", "lag_bytes", "retained_bytes", "watched_at", "watch_error", "behind_since", "behind_alerted", "endpoint_instance", "endpoint_note"`
 
 const updatePrefix = `UPDATE "database_replicas" SET `
 const deletePrefix = `DELETE FROM "database_replicas"`
@@ -2994,9 +3154,11 @@ const (
 	dWatchError        uint64 = 1 << 21
 	dBehindSince       uint64 = 1 << 22
 	dBehindAlerted     uint64 = 1 << 23
+	dEndpointInstance  uint64 = 1 << 24
+	dEndpointNote      uint64 = 1 << 25
 )
 
-const nUpdatable = 24
+const nUpdatable = 26
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -3024,6 +3186,8 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"watch_error\" = $", B: ""},         // watch_error
 	{A: "\"behind_since\" = $", B: ""},        // behind_since
 	{A: "\"behind_alerted\" = $", B: ""},      // behind_alerted
+	{A: "\"endpoint_instance\" = $", B: ""},   // endpoint_instance
+	{A: "\"endpoint_note\" = $", B: ""},       // endpoint_note
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -3054,6 +3218,8 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{},                                                        // watch_error has no server-side form
 	{A: "\"behind_since\" = now()", B: ""},                    // behind_since = the database's clock
 	{},                                                        // behind_alerted has no server-side form
+	{},                                                        // endpoint_instance has no server-side form
+	{},                                                        // endpoint_note has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -3090,9 +3256,11 @@ const (
 	iWatchError        uint64 = 1 << 22
 	iBehindSince       uint64 = 1 << 23
 	iBehindAlerted     uint64 = 1 << 24
+	iEndpointInstance  uint64 = 1 << 25
+	iEndpointNote      uint64 = 1 << 26
 )
 
-const nInsertable = 25
+const nInsertable = 27
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -3121,6 +3289,8 @@ var insCols = [nInsertable]string{
 	"\"watch_error\"",
 	"\"behind_since\"",
 	"\"behind_alerted\"",
+	"\"endpoint_instance\"",
+	"\"endpoint_note\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -3129,7 +3299,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"database_replicas\""
-const insReturning = " RETURNING \"id\", \"database_id\", \"asset_id\", \"name\", \"replica_address\", \"primary_address\", \"requested_by\", \"reason\", \"request_id\", \"state\", \"stage\", \"detail\", \"error\", \"replica_database_id\", \"created_at\", \"started_at\", \"finished_at\", \"streaming\", \"lag_s\", \"lag_bytes\", \"retained_bytes\", \"watched_at\", \"watch_error\", \"behind_since\", \"behind_alerted\""
+const insReturning = " RETURNING \"id\", \"database_id\", \"asset_id\", \"name\", \"replica_address\", \"primary_address\", \"requested_by\", \"reason\", \"request_id\", \"state\", \"stage\", \"detail\", \"error\", \"replica_database_id\", \"created_at\", \"started_at\", \"finished_at\", \"streaming\", \"lag_s\", \"lag_bytes\", \"retained_bytes\", \"watched_at\", \"watch_error\", \"behind_since\", \"behind_alerted\", \"endpoint_instance\", \"endpoint_note\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -3148,7 +3318,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"database_id\", \"asset_id\", \"name\", \"replica_address\", \"primary_address\", \"requested_by\", \"reason\", \"request_id\", \"state\", \"stage\", \"detail\", \"error\", \"replica_database_id\", \"created_at\", \"started_at\", \"finished_at\", \"streaming\", \"lag_s\", \"lag_bytes\", \"retained_bytes\", \"watched_at\", \"watch_error\", \"behind_since\", \"behind_alerted\""
+const updReturning = " RETURNING \"id\", \"database_id\", \"asset_id\", \"name\", \"replica_address\", \"primary_address\", \"requested_by\", \"reason\", \"request_id\", \"state\", \"stage\", \"detail\", \"error\", \"replica_database_id\", \"created_at\", \"started_at\", \"finished_at\", \"streaming\", \"lag_s\", \"lag_bytes\", \"retained_bytes\", \"watched_at\", \"watch_error\", \"behind_since\", \"behind_alerted\", \"endpoint_instance\", \"endpoint_note\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -3487,6 +3657,18 @@ func (m *Mut) SetBehindAlerted(v bool) {
 	m.expr &^= dBehindAlerted
 }
 
+func (m *Mut) SetEndpointInstance(v string) {
+	m.row.EndpointInstance = v
+	m.dirty |= dEndpointInstance
+	m.expr &^= dEndpointInstance
+}
+
+func (m *Mut) SetEndpointNote(v string) {
+	m.row.EndpointNote = v
+	m.dirty |= dEndpointNote
+	m.expr &^= dEndpointNote
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -3700,6 +3882,16 @@ func (n *Ins) SetBehindAlerted(v bool) {
 	n.set |= iBehindAlerted
 }
 
+func (n *Ins) SetEndpointInstance(v string) {
+	n.row.EndpointInstance = v
+	n.set |= iEndpointInstance
+}
+
+func (n *Ins) SetEndpointNote(v string) {
+	n.row.EndpointNote = v
+	n.set |= iEndpointNote
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -3746,7 +3938,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 24)
+	set := make([]string, 0, 26)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -3821,6 +4013,12 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<24) != 0 {
 			set = append(set, "behind_alerted")
 		}
+		if mask&(1<<25) != 0 {
+			set = append(set, "endpoint_instance")
+		}
+		if mask&(1<<26) != 0 {
+			set = append(set, "endpoint_note")
+		}
 	case 1:
 		if mask&(1<<2) != 0 {
 			set = append(set, "asset_id")
@@ -3887,6 +4085,12 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<24) != 0 {
 			set = append(set, "behind_alerted")
+		}
+		if mask&(1<<25) != 0 {
+			set = append(set, "endpoint_instance")
+		}
+		if mask&(1<<26) != 0 {
+			set = append(set, "endpoint_note")
 		}
 	}
 	return set
@@ -3970,6 +4174,8 @@ var assignFor = map[string]string{
 	"watch_error":         "\"watch_error\" = EXCLUDED.\"watch_error\"",
 	"behind_since":        "\"behind_since\" = EXCLUDED.\"behind_since\"",
 	"behind_alerted":      "\"behind_alerted\" = EXCLUDED.\"behind_alerted\"",
+	"endpoint_instance":   "\"endpoint_instance\" = EXCLUDED.\"endpoint_instance\"",
+	"endpoint_note":       "\"endpoint_note\" = EXCLUDED.\"endpoint_note\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -4063,6 +4269,10 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.BehindSince.Arg())
 		case 24:
 			args = append(args, n.row.BehindAlerted)
+		case 25:
+			args = append(args, n.row.EndpointInstance)
+		case 26:
+			args = append(args, n.row.EndpointNote)
 		}
 	}
 	var out Row
@@ -4100,7 +4310,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 25)
+	args := make([]any, 0, 27)
 	args = append(args, r.ID)
 	args = append(args, r.DatabaseID)
 	args = append(args, r.AssetID)
@@ -4126,6 +4336,8 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.WatchError)
 	args = append(args, r.BehindSince.Arg())
 	args = append(args, r.BehindAlerted)
+	args = append(args, r.EndpointInstance)
+	args = append(args, r.EndpointNote)
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -4177,13 +4389,15 @@ var copyCols = []string{
 	"watch_error",
 	"behind_since",
 	"behind_alerted",
+	"endpoint_instance",
+	"endpoint_note",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [25]any
+	buf  [27]any
 }
 
 func (s *rowSource) Next() bool {
@@ -4226,6 +4440,8 @@ func (s *rowSource) Values() []any {
 	s.buf[22] = &r.WatchError
 	s.buf[23] = r.BehindSince.Ptr()
 	s.buf[24] = &r.BehindAlerted
+	s.buf[25] = &r.EndpointInstance
+	s.buf[26] = &r.EndpointNote
 	return s.buf[:]
 }
 
@@ -4281,8 +4497,10 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 22
 	mask |= 1 << 23
 	mask |= 1 << 24
+	mask |= 1 << 25
+	mask |= 1 << 26
 	st := stmtForInsertNoReturn(mask, 0)
-	args := make([]any, 0, 25)
+	args := make([]any, 0, 27)
 	args = append(args, r.ID)
 	args = append(args, r.DatabaseID)
 	args = append(args, r.AssetID)
@@ -4308,6 +4526,8 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.WatchError)
 	args = append(args, r.BehindSince.Arg())
 	args = append(args, r.BehindAlerted)
+	args = append(args, r.EndpointInstance)
+	args = append(args, r.EndpointNote)
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -4391,6 +4611,10 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.BehindSince.Arg())
 		case 24:
 			args = append(args, n.row.BehindAlerted)
+		case 25:
+			args = append(args, n.row.EndpointInstance)
+		case 26:
+			args = append(args, n.row.EndpointNote)
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -4485,6 +4709,10 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.BehindSince.Arg())
 		case 23:
 			args = append(args, m.row.BehindAlerted)
+		case 24:
+			args = append(args, m.row.EndpointInstance)
+		case 25:
+			args = append(args, m.row.EndpointNote)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -4615,6 +4843,10 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.BehindSince.Arg())
 		case 23:
 			args = append(args, m.row.BehindAlerted)
+		case 24:
+			args = append(args, m.row.EndpointInstance)
+		case 25:
+			args = append(args, m.row.EndpointNote)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -4811,6 +5043,10 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.BehindSince.Arg())
 		case 23:
 			args = append(args, m.row.BehindAlerted)
+		case 24:
+			args = append(args, m.row.EndpointInstance)
+		case 25:
+			args = append(args, m.row.EndpointNote)
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

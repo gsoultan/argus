@@ -1255,6 +1255,9 @@ type DatabaseReplica struct {
 	WatchError      string
 	BehindSince     *time.Time
 	BehindAlerted   bool
+	// In the database's read endpoint (migration 095).
+	EndpointInstance string
+	EndpointNote     string
 }
 
 func (m *DatabaseReplica) Schema(t *storm.Table) {
@@ -1280,6 +1283,8 @@ func (m *DatabaseReplica) Schema(t *storm.Table) {
 	t.Col(&m.Streaming).Default("false")
 	t.Col(&m.WatchError).Default("''::text")
 	t.Col(&m.BehindAlerted).Default("false")
+	t.Col(&m.EndpointInstance).Default("''::text")
+	t.Col(&m.EndpointNote).Default("''::text")
 	t.UniqueNamed("database_replicas_database_id_name_key", &m.Database, &m.Name)
 	t.CheckNamed("database_replicas_name_check", "name ~ '^[a-z][a-z0-9_]{0,39}$'::text")
 	t.CheckNamed("database_replicas_state_check",
@@ -1429,6 +1434,7 @@ func All() []any {
 		&DatabaseBackupTest{},
 		&DatabaseChange{},
 		&DatabaseReplica{},
+		&DatabaseReadEndpoint{},
 		&DatabaseRestore{},
 		&DatabaseStatement{},
 		&DatabaseStatementItem{},
@@ -2390,4 +2396,36 @@ func usageDefaults(t *storm.Table, cols ...any) {
 	for _, c := range cols {
 		t.Col(c).Default("0")
 	}
+}
+
+// DatabaseReadEndpoint is table database_read_endpoints: the NLB target
+// group Argus keeps to a primary and its replicas that are not behind
+// (migration 095).
+type DatabaseReadEndpoint struct {
+	Database        Database
+	Account         CloudAccount
+	Region          string
+	TargetGroup     string
+	TargetName      string
+	IncludePrimary  bool
+	PrimaryInstance string
+	Note            string
+	SetBy           string
+	SetAt           time.Time
+}
+
+func (m *DatabaseReadEndpoint) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Database)
+	t.Col(&m.Database).ConstraintName("database_read_endpoints_database_id_fkey")
+	t.Col(&m.Database).OnDelete(storm.Cascade)
+	t.Col(&m.Database).NoIndex()
+	t.Col(&m.Account).ConstraintName("database_read_endpoints_account_id_fkey")
+	t.Col(&m.Account).OnDelete(storm.Cascade)
+	t.Col(&m.Account).NoIndex()
+	t.Col(&m.TargetName).Default("''::text")
+	t.Col(&m.IncludePrimary).Default("true")
+	t.Col(&m.PrimaryInstance).Default("''::text")
+	t.Col(&m.Note).Default("''::text")
+	t.Col(&m.SetAt).Default("now()")
+	t.Index(&m.Account).Named("database_read_endpoints_account_idx")
 }

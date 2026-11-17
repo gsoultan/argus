@@ -240,7 +240,7 @@ func TestDatabaseReplicaOnManagedServers(t *testing.T) {
 	f.mu.Unlock()
 	alerts := func(sev string) int {
 		var n int
-		_ = s.pool.QueryRow(ctx, `SELECT count(*) FROM console_alerts WHERE kind = 'backup' AND severity = $1 AND title LIKE '%replica on%'`, sev).Scan(&n)
+		_ = s.pool.QueryRow(ctx, `SELECT count(*) FROM console_alerts WHERE kind = 'backup' AND severity = $1 AND title LIKE '%replica on ' || $2 || '%'`, sev, rep.Hostname).Scan(&n)
 		return n
 	}
 	t0 := time.Now().UTC()

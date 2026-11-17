@@ -69,6 +69,8 @@ func (a *API) WatchReplicas(ctx context.Context, now time.Time) {
 	for _, rep := range reps {
 		a.watchReplica(ctx, rep, now)
 	}
+	// With the readings in, the read endpoints follow them.
+	a.TendReadEndpoints(ctx)
 }
 
 func (a *API) watchReplica(ctx context.Context, rep DatabaseReplica, now time.Time) {

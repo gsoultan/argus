@@ -1,4 +1,4 @@
-import type { Asset, Database, DatabaseReplica } from '~/types/domain'
+import type { Asset, Database, DatabaseReplica, ReadEndpoint } from '~/types/domain'
 
 /*
  * Streaming replicas of a Postgres on a server Argus manages (db_replica.go).
@@ -101,4 +101,23 @@ export function replicaHealth(r: Pick<DatabaseReplica, 'state' | 'streaming' | '
   if (!r.streaming || r.lagS === undefined || r.lagS < 0) return { words: 'Not streaming', color: 'rose' }
   if (r.lagS === 0) return { words: 'Streaming, caught up', color: 'teal' }
   return { words: `Streaming, ${lagWords(r.lagS)} behind`, color: r.lagS > 60 ? 'amber' : 'teal' }
+}
+
+/**
+ * Where a finished replica stands in the database's read endpoint: words and a colour.
+ * Null with no endpoint, or for a replica that is not made yet.
+ */
+export function endpointStatus(
+  r: Pick<DatabaseReplica, 'state' | 'endpointInstance' | 'endpointNote'>,
+  endpoint: Pick<ReadEndpoint, 'targetName' | 'health'> | null | undefined,
+): { words: string; color: string } | null {
+  if (!endpoint || r.state !== 'done') return null
+  if (r.endpointInstance) {
+    const health = endpoint.health[r.endpointInstance]
+    const bad = health === 'unhealthy' || health === 'draining'
+    return { words: `In ${endpoint.targetName}${health ? ` · ${health}` : ''}`, color: bad ? 'amber' : 'teal' }
+  }
+  if (r.endpointNote === 'out while it is behind') return { words: `Out of ${endpoint.targetName} while it is behind`, color: 'amber' }
+  if (r.endpointNote) return { words: `Not in ${endpoint.targetName}: ${r.endpointNote}`, color: 'rose' }
+  return { words: `Not in ${endpoint.targetName} yet`, color: 'dimmed' }
 }

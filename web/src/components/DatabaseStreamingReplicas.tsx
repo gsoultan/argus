@@ -1,18 +1,21 @@
 import { useMemo, useState } from 'react'
-import { Alert, Badge, Box, Button, Group, Loader, Modal, Select, Stack, Table, Text, Textarea, TextInput } from '@mantine/core'
+import { Alert, Badge, Box, Button, Checkbox, Group, Loader, Modal, Paper, Select, Stack, Table, Text, Textarea, TextInput } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { IconLock } from '@tabler/icons-react'
 import { ButtonLink } from '~/components/links'
 import { AloneOr } from '~/components/ApproveOwn'
 import { bytes, relTime } from '~/components/primitives'
 import { notifyError, notifyOk } from '~/lib/notify'
-import { assetsQuery, databaseReplicasQuery, useAskReplica } from '~/lib/queries'
 import {
-  REPLICA_STATE_COLOR, isIP, replicaHealth, replicaNameFor, replicaRefusal, replicaStage, serverAddresses, targetRefusal, validReplicaName,
+  assetsQuery, databaseReplicasQuery, meQuery, readEndpointQuery, useAskReplica, useRemoveReadEndpoint, useSetReadEndpoint,
+} from '~/lib/queries'
+import {
+  REPLICA_STATE_COLOR, endpointStatus, isIP, replicaHealth, replicaNameFor, replicaRefusal, replicaStage, serverAddresses, targetRefusal, validReplicaName,
 } from '~/lib/managedReplicas'
 import { assetName } from '~/lib/assetType'
 import { FS } from '~/theme'
-import type { Database, DatabaseReplica } from '~/types/domain'
+import { canSee } from '~/lib/roles'
+import type { Database, DatabaseReplica, ReadEndpoint, ReadEndpointChoice } from '~/types/domain'
 
 const MONO = { input: { fontFamily: 'var(--mantine-font-family-monospace)' } }
 
@@ -27,8 +30,10 @@ the run then goes across both servers' agents and adds the replica to Argus.
 export function StreamingReplicas({ database, narrow }: { database: Database; narrow: boolean }) {
   const refusal = replicaRefusal(database)
   const { data, isLoading, error } = useQuery(databaseReplicasQuery(database.id, database.engine === 'postgres'))
+  const endpoint = useQuery(readEndpointQuery(database.id, database.engine === 'postgres'))
   const [asking, setAsking] = useState(false)
   const rows = data ?? []
+  const ep = endpoint.data?.endpoint ?? null
   return (
     <Box p="md">
       <Group justify="space-between" align="flex-start" mb="sm" wrap="nowrap" gap="md">
@@ -42,6 +47,9 @@ export function StreamingReplicas({ database, narrow }: { database: Database; na
       </Group>
       {refusal && <Alert color="slate" variant="light" p="xs" mb="sm"><Text size={FS.meta}>{refusal}.</Text></Alert>}
       {error && <Alert color="rose" variant="light" p="xs" mb="sm"><Text size={FS.meta}>{String((error as Error).message ?? error)}</Text></Alert>}
+      {(ep || rows.some((r) => r.state === 'done')) && (
+        <ReadEndpointSection database={database} endpoint={ep} choices={endpoint.data?.choices ?? []} />
+      )}
       {isLoading ? <Loader size={16} /> : rows.length === 0 ? (
         <Text size={FS.meta} c="dimmed">No streaming replicas of {database.hostname} were made from Argus.</Text>
       ) : (
@@ -50,7 +58,7 @@ export function StreamingReplicas({ database, narrow }: { database: Database; na
             <Table.Tr><Table.Th>Replica</Table.Th><Table.Th>Where it is</Table.Th>{!narrow && <Table.Th>Asked</Table.Th>}<Table.Th></Table.Th></Table.Tr>
           </Table.Thead>
           <Table.Tbody>
-            {rows.map((r) => <ReplicaRow key={r.id} r={r} narrow={narrow} />)}
+            {rows.map((r) => <ReplicaRow key={r.id} r={r} narrow={narrow} endpoint={ep} />)}
           </Table.Tbody>
         </Table>
       )}
@@ -59,9 +67,10 @@ export function StreamingReplicas({ database, narrow }: { database: Database; na
   )
 }
 
-function ReplicaRow({ r, narrow }: { r: DatabaseReplica; narrow: boolean }) {
+function ReplicaRow({ r, narrow, endpoint }: { r: DatabaseReplica; narrow: boolean; endpoint: ReadEndpoint | null }) {
   const words = r.state === 'running' && r.detail ? `${replicaStage(r)} · ${r.detail}` : replicaStage(r)
   const health = replicaHealth(r)
+  const inEndpoint = endpointStatus(r, endpoint)
   return (
     <Table.Tr data-testid="streaming-replica">
       <Table.Td>
@@ -83,6 +92,7 @@ function ReplicaRow({ r, narrow }: { r: DatabaseReplica; narrow: boolean }) {
             {health && !r.streaming && r.retainedBytes !== undefined && r.retainedBytes > 0 && (
               <Text size={FS.micro} c="amber">Its slot keeps {bytes(r.retainedBytes)} of WAL on {r.primaryHostname}, growing until the replica is back.</Text>
             )}
+            {inEndpoint && <Text size={FS.micro} c={inEndpoint.color} data-testid="replica-endpoint">{inEndpoint.words}</Text>}
             {r.state === 'done' && r.watchError && <Text size={FS.micro} c="dimmed">Last check failed: {r.watchError}</Text>}
             {r.state === 'done' && r.detail && <Text size={FS.micro} c="dimmed">{r.detail}</Text>}
             {r.error && <Text size={FS.micro} c={r.state === 'failed' ? 'rose' : 'dimmed'}>{r.error}</Text>}
@@ -101,6 +111,132 @@ function ReplicaRow({ r, narrow }: { r: DatabaseReplica; narrow: boolean }) {
         )}
       </Table.Td>
     </Table.Tr>
+  )
+}
+
+/*
+The read endpoint (cloud scaling 8c-2; db_read_endpoint.go): a target group
+of a network load balancer that Argus keeps to the primary, if asked, and
+the replicas that are not behind. Setting it is an admin's, on top of DBA
+access to the database; the server says no to anyone else as well.
+*/
+function ReadEndpointSection({ database, endpoint, choices }: {
+  database: Database; endpoint: ReadEndpoint | null; choices: ReadEndpointChoice[]
+}) {
+  const { data: me } = useQuery(meQuery())
+  const admin = canSee(me?.role, 'admin')
+  const remove = useRemoveReadEndpoint()
+  const [editing, setEditing] = useState(false)
+  const usable = choices.filter((c) => !c.problem)
+  const why = !admin ? 'Setting a read endpoint needs the admin or owner role'
+    : usable.length === 0 ? `No target group in a connected account takes TCP on port ${database.port} to instances` : undefined
+  const drop = async () => {
+    try {
+      await remove.mutateAsync({ id: database.id })
+      notifyOk('Read endpoint removed', `What Argus put in ${endpoint!.targetName} came out; anything put in by hand stays.`)
+    } catch (err) {
+      notifyError('Not removed', err)
+    }
+  }
+  const primaryHealth = endpoint?.primaryInstance ? endpoint.health[endpoint.primaryInstance] : undefined
+  return (
+    <Paper withBorder p="sm" mb="sm" radius="md" data-testid="read-endpoint">
+      <Group justify="space-between" align="flex-start" wrap="nowrap" gap="md">
+        <Box>
+          <Text size={FS.body} fw={600}>Read endpoint</Text>
+          {endpoint ? (
+            <>
+              <Text size={FS.meta}>
+                Target group <Text span fw={600} size={FS.meta}>{endpoint.targetName}</Text> in {endpoint.accountName} {endpoint.region}, kept by Argus.
+                A replica more than a minute behind for five minutes is taken out, and put back when it catches up.
+              </Text>
+              <Text size={FS.micro} c={endpoint.note ? 'rose' : 'dimmed'}>
+                {endpoint.includePrimary
+                  ? endpoint.primaryInstance
+                    ? `${database.hostname} (the primary) is in${primaryHealth ? ` · ${primaryHealth}` : ''}.`
+                    : `${database.hostname} (the primary) is not in${endpoint.note ? `: ${endpoint.note}` : ' yet'}.`
+                  : `${database.hostname} (the primary) is left out; writes never go through this endpoint either way.`}
+              </Text>
+              {!endpoint.includePrimary && endpoint.note && <Text size={FS.micro} c="rose">{endpoint.note}</Text>}
+              <Text size={FS.micro} c="dimmed">Set by {endpoint.setBy} · {relTime(endpoint.setAt)}. A DNS name for it is not made by Argus.</Text>
+            </>
+          ) : (
+            <Text size={FS.meta} c="dimmed" maw={640}>
+              Send reads to one address: pick a network load balancer’s target group on port {database.port}, and Argus keeps the replicas
+              that are not behind in it. Make the target group under Cloud first if there is none.
+            </Text>
+          )}
+        </Box>
+        <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
+          {endpoint && admin && (
+            <Button size="xs" variant="subtle" color="rose" loading={remove.isPending} onClick={() => void drop()}>Remove</Button>
+          )}
+          <Button size="xs" variant={endpoint ? 'default' : 'light'} disabled={Boolean(why)} title={why} onClick={() => setEditing(true)}>
+            {endpoint ? 'Change' : 'Set a read endpoint'}
+          </Button>
+        </Group>
+      </Group>
+      {editing && <SetReadEndpoint database={database} endpoint={endpoint} choices={choices} onClose={() => setEditing(false)} />}
+    </Paper>
+  )
+}
+
+const choiceKey = (c: Pick<ReadEndpointChoice, 'accountId' | 'region' | 'targetGroup'>) => `${c.accountId}|${c.region}|${c.targetGroup}`
+
+function SetReadEndpoint({ database, endpoint, choices, onClose }: {
+  database: Database; endpoint: ReadEndpoint | null; choices: ReadEndpointChoice[]; onClose: () => void
+}) {
+  const set = useSetReadEndpoint()
+  const [key, setKey] = useState<string | null>(endpoint ? choiceKey(endpoint) : null)
+  const [primary, setPrimary] = useState(endpoint?.includePrimary ?? true)
+  const picked = choices.find((c) => choiceKey(c) === key)
+  const moving = endpoint && picked && choiceKey(endpoint) !== key
+  const submit = async () => {
+    if (!picked) return
+    try {
+      const ep = await set.mutateAsync({ id: database.id, accountId: picked.accountId, region: picked.region,
+        targetGroup: picked.targetGroup, includePrimary: primary })
+      notifyOk('Read endpoint set', ep.note ? ep.note : `Argus keeps ${ep.targetName} from now on.`)
+      onClose()
+    } catch (err) {
+      notifyError('Not set', err)
+    }
+  }
+  return (
+    <Modal opened onClose={onClose} title={`Read endpoint for ${database.dbname}`} centered size="lg">
+      <Stack gap="sm">
+        <Select label="Target group" placeholder="Pick a target group" value={key} onChange={setKey} searchable
+          description={`A network load balancer’s target group: TCP, instance targets, port ${database.port}.`}
+          nothingFoundMessage={`No target group on port ${database.port}`}
+          data={choices.map((c) => ({
+            value: choiceKey(c),
+            label: `${c.name}${c.balancer ? ` (${c.balancer})` : ''} · ${c.accountName} ${c.region}${c.problem ? ` · ${c.problem}` : ''}`,
+            disabled: Boolean(c.problem),
+          }))} />
+        <Checkbox label={`Include ${database.hostname}, the primary`} checked={primary} onChange={(e) => setPrimary(e.currentTarget.checked)}
+          description="It takes reads too, and is never taken out for lag. Leave it out to keep reads off it entirely." />
+        <Box>
+          <Text size={FS.body} fw={600} mb={4}>What Argus does</Text>
+          <Stack gap={2}>
+            <Text size={FS.meta}>1 · Puts in each replica of {database.dbname} whose server is an instance in the same account and region{primary ? `, and ${database.hostname}` : ''}.</Text>
+            <Text size={FS.meta}>2 · Every minute, after the lag check: takes out a replica that has been behind for five minutes, and puts it back once it catches up.</Text>
+            <Text size={FS.meta}>3 · Only ever takes out what it put in. Targets added by hand stay. In the cloud it runs as argus-replicas.</Text>
+          </Stack>
+        </Box>
+        {moving && (
+          <Alert color="amber" variant="light" p="xs">
+            <Text size={FS.meta}>What Argus put in {endpoint!.targetName} comes out first.</Text>
+          </Alert>
+        )}
+        <Group gap="xs">
+          <Button onClick={() => void submit()} loading={set.isPending} disabled={!picked || Boolean(picked.problem)}>
+            {endpoint ? 'Save' : 'Set read endpoint'}
+          </Button>
+          <Button variant="default" onClick={onClose}>Cancel</Button>
+        </Group>
+        <Text size={FS.micro} c="dimmed">Writes still go to {database.hostname} directly. Argus does not make a DNS name for the endpoint.</Text>
+      </Stack>
+    </Modal>
   )
 }
 
