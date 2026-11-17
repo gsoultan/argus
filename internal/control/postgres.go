@@ -421,7 +421,8 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 					_ = sendJSON(pgBrowserMessage{Type: "ans", Ans: ans})
 					continue
 				}
-				if req.Op == "admin" && !pg {
+				network := req.Admin != nil && (req.Admin.Kind == tunnel.AdminNetwork || req.Admin.Kind == tunnel.AdminNetworkSet)
+				if req.Op == "admin" && !pg && !(network && db.Engine == tunnel.EngineMySQL) {
 					ans, _ := json.Marshal(tunnel.PGAnswer{ID: req.ID, Type: "error",
 						Error: "extensions and replication are Postgres's"})
 					_ = sendJSON(pgBrowserMessage{Type: "ans", Ans: ans})
@@ -431,8 +432,12 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 					// The agent refuses this too, against the signed grant;
 					// this is the quick, honest answer. The request is not
 					// logged: it may carry a publisher's password.
+					what := "extensions and replication are"
+					if network {
+						what = "changing which machines can connect is"
+					}
 					ans, _ := json.Marshal(tunnel.PGAnswer{ID: req.ID, Type: "error", Code: "42501",
-						Error: "extensions and replication are DBA work; this session is at " + level})
+						Error: what + " DBA work; this session is at " + level})
 					_ = sendJSON(pgBrowserMessage{Type: "ans", Ans: ans})
 					continue
 				}
@@ -558,7 +563,7 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 				// account: an audit row of its own, beyond the recording.
 				// The agent redacted any password before sending the line.
 				a.auditDB(ctx, "db.admin", "warning", email, db.Hostname,
-					"In database session "+sessionID+" on "+db.Name+", ran through the server's postgres account: "+
+					"In database session "+sessionID+" on "+db.Name+", ran as the server's "+db.Noun()+" administrator: "+
 						r.SQL)
 			}
 		}

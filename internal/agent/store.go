@@ -45,6 +45,9 @@ type StoreConfig struct {
 	StateDir   string
 	// Firewall stands in for that helper; nil runs it.
 	Firewall func(ctx context.Context, req tunnel.FirewallRequest) tunnel.FirewallResult
+	// Restart stands in for restarting the engine's systemd service; nil
+	// runs systemctl.
+	Restart func(ctx context.Context, unit string) error
 }
 
 // firewall is how an engine asks the server's firewall.
