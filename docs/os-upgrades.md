@@ -53,6 +53,12 @@ the agent, so it goes on if the agent restarts or loses the control plane.
    way through. The helper sets the disk `/boot` (or `/`) is on. If it cannot
    tell, for example with RAID across disks, it stops and asks for
    `sudo dpkg-reconfigure grub-pc` first.
+   Every ordinary update and every repair after an interrupted run does the
+   same before apt runs, because `grub-pc` asks again whenever a new version
+   of it is configured. Without that, the next update after a release upgrade
+   stops with "… does not exist, so cannot grub-install to it!" and leaves
+   `grub-pc` unconfigured. There, a disk Argus cannot tell does not stop the
+   update; it is said in the run's log.
 2. **Snapshot.** It records which programs the agent uses on the server are
    present, and the package each came from: `sshd` and its `sftp-server`,
    and the PostgreSQL, MySQL/MariaDB and MongoDB clients.

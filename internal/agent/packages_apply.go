@@ -202,6 +202,7 @@ func (a *PackageApplier) Apply(ctx context.Context) PackageRunStatus {
 	if err := m.refresh(ctx, a.Run, a.lw); err != nil {
 		return a.fail(err.Error())
 	}
+	a.answerGrubForApt(ctx, m)
 	ups, _, err := m.list(ctx, a.Run)
 	if err != nil {
 		return a.fail(err.Error())
@@ -303,6 +304,19 @@ func (a *PackageApplier) Apply(ctx context.Context) PackageRunStatus {
 			s.Message += "; the server needs a reboot for all of it to take effect"
 		}
 	})
+}
+
+// answerGrubForApt gives grub-pc its disk before an apt run that may
+// configure it: a new grub-pc in the updates, or one a release upgrade left
+// half configured. Not answering is not a reason to stop the run, which may
+// not touch grub-pc at all; it is said in the log.
+func (a *PackageApplier) answerGrubForApt(ctx context.Context, m pkgManager) {
+	if m.name() != "apt" {
+		return
+	}
+	if err := a.answerGrub(ctx); err != nil {
+		fmt.Fprintf(a.lw, "argus: %v\n", err)
+	}
 }
 
 // applyReboot reboots and installs nothing. The agent that comes back
