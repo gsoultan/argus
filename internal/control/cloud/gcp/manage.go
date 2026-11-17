@@ -55,6 +55,11 @@ var supported = map[cloud.Action]bool{
 	cloud.ActionVolumeDelete:   true,
 	cloud.ActionSnapshotCreate: true,
 	cloud.ActionSnapshotDelete: true,
+
+	cloud.ActionAddressAllocate:     true,
+	cloud.ActionAddressAssociate:    true,
+	cloud.ActionAddressDisassociate: true,
+	cloud.ActionAddressRelease:      true,
 }
 
 // TaggableKinds are the kinds Argus labels in Google Cloud so far.
@@ -70,7 +75,8 @@ func SupportedActions() []cloud.Action {
 	for _, a := range []cloud.Action{cloud.ActionStart, cloud.ActionStop, cloud.ActionReboot,
 		cloud.ActionResize, cloud.ActionTags, cloud.ActionProtect, cloud.ActionUnprotect, cloud.ActionVolumeGrow,
 		cloud.ActionVolumeCreate, cloud.ActionVolumeAttach, cloud.ActionVolumeDetach, cloud.ActionVolumeDelete,
-		cloud.ActionSnapshotCreate, cloud.ActionSnapshotDelete} {
+		cloud.ActionSnapshotCreate, cloud.ActionSnapshotDelete,
+		cloud.ActionAddressAllocate, cloud.ActionAddressAssociate, cloud.ActionAddressDisassociate, cloud.ActionAddressRelease} {
 		if supported[a] {
 			out = append(out, a)
 		}
@@ -99,7 +105,7 @@ func (w where) path(project, kind string) string {
 	return "/compute/v1/projects/" + project + "/regions/" + w.Region + "/" + kind + "/"
 }
 
-// locate finds where the resource of kind ("instances" or "disks") with
+// locate finds where the resource of kind ("instances", "disks" or "addresses") with
 // id is, in the region the console named.
 func (p *Provider) locate(ctx context.Context, t token, actor cloud.Actor, project, region, kind, id string) (where, error) {
 	if !reID.MatchString(id) {
@@ -138,7 +144,7 @@ func (p *Provider) locate(ctx context.Context, t token, actor cloud.Actor, proje
 			return w, nil
 		}
 	}
-	return where{}, fmt.Errorf("project %s has no %s with id %s", project, kind[:len(kind)-1], id)
+	return where{}, fmt.Errorf("project %s has no %s with id %s", project, map[string]string{"instances": "instance", "disks": "disk", "addresses": "address"}[kind], id)
 }
 
 // operation is the part of a Compute Engine operation Argus reads.
@@ -699,17 +705,197 @@ func (p *Provider) CreateImage(context.Context, cloud.Account, cloud.Actor, stri
 func (p *Provider) DeleteImage(context.Context, cloud.Account, cloud.Actor, string, string, bool) (cloud.Result, error) {
 	return cloud.Result{}, errNotYet("delete an image")
 }
-func (p *Provider) AllocateAddress(context.Context, cloud.Account, cloud.Actor, string, string) (cloud.Result, error) {
-	return cloud.Result{}, errNotYet("reserve an address")
+
+// AllocateAddress reserves a static external address in region under
+// name. Google bills it while nothing uses it, as AWS does.
+func (p *Provider) AllocateAddress(ctx context.Context, a cloud.Account, actor cloud.Actor, region, name string) (cloud.Result, error) {
+	if !ValidName(name) {
+		return cloud.Result{}, fmt.Errorf("%q cannot name an address: lowercase letters, digits and -, up to 63, starting with a letter", name)
+	}
+	if region == "" || region == GlobalRegion {
+		return cloud.Result{}, errors.New("an address for a VM is reserved in its region")
+	}
+	t, err := p.session(ctx, a, actor)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	base := p.ep.compute + "/compute/v1/projects/" + a.AccountID + "/regions/" + region + "/addresses"
+	op, err := p.send(ctx, t, actor, http.MethodPost, base, map[string]any{"name": name, "addressType": "EXTERNAL"})
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	res := cloud.Result{ResourceID: op.TargetID, RequestID: op.Name}
+	// The address itself is known once Google has reserved it.
+	if p.wait(ctx, t, actor, op) == nil {
+		var got struct {
+			Address string `json:"address"`
+		}
+		if p.get(ctx, t, actor, base+"/"+name+"?fields=address", &got) == nil && got.Address != "" {
+			res.Detail = "Address " + got.Address
+		}
+	}
+	return res, nil
 }
-func (p *Provider) AssociateAddress(context.Context, cloud.Account, cloud.Actor, string, string, string) (cloud.Result, error) {
-	return cloud.Result{}, errNotYet("assign an address")
+
+// addressAt is a regional address and who uses it.
+type addressAt struct {
+	where
+	IP    string
+	Users []string
 }
-func (p *Provider) DisassociateAddress(context.Context, cloud.Account, cloud.Actor, string, string) (cloud.Result, error) {
-	return cloud.Result{}, errNotYet("unassign an address")
+
+func (p *Provider) addressOf(ctx context.Context, t token, actor cloud.Actor, project, region, id string) (addressAt, error) {
+	w, err := p.locate(ctx, t, actor, project, region, "addresses", id)
+	if err != nil {
+		return addressAt{}, err
+	}
+	if w.Region == "" {
+		return addressAt{}, fmt.Errorf("%s is a global address, for load balancers; Argus assigns regional ones to VMs", w.Name)
+	}
+	var got struct {
+		Address string   `json:"address"`
+		Users   []string `json:"users"`
+	}
+	if err := p.get(ctx, t, actor, p.ep.compute+w.path(project, "addresses")+id+"?fields=address,users", &got); err != nil {
+		return addressAt{}, err
+	}
+	return addressAt{where: w, IP: got.Address, Users: got.Users}, nil
 }
-func (p *Provider) ReleaseAddress(context.Context, cloud.Account, cloud.Actor, string, string) (cloud.Result, error) {
-	return cloud.Result{}, errNotYet("release an address")
+
+// accessConfig is the external address a VM's network interface has.
+type accessConfig struct {
+	Name  string `json:"name"`
+	NatIP string `json:"natIP"`
+}
+
+// nicsOf are a VM's network interfaces with their external addresses.
+func (p *Provider) nicsOf(ctx context.Context, t token, actor cloud.Actor, instance string) ([]struct {
+	Name          string         `json:"name"`
+	AccessConfigs []accessConfig `json:"accessConfigs"`
+}, error) {
+	var got struct {
+		NetworkInterfaces []struct {
+			Name          string         `json:"name"`
+			AccessConfigs []accessConfig `json:"accessConfigs"`
+		} `json:"networkInterfaces"`
+	}
+	err := p.get(ctx, t, actor, p.ep.compute+instance+"?fields=networkInterfaces(name,accessConfigs(name,natIP))", &got)
+	return got.NetworkInterfaces, err
+}
+
+// AssociateAddress gives a VM the static address as its external one, on
+// its first network interface. An ephemeral address it had is let go
+// first: Google allows one external address on an interface.
+func (p *Provider) AssociateAddress(ctx context.Context, a cloud.Account, actor cloud.Actor, region, address, instance string) (cloud.Result, error) {
+	t, err := p.session(ctx, a, actor)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	ad, err := p.addressOf(ctx, t, actor, a.AccountID, region, address)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	if len(ad.Users) > 0 {
+		return cloud.Result{}, fmt.Errorf("%s is in use by %s; unassign it first", ad.IP, last(ad.Users[0]))
+	}
+	in, err := p.locate(ctx, t, actor, a.AccountID, region, "instances", instance)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	vm := in.path(a.AccountID, "instances") + instance
+	nics, err := p.nicsOf(ctx, t, actor, vm)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	if len(nics) == 0 {
+		return cloud.Result{}, fmt.Errorf("%s has no network interface", in.Name)
+	}
+	nic := nics[0]
+	res := cloud.Result{ResourceID: address}
+	for _, ac := range nic.AccessConfigs {
+		q := url.Values{"accessConfig": {ac.Name}, "networkInterface": {nic.Name}}
+		op, err := p.send(ctx, t, actor, http.MethodPost, p.ep.compute+vm+"/deleteAccessConfig?"+q.Encode(), nil)
+		if err == nil {
+			err = p.wait(ctx, t, actor, op)
+		}
+		if err != nil {
+			return res, fmt.Errorf("%s keeps its address %s: %w", in.Name, ac.NatIP, err)
+		}
+		if ac.NatIP != "" {
+			res.Detail = "Replaced " + ac.NatIP
+		}
+	}
+	q := url.Values{"networkInterface": {nic.Name}}
+	op, err := p.send(ctx, t, actor, http.MethodPost, p.ep.compute+vm+"/addAccessConfig?"+q.Encode(),
+		map[string]any{"name": "external-nat", "type": "ONE_TO_ONE_NAT", "natIP": ad.IP})
+	if err != nil {
+		if res.Detail != "" {
+			return res, fmt.Errorf("%s lost its old address but did not get %s: %w", in.Name, ad.IP, err)
+		}
+		return res, err
+	}
+	res.RequestID = op.Name
+	return res, nil
+}
+
+// DisassociateAddress takes the static address off the VM using it. The
+// VM has no external address afterwards until it is given one.
+func (p *Provider) DisassociateAddress(ctx context.Context, a cloud.Account, actor cloud.Actor, region, address string) (cloud.Result, error) {
+	t, err := p.session(ctx, a, actor)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	ad, err := p.addressOf(ctx, t, actor, a.AccountID, region, address)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	var vm string
+	for _, u := range ad.Users {
+		if strings.Contains(u, "/instances/") {
+			vm = trimHost(u)
+		}
+	}
+	if vm == "" {
+		return cloud.Result{}, fmt.Errorf("%s is not assigned to a VM", ad.IP)
+	}
+	nics, err := p.nicsOf(ctx, t, actor, vm)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	for _, nic := range nics {
+		for _, ac := range nic.AccessConfigs {
+			if ac.NatIP != ad.IP {
+				continue
+			}
+			q := url.Values{"accessConfig": {ac.Name}, "networkInterface": {nic.Name}}
+			op, err := p.send(ctx, t, actor, http.MethodPost, p.ep.compute+vm+"/deleteAccessConfig?"+q.Encode(), nil)
+			if err != nil {
+				return cloud.Result{}, err
+			}
+			return cloud.Result{ResourceID: address, RequestID: op.Name}, nil
+		}
+	}
+	return cloud.Result{}, fmt.Errorf("%s does not have %s any more", last(vm), ad.IP)
+}
+
+// ReleaseAddress gives a static address nothing uses back to Google.
+func (p *Provider) ReleaseAddress(ctx context.Context, a cloud.Account, actor cloud.Actor, region, address string) (cloud.Result, error) {
+	t, err := p.session(ctx, a, actor)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	ad, err := p.addressOf(ctx, t, actor, a.AccountID, region, address)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	if len(ad.Users) > 0 {
+		return cloud.Result{}, fmt.Errorf("%s is in use by %s; unassign it first", ad.IP, last(ad.Users[0]))
+	}
+	op, err := p.send(ctx, t, actor, http.MethodDelete, p.ep.compute+ad.path(a.AccountID, "addresses")+address, nil)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	return cloud.Result{ResourceID: address, RequestID: op.Name}, nil
 }
 
 var (

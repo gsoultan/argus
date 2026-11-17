@@ -94,7 +94,7 @@ export function StorageActions({ it }: { it: CloudItem }) {
       case 'address':
         return r.state === 'attached'
           ? can('address-disassociate') && <Button size="xs" variant="default" leftSection={<IconLinkOff size={14} />} disabled={busy} onClick={() => setOpen('address-disassociate')}>Take it off</Button>
-          : can('address-associate') && <Button size="xs" variant="default" leftSection={<IconLink size={14} />} disabled={busy} onClick={() => setOpen('address-associate')}>Attach to an instance</Button>
+          : can('address-associate') && !(gcp && (!r.publicIp || r.region === 'global')) && <Button size="xs" variant="default" leftSection={<IconLink size={14} />} disabled={busy} onClick={() => setOpen('address-associate')}>Attach to an instance</Button>
       default:
         return null
     }
@@ -270,7 +270,9 @@ function Detach({ it, env, account, action, onClose }: {
           ? gcp
             ? 'Unmount it on the server first. Google detaches the disk at once, whether or not the server is still using it, and files being written can be lost.'
             : 'Unmount it on the server first. Argus never forces a detach, so AWS waits for the server to let go of it; a disk still in use stays attached.'
-          : `${name} loses this address. A running instance gets a new public address from Amazon only when it next starts; the Elastic IP stays yours and is billed while it is not attached.`}
+          : gcp
+            ? `${name} loses this address and has no public address until it is given one. The static address stays yours and is billed while nothing uses it.`
+            : `${name} loses this address. A running instance gets a new public address from Amazon only when it next starts; the Elastic IP stays yours and is billed while it is not attached.`}
       </Text>
     </ChangeModal>
   )
@@ -320,7 +322,7 @@ function Delete({ it, env, account, action, onClose }: { it: CloudItem; env: Clo
   const gcp = account?.provider === 'gcp'
   const [extra, setExtra] = useState<boolean>(action === 'volume-delete' ? env === 'production' && !gcp : action === 'image-delete')
   const { submit, busy } = useSubmit(onClose)
-  const word = r.kind === 'address' ? r.publicIp ?? r.name : r.name
+  const word = r.kind === 'address' ? r.publicIp || r.name : r.name
   const usedBy = r.kind === 'snapshot'
     ? images.data?.find((im) => im.accountId === it.accountId && im.resource.links?.some((l) => l.kind === 'snapshot' && l.id === r.id))
     : undefined
@@ -331,7 +333,7 @@ function Delete({ it, env, account, action, onClose }: { it: CloudItem; env: Clo
   const verb = action === 'address-release' ? 'Release' : 'Delete'
   return (
     <ChangeModal title={`${verb} ${word}?`} env={env} level="remove" reason={reason} setReason={setReason} onClose={onClose} busy={busy}
-      submit={`${verb} ${KIND_WORD[r.kind]}`} color="rose" disabled={Boolean(refusal) || (typed.trim() !== word && typed.trim() !== r.id) || roleLacks(account, action)}
+      submit={`${verb} ${gcp && r.kind === 'address' ? 'static address' : KIND_WORD[r.kind]}`} color="rose" disabled={Boolean(refusal) || (typed.trim() !== word && typed.trim() !== r.id) || roleLacks(account, action)}
       onSubmit={() => void submit({ accountId: it.accountId, region: r.region, action, resourceId: r.id, confirm: typed.trim(), reason,
         spec: action === 'volume-delete' ? { finalSnapshot: extra } : action === 'image-delete' ? { withSnapshots: extra } : undefined }, verb === 'Release' ? 'Released' : 'Deleting')}>
       <RoleNeedsUpdate account={account} action={action} />
@@ -344,7 +346,7 @@ function Delete({ it, env, account, action, onClose }: { it: CloudItem; env: Clo
             {action === 'volume-delete' && gcp && ' To keep a copy, take a snapshot of it first and delete it once that is ready.'}
             {action === 'snapshot-delete' && `${gcp ? 'Google' : 'AWS'} deletes the snapshot (${r.size}). Disks already made from it are not touched. This cannot be undone.`}
             {action === 'image-delete' && 'Nobody can launch from this image afterwards. Instances already launched from it keep running.'}
-            {action === 'address-release' && `${r.publicIp} goes back to Amazon and is gone for good; anything that points at it (DNS, allow lists) stops reaching you.`}
+            {action === 'address-release' && `${r.publicIp ?? r.addresses?.[0] ?? r.name} goes back to ${gcp ? 'Google' : 'Amazon'} and is gone for good; anything that points at it (DNS, allow lists) stops reaching you.`}
           </Text>
           {action === 'volume-delete' && !gcp && (
             <Checkbox checked={extra} onChange={(e) => setExtra(e.currentTarget.checked)} label="Take a final snapshot first"
@@ -481,30 +483,48 @@ export function NewDisk({ accountId, region, snapshot, onClose }: { accountId?: 
 /** A new Elastic IP, from Network › Elastic IPs. */
 export function NewAddress({ onClose }: { onClose: () => void }) {
   const accounts = useQuery(cloudAccountsQuery())
+  const addresses = useQuery(cloudItemsQuery('address'))
   const manageable = (accounts.data?.accounts ?? []).filter((a) => a.access === 'manage' && allows(a, 'address-allocate'))
   const [acct, setAcct] = useState<string | null>(manageable.length === 1 ? manageable[0]!.id : null)
   const account = manageable.find((a) => a.id === acct)
-  const [reg, setReg] = useState<string | null>(account?.regions.length === 1 ? account.regions[0]! : null)
+  const gcp = account?.provider === 'gcp'
+  const regions = (account?.regions ?? []).filter((x) => x !== 'global')
+  const [reg, setReg] = useState<string | null>(regions.length === 1 ? regions[0]! : null)
   const [name, setName] = useState('')
   const [reason, setReason] = useState('')
   const { submit, busy } = useSubmit(onClose)
+  const n = name.trim()
+  const taken = gcp && reg !== null && (addresses.data ?? []).some((x) => x.accountId === acct && x.resource.region === reg && x.resource.name === n)
+  const nameProblem = !gcp || n === '' ? undefined
+    : !GCP_NAME.test(n) ? 'Lowercase letters, digits and -, starting with a letter, up to 63'
+      : taken ? `There is already an address ${n} in ${reg}` : undefined
   return (
-    <ChangeModal title="Allocate an Elastic IP" env={account?.environment ?? 'production'} level="change" reason={reason} setReason={setReason}
-      onClose={onClose} busy={busy} submit="Allocate" disabled={!acct || !reg || roleLacks(account, 'address-allocate')}
-      onSubmit={() => void submit({ accountId: acct!, region: reg!, action: 'address-allocate', spec: { name: name.trim() }, reason }, 'Allocated')}>
+    <ChangeModal title={gcp ? 'Reserve a static address' : 'Allocate an Elastic IP'} env={account?.environment ?? 'production'} level="change"
+      reason={reason} setReason={setReason} onClose={onClose} busy={busy} submit={gcp ? 'Reserve' : 'Allocate'}
+      disabled={!acct || !reg || (gcp && (n === '' || Boolean(nameProblem))) || roleLacks(account, 'address-allocate')}
+      onSubmit={() => void submit({ accountId: acct!, region: reg!, action: 'address-allocate', spec: { name: n }, reason }, gcp ? 'Reserved' : 'Allocated')}>
       <RoleNeedsUpdate account={account} action="address-allocate" />
       <Text size={FS.body} lh={1.55}>
-        A public address that stays yours until it is released, to attach to an instance so it keeps the same address
-        across stops and starts.
+        {gcp
+          ? 'An external address that stays yours until it is released, to give a VM in the same region so it keeps the same address across stops and starts.'
+          : 'A public address that stays yours until it is released, to attach to an instance so it keeps the same address across stops and starts.'}
       </Text>
       {manageable.length > 1 && (
         <Select label="Account" placeholder="Pick an account" value={acct} onChange={(v) => { setAcct(v); setReg(null) }} data={manageable.map((a) => ({ value: a.id, label: a.name }))} allowDeselect={false} />
       )}
-      {account && account.regions.length > 1 && (
-        <Select label="Region" value={reg} onChange={setReg} data={account.regions} allowDeselect={false} />
+      {account && regions.length > 1 && (
+        <Select label="Region" placeholder="Pick a region" value={reg} onChange={setReg} data={regions} allowDeselect={false} />
       )}
-      <TextInput label="Name" placeholder="Optional" value={name} onChange={(e) => setName(e.currentTarget.value)} maxLength={128} />
-      <Text size={FS.meta} c="dimmed">About {money(PRICE.elasticIp)} a month, attached or not, as AWS bills every public IPv4 address.</Text>
+      {gcp ? (
+        <TextInput label="Name" placeholder="Required, like web-ip" value={name} onChange={(e) => setName(e.currentTarget.value)} maxLength={63} error={nameProblem} />
+      ) : (
+        <TextInput label="Name" placeholder="Optional" value={name} onChange={(e) => setName(e.currentTarget.value)} maxLength={128} />
+      )}
+      <Text size={FS.meta} c="dimmed">
+        {gcp
+          ? 'Google bills a static address while it is reserved, and more while no VM uses it.'
+          : `About ${money(PRICE.elasticIp)} a month, attached or not, as AWS bills every public IPv4 address.`}
+      </Text>
     </ChangeModal>
   )
 }
