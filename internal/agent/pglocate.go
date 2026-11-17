@@ -83,6 +83,18 @@ type pgBouncerSeen struct {
 	AuthFile string
 	// Targets are its [databases]: where each name is sent.
 	Targets []tunnel.PoolerTarget
+	// AuthUser is its auth_user, which PgBouncer itself signs in as.
+	AuthUser string
+	// Logins are the user= and password= a [databases] line signs in to
+	// its Postgres with. They stay in the agent: Targets go to the
+	// control plane, these never do.
+	Logins []pgLogin
+}
+
+// pgLogin is a user and password PgBouncer signs in to host:port with.
+type pgLogin struct {
+	Host, User, Password string
+	Port                 int
 }
 
 // pgLocation is everything found.
@@ -603,9 +615,15 @@ func (l pgLocator) pgbouncer(path string) (pgBouncerSeen, bool) {
 				b.Socket = val
 			case "auth_file":
 				b.AuthFile = authFile(path, val)
+			case "auth_user":
+				b.AuthUser = val
 			}
 		case "databases":
-			b.Targets = append(b.Targets, poolerTarget(key, val))
+			t := poolerTarget(key, val)
+			b.Targets = append(b.Targets, t)
+			if kv := parseConnStr(val); kv["user"] != "" {
+				b.Logins = append(b.Logins, pgLogin{Host: t.Host, Port: t.Port, User: kv["user"], Password: kv["password"]})
+			}
 		}
 	})
 	if !ok {

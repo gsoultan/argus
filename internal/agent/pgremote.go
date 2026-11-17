@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -148,39 +149,131 @@ func pgRemoteAdmin(ctx context.Context, l pgLocator, req PGAdminRequest) PGAdmin
 		return PGAdminResult{Error: fmt.Sprintf("Postgres on %s is not one this server's PgBouncer sends to, "+
 			"so the agent will not sign in there", where)}
 	}
-	user := req.AdminUser
-	if user == "" {
-		user = "postgres"
+	logins, missing := l.remoteLogins(b, req)
+	if len(logins) == 0 {
+		return PGAdminResult{Error: fmt.Sprintf("Postgres is on %s, and the agent found no password to sign in there with: %s. "+
+			"Put a password itself (not an md5 or SCRAM hash) for an account that may create roles in %s, "+
+			"or install the Argus agent on %s", where, strings.Join(missing, "; "), pgAuthWhere(b), req.Socket)}
 	}
-	if b.AuthFile == "" {
-		return PGAdminResult{Error: fmt.Sprintf("Postgres is on %s, and %s names no auth_file to find %s's password in",
-			where, b.Config, user)}
+	var failed []string
+	for _, lg := range logins {
+		cfg, err := pgconn.ParseConfig("sslmode=prefer")
+		if err != nil {
+			return PGAdminResult{Error: err.Error()}
+		}
+		cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.Database = req.Socket, uint16(req.Port), lg.User, lg.Password, req.Database
+		cfg.ConnectTimeout = pgRemoteWait
+		cfg.RuntimeParams = map[string]string{"application_name": "argus-admin"}
+		conn, err := pgconn.ConnectConfig(ctx, cfg)
+		if err != nil {
+			failed = append(failed, fmt.Sprintf("%s (from %s): %s", lg.User, lg.From, pgSignInWhy(err)))
+			continue
+		}
+		res := RunPGAdmin(ctx, conn, req)
+		conn.Close(context.WithoutCancel(ctx))
+		// Only a listing moves on to the next account when this one may
+		// not: anything that changes Postgres stops where it failed.
+		if res.OK || req.Op != "discover-databases" || !pgNotAllowed(res) {
+			return res
+		}
+		failed = append(failed, fmt.Sprintf("%s (from %s): signed in, but may not do this: %s", lg.User, lg.From, res.Error))
 	}
-	users := l.userlist(b.AuthFile)
-	pw, found := users[user]
-	switch {
-	case !found:
-		return PGAdminResult{Error: fmt.Sprintf("Postgres is on %s, and %s has no password for %s; "+
-			"add it there, or install the Argus agent on %s", where, b.AuthFile, user, req.Socket)}
-	case pgHashedSecret(pw):
-		return PGAdminResult{Error: fmt.Sprintf("Postgres is on %s, and %s holds only a hash of %s's password, "+
-			"which cannot sign in; put the password itself there, or install the Argus agent on %s",
-			where, b.AuthFile, user, req.Socket)}
+	return PGAdminResult{Error: fmt.Sprintf("could not sign in to Postgres on %s with any password PgBouncer has here. Tried %s",
+		where, strings.Join(append(failed, missing...), "; "))}
+}
+
+// pgRemoteLogin is one user and password to try, and where it was read.
+type pgRemoteLogin struct {
+	User, Password, From string
+}
+
+// remoteLogins are the accounts the agent may sign in to a Postgres on
+// another server with, best first: the admin account asked for, then
+// PgBouncer's own auth_user, then the user= a [databases] line for that
+// server names, then every other account in userlist.txt. Only a password
+// itself counts; a hash cannot sign in. missing says why each account that
+// was looked for has none.
+func (l pgLocator) remoteLogins(b pgBouncerSeen, req PGAdminRequest) (out []pgRemoteLogin, missing []string) {
+	want := req.AdminUser
+	if want == "" {
+		want = "postgres"
 	}
-	cfg, err := pgconn.ParseConfig("sslmode=prefer")
-	if err != nil {
-		return PGAdminResult{Error: err.Error()}
+	users := map[string]string{}
+	var order []string
+	if b.AuthFile != "" {
+		users = l.userlistOrdered(b.AuthFile, &order)
 	}
-	cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.Database = req.Socket, uint16(req.Port), user, pw, req.Database
-	cfg.ConnectTimeout = pgRemoteWait
-	cfg.RuntimeParams = map[string]string{"application_name": "argus-admin"}
-	conn, err := pgconn.ConnectConfig(ctx, cfg)
-	if err != nil {
-		return PGAdminResult{Error: fmt.Sprintf("could not sign in to Postgres as %s on %s with the password in %s: %v",
-			user, where, b.AuthFile, err)}
+	seen := map[string]bool{}
+	add := func(user, pw, from string) {
+		if user == "" || seen[user] {
+			return
+		}
+		switch {
+		case pw == "":
+			return
+		case pgHashedSecret(pw):
+			seen[user] = true
+			missing = append(missing, fmt.Sprintf("%s has only a hash of %s's password", from, user))
+			return
+		}
+		seen[user] = true
+		out = append(out, pgRemoteLogin{User: user, Password: pw, From: from})
 	}
-	defer conn.Close(context.WithoutCancel(ctx))
-	return RunPGAdmin(ctx, conn, req)
+	fromList := func(user string) {
+		if pw, ok := users[user]; ok {
+			add(user, pw, b.AuthFile)
+		}
+	}
+	fromList(want)
+	if !seen[want] {
+		if b.AuthFile == "" {
+			missing = append(missing, b.Config+" names no auth_file")
+		} else if _, ok := users[want]; !ok {
+			missing = append(missing, fmt.Sprintf("%s has no password for %s", b.AuthFile, want))
+		}
+		seen[want] = true
+	}
+	fromList(b.AuthUser)
+	for _, lg := range b.Logins {
+		if strings.EqualFold(lg.Host, req.Socket) && lg.Port == req.Port {
+			if lg.Password != "" {
+				add(lg.User, lg.Password, b.Config)
+			} else {
+				fromList(lg.User)
+			}
+		}
+	}
+	for _, u := range order {
+		fromList(u)
+	}
+	return out, missing
+}
+
+// pgAuthWhere is the file a password belongs in.
+func pgAuthWhere(b pgBouncerSeen) string {
+	if b.AuthFile != "" {
+		return b.AuthFile
+	}
+	return b.Config
+}
+
+// pgSignInWhy is the readable end of a connection error.
+func pgSignInWhy(err error) string {
+	var pe *pgconn.PgError
+	if errors.As(err, &pe) {
+		return pe.Message
+	}
+	e := err.Error()
+	if i := strings.LastIndex(e, "): "); i >= 0 {
+		e = e[i+3:]
+	}
+	return e
+}
+
+// pgNotAllowed says an operation failed for want of a privilege, so another
+// account may do it.
+func pgNotAllowed(r PGAdminResult) bool {
+	return r.Code == "42501" || strings.Contains(r.Error, "permission denied") || strings.Contains(r.Error, "must have")
 }
 
 var md5Secret = regexp.MustCompile(`^md5[0-9a-f]{32}$`)
@@ -193,6 +286,11 @@ func pgHashedSecret(s string) bool {
 // userlist reads PgBouncer's auth_file: one "user" "password" a line, a
 // doubled quote inside for a quote.
 func (l pgLocator) userlist(path string) map[string]string {
+	return l.userlistOrdered(path, nil)
+}
+
+// userlistOrdered is userlist, also keeping the users in the file's order.
+func (l pgLocator) userlistOrdered(path string, order *[]string) map[string]string {
 	out := map[string]string{}
 	b, err := l.read(path, 1<<20)
 	if err != nil {
@@ -202,6 +300,9 @@ func (l pgLocator) userlist(path string) map[string]string {
 	for sc.Scan() {
 		f := quotedFields(sc.Text())
 		if len(f) >= 2 {
+			if _, dup := out[f[0]]; !dup && order != nil {
+				*order = append(*order, f[0])
+			}
 			out[f[0]] = f[1]
 		}
 	}

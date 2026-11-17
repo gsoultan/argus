@@ -152,9 +152,15 @@ function isLocalHost(h: string) {
   return h.startsWith('/') || h === '127.0.0.1' || h === '::1' || h === 'localhost'
 }
 
-/** Where a PgBouncer on this server sends each database, with the server in Argus to add it on. */
-function PoolerTargets({ targets }: {
-  targets: (NonNullable<DiscoverAnswer['poolers']>[number]['targets'][number])[]
+type PoolerTarget = NonNullable<DiscoverAnswer['poolers']>[number]['targets'][number]
+
+/**
+ * Where a PgBouncer on this server sends each database. A Postgres that is a
+ * server in Argus can be added there; any other is added here, and the agent
+ * reaches it through this server's PgBouncer configuration.
+ */
+function PoolerTargets({ targets, using, onUse }: {
+  targets: PoolerTarget[]; using?: string; onUse: (t: PoolerTarget) => void
 }) {
   return (
     <Stack gap={4} mt={6}>
@@ -169,8 +175,10 @@ function PoolerTargets({ targets }: {
               <ButtonLink size="compact-xs" variant="light" to="/assets/$assetId" params={{ assetId: t.assetId }} search={{ tab: 'apps' }}>
                 Add on {t.assetName}
               </ButtonLink>
+            ) : using === `${t.host}:${t.port}` ? (
+              <Badge size="xs" variant="light" color="teal" radius="sm">Adding here</Badge>
             ) : (
-              <Text size={FS.micro} c="dimmed">not a server in Argus</Text>
+              <Button size="compact-xs" variant="light" onClick={() => onUse(t)}>Add through PgBouncer</Button>
             )}
           </Box>
         </Group>
@@ -250,8 +258,9 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
       for (const n of names) {
         await create.mutateAsync({
           assetId: asset.id, engine, dbname: n, label,
-          port: Number(port) || (engine === 'postgres' && ans?.port) || info.defaults.port,
-          ...(host.trim() ? { host: host.trim() } : engine === 'postgres' && ans?.host ? { host: ans.host } : {}),
+          port: Number(port) || (engine === 'postgres' && ans?.port) || viaPooler?.port || info.defaults.port,
+          ...(host.trim() ? { host: host.trim() } : engine === 'postgres' && ans?.host ? { host: ans.host }
+            : viaPooler?.host ? { host: viaPooler.host } : {}),
           ...(engine === 'postgres' ? { poolerPort: Number(poolerPort) || 0 } : {}),
           ...(engine === 'redis' ? { configPath: configPath.trim() || info.defaults.configPath } : {}),
           ...((engine === 'mysql' || engine === 'mongodb' || engine === 'kafka') && configPath.trim() ? { configPath: configPath.trim() } : {}),
@@ -273,6 +282,17 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
   const remote = engine === 'postgres' && ans?.state === 'failed'
     ? (ans.poolers ?? []).flatMap((p) => p.targets.filter((t) => t.host && !isLocalHost(t.host)).map((t) => ({ ...t, pooler: p })))
     : []
+  // Typed by name with no address, it goes where PgBouncer sends, not to a
+  // socket on this server, when PgBouncer sends everything to one place.
+  const remoteHosts = [...new Set(remote.filter((t) => !t.assetId).map((t) => `${t.host}:${t.port}`))]
+  const viaPooler = engine === 'postgres' && !host.trim() && remoteHosts.length === 1
+    ? remote.find((t) => `${t.host}:${t.port}` === remoteHosts[0]) : undefined
+  const remoteHost = engine === 'postgres' && host.trim() && !isLocalHost(host.trim()) ? host.trim()
+    : viaPooler?.host
+  const useTarget = (t: PoolerTarget & { pooler?: { port: number } }) => {
+    setHost(t.host ?? ''); setPort(t.port); reset()
+    if (!Number(poolerPort) && t.pooler?.port) setPoolerPort(t.pooler.port)
+  }
   const why = found.isError ? (found.error as Error).message
     : remote.length > 0 && ans?.error ? `${ans.error}.`
     : ans?.state === 'offline' ? `The agent on ${asset.hostname} is offline, so it can't look. You can still add by name; it will connect once the agent is back.`
@@ -314,7 +334,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
             {failed && !found.isFetching && (
               <Alert color={ans?.state === 'offline' ? 'rose' : 'amber'} variant="light" p="xs">
                 <Text size={FS.meta}>{why}</Text>
-                {remote.length > 0 && <PoolerTargets targets={remote} />}
+                {remote.length > 0 && <PoolerTargets targets={remote} using={viaPooler ? remoteHosts[0] : undefined} onUse={useTarget} />}
               </Alert>
             )}
             {listing && engine === 'postgres' && ans?.port && !port && (
@@ -416,7 +436,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
         {(manual || failed) && !scoped && (
           <TextInput label={info.nameLabel} placeholder={info.defaults.dbname || 'orders'} value={typed}
             onChange={(e) => setTyped(e.currentTarget.value)}
-            description={<>{info.nameHint}{manual && <> <Anchor component="button" type="button" size={FS.micro} onClick={() => { setManual(false); setTyped('') }}>Pick from the server instead</Anchor></>}</>} />
+            description={<>{remoteHost ? `As Postgres on ${remoteHost} knows it. This server's PgBouncer sends there; the agent signs in with a password PgBouncer has (userlist.txt or pgbouncer.ini).` : info.nameHint}{manual && <> <Anchor component="button" type="button" size={FS.micro} onClick={() => { setManual(false); setTyped('') }}>Pick from the server instead</Anchor></>}</>} />
         )}
 
         {engine !== 'postgres' && (

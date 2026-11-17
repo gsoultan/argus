@@ -74,7 +74,7 @@ describe('ApplicationsOnServer', () => {
     expect((screen.getByLabelText('PgBouncer port') as HTMLInputElement).value).toBe('6432')
   })
 
-  it('does not offer PgBouncer when no host Postgres runs, or when it is in a container', async () => {
+  it('offers PgBouncer with no host Postgres, for the server it sends to, but not one in a container', async () => {
     vi.spyOn(api, 'applications').mockResolvedValue({
       ...report,
       applications: [
@@ -85,9 +85,12 @@ describe('ApplicationsOnServer', () => {
       ],
     })
     renderCard(true)
-    expect(await screen.findByText('no Postgres here')).toBeTruthy()
-    expect(screen.getAllByText('in a container')).toHaveLength(2)
-    expect(screen.queryByRole('button', { name: /^Add database/ })).toBeNull()
+    expect(await screen.findAllByText('in a container')).toHaveLength(2)
+    expect(screen.queryByText('no Postgres here')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /^Add database/ }))
+    expect((screen.getByRole('radio', { name: 'Postgres' }) as HTMLInputElement).checked).toBe(true)
+    expect(((await screen.findByLabelText('Port')) as HTMLInputElement).value).toBe('')
+    expect((screen.getByLabelText('PgBouncer port') as HTMLInputElement).value).toBe('6432')
   })
 
   it('offers a Redis and a RabbitMQ too, opening the form on their engine', async () => {

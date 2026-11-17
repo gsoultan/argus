@@ -47,7 +47,7 @@ func TestPGRemoteAdminRefuses(t *testing.T) {
 	}{
 		{"10.0.0.6", 5432, "is not one this server's PgBouncer sends to"},
 		{"10.0.0.5", 5433, "is not one this server's PgBouncer sends to"},
-		{"10.0.0.5", 5432, "holds only a hash of postgres's password"},
+		{"10.0.0.5", 5432, "has only a hash of postgres's password"},
 	} {
 		r := pgRemoteAdmin(context.Background(), l, PGAdminRequest{Op: "discover-databases", Database: "postgres",
 			Socket: c.host, Port: c.port})
@@ -238,5 +238,69 @@ func TestPostgresSessionBehindPgBouncer(t *testing.T) {
 	// Any other server is refused before anything is dialled.
 	if ans := open("127.0.0.3"); ans.OK || !strings.Contains(ans.Error, "behind its PgBouncer") {
 		t.Fatalf("another server was opened: %+v", ans)
+	}
+}
+
+// With no password for postgres, the agent tries the other accounts PgBouncer
+// can sign in with: its auth_user, a [databases] line's user=, then the rest
+// of userlist.txt. Hashes are said, not tried.
+func TestPGRemoteLogins(t *testing.T) {
+	f := newPGFakeHost(t)
+	f.file("/etc/pgbouncer/pgbouncer.ini", "[databases]\n"+
+		"* = host=pg.example.id port=5432\n"+
+		"app = host=pg.example.id port=5432 user=app_rw password=inline\n"+
+		"[pgbouncer]\nauth_file = userlist.txt\nauth_user = pgbouncer\n")
+	f.file("/etc/pgbouncer/userlist.txt", `"zed" "z"`+"\n"+
+		`"hashed" "md5d41d8cd98f00b204e9800998ecf8427e"`+"\n"+
+		`"pgbouncer" "pb"`+"\n")
+	l := pgLocator{root: f.root}
+	b, ok := l.behindPooler("pg.example.id", 5432)
+	if !ok {
+		t.Fatal("not behind the pooler")
+	}
+	got, missing := l.remoteLogins(b, PGAdminRequest{Socket: "pg.example.id", Port: 5432})
+	var users []string
+	for _, lg := range got {
+		users = append(users, lg.User+"="+lg.Password)
+	}
+	if strings.Join(users, ",") != "pgbouncer=pb,app_rw=inline,zed=z" {
+		t.Fatalf("logins = %v", users)
+	}
+	if m := strings.Join(missing, "; "); !strings.Contains(m, "has no password for postgres") ||
+		!strings.Contains(m, "has only a hash of hashed's password") {
+		t.Fatalf("missing = %q", m)
+	}
+}
+
+// End to end: userlist.txt has no postgres, only the application's account,
+// yet the databases behind PgBouncer are listed with it.
+func TestPGRemoteDiscoverWithAppAccount(t *testing.T) {
+	dsn, _, _, dbname := pgTest(t)
+	pc, err := pgconn.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	superExec(t, dsn, "DROP ROLE IF EXISTS argus_app_t")
+	superExec(t, dsn, "CREATE ROLE argus_app_t LOGIN PASSWORD 'app-pw'")
+	t.Cleanup(func() { superExec(t, dsn, "DROP ROLE IF EXISTS argus_app_t") })
+	host := "127.0.0.2"
+	f := newPGFakeHost(t)
+	f.file("/etc/pgbouncer/pgbouncer.ini", fmt.Sprintf("[databases]\n* = host=%s port=%d\n[pgbouncer]\nauth_file = /etc/pgbouncer/userlist.txt\n", host, pc.Port))
+	f.file("/etc/pgbouncer/userlist.txt", `"argus_app_t" "app-pw"`+"\n")
+	cfg := DiscoverDBConfig{PGRoot: f.root, Admin: withPooledRemote(f.root,
+		func(context.Context, PGAdminRequest) PGAdminResult {
+			return PGAdminResult{Error: "could not sign in to Postgres as postgres over /var/run/postgresql (port 5432): no such file or directory"}
+		})}
+	res := discoverPostgres(context.Background(), cfg, tunnel.GrantDiscover{Engine: tunnel.EnginePostgres,
+		Host: "/var/run/postgresql", Port: 5432}, "ana@corp.example")
+	if !res.OK || res.Host != host {
+		t.Fatalf("res = %+v", res)
+	}
+	found := false
+	for _, d := range res.Databases {
+		found = found || d.Name == dbname
+	}
+	if !found {
+		t.Fatalf("%s not listed: %+v", dbname, res.Databases)
 	}
 }
