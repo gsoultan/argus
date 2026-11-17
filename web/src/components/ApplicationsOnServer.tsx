@@ -247,14 +247,12 @@ const VALKEY_CONF = '/etc/valkey/valkey.conf'
 
 /**
  * Adds the databases behind a PgBouncer the agent found. PgBouncer holds no
- * databases of its own: Argus opens the host Postgres behind it as this
- * server's postgres account, and sessions then go through PgBouncer. So the
- * form opens on that Postgres, with its port and this PgBouncer's filled in.
- * Like the Postgres row, a containerised PgBouncer is not offered, and with no
- * host Postgres there is nothing for Argus to open.
- *
- * Which Postgres port: the host Postgres's first, or the form's default when
- * it listens on none the agent saw. One button per port PgBouncer listens on;
+ * databases of its own: Argus opens the Postgres behind it, and sessions then
+ * go through PgBouncer. So the form opens on that Postgres, with this
+ * PgBouncer's port filled in. With a host Postgres, its port is filled in
+ * too; with none, the agent reads pgbouncer.ini and lists the databases on
+ * the server PgBouncer sends to. Like the Postgres row, a containerised
+ * PgBouncer is not offered. One button per port PgBouncer listens on;
  * a database already going through that port says so by name.
  */
 function AddThroughPooler({ app, postgres, dbs, onAdd }: {
@@ -267,14 +265,9 @@ function AddThroughPooler({ app, postgres, dbs, onAdd }: {
       </Tooltip>
     )
   }
-  if (!postgres) {
-    return (
-      <Tooltip multiline w={260} label="PgBouncer's databases are added through the Postgres behind it, which Argus opens as this server's postgres account. The agent found no Postgres running on this server outside a container.">
-        <Text size={FS.micro} c="dimmed">no Postgres here</Text>
-      </Tooltip>
-    )
-  }
-  const pgPort = [...new Set(postgres.listen.map((l) => l.port))].sort((a, b) => a - b)[0]
+  // No Postgres here: the form asks the agent, which reads where this
+  // PgBouncer sends and lists the databases on that server.
+  const pgPort = postgres ? [...new Set(postgres.listen.map((l) => l.port))].sort((a, b) => a - b)[0] : undefined
   const ports = [...new Set(app.listen.map((l) => l.port))].sort((a, b) => a - b)
   return (
     <Stack gap={4} align="flex-end">

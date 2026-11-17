@@ -294,7 +294,7 @@ func discoverPostgres(ctx context.Context, cfg DiscoverDBConfig, d tunnel.GrantD
 		for _, b := range loc.Bouncers {
 			for _, t := range b.Targets {
 				if !t.Local() && tunnel.RemotePGHost(t.Host) {
-					way(pgPlace{Host: t.Host, Port: t.Port, Label: "behind PgBouncer"})
+					way(pgPlace{Host: t.Host, Port: t.Port, Label: pgBehindLabel})
 				}
 			}
 		}
@@ -330,6 +330,11 @@ func discoverPostgres(ctx context.Context, cfg DiscoverDBConfig, d tunnel.GrantD
 		if strings.Contains(r.Error, "unknown operation") {
 			return tunnel.DiscoverResult{Error: "this agent's database helper is older than the agent; restart the agent and try again",
 				Version: r.Version}
+		}
+		if w.Label == pgBehindLabel {
+			// pgremote.go already says which passwords it tried and why.
+			tried = append(tried, net2(w.Host, w.Port)+": "+r.Error)
+			continue
 		}
 		tried = append(tried, w.String()+": "+pgWhy(r.Error))
 	}
@@ -417,11 +422,14 @@ func elsewhere(bs []pgBouncerSeen) string {
 		for _, k := range order {
 			parts = append(parts, k+" for "+strings.Join(hosts[k], ", "))
 		}
-		return fmt.Sprintf("no Postgres runs on this server, only PgBouncer (port %d, %s), which sends its databases to Postgres on %s. "+
-			"Add them on the server Postgres runs on, where its agent signs in to it", b.Port, b.Config, strings.Join(parts, "; "))
+		return fmt.Sprintf("no Postgres runs on this server, only PgBouncer (port %d, %s), which sends its databases to Postgres on %s",
+			b.Port, b.Config, strings.Join(parts, "; "))
 	}
 	return ""
 }
+
+// pgBehindLabel marks a way in that is a Postgres on another server.
+const pgBehindLabel = "behind PgBouncer"
 
 // discoverBehindPooler lists a Postgres on another server that this
 // server's PgBouncer sends to, signing in with its userlist.txt
