@@ -348,3 +348,40 @@ func TestPostgresNetworkChangeWaits(t *testing.T) {
 		t.Fatalf("MySQL's change: %+v", no)
 	}
 }
+
+// A MySQL's network change waits for approval like a Postgres's, so asking
+// for that approval must be taken on a MySQL database.
+func TestMySQLNetworkChangeCanBeAsked(t *testing.T) {
+	a, s, h, pg, admin := dbFixture(t)
+	ctx := context.Background()
+	db, err := s.CreateDatabase(ctx, Database{AssetID: pg.AssetID, Engine: tunnel.EngineMySQL,
+		Name: "shop", Host: "127.0.0.1", Port: 3306}, admin)
+	if err != nil {
+		t.Fatalf("CreateDatabase mysql: %v", err)
+	}
+	ana, _ := newAccount(t, s, "operator")
+	a.UserTokens["ana"] = ana
+	if w := do(t, h, http.MethodPut, "/api/v1/databases/"+db.ID+"/assignments", "admin-token",
+		fmt.Sprintf(`{"userEmail":%q,"level":"dba"}`, ana)); w.Code >= 300 {
+		t.Fatalf("assign: %d %s", w.Code, w.Body)
+	}
+	op := tunnel.PGAdminOp{Kind: tunnel.AdminNetworkSet, Reach: tunnel.ReachSelected,
+		Addresses: []string{"10.0.0.183"}, Sources: []string{"10.0.0.61"}, Restart: true}
+	no := a.statementGate(ctx, ana, db, tunnel.LevelDBA, &tunnel.PGRequest{ID: 1, Op: "admin", Admin: &op})
+	if no == nil || no.Code != tunnel.GuardNeedsApproval {
+		t.Fatalf("a production MySQL's change did not wait: %+v", no)
+	}
+	body, _ := json.Marshal(map[string]any{"items": []map[string]any{{"sql": no.Approve}}, "justification": "the app server moves"})
+	w := do(t, h, http.MethodPost, "/api/v1/databases/"+db.ID+"/statements", "ana", string(body))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("ask on MySQL: %d %s", w.Code, w.Body)
+	}
+	var ask StatementAsk
+	_ = json.Unmarshal(w.Body.Bytes(), &ask)
+	if _, err := s.DecideRequest(ctx, ask.RequestID, "approved", "", admin, false); err != nil {
+		t.Fatal(err)
+	}
+	if no := a.statementGate(ctx, ana, db, tunnel.LevelDBA, &tunnel.PGRequest{ID: 2, Op: "admin", Admin: &op, Approval: ask.RequestID}); no != nil {
+		t.Fatalf("the approved change was stopped: %+v", no)
+	}
+}
