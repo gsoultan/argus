@@ -62,6 +62,7 @@ var supported = map[cloud.Action]bool{
 	cloud.ActionAddressRelease:      true,
 
 	cloud.ActionRemove: true,
+	cloud.ActionLaunch: true,
 }
 
 // TaggableKinds are the kinds Argus labels in Google Cloud so far.
@@ -79,7 +80,7 @@ func SupportedActions() []cloud.Action {
 		cloud.ActionVolumeCreate, cloud.ActionVolumeAttach, cloud.ActionVolumeDetach, cloud.ActionVolumeDelete,
 		cloud.ActionSnapshotCreate, cloud.ActionSnapshotDelete,
 		cloud.ActionAddressAllocate, cloud.ActionAddressAssociate, cloud.ActionAddressDisassociate, cloud.ActionAddressRelease,
-		cloud.ActionRemove} {
+		cloud.ActionRemove, cloud.ActionLaunch} {
 		if supported[a] {
 			out = append(out, a)
 		}
@@ -861,14 +862,201 @@ func (p *Provider) Remove(ctx context.Context, a cloud.Account, actor cloud.Acto
 	return out, nil
 }
 
+// imageFamilies are the public images Argus offers to launch from: each
+// family's latest image, so a VM starts patched.
+var imageFamilies = []struct{ project, family, label string }{
+	{"debian-cloud", "debian-12", "Debian 12"},
+	{"ubuntu-os-cloud", "ubuntu-2404-lts-amd64", "Ubuntu 24.04 LTS"},
+	{"ubuntu-os-cloud", "ubuntu-2204-lts", "Ubuntu 22.04 LTS"},
+	{"rocky-linux-cloud", "rocky-linux-9", "Rocky Linux 9"},
+	{"windows-cloud", "windows-2022", "Windows Server 2022"},
+}
+
+// Images are the image families Argus offers, those Google still has. An
+// image's id is its family's path, which Google resolves to the latest
+// image when the VM is made.
+func (p *Provider) Images(ctx context.Context, a cloud.Account, actor cloud.Actor, _ string) ([]cloud.Image, error) {
+	t, err := p.session(ctx, a, actor)
+	if err != nil {
+		return nil, err
+	}
+	var out []cloud.Image
+	var last error
+	for _, f := range imageFamilies {
+		var img struct {
+			Name string `json:"name"`
+		}
+		path := "projects/" + f.project + "/global/images/family/" + f.family
+		if err := p.get(ctx, t, actor, p.ep.compute+"/compute/v1/"+path+"?fields=name", &img); err != nil {
+			last = err
+			continue
+		}
+		out = append(out, cloud.Image{Family: f.family, Label: f.label, ID: path, Name: img.Name, Linux: f.project != "windows-cloud"})
+	}
+	if len(out) == 0 && last != nil {
+		return nil, last
+	}
+	return out, nil
+}
+
+// Zones are the zones of a region that are up, for a launch.
+func (p *Provider) Zones(ctx context.Context, a cloud.Account, actor cloud.Actor, region string) ([]string, error) {
+	t, err := p.session(ctx, a, actor)
+	if err != nil {
+		return nil, err
+	}
+	var r struct {
+		Zones []string `json:"zones"`
+	}
+	if err := p.get(ctx, t, actor, p.ep.compute+"/compute/v1/projects/"+a.AccountID+"/regions/"+region+"?fields=zones", &r); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(r.Zones))
+	for _, z := range r.Zones {
+		out = append(out, last(z))
+	}
+	slices.Sort(out)
+	return out, nil
+}
+
+// LaunchSizes are the machine types the launch form offers in Google Cloud.
+var LaunchSizes = []string{"e2-micro", "e2-small", "e2-medium", "e2-standard-2", "e2-standard-4", "e2-standard-8",
+	"e2-highmem-2", "e2-highmem-4", "n2-standard-2", "n2-standard-4", "n2-standard-8", "n2-highmem-4",
+	"n2d-standard-2", "n2d-standard-4", "c3-standard-4", "t2d-standard-2"}
+
+// firstBoot makes a startup script run once: Google runs it at every boot,
+// AWS user data only at the first, and an enrollment token is single use.
+func firstBoot(script string) string {
+	body := strings.TrimPrefix(script, "#!/bin/sh\n")
+	return "#!/bin/sh\n" +
+		"# Argus: run once, at the first boot.\n" +
+		"[ -e /var/lib/argus-first-boot ] && exit 0\n" +
+		"mkdir -p /var/lib && touch /var/lib/argus-first-boot\n" + body
+}
+
+var reNotLabel = regexp.MustCompile(`[^a-z0-9_-]+`)
+
+// launchLabels are a launch's tags as labels: who launched it, as a label
+// value can hold an email, and the change.
+func launchLabels(tags map[string]string) map[string]string {
+	in := map[string]string{}
+	for k, v := range tags {
+		if k == "argus:launched-by" {
+			k, v = "argus-launched-by", strings.Trim(reNotLabel.ReplaceAllString(strings.ToLower(v), "_"), "_")
+			if len(v) > 63 {
+				v = v[:63]
+			}
+		}
+		in[k] = v
+	}
+	return labelsOf(in)
+}
+
+// Launch makes one VM in a zone: from an image family, with a boot disk and
+// any extra disks Google deletes with it, on a subnet, with the network
+// tags of the firewall rules picked, and an ephemeral public address when
+// asked. It runs with no service account, so it holds no Google
+// credentials and Argus needs no right to hand one out.
+func (p *Provider) Launch(ctx context.Context, a cloud.Account, actor cloud.Actor, s cloud.LaunchSpec) (cloud.Result, error) {
+	if !ValidName(s.Name) {
+		return cloud.Result{}, fmt.Errorf("%q cannot name a VM: lowercase letters, digits and -, up to 63, starting with a letter", s.Name)
+	}
+	if regionOfZone(s.Zone) != s.Region {
+		return cloud.Result{}, fmt.Errorf("pick a zone of %s", s.Region)
+	}
+	if !ValidMachineType(s.Size) {
+		return cloud.Result{}, fmt.Errorf("%q is not a machine type", s.Size)
+	}
+	known := false
+	for _, f := range imageFamilies {
+		known = known || s.Image == "projects/"+f.project+"/global/images/family/"+f.family
+	}
+	if !known {
+		return cloud.Result{}, errors.New("pick one of the images offered")
+	}
+	if s.CapacityReservation != "" {
+		return cloud.Result{}, errNotYet("launch into a reservation")
+	}
+	t, err := p.session(ctx, a, actor)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	project := a.AccountID
+	var subnet struct {
+		SelfLink string `json:"selfLink"`
+		Network  string `json:"network"`
+	}
+	if !reID.MatchString(s.Subnet) {
+		return cloud.Result{}, fmt.Errorf("%q is not a Compute Engine id", s.Subnet)
+	}
+	if err := p.get(ctx, t, actor, p.ep.compute+"/compute/v1/projects/"+project+"/regions/"+s.Region+"/subnetworks/"+s.Subnet+"?fields=selfLink,network", &subnet); err != nil {
+		return cloud.Result{}, err
+	}
+	// A firewall rule reaches a VM by its network tags.
+	var tags []string
+	for _, f := range s.Firewalls {
+		if !reID.MatchString(f) {
+			return cloud.Result{}, fmt.Errorf("%q is not a Compute Engine id", f)
+		}
+		var fw struct {
+			Name       string   `json:"name"`
+			Network    string   `json:"network"`
+			TargetTags []string `json:"targetTags"`
+		}
+		if err := p.get(ctx, t, actor, p.ep.compute+"/compute/v1/projects/"+project+"/global/firewalls/"+f+"?fields=name,network,targetTags", &fw); err != nil {
+			return cloud.Result{}, err
+		}
+		if last(fw.Network) != last(subnet.Network) {
+			return cloud.Result{}, fmt.Errorf("%s is in another network than the subnet", fw.Name)
+		}
+		for _, tg := range fw.TargetTags {
+			if !slices.Contains(tags, tg) {
+				tags = append(tags, tg)
+			}
+		}
+	}
+	disks := []map[string]any{{"boot": true, "autoDelete": true, "deviceName": s.Name,
+		"initializeParams": map[string]any{"sourceImage": s.Image, "diskSizeGb": fmt.Sprint(s.DiskGB),
+			"diskType": "zones/" + s.Zone + "/diskTypes/pd-balanced"}}}
+	for i, gb := range s.ExtraDisks {
+		dev := fmt.Sprintf("%s-data-%d", s.Name, i+1)
+		if len(dev) > 63 {
+			dev = fmt.Sprintf("data-%d", i+1)
+		}
+		disks = append(disks, map[string]any{"autoDelete": true, "deviceName": dev,
+			"initializeParams": map[string]any{"diskSizeGb": fmt.Sprint(gb), "diskType": "zones/" + s.Zone + "/diskTypes/pd-balanced"}})
+	}
+	nic := map[string]any{"subnetwork": trimHost(subnet.SelfLink)}
+	if s.PublicIP {
+		nic["accessConfigs"] = []map[string]any{{"name": "external-nat", "type": "ONE_TO_ONE_NAT"}}
+	}
+	body := map[string]any{
+		"name":               s.Name,
+		"machineType":        "zones/" + s.Zone + "/machineTypes/" + s.Size,
+		"disks":              disks,
+		"networkInterfaces":  []map[string]any{nic},
+		"labels":             launchLabels(s.Tags),
+		"deletionProtection": s.Protect,
+		"serviceAccounts":    []any{},
+	}
+	if len(tags) > 0 {
+		body["tags"] = map[string]any{"items": tags}
+	}
+	if s.UserData != "" {
+		body["metadata"] = map[string]any{"items": []map[string]string{{"key": "startup-script", "value": firstBoot(s.UserData)}}}
+	}
+	if s.Spot {
+		body["scheduling"] = map[string]any{"provisioningModel": "SPOT", "instanceTerminationAction": "DELETE", "automaticRestart": false, "onHostMaintenance": "TERMINATE"}
+	}
+	op, err := p.send(ctx, t, actor, http.MethodPost, p.ep.compute+"/compute/v1/projects/"+project+"/zones/"+s.Zone+"/instances", body)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	return cloud.Result{ResourceID: op.TargetID, RequestID: op.Name}, nil
+}
+
 // The rest of cloud.Manager and cloud.Storage: refused until each is built.
 
-func (p *Provider) Images(context.Context, cloud.Account, cloud.Actor, string) ([]cloud.Image, error) {
-	return nil, errNotYet("list images to launch from")
-}
-func (p *Provider) Launch(context.Context, cloud.Account, cloud.Actor, cloud.LaunchSpec) (cloud.Result, error) {
-	return cloud.Result{}, errNotYet("launch an instance")
-}
 func (p *Provider) CreateImage(context.Context, cloud.Account, cloud.Actor, string, string, string, bool) (cloud.Result, error) {
 	return cloud.Result{}, errNotYet("make an image")
 }

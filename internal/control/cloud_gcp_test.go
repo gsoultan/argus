@@ -45,6 +45,11 @@ func (g gcpFake) SetTagsOf(ctx context.Context, a cloud.Account, actor cloud.Act
 	return res, err
 }
 
+// Zones are the region's zones, for a launch.
+func (gcpFake) Zones(context.Context, cloud.Account, cloud.Actor, string) ([]string, error) {
+	return []string{"us-central1-a", "us-central1-b"}, nil
+}
+
 // Sizes are the machine types of the instance's zone.
 func (gcpFake) Sizes(context.Context, cloud.Account, cloud.Actor, string, string) ([]string, error) {
 	return []string{"e2-medium", "n2-standard-4"}, nil
@@ -544,5 +549,69 @@ func TestCloudGoogleProjectRemovesAVMByItsTypedName(t *testing.T) {
 	ch := ask(`"action":"remove","resourceId":"101","confirm":"web-1","spec":{"finalSnapshots":true}`, http.StatusOK)
 	if ch.State != "applied" || ch.Summary != "Remove web-1 (101) and 1 disk, 8 GB, after a final snapshot of each" {
 		t.Fatalf("remove: %+v", ch)
+	}
+}
+
+func TestCloudGoogleProjectLaunchesVMsInAZone(t *testing.T) {
+	e, fake, project := gcpEnv(t)
+	w := do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts/prepare", "admin-token", `{"provider":"gcp","accountId":"`+project+`","manage":true}`)
+	var p CloudPrepared
+	_ = json.Unmarshal(w.Body.Bytes(), &p)
+	fake.Roles[p.ReadRoleARN] = p.ExternalID
+	fake.Roles[p.ManageRoleARN] = p.ExternalID
+	fake.Resources["us-central1"] = []cloud.Resource{
+		{Kind: cloud.KindInstance, ID: "101", Name: "web-1", Region: "us-central1", Zone: "us-central1-a", State: "running", Size: "e2-small"},
+		{Kind: cloud.KindSubnet, ID: "801", Name: "default", Region: "us-central1", Network: "default"},
+	}
+	fake.Resources[gcp.GlobalRegion] = []cloud.Resource{
+		{Kind: cloud.KindFirewall, ID: "901", Name: "allow-http", Region: gcp.GlobalRegion, Network: "default"},
+		{Kind: cloud.KindFirewall, ID: "903", Name: "other-net", Region: gcp.GlobalRegion, Network: "other"},
+	}
+	w = do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts", "admin-token",
+		`{"provider":"gcp","name":"web-gcp","accountId":"`+project+`","environment":"development","manage":true}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("connect with changes: %d %s", w.Code, w.Body)
+	}
+	var c CloudAccount
+	_ = json.Unmarshal(w.Body.Bytes(), &c)
+	deadline := time.Now().Add(5 * time.Second)
+	for !e.a.SyncCloudAccount(context.Background(), c) {
+		if time.Now().After(deadline) {
+			t.Fatal("the project was being read for too long")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// The form offers the region's zones, Google machine types, and the project's firewall rules.
+	w = do(t, e.h, http.MethodGet, "/api/v1/cloud/launch-options?accountId="+c.ID+"&region=us-central1", "admin-token", "")
+	var opts CloudLaunchOptions
+	_ = json.Unmarshal(w.Body.Bytes(), &opts)
+	if w.Code != http.StatusOK || strings.Join(opts.Zones, ",") != "us-central1-a,us-central1-b" || !slices.Contains(opts.Sizes, "e2-medium") ||
+		len(opts.Subnets) != 1 || len(opts.Firewalls) != 2 {
+		t.Fatalf("options: %d %+v", w.Code, opts)
+	}
+
+	ask := func(spec string, want int) CloudChange {
+		t.Helper()
+		w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes", "admin-token",
+			`{"accountId":"`+c.ID+`","region":"us-central1","action":"launch","spec":`+spec+`}`)
+		if w.Code != want {
+			t.Fatalf("%s: %d %s, want %d", spec, w.Code, w.Body, want)
+		}
+		var ch CloudChange
+		_ = json.Unmarshal(w.Body.Bytes(), &ch)
+		return ch
+	}
+	good := `"image":"ami-ubuntu","size":"e2-medium","diskGb":30,"subnet":"801","firewalls":["901"]`
+	ask(`{"name":"web-2",`+good+`}`, http.StatusBadRequest)                         // no zone
+	ask(`{"name":"web-2","zone":"europe-west1-b",`+good+`}`, http.StatusBadRequest) // another region's zone
+	ask(`{"name":"web-1","zone":"us-central1-a",`+good+`}`, http.StatusConflict)    // taken in the zone
+	ask(`{"name":"web-2","zone":"us-central1-a","image":"ami-ubuntu","size":"t3.medium","subnet":"801"}`, http.StatusBadRequest)
+	ask(`{"name":"web-2","zone":"us-central1-a","image":"ami-ubuntu","size":"e2-medium","diskGb":8,"subnet":"801"}`, http.StatusBadRequest)
+	ask(`{"name":"web-2","zone":"us-central1-a","image":"ami-ubuntu","size":"e2-medium","subnet":"801","firewalls":["903"]}`, http.StatusBadRequest)
+	ask(`{"name":"web-2","zone":"us-central1-a",`+good+`,"tags":{"Team":"web"}}`, http.StatusBadRequest)
+	ch := ask(`{"name":"web-2","zone":"us-central1-a",`+good+`,"tags":{"team":"web"},"extraDisks":[100]}`, http.StatusOK)
+	if ch.State != "applied" || ch.Summary != "Launch web-2: Ubuntu 24.04 LTS, e2-medium, 30 GB in us-central1-a, 1 extra disk" {
+		t.Fatalf("launch: %+v", ch)
 	}
 }

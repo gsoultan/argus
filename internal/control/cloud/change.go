@@ -84,12 +84,15 @@ type Image struct {
 
 // LaunchSpec is one new instance.
 type LaunchSpec struct {
-	Region    string            `json:"region"`
-	Name      string            `json:"name"`
-	Image     string            `json:"image"` // an Image's ID
-	Size      string            `json:"size"`  // instance type
-	DiskGB    int32             `json:"diskGb"`
-	Subnet    string            `json:"subnet"`
+	Region string `json:"region"`
+	Name   string `json:"name"`
+	Image  string `json:"image"` // an Image's ID
+	Size   string `json:"size"`  // instance type
+	DiskGB int32  `json:"diskGb"`
+	Subnet string `json:"subnet"`
+	// Zone is where the instance goes, where the subnet does not say: a
+	// Google Cloud subnet spans its region.
+	Zone      string            `json:"zone,omitempty"`
 	Firewalls []string          `json:"firewalls"`
 	Protect   bool              `json:"protect"`
 	PublicIP  bool              `json:"publicIp"`
