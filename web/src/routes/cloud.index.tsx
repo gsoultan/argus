@@ -23,7 +23,7 @@ import { CLOUD_TABS, CLOUD_TAB_LABEL, parseCloudTab, type CloudTab } from '~/com
 import { ButtonLink } from '~/components/links'
 import { PageBody, PageHeader, Toolbar } from '~/components/page'
 import { relTime } from '~/components/primitives'
-import { cloudAccountsQuery, cloudChangesQuery, cloudItemsQuery, cloudSchedulesQuery, type CloudItem, type CloudKind } from '~/lib/cloud'
+import { allows, cloudAccountsQuery, cloudChangesQuery, cloudItemsQuery, cloudSchedulesQuery, type CloudItem, type CloudKind } from '~/lib/cloud'
 import { cloudAccessQuery } from '~/lib/cloudAccess'
 import { guard } from '~/lib/guard'
 import { isConfigured } from '~/lib/live'
@@ -115,6 +115,7 @@ function Cloud() {
   const badge = (n?: number) => (n ? <Badge size="xs" variant="light" color="slate" circle={false}>{n}</Badge> : undefined)
   const hasAccounts = list.length > 0
   const canChange = list.some((a) => a.access === 'manage')
+  const can = (action: string) => list.some((a) => a.access === 'manage' && allows(a, action))
 
   return (
     <Box>
@@ -129,10 +130,10 @@ function Cloud() {
           <Group gap="xs">
             <ButtonLink to="/cloud/connect" size="sm" variant="default" leftSection={<IconCloudPlus size={16} />}>Connect an account</ButtonLink>
             {canChange && tab === 'schedules' && <ButtonLink to="/cloud/schedule" size="sm" leftSection={<IconCalendarTime size={16} />}>Make a schedule</ButtonLink>}
-            {canChange && tab === 'disks' && <Button size="sm" leftSection={<IconCirclePlus size={16} />} onClick={() => setMaking('disk')}>New disk</Button>}
-            {canChange && tab === 'network' && <Button size="sm" variant="default" leftSection={<IconCirclePlus size={16} />} onClick={() => setMaking('address')}>Allocate an Elastic IP</Button>}
-            {canChange && tab === 'network' && <Button size="sm" leftSection={<IconShieldPlus size={16} />} onClick={() => setMaking('firewall')}>New security group</Button>}
-            {canChange && tab !== 'schedules' && tab !== 'disks' && tab !== 'network' && tab !== 'access' && tab !== 'costs' && tab !== 'reservations' && tab !== 'risks' && <ButtonLink to="/cloud/launch" size="sm" leftSection={<IconCirclePlus size={16} />}>Launch an instance</ButtonLink>}
+            {can('volume-create') && tab === 'disks' && <Button size="sm" leftSection={<IconCirclePlus size={16} />} onClick={() => setMaking('disk')}>New disk</Button>}
+            {can('address-allocate') && tab === 'network' && <Button size="sm" variant="default" leftSection={<IconCirclePlus size={16} />} onClick={() => setMaking('address')}>Allocate an Elastic IP</Button>}
+            {can('firewall-create') && tab === 'network' && <Button size="sm" leftSection={<IconShieldPlus size={16} />} onClick={() => setMaking('firewall')}>New security group</Button>}
+            {can('launch') && tab !== 'schedules' && tab !== 'disks' && tab !== 'network' && tab !== 'access' && tab !== 'costs' && tab !== 'reservations' && tab !== 'risks' && <ButtonLink to="/cloud/launch" size="sm" leftSection={<IconCirclePlus size={16} />}>Launch an instance</ButtonLink>}
           </Group>
         ) : undefined}
         tabs={hasAccounts ? (
@@ -194,7 +195,7 @@ function Cloud() {
           {tab === 'network' && (
             <NetworkTables firewalls={narrow(q.firewall.data)} instances={q.instance.data} networks={narrow(q.network.data)} subnets={q.subnet.data}
               addresses={narrow(q.address.data)} balancers={narrow(q['load-balancer'].data)} targetGroups={narrow(q['target-group'].data)}
-              loading={q.firewall.isPending} names={names} filtered={filtered} onMake={admin && canChange ? setMaking : undefined} />
+              loading={q.firewall.isPending} names={names} filtered={filtered} onMake={admin && can('firewall-create') ? setMaking : undefined} />
           )}
           {tab === 'scaling' && (
             <Stack gap="md">

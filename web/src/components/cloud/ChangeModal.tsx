@@ -44,7 +44,7 @@ export function ChangeModal({ title, env, level, reason, setReason, children, on
             <Group gap={6} mb={2}><EnvBadge env={env} /><Text size={FS.meta} fw={600}>Someone else approves this</Text></Group>
             <Text size={FS.meta}>
               <AloneOr kind="requests" what="it">
-                Nothing changes in AWS until another admin, owner or approver approves it. It then runs as you, and the audit log has both of you.
+                Nothing changes in the cloud until another admin, owner or approver approves it. It then runs as you, and the audit log has both of you.
               </AloneOr>
             </Text>
           </Alert>

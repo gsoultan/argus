@@ -153,6 +153,9 @@ func (a *API) getCloudAccounts(w http.ResponseWriter, r *http.Request) {
 	for n := range out.Accounts {
 		c := &out.Accounts[n]
 		c.IdentityMissing = !slices.ContainsFunc(ids[c.Provider], func(i CloudIdentity) bool { return i.ID == c.Identity })
+		if c.Provider == "gcp" {
+			c.Actions = gcp.SupportedActions()
+		}
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, out)
@@ -241,9 +244,6 @@ func (a *API) cloudPrepare(ctx context.Context, in cloudPrepareIn) (CloudPrepare
 	if err := checkCloudAccountID(provider, accountID); err != nil {
 		return CloudPrepared{}, http.StatusBadRequest, err
 	}
-	if provider == "gcp" && in.Manage {
-		return CloudPrepared{}, http.StatusBadRequest, errors.New("Google Cloud projects are read only in Argus so far")
-	}
 	if in.Identity == "" {
 		// An account already connected keeps the identity it uses: its
 		// template, to allow changes or to update the roles, trusts that one.
@@ -281,11 +281,16 @@ func (a *API) cloudPrepare(ctx context.Context, in cloudPrepareIn) (CloudPrepare
 	}
 	if provider == "gcp" {
 		sa := gcp.AccountEmail(accountID, gcp.ReadAccountName)
-		return CloudPrepared{
+		out := CloudPrepared{
 			Provider: provider, AccountID: accountID, ExternalID: ext, Principal: base.Principal, Source: base.Source,
 			Identity: ident.ID, IdentityName: ident.Name, Kept: kept,
-			RoleName: gcp.ReadAccountName, ReadRoleARN: sa, Command: gcp.SetupCommandFor(accountID, principals, ext),
-		}, http.StatusOK, nil
+			RoleName: gcp.ReadAccountName, ReadRoleARN: sa, Command: gcp.SetupCommandFor(accountID, principals, ext, in.Manage),
+		}
+		if in.Manage {
+			out.ManageRoleName = gcp.ManageAccountName
+			out.ManageRoleARN = gcp.AccountEmail(accountID, gcp.ManageAccountName)
+		}
+		return out, http.StatusOK, nil
 	}
 	out := CloudPrepared{
 		Provider: provider, AccountID: accountID, ExternalID: ext, Principal: base.Principal, Source: base.Source,
@@ -420,8 +425,11 @@ func (in *cloudAccountIn) validateGCP() error {
 	if gcp.ProjectOf(in.RoleARN) != in.AccountID {
 		return errors.New("that service account is in another project than " + in.AccountID)
 	}
-	if in.Manage || in.ManageRoleARN != "" {
-		return errors.New("Google Cloud projects are read only in Argus so far")
+	if in.Manage && in.ManageRoleARN == "" {
+		in.ManageRoleARN = gcp.AccountEmail(in.AccountID, gcp.ManageAccountName)
+	}
+	if err := checkGCPManage(in.ManageRoleARN, in.AccountID, in.RoleARN); err != nil {
+		return err
 	}
 	return in.checkEnvironment()
 }
@@ -494,8 +502,11 @@ func (a *API) postCloudAccount(w http.ResponseWriter, r *http.Request) {
 			a.auditAsset(r, AuditEvent{Action: "cloud.account.refused", Severity: "notice", ActorEmail: actor,
 				Target: cloudTarget(in.Provider, in.AccountID, in.Name),
 				Detail: "Could not use the manage role " + in.ManageRoleARN + ": " + err.Error()})
-			writeErr(w, http.StatusUnprocessableEntity, "Argus could read the account but not use the manage role: "+err.Error()+
-				". Check the stack was made from the read-and-change template, or connect read only.")
+			next := ". Check the stack was made from the read-and-change template, or connect read only."
+			if in.Provider == "gcp" {
+				next = ". Check the command from this page, with changes allowed, finished without an error, or connect read only."
+			}
+			writeErr(w, http.StatusUnprocessableEntity, "Argus could read the account but not use the manage role: "+err.Error()+next)
 			return
 		}
 		access = "read and change through " + in.ManageRoleARN
@@ -710,6 +721,24 @@ func checkManageRole(arn, accountID, readRole string) error {
 	return nil
 }
 
+// checkGCPManage refuses a manage account that is not a service account in
+// the project, or is the read account. Empty is read only.
+func checkGCPManage(email, project, read string) error {
+	if email == "" {
+		return nil
+	}
+	if !gcp.ValidAccountEmail(email) {
+		return errors.New("the manage account is not a service account; it looks like " + gcp.AccountEmail(project, gcp.ManageAccountName))
+	}
+	if gcp.ProjectOf(email) != project {
+		return errors.New("the manage account is in another project than " + project)
+	}
+	if email == read {
+		return errors.New("the manage account must be a different service account from the read one")
+	}
+	return nil
+}
+
 // putCloudManage lets Argus change an account that was read only: the
 // person deployed the manage template over the stack and pastes the new
 // role, which Argus assumes as them before keeping it.
@@ -734,15 +763,17 @@ func (a *API) putCloudManage(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "cloud account", err)
 		return
 	}
-	if c.Provider != "aws" {
-		writeErr(w, http.StatusNotImplemented, cloudProviderName(c.Provider)+" projects are read only in Argus so far")
-		return
-	}
 	in.RoleARN = strings.TrimSpace(in.RoleARN)
-	if in.RoleARN == "" {
+	check := checkManageRole
+	if c.Provider == "gcp" {
+		if in.RoleARN == "" {
+			in.RoleARN = gcp.AccountEmail(c.AccountID, gcp.ManageAccountName)
+		}
+		check = checkGCPManage
+	} else if in.RoleARN == "" {
 		in.RoleARN = cloudRoleARN(c.AccountID, aws.ManageRoleName)
 	}
-	if err := checkManageRole(in.RoleARN, c.AccountID, c.RoleARN); err != nil {
+	if err := check(in.RoleARN, c.AccountID, c.RoleARN); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -763,8 +794,11 @@ func (a *API) putCloudManage(w http.ResponseWriter, r *http.Request) {
 		a.auditAsset(r, AuditEvent{Action: "cloud.account.refused", Severity: "notice", ActorEmail: actor,
 			Target: cloudTarget(c.Provider, c.AccountID, c.Name),
 			Detail: "Could not use the manage role " + in.RoleARN + ": " + err.Error()})
-		writeErr(w, http.StatusUnprocessableEntity, "Argus could not use that role: "+err.Error()+
-			". Check the stack update finished.")
+		next := ". Check the stack update finished."
+		if c.Provider == "gcp" {
+			next = ". Check the command finished without an error."
+		}
+		writeErr(w, http.StatusUnprocessableEntity, "Argus could not use that role: "+err.Error()+next)
 		return
 	}
 	c, err = a.store.SetCloudManageRole(r.Context(), c.ID, in.RoleARN)
@@ -774,7 +808,7 @@ func (a *API) putCloudManage(w http.ResponseWriter, r *http.Request) {
 	}
 	a.auditAsset(r, AuditEvent{Action: "cloud.account.manage_allowed", Severity: "notice", ActorEmail: actor,
 		Target: cloudTarget(c.Provider, c.AccountID, c.Name),
-		Detail: "Argus may now change instances, disks, images and addresses in this account, through " + in.RoleARN + "."})
+		Detail: "Argus may now make changes in this account, through " + in.RoleARN + "."})
 	// Read what the role may do now, as an update to the stack changes it.
 	a.syncCloudAccountSoon(r.Context(), c)
 	writeJSON(w, http.StatusOK, c)

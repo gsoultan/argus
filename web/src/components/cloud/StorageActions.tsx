@@ -6,7 +6,7 @@ import {
 import { useState } from 'react'
 import { Field, relTime } from '~/components/primitives'
 import {
-  ACTION_LEVEL, PRICE, VOLUME_TYPES, attachment, cloudAccountsQuery, cloudChangesQuery, cloudItemsQuery, envOf, freeDevice, money,
+  ACTION_LEVEL, PRICE, VOLUME_TYPES, allows, attachment, cloudAccountsQuery, cloudChangesQuery, cloudItemsQuery, envOf, freeDevice, money,
   roleLacks, volumeMonthly, volumeOf, type CloudAccount, type CloudAction, type CloudEnvironment, type CloudItem,
 } from '~/lib/cloud'
 import { meQuery } from '~/lib/queries'
@@ -70,25 +70,31 @@ export function StorageActions({ it }: { it: CloudItem }) {
   const close = () => setOpen(null)
   const busy = Boolean(waiting) || r.state === 'deleting' || r.state === 'deleted'
   const attached = attachment(r)
+  const can = (a: CloudAction) => allows(account, a)
+  const gcp = account?.provider === 'gcp'
 
   const buttons = (() => {
     switch (r.kind) {
       case 'volume':
         return (
           <>
-            <Button size="xs" variant="default" leftSection={<IconResize size={14} />} disabled={busy} onClick={() => setOpen('volume-grow')}>Grow or change</Button>
+            {can('volume-grow') && (
+              <Button size="xs" variant="default" leftSection={<IconResize size={14} />} disabled={busy} onClick={() => setOpen('volume-grow')}>
+                {gcp ? 'Grow' : 'Grow or change'}
+              </Button>
+            )}
             {r.state === 'available'
-              ? <Button size="xs" variant="default" leftSection={<IconLink size={14} />} disabled={busy} onClick={() => setOpen('volume-attach')}>Attach</Button>
-              : <Button size="xs" variant="default" leftSection={<IconLinkOff size={14} />} disabled={busy || !attached} onClick={() => setOpen('volume-detach')}>Detach</Button>}
-            <Button size="xs" variant="default" leftSection={<IconCamera size={14} />} disabled={busy} onClick={() => setOpen('snapshot-create')}>Snapshot</Button>
+              ? can('volume-attach') && <Button size="xs" variant="default" leftSection={<IconLink size={14} />} disabled={busy} onClick={() => setOpen('volume-attach')}>Attach</Button>
+              : can('volume-detach') && <Button size="xs" variant="default" leftSection={<IconLinkOff size={14} />} disabled={busy || !attached} onClick={() => setOpen('volume-detach')}>Detach</Button>}
+            {can('snapshot-create') && <Button size="xs" variant="default" leftSection={<IconCamera size={14} />} disabled={busy} onClick={() => setOpen('snapshot-create')}>Snapshot</Button>}
           </>
         )
       case 'snapshot':
-        return <Button size="xs" variant="default" leftSection={<IconPlus size={14} />} disabled={r.state !== 'completed'} onClick={() => setOpen('new-disk')}>New disk from it</Button>
+        return can('volume-create') && <Button size="xs" variant="default" leftSection={<IconPlus size={14} />} disabled={r.state !== 'completed'} onClick={() => setOpen('new-disk')}>New disk from it</Button>
       case 'address':
         return r.state === 'attached'
-          ? <Button size="xs" variant="default" leftSection={<IconLinkOff size={14} />} disabled={busy} onClick={() => setOpen('address-disassociate')}>Take it off</Button>
-          : <Button size="xs" variant="default" leftSection={<IconLink size={14} />} disabled={busy} onClick={() => setOpen('address-associate')}>Attach to an instance</Button>
+          ? can('address-disassociate') && <Button size="xs" variant="default" leftSection={<IconLinkOff size={14} />} disabled={busy} onClick={() => setOpen('address-disassociate')}>Take it off</Button>
+          : can('address-associate') && <Button size="xs" variant="default" leftSection={<IconLink size={14} />} disabled={busy} onClick={() => setOpen('address-associate')}>Attach to an instance</Button>
       default:
         return null
     }
@@ -99,7 +105,7 @@ export function StorageActions({ it }: { it: CloudItem }) {
     image: { action: 'image-delete', label: 'Delete image…' },
     address: { action: 'address-release', label: 'Release address…' },
   }
-  const rm = remove[r.kind]
+  const rm = remove[r.kind] && can(remove[r.kind]!.action) ? remove[r.kind] : undefined
 
   return (
     <Gate it={it} account={account}>
@@ -111,7 +117,7 @@ export function StorageActions({ it }: { it: CloudItem }) {
         )}
         <Group gap="xs">
           {buttons}
-          <Button size="xs" variant="default" leftSection={<IconTag size={14} />} disabled={busy} onClick={() => setOpen('tags')}>Tags</Button>
+          {can('tags') && <Button size="xs" variant="default" leftSection={<IconTag size={14} />} disabled={busy} onClick={() => setOpen('tags')}>Tags</Button>}
           {rm && (
             <Menu position="bottom-end" withinPortal>
               <Menu.Target>
@@ -124,7 +130,9 @@ export function StorageActions({ it }: { it: CloudItem }) {
           )}
         </Group>
         {open === 'tags' && <TagsChange it={it} env={env} onClose={close} />}
-        {open === 'volume-grow' && <VolumeGrow it={it} env={env} account={account} onClose={close} />}
+        {open === 'volume-grow' && (gcp
+          ? <GcpDiskGrow it={it} env={env} onClose={close} />
+          : <VolumeGrow it={it} env={env} account={account} onClose={close} />)}
         {(open === 'volume-attach' || open === 'address-associate') && <AttachTo it={it} env={env} account={account} action={open} onClose={close} />}
         {(open === 'volume-detach' || open === 'address-disassociate') && <Detach it={it} env={env} account={account} action={open} onClose={close} />}
         {open === 'snapshot-create' && <SnapshotCreate it={it} env={env} account={account} onClose={close} />}
@@ -140,6 +148,37 @@ function useTargets(it: CloudItem, sameZone: boolean) {
   const instances = useQuery(cloudItemsQuery('instance'))
   return (instances.data ?? []).filter((x) => x.accountId === it.accountId && x.resource.region === it.resource.region &&
     x.resource.state !== 'terminated' && x.resource.state !== 'shutting-down' && (!sameZone || x.resource.zone === it.resource.zone))
+}
+
+/**
+ * Growing a Google Cloud disk: its size, and nothing else. Google changes
+ * neither a disk's type nor its performance by resizing it.
+ */
+function GcpDiskGrow({ it, env, onClose }: { it: CloudItem; env: CloudEnvironment; onClose: () => void }) {
+  const r = it.resource
+  const now = volumeOf(r)
+  const [gb, setGb] = useState<number>(now.gb)
+  const [reason, setReason] = useState('')
+  const { submit, busy } = useSubmit(onClose)
+  const shrink = gb < now.gb
+  return (
+    <ChangeModal title={`Grow ${r.name}`} env={env} level="change" reason={reason} setReason={setReason} onClose={onClose}
+      busy={busy} submit="Grow disk" disabled={gb <= now.gb}
+      onSubmit={() => void submit({ accountId: it.accountId, region: r.region, action: 'volume-grow', resourceId: r.id,
+        spec: { sizeGb: gb }, reason }, 'Disk growing')}>
+      <Text size={FS.body} lh={1.55}>
+        Google grows the disk in a few seconds while it stays in use. A disk can only grow, never shrink. Its type and performance
+        stay as they are.
+      </Text>
+      <NumberInput label="Size, GB" value={gb} onChange={(v) => setGb(Number(v) || 0)} min={now.gb} max={65536} w={200}
+        error={shrink ? `A disk cannot shrink below ${now.gb} GB` : undefined} />
+      {gb > now.gb && (
+        <Text size={FS.meta} c="dimmed">
+          The file system on it keeps its old size until it is grown too, from the server's Disks tab when it has the Argus agent.
+        </Text>
+      )}
+    </ChangeModal>
+  )
 }
 
 function VolumeGrow({ it, env, account, onClose }: { it: CloudItem; env: CloudEnvironment; account?: CloudAccount; onClose: () => void }) {
@@ -342,7 +381,7 @@ export function NewDisk({ accountId, region, snapshot, onClose }: { accountId?: 
   const accounts = useQuery(cloudAccountsQuery())
   const subnets = useQuery(cloudItemsQuery('subnet'))
   const instances = useQuery(cloudItemsQuery('instance'))
-  const manageable = (accounts.data?.accounts ?? []).filter((a) => a.access === 'manage')
+  const manageable = (accounts.data?.accounts ?? []).filter((a) => a.access === 'manage' && allows(a, 'volume-create'))
   const [acct, setAcct] = useState<string | null>(accountId ?? (manageable.length === 1 ? manageable[0]!.id : null))
   const account = manageable.find((a) => a.id === acct)
   const [reg, setReg] = useState<string | null>(region ?? (account?.regions.length === 1 ? account.regions[0]! : null))
@@ -403,7 +442,7 @@ export function NewDisk({ accountId, region, snapshot, onClose }: { accountId?: 
 /** A new Elastic IP, from Network › Elastic IPs. */
 export function NewAddress({ onClose }: { onClose: () => void }) {
   const accounts = useQuery(cloudAccountsQuery())
-  const manageable = (accounts.data?.accounts ?? []).filter((a) => a.access === 'manage')
+  const manageable = (accounts.data?.accounts ?? []).filter((a) => a.access === 'manage' && allows(a, 'address-allocate'))
   const [acct, setAcct] = useState<string | null>(manageable.length === 1 ? manageable[0]!.id : null)
   const account = manageable.find((a) => a.id === acct)
   const [reg, setReg] = useState<string | null>(account?.regions.length === 1 ? account.regions[0]! : null)

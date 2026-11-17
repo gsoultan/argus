@@ -425,6 +425,10 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 	if !hasRegion(m.acct, in.Region) {
 		return ch, http.StatusBadRequest, errors.New("pick one of the account's regions")
 	}
+	if !cloud.Supports(m.manager, in.Action) {
+		return ch, http.StatusNotImplemented, fmt.Errorf("Argus cannot make that change (%s) in %s yet; do it in the provider's own console",
+			in.Action, cloudProviderName(m.acct.Provider))
+	}
 	if in.Action == cloud.ActionLaunch {
 		return a.planLaunch(r, m, actor, in, ch)
 	}
@@ -479,6 +483,10 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 		return a.planSettings(r, m, in, inst, ch)
 	case cloud.ActionReboot:
 		ch.Summary = "Reboot " + inst.Name
+		if m.acct.Provider == "gcp" {
+			// Google has no gentle reboot: it resets, like the power button.
+			ch.Summary = "Reset " + inst.Name + " (Google Cloud has no gentle reboot: the operating system is not asked to shut down first)"
+		}
 	case cloud.ActionProtect:
 		ch.Summary = "Turn on termination protection for " + inst.Name
 	case cloud.ActionUnprotect:

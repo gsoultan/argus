@@ -53,7 +53,7 @@ function Connect() {
   const [picked, setPicked] = useState('')
   // The default when this organization may use it, else the only one.
   const identity = picked || (bases?.find((b) => b.default) ?? (bases?.length === 1 ? bases[0] : undefined))?.identity || ''
-  const prepare = useMutation({ mutationFn: (id: string) => prepareCloudAccount(id, !gcp && manage, identity, '', provider) })
+  const prepare = useMutation({ mutationFn: (id: string) => prepareCloudAccount(id, manage, identity, '', provider) })
   const connect = useConnectCloudAccount()
   const prepared: CloudPrepared | undefined = prepare.data
 
@@ -63,7 +63,7 @@ function Connect() {
 
   const next = () => prepare.mutate(digits, { onSuccess: () => { connect.reset(); setStep(1) } })
   const submit = () => connect.mutate(
-    { provider, name: name.trim(), accountId: digits, environment: env, manage: !gcp && manage, identity: prepared?.identity ?? identity },
+    { provider, name: name.trim(), accountId: digits, environment: env, manage, identity: prepared?.identity ?? identity },
     { onSuccess: (a) => { setDone(a); setStep(2) } },
   )
   const reset = () => { setStep(0); setName(''); setAccountId(''); setManage(false); setPicked(''); setDone(null); prepare.reset(); connect.reset() }
@@ -108,31 +108,22 @@ function Connect() {
                   <SegmentedControl value={env} onChange={(v) => setEnv(v as CloudEnvironment)}
                     data={ENVS.map((e) => ({ value: e, label: ENV_LABEL[e] }))} />
                 </Box>
-                {gcp ? (
-                  <Group gap="sm" wrap="nowrap" align="flex-start" p="sm" style={{ border: '1px solid var(--color-line)', borderRadius: 8 }}>
-                    <ThemeIcon variant="light" color="slate" size={28} radius="md"><IconEye size={15} /></ThemeIcon>
-                    <Box>
-                      <Text fw={600} size={FS.body}>Read only</Text>
-                      <Text size={FS.meta} c="dimmed" lh={1.5}>
-                        See VMs, disks, firewalls, networks and addresses, and which VMs have an Argus server. Nothing in the project can be
-                        changed from Argus: changes, costs and schedules are AWS only for now.
-                      </Text>
-                    </Box>
-                  </Group>
-                ) : (
-                  <Box>
-                    <Text size="sm" fw={500}>What Argus may do</Text>
-                    <Text size={FS.meta} c="dimmed" mb={6}>You can allow changes later, and take them back.</Text>
-                    <Radio.Group value={manage ? 'manage' : 'read'} onChange={(v) => setManage(v === 'manage')}>
-                      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
-                        <Choice value="read" icon={IconEye} title="Read only"
-                          text="See instances, disks and firewalls. Nothing in the account can be changed from Argus." />
-                        <Choice value="manage" icon={IconPencil} title="Read and change"
-                          text="Also launch, stop, resize and remove instances, with approvals and the audit log." />
-                      </SimpleGrid>
-                    </Radio.Group>
-                  </Box>
-                )}
+                <Box>
+                  <Text size="sm" fw={500}>What Argus may do</Text>
+                  <Text size={FS.meta} c="dimmed" mb={6}>You can allow changes later, and take them back.</Text>
+                  <Radio.Group value={manage ? 'manage' : 'read'} onChange={(v) => setManage(v === 'manage')}>
+                    <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+                      <Choice value="read" icon={IconEye} title="Read only"
+                        text={gcp
+                          ? 'See VMs, disks, firewalls, networks and addresses. Nothing in the project can be changed from Argus.'
+                          : 'See instances, disks and firewalls. Nothing in the account can be changed from Argus.'} />
+                      <Choice value="manage" icon={IconPencil} title="Read and change"
+                        text={gcp
+                          ? 'Also start, stop and reset VMs and grow disks, with approvals and the audit log. More changes come later.'
+                          : 'Also launch, stop, resize and remove instances, with approvals and the audit log.'} />
+                    </SimpleGrid>
+                  </Radio.Group>
+                </Box>
                 {choose && bases && <IdentityPicker bases={bases} value={identity} onChange={setPicked} />}
                 {prepare.error && <Alert color="amber" variant="light" title="Argus cannot make the role yet">{(prepare.error as Error).message}</Alert>}
                 <Group justify="space-between" mt="xs">
@@ -154,7 +145,7 @@ function Connect() {
                   {prepared.canDeploy && <Text fw={600} size={FS.body} mb="xs">Or make it yourself</Text>}
                   {gcp ? <GcpSetup prepared={prepared} /> : <RoleSetup prepared={prepared} />}
                 </Box>
-                <WatchForRoles prepared={prepared} manage={!gcp && manage} connecting={connect.isPending} failed={connect.error as Error | null}
+                <WatchForRoles prepared={prepared} manage={manage} connecting={connect.isPending} failed={connect.error as Error | null}
                   onReady={submit} />
                 <Group justify="space-between">
                   <Button variant="default" onClick={() => setStep(0)}>Back</Button>
@@ -235,10 +226,14 @@ function GcpSummary({ prepared }: { prepared: CloudPrepared }) {
     <Group gap="sm" wrap="nowrap" align="flex-start">
       <ThemeIcon variant="light" color="azure" size={34} radius="md"><IconShieldLock size={18} /></ThemeIcon>
       <Box style={{ minWidth: 0 }}>
-        <Text fw={600}>Argus needs a read-only service account in {prepared.accountId}</Text>
+        <Text fw={600}>{prepared.manageRoleName
+          ? `Argus needs two service accounts in ${prepared.accountId}`
+          : `Argus needs a read-only service account in ${prepared.accountId}`}</Text>
         <Text size={FS.meta} c="dimmed" lh={1.55}>
           One command makes <Text span ff="monospace" size={FS.meta}>argus-read</Text>. It can list and describe Compute Engine, never read
-          what is on a disk or change anything. It has no key, and costs nothing.{' '}
+          what is on a disk or change anything.{prepared.manageRoleName && <> It also makes{' '}
+          <Text span ff="monospace" size={FS.meta}>argus-manage</Text>, which can change Compute Engine and nothing outside it: no IAM, so it
+          cannot grant itself more.</>}{prepared.manageRoleName ? ' Neither has a key, and they cost nothing.' : ' It has no key, and costs nothing.'}{' '}
           <Text span size={FS.meta} c="azure" style={{ cursor: 'pointer' }} onClick={() => setMore((m) => !m)}>
             {more ? 'Less' : 'How it is locked down'}
           </Text>
@@ -246,7 +241,7 @@ function GcpSummary({ prepared }: { prepared: CloudPrepared }) {
         {more && (
           <Text size={FS.meta} c="dimmed" lh={1.55} mt={4} style={{ overflowWrap: 'anywhere' }}>
             Only <Text span ff="monospace" size={FS.meta}>{prepared.principal}</Text>, argus-control's own service account, may ask Google for
-            a short-lived token for it (Service Account Token Creator, on argus-read alone). Its description carries the external id{' '}
+            a short-lived token for it (Service Account Token Creator, on Argus's own accounts alone). Its description carries the external id{' '}
             <Text span ff="monospace" size={FS.meta}>{prepared.externalId}</Text>, made for this organization and project, and Argus refuses
             the account without it. Every call names the person it is for in its user agent, which Google's audit log keeps.
           </Text>

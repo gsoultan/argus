@@ -160,6 +160,9 @@ func (a *API) planStorage(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 			return ch, http.StatusBadRequest, errors.New("a disk change takes {sizeGb, type, iops, throughput}")
 		}
 		s.FromGB, s.FromType = volumeGB(res)
+		if m.acct.Provider == "gcp" {
+			return planGCPDiskGrow(res, s, ch)
+		}
 		if s.Type == s.FromType {
 			s.Type = ""
 		}
@@ -646,6 +649,10 @@ func (a *API) applyStorage(ctx context.Context, m cloudManaged, ch CloudChange) 
 		if err == nil && s.SizeGB > s.FromGB {
 			res.Detail = "AWS grows the disk in the background. The file system on it still has its old size until it is grown too: " +
 				"from the server's Disks tab when it has the Argus agent"
+			if m.acct.Provider == "gcp" {
+				res.Detail = "Google grows the disk in a few seconds. The file system on it still has its old size until it is grown too: " +
+					"from the server's Disks tab when it has the Argus agent"
+			}
 		}
 		return res, err
 	case cloud.ActionVolumeAttach:
@@ -701,4 +708,28 @@ func (a *API) applyStorage(ctx context.Context, m cloudManaged, ch CloudChange) 
 		return st.ReleaseAddress(ctx, t, actor, region, id)
 	}
 	return cloud.Result{}, fmt.Errorf("%q is not a storage change", ch.Action)
+}
+
+// gcpDiskMaxGB is the largest a Compute Engine persistent disk grows to.
+const gcpDiskMaxGB = 65536
+
+// planGCPDiskGrow plans a Google Cloud disk grow: Google resizes a disk
+// up, and changes neither its type nor its performance that way.
+func planGCPDiskGrow(res cloud.Resource, s cloudVolumeGrowSpec, ch CloudChange) (CloudChange, int, error) {
+	if (s.Type != "" && s.Type != s.FromType) || s.IOPS != 0 || s.Throughput != 0 {
+		return ch, http.StatusBadRequest, errors.New("Argus grows a Google Cloud disk's size only; change its type or performance in the Google Cloud console")
+	}
+	s.Type = ""
+	if s.SizeGB <= s.FromGB {
+		return ch, http.StatusBadRequest, fmt.Errorf("Google Cloud only grows a disk; pick more than %d GB for %s", s.FromGB, res.Name)
+	}
+	if s.SizeGB > gcpDiskMaxGB {
+		return ch, http.StatusBadRequest, fmt.Errorf("a Google Cloud disk is at most %d GB", gcpDiskMaxGB)
+	}
+	if res.State != "in-use" && res.State != "available" {
+		return ch, http.StatusConflict, errors.New(res.Name + " is " + res.State + "; wait until it is ready")
+	}
+	ch.Spec, _ = json.Marshal(s)
+	ch.Summary = fmt.Sprintf("Grow %s from %d to %d GB", res.Name, s.FromGB, s.SizeGB)
+	return ch, http.StatusOK, nil
 }

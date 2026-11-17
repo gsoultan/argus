@@ -293,3 +293,20 @@ func ValidTagKey(k string) bool {
 
 // ValidSize reports whether s looks like an instance type.
 func ValidSize(s string) bool { return reSize.MatchString(s) && len(s) <= 32 }
+
+// ErrUnsupported is a change a provider does not make yet.
+var ErrUnsupported = errors.New("not supported")
+
+// Supporter is a Manager that makes only some changes so far. A Manager
+// that is not one makes every change it has a method for.
+type Supporter interface {
+	Supports(a Action) bool
+}
+
+// Supports reports whether m makes change a.
+func Supports(m any, a Action) bool {
+	if s, ok := m.(Supporter); ok {
+		return s.Supports(a)
+	}
+	return true
+}

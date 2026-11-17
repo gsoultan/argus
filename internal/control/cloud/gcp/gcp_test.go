@@ -268,7 +268,7 @@ func TestBaseFromAKeyFile(t *testing.T) {
 }
 
 func TestSetupCommandCarriesTheExternalID(t *testing.T) {
-	cmd := SetupCommandFor("payments-prod-4182", []string{"argus@ops-home.iam.gserviceaccount.com"}, "argus-0123")
+	cmd := SetupCommandFor("payments-prod-4182", []string{"argus@ops-home.iam.gserviceaccount.com"}, "argus-0123", false)
 	for _, want := range []string{"P=payments-prod-4182", Description("argus-0123"), "roles/compute.viewer", "roles/iam.serviceAccountViewer",
 		"--member=serviceAccount:argus@ops-home.iam.gserviceaccount.com --role=roles/iam.serviceAccountTokenCreator"} {
 		if !strings.Contains(cmd, want) {

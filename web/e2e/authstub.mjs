@@ -477,7 +477,11 @@ const server = createServer(async (req, res) => {
           + 'retry gcloud projects add-iam-policy-binding $P --member=serviceAccount:$SA --role=roles/compute.viewer --condition=None --quiet && \\\n'
           + 'retry gcloud projects add-iam-policy-binding $P --member=serviceAccount:$SA --role=roles/iam.serviceAccountViewer --condition=None --quiet && \\\n'
           + `retry gcloud iam service-accounts add-iam-policy-binding $SA --project=$P --member=serviceAccount:${GCP_PRINCIPAL} --role=roles/iam.serviceAccountTokenCreator --quiet && \\\n`
-          + 'echo "Done. Argus connects by itself within a minute."\n' })
+          + (body.manage
+            ? `retry gcloud projects add-iam-policy-binding $P --member=serviceAccount:$M --role=roles/compute.instanceAdmin.v1 --condition=None --quiet && \\\n`
+            : '')
+          + 'echo "Done. Argus connects by itself within a minute."\n',
+        ...(body.manage ? { manageRoleName: 'argus-manage', manageRoleArn: `argus-manage@${p}.iam.gserviceaccount.com` } : {}) })
     }
     if (path === '/api/v1/cloud/accounts/check' && req.method === 'POST') {
       const body = /** @type {any} */ (await readBody(req))
