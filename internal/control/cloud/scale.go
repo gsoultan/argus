@@ -45,6 +45,10 @@ func IsScale(a Action) bool {
 // them apart from a person's.
 const ScaleActor Actor = "argus-scale"
 
+// ReplicaActor is who Argus runs as when it keeps a database's read
+// endpoint: a replica in or out of its target group.
+const ReplicaActor Actor = "argus-replicas"
+
 // Safety limits no setting removes.
 const (
 	// ScaleAskLapse is how long an "Ask each time" question waits: a

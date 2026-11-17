@@ -1532,4 +1532,44 @@ export interface DatabaseReplica {
   watchError?: string
   /** Since when it has been more than a minute behind, or not streaming. */
   behindSince?: ISOTime
+  /** The instance Argus put in the database's read endpoint for it; empty when it is out. */
+  endpointInstance?: string
+  /** Why it is not in the read endpoint, when it should be or is held out. */
+  endpointNote?: string
+}
+
+/** A database's read endpoint: a load balancer target group Argus keeps to the replicas that are not behind. */
+export interface ReadEndpoint {
+  databaseId: UUID
+  accountId: UUID
+  accountName: string
+  region: string
+  targetGroup: string
+  targetName: string
+  includePrimary: boolean
+  /** The primary's instance, when Argus put it in. */
+  primaryInstance: string
+  /** Why the primary is not in, or the account could not be reached. */
+  note: string
+  setBy: string
+  setAt: ISOTime
+  /** Each instance's health in the target group, as the cloud was last read. */
+  health: Record<string, string>
+}
+
+/** A target group a read endpoint could be. */
+export interface ReadEndpointChoice {
+  accountId: UUID
+  accountName: string
+  region: string
+  targetGroup: string
+  name: string
+  balancer: string
+  /** Why it cannot be picked; absent when it can. */
+  problem?: string
+}
+
+export interface ReadEndpointView {
+  endpoint: ReadEndpoint | null
+  choices: ReadEndpointChoice[]
 }

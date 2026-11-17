@@ -75,6 +75,11 @@ type DatabaseReplica struct {
 	WatchError    string     `json:"watchError,omitempty"`
 	BehindSince   *time.Time `json:"behindSince,omitempty"`
 	BehindAlerted bool       `json:"-"`
+	// The instance Argus put in the database's read endpoint for this
+	// replica, or ""; and why it is not in, when it should be
+	// (db_read_endpoint.go).
+	EndpointInstance string `json:"endpointInstance"`
+	EndpointNote     string `json:"endpointNote"`
 }
 
 // ErrReplicaNotFound is a replica that does not exist.
@@ -83,7 +88,8 @@ var ErrReplicaNotFound = errors.New("no such replica")
 const replicaCols = `r.id::text, r.database_id::text, d.dbname, pa.hostname, r.asset_id::text, ra.hostname, r.name,
 	r.replica_address, r.primary_address, r.requested_by, r.reason, r.request_id::text, r.state, r.stage, r.detail,
 	r.error, r.replica_database_id::text, r.created_at, r.started_at, r.finished_at,
-	r.streaming, r.lag_s, r.lag_bytes, r.retained_bytes, r.watched_at, r.watch_error, r.behind_since, r.behind_alerted`
+	r.streaming, r.lag_s, r.lag_bytes, r.retained_bytes, r.watched_at, r.watch_error, r.behind_since, r.behind_alerted,
+	r.endpoint_instance, r.endpoint_note`
 
 const replicaFrom = ` FROM database_replicas r JOIN databases d ON d.id = r.database_id
 	JOIN assets pa ON pa.id = d.asset_id JOIN assets ra ON ra.id = r.asset_id `
@@ -93,7 +99,8 @@ func scanReplica(row pgx.Row) (DatabaseReplica, error) {
 	err := row.Scan(&r.ID, &r.DatabaseID, &r.DBName, &r.PrimaryHostname, &r.AssetID, &r.Hostname, &r.Name,
 		&r.ReplicaAddress, &r.PrimaryAddress, &r.RequestedBy, &r.Reason, &r.RequestID, &r.State, &r.Stage, &r.Detail,
 		&r.Error, &r.ReplicaDatabaseID, &r.CreatedAt, &r.StartedAt, &r.FinishedAt,
-		&r.Streaming, &r.LagS, &r.LagBytes, &r.RetainedBytes, &r.WatchedAt, &r.WatchError, &r.BehindSince, &r.BehindAlerted)
+		&r.Streaming, &r.LagS, &r.LagBytes, &r.RetainedBytes, &r.WatchedAt, &r.WatchError, &r.BehindSince, &r.BehindAlerted,
+		&r.EndpointInstance, &r.EndpointNote)
 	return r, err
 }
 

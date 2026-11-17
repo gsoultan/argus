@@ -30,7 +30,7 @@ import type { MyServer,
   ServerAccount,
   TemporaryPasswordOutcome,
   User,
-  BackupCatalog, BackupDestination, BackupSchedule, BackupTest, BackupsView, CheckResult, DatabaseBackup, DatabaseReplica, DatabaseRestore, TestCheck,
+  BackupCatalog, BackupDestination, BackupSchedule, BackupTest, BackupsView, CheckResult, DatabaseBackup, DatabaseReplica, DatabaseRestore, ReadEndpoint, ReadEndpointView, TestCheck,
   Database, DBAccess, DBAssignment, DBEngine, DBLabel, DBLevel, DBPolicy, DBPoolerSetup,
   StatementAsk, StatementItem, ChangeApproval,
 } from '~/types/domain'
@@ -2049,6 +2049,23 @@ export async function askReplica(id: string, input: {
   assetId: string; name: string; replicaAddress?: string; primaryAddress?: string; reason: string
 }): Promise<DatabaseReplica> {
   return post<DatabaseReplica>(`${dbPath(id)}/replicas`, input)
+}
+
+/** The database's read endpoint, if any, and the target groups it could be. */
+export async function readEndpoint(id: string): Promise<ReadEndpointView> {
+  return get(`${dbPath(id)}/read-endpoint`)
+}
+
+/** Makes a target group the read endpoint; Argus puts the members in at once. */
+export async function setReadEndpoint(id: string, input: {
+  accountId: string; region: string; targetGroup: string; includePrimary: boolean
+}): Promise<ReadEndpoint> {
+  return send<ReadEndpoint>('PUT', `${dbPath(id)}/read-endpoint`, input)
+}
+
+/** Takes out what Argus put in and stops keeping the target group. */
+export async function removeReadEndpoint(id: string): Promise<void> {
+  await send('DELETE', `${dbPath(id)}/read-endpoint`)
 }
 
 export async function backupSchedule(id: string): Promise<BackupSchedule> {
