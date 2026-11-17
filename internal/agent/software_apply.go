@@ -51,6 +51,9 @@ func (a *PackageApplier) applySoftware(ctx context.Context) PackageRunStatus {
 	a.update(func(s *PackageRunStatus) {
 		s.Step, s.Message = "simulate", "checking the server still answers what was approved"
 	})
+	if pm, ok := m.(pkgManager); ok {
+		a.answerGrubForApt(ctx, pm)
+	}
 	pv, targets, err := previewSoftware(ctx, a.Run, m, action, a.Plan.Items, a.Plan.Purge)
 	if err != nil {
 		return a.fail(err.Error())

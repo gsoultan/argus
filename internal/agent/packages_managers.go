@@ -404,7 +404,11 @@ func (aptManager) repair(ctx context.Context, run cmdRunner, log io.Writer) erro
 	// Three steps, each for what the one before cannot fix: configure what
 	// was unpacked, let apt finish what it planned, and reinstall a package
 	// dpkg was cut off in the middle of unpacking, which configure cannot
-	// touch ("in a mess ... must be reinstalled").
+	// touch ("in a mess ... must be reinstalled"). A grub-pc whose disk on
+	// record is gone fails every one of them, so it is answered first.
+	if err := answerGrub(ctx, run, os.TempDir(), log); err != nil {
+		fmt.Fprintf(log, "argus: %v\n", err)
+	}
 	if _, err := run(ctx, log, aptEnv, "dpkg", "--force-confdef", "--force-confold", "--configure", "-a"); err != nil {
 		return err
 	}

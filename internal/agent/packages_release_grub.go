@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,19 +30,32 @@ var (
 
 const grubDevicesQuestion = "grub-pc/install_devices"
 
-// grubNeedsNoAnswer names why the question cannot come up, or "" when it can.
-func (a *PackageApplier) grubNeedsNoAnswer(ctx context.Context) string {
+// grubNeedsNoAnswer names why the question cannot come up, or "" when it
+// can, on a system known to have dpkg.
+func grubNeedsNoAnswer(ctx context.Context, run cmdRunner) string {
 	if _, err := os.Stat(efiFirmwareDir); err == nil {
 		return "the server boots with UEFI"
 	}
-	if _, err := a.Look("dpkg-query"); err != nil {
-		return "not a dpkg system"
-	}
-	b, code, err := output(ctx, a.Run, nil, "dpkg-query", "-W", "-f=${Status}", "grub-pc")
-	if err != nil || code != 0 || !strings.Contains(string(b), "install ok installed") {
+	b, code, err := output(ctx, run, nil, "dpkg-query", "-W", "-f=${Status}", "grub-pc")
+	if err != nil || code != 0 || !grubPresent(string(b)) {
 		return "grub-pc is not installed"
 	}
 	return ""
+}
+
+// grubPresent reads grub-pc's dpkg status: installed, or left half way
+// (half-configured, unpacked, waiting on triggers), which is just when it
+// needs its answer to finish.
+func grubPresent(status string) bool {
+	f := strings.Fields(status)
+	if len(f) != 3 {
+		return false
+	}
+	switch f[2] {
+	case "installed", "half-configured", "unpacked", "half-installed", "triggers-awaited", "triggers-pending":
+		return true
+	}
+	return false
 }
 
 // parseGrubDevices reads grub-pc/install_devices from `debconf-show grub-pc`:
@@ -69,10 +83,12 @@ func parseGrubDevices(b []byte) []string {
 // under / when /boot is not a mount of its own, followed down through
 // partitions, LVM and the like. "" with a reason when it cannot be told, as
 // for a RAID set spread over several disks.
-func (a *PackageApplier) bootDisk(ctx context.Context) (string, string) {
+func (a *PackageApplier) bootDisk(ctx context.Context) (string, string) { return bootDisk(ctx, a.Run) }
+
+func bootDisk(ctx context.Context, run cmdRunner) (string, string) {
 	var src string
 	for _, mnt := range []string{"/boot", "/"} {
-		b, code, err := output(ctx, a.Run, nil, "findmnt", "-n", "-o", "SOURCE", mnt)
+		b, code, err := output(ctx, run, nil, "findmnt", "-n", "-o", "SOURCE", mnt)
 		if err == nil && code == 0 {
 			if src = strings.TrimSpace(string(b)); src != "" {
 				break
@@ -84,7 +100,7 @@ func (a *PackageApplier) bootDisk(ctx context.Context) (string, string) {
 	}
 	dev := src
 	for range 6 {
-		b, code, err := output(ctx, a.Run, nil, "lsblk", "-n", "-o", "PKNAME", dev)
+		b, code, err := output(ctx, run, nil, "lsblk", "-n", "-o", "PKNAME", dev)
 		if err != nil || code != 0 {
 			return "", "lsblk could not say what " + dev + " is on"
 		}
@@ -111,10 +127,24 @@ func (a *PackageApplier) bootDisk(ctx context.Context) (string, string) {
 // disk when not. An error means nothing was changed and the upgrade must not
 // start.
 func (a *PackageApplier) answerGrub(ctx context.Context) error {
-	if why := a.grubNeedsNoAnswer(ctx); why != "" {
+	if _, err := a.Look("dpkg-query"); err != nil {
 		return nil
 	}
-	b, _, err := output(ctx, a.Run, nil, "debconf-show", "grub-pc")
+	return answerGrub(ctx, a.Run, filepath.Join(a.Plan.StateDir, packagesDir), a.lw)
+}
+
+// answerGrub is the same for any apt run, on a system known to have dpkg:
+// the answer is kept in dir while debconf reads it. grub-pc asks again
+// whenever a new grub-pc is configured, not only in a release upgrade, so
+// an ordinary update or a repair after one needs the same answer.
+func answerGrub(ctx context.Context, run cmdRunner, dir string, w io.Writer) error {
+	if w == nil {
+		w = io.Discard
+	}
+	if why := grubNeedsNoAnswer(ctx, run); why != "" {
+		return nil
+	}
+	b, _, err := output(ctx, run, nil, "debconf-show", "grub-pc")
 	if err != nil {
 		return err
 	}
@@ -125,21 +155,25 @@ func (a *PackageApplier) answerGrub(ctx context.Context) error {
 		}
 	}
 	if len(have) > 0 {
-		fmt.Fprintf(a.lw, "argus: GRUB installs to %s\n", strings.Join(have, ", "))
+		fmt.Fprintf(w, "argus: GRUB installs to %s\n", strings.Join(have, ", "))
 		return nil
 	}
-	disk, why := a.bootDisk(ctx)
+	disk, why := bootDisk(ctx, run)
 	if disk == "" {
 		return fmt.Errorf("GRUB does not know which disk to install the boot loader on, and Argus could not tell "+
-			"(%s), so the upgrade would stop part way; nothing was changed. Run `sudo dpkg-reconfigure grub-pc` "+
-			"on the server, tick the disk it boots from, and ask again", why)
+			"(%s), so nothing was changed. Run `sudo dpkg-reconfigure grub-pc` on the server (or `sudo "+
+			"DEBIAN_FRONTEND=dialog dpkg --configure grub-pc` while it is half configured), tick the disk it boots "+
+			"from, and ask again", why)
 	}
-	sel := filepath.Join(a.Plan.StateDir, packagesDir, "grub-pc.debconf")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("cannot write GRUB's answer; nothing was changed: %w", err)
+	}
+	sel := filepath.Join(dir, "grub-pc.debconf")
 	if err := writeFileAtomic(sel, []byte("grub-pc "+grubDevicesQuestion+" multiselect "+disk+"\n"), 0o600); err != nil {
 		return fmt.Errorf("cannot write GRUB's answer; nothing was changed: %w", err)
 	}
 	defer os.Remove(sel)
-	out, code, err := output(ctx, a.Run, nil, "debconf-set-selections", sel)
+	out, code, err := output(ctx, run, nil, "debconf-set-selections", sel)
 	if err != nil {
 		return err
 	}
@@ -147,6 +181,6 @@ func (a *PackageApplier) answerGrub(ctx context.Context) error {
 		return fmt.Errorf("could not tell GRUB to install to %s (debconf-set-selections exit %d), so nothing was "+
 			"changed: %s", disk, code, tail(out, 300))
 	}
-	fmt.Fprintf(a.lw, "argus: GRUB had no disk on record that is still there; it installs to %s, the disk the server boots from\n", disk)
+	fmt.Fprintf(w, "argus: GRUB had no disk on record that is still there; it installs to %s, the disk the server boots from\n", disk)
 	return nil
 }

@@ -1,0 +1,177 @@
+package agent
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+)
+
+// grubDisk scripts a BIOS server whose grub-pc a release upgrade left half
+// configured, with a disk on record that is gone (a Nutanix by-id name), and
+// / on sda2. Everything else goes to next. It records the order of calls and
+// what GRUB was told.
+type grubDisk struct {
+	mu       sync.Mutex
+	status   string
+	calls    []string
+	answered string
+	next     cmdRunner
+}
+
+func newGrubDisk(t *testing.T, next cmdRunner) *grubDisk {
+	t.Helper()
+	oldEFI, oldExists := efiFirmwareDir, deviceExists
+	efiFirmwareDir = filepath.Join(t.TempDir(), "no-efi")
+	deviceExists = func(string) bool { return false }
+	t.Cleanup(func() { efiFirmwareDir, deviceExists = oldEFI, oldExists })
+	return &grubDisk{status: "install ok half-configured", next: next}
+}
+
+func (g *grubDisk) run(ctx context.Context, out io.Writer, env []string, name string, args ...string) (int, error) {
+	if out == nil {
+		out = io.Discard
+	}
+	cmd := strings.TrimSpace(name + " " + strings.Join(args, " "))
+	g.mu.Lock()
+	g.calls = append(g.calls, cmd)
+	g.mu.Unlock()
+	switch {
+	case cmd == "dpkg-query -W -f=${Status} grub-pc":
+		fmt.Fprint(out, g.status)
+		return 0, nil
+	case cmd == "debconf-show grub-pc":
+		fmt.Fprintln(out, "* grub-pc/install_devices: /dev/disk/by-id/scsi-1NUTANIX_NFS_1_0_216831_gone")
+		return 0, nil
+	case cmd == "findmnt -n -o SOURCE /boot":
+		return 1, nil
+	case cmd == "findmnt -n -o SOURCE /":
+		fmt.Fprintln(out, "/dev/sda2")
+		return 0, nil
+	case cmd == "lsblk -n -o PKNAME /dev/sda2":
+		fmt.Fprintln(out, "sda")
+		return 0, nil
+	case cmd == "lsblk -n -o PKNAME /dev/sda":
+		fmt.Fprintln(out)
+		return 0, nil
+	case name == "debconf-set-selections":
+		b, _ := os.ReadFile(args[0])
+		g.mu.Lock()
+		g.answered = string(b)
+		g.mu.Unlock()
+		return 0, nil
+	}
+	if g.next == nil {
+		return 0, nil
+	}
+	return g.next(ctx, out, env, name, args...)
+}
+
+// at is where the first call holding prefix was made, -1 when none was.
+func (g *grubDisk) at(prefix string) int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for i, c := range g.calls {
+		if strings.Contains(c, prefix) {
+			return i
+		}
+	}
+	return -1
+}
+
+const sdaAnswer = "grub-pc grub-pc/install_devices multiselect /dev/sda\n"
+
+// An ordinary update after a release upgrade, as on the server that hit
+// "scsi-1NUTANIX_… does not exist, so cannot grub-install to it!": GRUB is
+// told the boot disk before apt configures anything.
+func TestApplyAllAnswersGrubsDiskFirst(t *testing.T) {
+	f := newFakeApt()
+	a, _ := applier(t, f, PackageRunRequest{ID: "run-grub-0001", Mode: PackagesAll})
+	g := newGrubDisk(t, f.run)
+	a.Run = g.run
+	st := a.Apply(context.Background())
+	if st.State != RunDone {
+		t.Fatalf("state = %s (%s)", st.State, st.Message)
+	}
+	if g.answered != sdaAnswer {
+		t.Errorf("GRUB was told %q", g.answered)
+	}
+	set, install := g.at("debconf-set-selections"), g.at("install --only-upgrade")
+	if set < 0 || install < 0 || set > install {
+		t.Errorf("GRUB answered at %d, install at %d: %v", set, install, g.calls)
+	}
+}
+
+// A GRUB whose disk cannot be told does not stop an update that may not
+// touch it; the run goes on and the log says why.
+func TestApplyAllGoesOnWhenGrubsDiskCannotBeTold(t *testing.T) {
+	f := newFakeApt()
+	a, _ := applier(t, f, PackageRunRequest{ID: "run-grub-0002", Mode: PackagesAll})
+	g := newGrubDisk(t, f.run)
+	a.Run = func(ctx context.Context, out io.Writer, env []string, name string, args ...string) (int, error) {
+		if name == "findmnt" {
+			return 1, nil
+		}
+		return g.run(ctx, out, env, name, args...)
+	}
+	st := a.Apply(context.Background())
+	if st.State != RunDone || g.answered != "" {
+		t.Fatalf("state = %s (%s), answered %q", st.State, st.Message, g.answered)
+	}
+}
+
+// A server without grub-pc, or one booted by UEFI, is not asked about.
+func TestApplyAllLeavesGrubAloneWithoutGrubPC(t *testing.T) {
+	f := newFakeApt()
+	a, _ := applier(t, f, PackageRunRequest{ID: "run-grub-0003", Mode: PackagesAll})
+	g := newGrubDisk(t, f.run)
+	g.status = "unknown ok not-installed"
+	a.Run = g.run
+	if st := a.Apply(context.Background()); st.State != RunDone {
+		t.Fatalf("state = %s (%s)", st.State, st.Message)
+	}
+	if g.at("debconf-show") >= 0 || g.answered != "" {
+		t.Errorf("asked GRUB on a server without grub-pc: %v", g.calls)
+	}
+}
+
+// The repair after an interrupted run answers GRUB before dpkg configures
+// it, or `dpkg --configure -a` fails on grub-pc every time.
+func TestAptRepairAnswersGrubFirst(t *testing.T) {
+	g := newGrubDisk(t, nil)
+	var log bytes.Buffer
+	if err := (aptManager{}).repair(context.Background(), g.run, &log); err != nil {
+		t.Fatal(err)
+	}
+	if g.answered != sdaAnswer {
+		t.Errorf("GRUB was told %q", g.answered)
+	}
+	set, conf := g.at("debconf-set-selections"), g.at("dpkg --force-confdef --force-confold --configure -a")
+	if set < 0 || conf < 0 || set > conf {
+		t.Errorf("GRUB answered at %d, configure at %d: %v", set, conf, g.calls)
+	}
+	if !strings.Contains(log.String(), "installs to /dev/sda") {
+		t.Errorf("log = %q", log.String())
+	}
+}
+
+func TestGrubPresent(t *testing.T) {
+	for status, want := range map[string]bool{
+		"install ok installed":        true,
+		"install ok half-configured":  true,
+		"install ok unpacked":         true,
+		"install ok triggers-pending": true,
+		"deinstall ok config-files":   false,
+		"unknown ok not-installed":    false,
+		"":                            false,
+	} {
+		if got := grubPresent(status); got != want {
+			t.Errorf("grubPresent(%q) = %v, want %v", status, got, want)
+		}
+	}
+}
