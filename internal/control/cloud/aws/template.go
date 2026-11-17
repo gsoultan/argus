@@ -30,7 +30,9 @@ var ReadPolicy = []string{
 // ManagePolicy is what the manage role may do: the changes Argus makes to
 // instances, disks, snapshots, images, Elastic IPs, security groups and
 // load balancer targets, target groups and load balancers (made, never
-// deleted), Auto Scaling group sizes, capacity reservations, buying Reserved
+// deleted), Auto Scaling group sizes, launch templates and Auto Scaling
+// groups for scale groups (made, never deleted) and their target-tracking
+// policy, capacity reservations, buying Reserved
 // Instances and Savings Plans (which Argus only does with a second person's
 // approval, every time), and nothing else. No
 // IAM, so a change cannot grant itself more; no iam:PassRole, so an
@@ -59,6 +61,8 @@ var ManagePolicy = []string{
 	"elasticloadbalancing:CreateTargetGroup", "elasticloadbalancing:ModifyTargetGroup",
 	"elasticloadbalancing:CreateLoadBalancer", "elasticloadbalancing:CreateListener", "elasticloadbalancing:AddTags",
 	"autoscaling:UpdateAutoScalingGroup",
+	"ec2:CreateLaunchTemplate", "autoscaling:CreateAutoScalingGroup", "autoscaling:CreateOrUpdateTags",
+	"autoscaling:PutScalingPolicy",
 }
 
 // ReadRoleName and ManageRoleName are the roles the template makes.
@@ -145,7 +149,22 @@ func roleYAML(logical, name, policy, principal, externalID string, actions []str
               - Effect: Allow
                 Resource: "*"
                 Action:
-%s`, logical, name, trustYAML(principal, externalID), policy, acts.String())
+%s%s`, logical, name, trustYAML(principal, externalID), policy, acts.String(), extraStatements[policy])
+}
+
+// extraStatements are statements beside a role's one list of actions. The
+// manage role may make Auto Scaling's own service-linked role, which AWS
+// makes the first time an account has an Auto Scaling group, and no other
+// role: AWS defines that role's rights, so this grants nothing else.
+var extraStatements = map[string]string{
+	"argus-manage": `              - Effect: Allow
+                Action:
+                  - iam:CreateServiceLinkedRole
+                Resource: "arn:aws:iam::*:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling*"
+                Condition:
+                  StringLike:
+                    iam:AWSServiceName: autoscaling.amazonaws.com
+`,
 }
 
 // DeployCommand is a command that makes the role from AWS CloudShell or any

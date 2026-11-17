@@ -40,9 +40,9 @@ const DRAFT = {
   rules: RULES, limits: { min: 2, max: 4, costCap: 300, addWait: 10, removeWait: 30 },
 }
 
-const member = (host: string, id: string, zone: string, joined: number, state = 'member') => ({
-  instanceId: id, hostname: host, zone: `ap-southeast-3${zone}`, subnet: `subnet-${zone}`, state, addedBy: 'argus-scale',
-  joinedAt: ago(joined), registeredAt: ago(joined - 2), drainUntil: null, leftAt: null,
+const member = (host: string, id: string, zone: string, joined: number, state = 'member', inAws = false) => ({
+  instanceId: id, hostname: host, zone: `ap-southeast-3${zone}`, subnet: `subnet-${zone}`, state, addedBy: inAws ? 'aws' : 'argus-scale',
+  joinedAt: ago(joined), registeredAt: ago(joined - 2), drainUntil: null, leftAt: null, inAws,
 })
 
 const series = (base: number, wobble: number, from = 480) =>
@@ -55,21 +55,25 @@ const GROUP = {
   limits: { min: 2, max: 4, costCap: 450, addWait: 10, removeWait: 30 }, rules: RULES, mode: 'auto', autoBy: 'dev@northwind.id', autoAt: ago(14 * 1440),
   state: 'active', pausedReason: '', note: 'Normal: no rule met across 3 servers', failedStarts: 0, lastAddAt: ago(260), lastRemoveAt: null,
   checkedAt: ago(1), createdBy: 'dev@northwind.id', createdAt: ago(20 * 1440),
-  members: [member('pay-api-01', 'i-01', 'a', 20 * 1440), member('pay-api-02', 'i-02', 'b', 20 * 1440), member('pay-api-03', 'i-03', 'a', 260)],
+  members: [member('pay-api-01', 'i-01', 'a', 20 * 1440), member('pay-api-i-0a4c71e2', 'i-0a4c71e2', 'b', 20 * 1440, 'member', true), member('pay-api-03', 'i-03', 'a', 260)],
   now: 41, monthly: 210.24, each: 70.08, open: null,
+  awsTrack: {}, awsGroup: 'argus-pay-api', awsTemplate: 'lt-0b7d2e94c1a35f608', awsNote: '',
+  aws: { words: 'AWS keeps 1 copy besides pay-api-01', min: 1, max: 1, desired: 1 },
   last: { at: ago(260), kind: 'added', actor: 'argus-scale', detail: 'Launched pay-api-03 (i-03); automatic, turned on by dev@northwind.id', changeId: 'c1' },
-  health: { 'i-01': 'healthy', 'i-02': 'healthy', 'i-03': 'healthy' },
-  usage: { 'pay-api-01': { cpu: 46, mem: 58 }, 'pay-api-02': { cpu: 41, mem: 55 }, 'pay-api-03': { cpu: 38, mem: 40 } },
+  health: { 'i-01': 'healthy', 'i-0a4c71e2': 'healthy', 'i-03': 'healthy' },
+  usage: { 'pay-api-01': { cpu: 46, mem: 58 }, 'pay-api-i-0a4c71e2': { cpu: 41, mem: 55 }, 'pay-api-03': { cpu: 38, mem: 40 } },
 }
 
 const DETAIL = {
   ...GROUP,
-  series: { 'pay-api-01': series(45, 10), 'pay-api-02': series(40, 12), 'pay-api-03': series(30, 8, 255) },
+  series: { 'pay-api-01': series(45, 10), 'pay-api-i-0a4c71e2': series(40, 12), 'pay-api-03': series(30, 8, 255) },
   activity: [
     { at: ago(258), kind: 'healthy', actor: 'argus', detail: 'pay-api-03 is healthy in pay-api-tg after 2 min 40 s', changeId: '' },
     { at: ago(260), kind: 'added', actor: 'argus-scale', detail: 'Launched pay-api-03 (i-03); automatic, turned on by dev@northwind.id', changeId: 'c1' },
     { at: ago(270), kind: 'rule', actor: 'argus', detail: 'Rule met: group average processor above 75% for 10 min (81%): pay-api-01 88%, pay-api-02 84%', changeId: 'c1' },
     { at: ago(14 * 1440), kind: 'changed', actor: 'dev@northwind.id', detail: 'Argus adds and takes away by itself within the limits; approved by rina@northwind.id', changeId: 'c0' },
+    { at: ago(19 * 1440), kind: 'added', actor: 'aws', detail: 'AWS started pay-api-i-0a4c71e2 in argus-pay-api to keep the minimum; it serves once its health check passes', changeId: '' },
+    { at: ago(20 * 1440 - 5), kind: 'aws', actor: 'argus', detail: 'Made Auto Scaling group argus-pay-api from launch template lt-0b7d2e94c1a35f608: AWS keeps 1 copy besides pay-api-01 even when Argus is down', changeId: '' },
   ],
 }
 
@@ -147,6 +151,7 @@ test('make a scale group from a server, step by step', async ({ page }) => {
   await page.getByRole('button', { name: /Ask each time/ }).click()
   await page.getByRole('button', { name: 'Next: review' }).click()
   await expect(page.getByText('Keep 2 to 6 servers like it (m6i.large) in web-tg, behind web-lb, across 2 zones.')).toBeVisible()
+  await expect(page.getByText(/Make an AWS Auto Scaling group, argus-web, once the image is ready, that keeps 1 copy besides web-01 even when Argus is down/)).toBeVisible()
   await page.getByRole('textbox', { name: 'Reason' }).fill('web is busy every afternoon')
   await page.getByRole('button', { name: 'Ask for approval' }).click()
   await expect.poll(() => got.body).toMatchObject({ accountId: 'ca1', region: 'ap-southeast-3', action: 'scale-group-create', reason: 'web is busy every afternoon',
@@ -165,7 +170,10 @@ test("a group's page: chart, members, activity, and changing its rules", async (
   await expect(page.getByRole('img', { name: /Processor across the group/ })).toBeVisible()
   await expect(page.getByText('Launched pay-api-03 (i-03); automatic, turned on by dev@northwind.id')).toBeVisible()
   await expect(page.getByRole('cell', { name: /pay-api-03/ })).toBeVisible()
-  if (SHOTS) await page.screenshot({ path: `${SHOTS}/22-scale-group.png` })
+  await expect(page.getByRole('cell', { name: /pay-api-i-0a4c71e2/ })).toContainText('AWS')
+  await expect(page.getByTestId('scale-aws')).toContainText('pay-api never falls below 2: AWS keeps 1 copy besides pay-api-01, replacing a failed one by itself. Growing above 2 waits for Argus.')
+  await expect(page.getByTestId('scale-aws')).toContainText('argus-pay-api · wants 1 (1 to 1)')
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/22-scale-group.png`, fullPage: true })
   await page.getByRole('button', { name: 'Change rules' }).click()
   const dialog = page.getByRole('dialog', { name: 'Change pay-api' })
   await dialog.getByRole('textbox', { name: 'Most' }).fill('5')
@@ -189,4 +197,42 @@ test("Argus's question in Approvals, on a phone", async ({ page }) => {
   await expect(card.getByRole('img', { name: /Processor across the group/ })).toBeVisible()
   await expect(card.getByRole('button', { name: 'Approve' })).toBeVisible()
   if (SHOTS) await card.screenshot({ path: `${SHOTS}/23-approve-scale-phone.png` })
+})
+
+test('AWS decides: the wizard keeps the maximum under the cost cap, and the group page says what AWS keeps', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  const got = await asks(page)
+  await signIn(page)
+  await page.goto('/cloud/scale/new?account=ca1&region=ap-southeast-3&from=i-0web01')
+  await page.getByRole('button', { name: 'Next: load balancer' }).click()
+  await page.getByRole('button', { name: 'Next: size' }).click()
+  await page.getByRole('textbox', { name: 'Most servers' }).fill('6')
+  await page.getByRole('button', { name: 'Next: when and limits' }).click()
+  await page.getByRole('button', { name: /AWS decides/ }).click()
+  await expect(page.getByText('Add a server when')).toBeHidden()
+  // $70.08 each: 6 is over a $300 cap, which AWS would not know.
+  await expect(page.getByText('AWS does not know the cost cap, so the maximum keeps under it: 4 servers at most.').first()).toBeVisible()
+  await page.getByRole('textbox', { name: 'Cost cap' }).fill('450')
+  await page.getByRole('textbox', { name: 'Near' }).fill('55')
+  await expect(page.getByText('Nothing changes: AWS Auto Scaling keeps adding and taking away servers by itself.')).toBeVisible()
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/24-aws-decides.png` })
+  await page.getByRole('button', { name: 'Next: review' }).click()
+  await expect(page.getByText(/that adds and takes away copies between 1 and 5, keeping the group's processor near 55%/)).toBeVisible()
+  await page.getByRole('button', { name: 'Ask for approval' }).click()
+  await expect.poll(() => got.body).toMatchObject({ action: 'scale-group-create', spec: { mode: 'aws', track: { metric: 'cpu', target: 55 },
+    limits: { min: 2, max: 6, costCap: 450 } } })
+
+  // A group AWS decides for: no adding by hand, and what AWS keeps.
+  await page.route('**/api/v1/cloud/scale-groups/sg1', (r) => r.fulfill({ json: { ...DETAIL, mode: 'aws', awsTrack: { metric: 'cpu', target: 55 },
+    aws: { words: "AWS decides, keeping the group's processor near 55%", min: 1, max: 3, desired: 2 } } }))
+  await page.goto('/cloud/scale/sg1')
+  await expect(page.getByRole('heading', { name: 'pay-api' })).toBeVisible()
+  await expect(page.getByText('AWS decides', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Add a server now' })).toBeDisabled()
+  await expect(page.getByTestId('scale-aws')).toContainText('Nothing changes: AWS Auto Scaling keeps adding and taking away servers by itself.')
+  await expect(page.getByTestId('scale-aws')).toContainText('wants 2 (1 to 3)')
+  await page.getByRole('button', { name: 'Change', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Change pay-api' })
+  await dialog.getByText('Ask each time', { exact: true }).click()
+  await expect(dialog.getByText('Argus decides again; AWS ends the servers it added above the minimum.')).toBeVisible()
 })

@@ -10,7 +10,8 @@ import { RuleList } from '~/components/cloud/ScaleRules'
 import { PageBody, PageHeader } from '~/components/page'
 import { money, needsApproval, useAskCloudChange } from '~/lib/cloud'
 import {
-  limitsProblem, ruleProblem, ruleWords, scaleDraftQuery, type ScaleLimits, type ScaleMode, type ScaleRules,
+  DEFAULT_TRACK, limitsProblem, ruleProblem, ruleWords, scaleDraftQuery, trackProblem, trackWords, type AWSTrack, type ScaleLimits,
+  type ScaleMode, type ScaleRules,
 } from '~/lib/cloudScale'
 import { guard } from '~/lib/guard'
 import { notifyError, notifyOk } from '~/lib/notify'
@@ -51,6 +52,7 @@ function NewScaleGroup() {
   const [limits, setLimits] = useState<ScaleLimits>({ min: 2, max: 4, costCap: 0, addWait: 10, removeWait: 30 })
   const [rules, setRules] = useState<ScaleRules>({ add: [], remove: [] })
   const [mode, setMode] = useState<ScaleMode>('ask')
+  const [track, setTrack] = useState<AWSTrack>(DEFAULT_TRACK)
   const [reason, setReason] = useState('')
   useEffect(() => {
     if (!d) return
@@ -65,12 +67,14 @@ function NewScaleGroup() {
   const src = d?.from.resource
   const tg = d?.targetGroups?.find((t) => t.value === targetGroup)
   const zones = new Set((d?.subnets ?? []).filter((s) => subnets.includes(s.value)).map((s) => s.zone))
-  const rulesBad = [...rules.add, ...rules.remove].map(ruleProblem).find(Boolean) || (rules.add.length ? '' : 'Give at least one rule for adding a server.')
+  const rulesBad = mode === 'aws'
+    ? trackProblem(track)
+    : [...rules.add, ...rules.remove].map(ruleProblem).find(Boolean) || (rules.add.length ? '' : 'Give at least one rule for adding a server.')
   const problems = [
     !NAME.test(name) ? 'Name the group with lowercase letters, digits and dashes; its servers are named after it.' : '',
     !targetGroup ? 'Pick the target group traffic comes in through.' : '',
     subnets.length === 0 ? 'Pick at least one subnet.' : '',
-    limitsProblem(limits, mode),
+    limitsProblem(limits, mode, d?.each),
     rulesBad,
   ]
   const stepProblem = [problems[0], problems[1], problems[2] || problems[3], problems[4] || problems[3], problems.find(Boolean) ?? ''][step] ?? ''
@@ -82,7 +86,10 @@ function NewScaleGroup() {
     try {
       const out = await ask.mutateAsync({
         accountId: account, region, action: 'scale-group-create', reason,
-        spec: { name, from: src.id, image: image === 'new' ? '' : image, reboot, targetGroup, subnets, limits, rules, mode },
+        spec: {
+          name, from: src.id, image: image === 'new' ? '' : image, reboot, targetGroup, subnets, limits, rules, mode,
+          ...(mode === 'aws' ? { track } : {}),
+        },
       })
       if (out.state === 'failed') {
         notifyError('AWS refused it', new Error(out.error || 'No reason was given.'))
@@ -173,13 +180,32 @@ function NewScaleGroup() {
                     </Group>
                     <MultiSelect label="Subnets" description="One in each zone spreads the servers, so a zone going down takes only some"
                       data={(d?.subnets ?? []).map((s) => ({ value: s.value, label: `${s.label || s.value} · ${s.zone}` }))} value={subnets} onChange={setSubnets} />
-                    {limitsProblem(limits, mode) && step === 2 && <Text size={FS.meta} c="rose">{limitsProblem(limits, mode)}</Text>}
+                    {problems[3] && step === 2 && <Text size={FS.meta} c="rose">{problems[3]}</Text>}
                   </Stack>
                 )}
                 {step === 3 && (
                   <Stack gap="md">
-                    <RuleList title="Add a server when" join="or" rules={rules.add} onChange={(add) => setRules({ ...rules, add })} fresh={{ signal: 'cpu', over: 'average', op: 'above', value: 75, minutes: 10 }} />
-                    <RuleList title="Take one away when" join="and" rules={rules.remove} onChange={(remove) => setRules({ ...rules, remove })} fresh={{ signal: 'cpu', over: 'average', op: 'below', value: 25, minutes: 30 }} />
+                    {mode === 'aws' ? (
+                      <Box>
+                        <Text fw={600} size={FS.body} mb={SP.cozy}>AWS keeps</Text>
+                        <Group align="flex-end" gap="sm">
+                          <Select label="Measure" w={260} allowDeselect={false} value={track.metric}
+                            data={[{ value: 'cpu', label: "The group's average processor" }, { value: 'requests', label: 'Requests per server a minute' }]}
+                            onChange={(v) => setTrack(v === 'requests' ? { metric: 'requests', target: 1000 } : { metric: 'cpu', target: 60 })} />
+                          <NumberInput label="Near" w={140} suffix={track.metric === 'cpu' ? ' %' : ''} min={1} value={track.target}
+                            onChange={(v) => setTrack({ ...track, target: Number(v) || 0 })} />
+                        </Group>
+                        <Text size={FS.micro} c="dimmed" mt={SP.snug}>
+                          On CloudWatch's free 5-minute metrics, so AWS does not see memory, swap or load. Argus's own rules wait until Argus decides again.
+                          {track.metric === 'requests' ? ' Requests need an application load balancer in front of the target group.' : ''}
+                        </Text>
+                      </Box>
+                    ) : (
+                      <>
+                        <RuleList title="Add a server when" join="or" rules={rules.add} onChange={(add) => setRules({ ...rules, add })} fresh={{ signal: 'cpu', over: 'average', op: 'above', value: 75, minutes: 10 }} />
+                        <RuleList title="Take one away when" join="and" rules={rules.remove} onChange={(remove) => setRules({ ...rules, remove })} fresh={{ signal: 'cpu', over: 'average', op: 'below', value: 25, minutes: 30 }} />
+                      </>
+                    )}
                     <SimpleGrid cols={{ base: 1, sm: 3 }}>
                       <NumberInput label="Cost cap" description="A month; never more, whatever the metrics say" prefix="$" min={0} value={limits.costCap}
                         onChange={(v) => setLimits({ ...limits, costCap: Number(v) || 0 })} />
@@ -188,14 +214,17 @@ function NewScaleGroup() {
                     </SimpleGrid>
                     <Box>
                       <Text fw={600} size={FS.body} mb={SP.cozy}>Who decides</Text>
-                      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+                      <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="sm">
                         <ModeCard on={mode === 'ask'} onPick={() => setMode('ask')} title="Ask each time" tag="Recommended"
                           text="Each add or take-away goes to Approvals with the chart. Unanswered in 30 minutes, it lapses." />
                         <ModeCard on={mode === 'auto'} onPick={() => setMode('auto')} title="Automatic within limits"
                           text={`Argus acts between ${limits.min} and ${limits.max} servers${limits.costCap ? ` and under ${money(limits.costCap)} a month` : ''}, at most 3 adds a day before it asks.${waits ? ' Turning this on here needs an approval.' : ''}`} />
+                        <ModeCard on={mode === 'aws'} onPick={() => setMode('aws')} title="AWS decides"
+                          text={`AWS Auto Scaling on CloudWatch, keeping ${trackWords(track)}. Keeps working if Argus is down; sees no memory.`} />
                       </SimpleGrid>
                     </Box>
                     {rulesBad && <Text size={FS.meta} c="rose">{rulesBad}</Text>}
+                    {mode === 'aws' && problems[3] && <Text size={FS.meta} c="rose">{problems[3]}</Text>}
                   </Stack>
                 )}
                 {step === 4 && src && (
@@ -204,9 +233,12 @@ function NewScaleGroup() {
                     <Stack gap={4} component="ol" style={{ paddingLeft: 18, margin: 0 }}>
                       <Text component="li" size={FS.body}>{image === 'new' ? `Make an image of ${src.name}${reboot ? ', rebooting it' : ', without a reboot'}` : `Launch from image ${image}`}.</Text>
                       <Text component="li" size={FS.body}>Keep {limits.min} to {limits.max} servers like it ({d?.size}) in {tg?.label}{tg?.note ? `, behind ${tg.note}` : ''}, across {zones.size} zone{zones.size === 1 ? '' : 's'}.</Text>
-                      <Text component="li" size={FS.body}>Add one when {rules.add.map(ruleWords).join(', or ')}.</Text>
-                      <Text component="li" size={FS.body}>{rules.remove.length ? `Take the newest away, drained first, when ${rules.remove.map(ruleWords).join(', and ')}.` : 'Never take one away by itself.'}</Text>
-                      <Text component="li" size={FS.body}>{mode === 'ask' ? 'Ask each time, in Approvals.' : 'Act by itself within the limits, naming you as who turned it on.'}</Text>
+                      <Text component="li" size={FS.body}>Make an AWS Auto Scaling group, {floorName(name)}, once the image is ready, that {mode === 'aws'
+                        ? `adds and takes away copies between ${Math.max(limits.min - 1, 0)} and ${Math.max(limits.max - 1, 1)}, keeping ${trackWords(track)}`
+                        : `keeps ${copies(limits.min - 1)} besides ${src.name} even when Argus is down`}. Its servers enroll their agent with the group's key.</Text>
+                      {mode !== 'aws' && <Text component="li" size={FS.body}>Add one when {rules.add.map(ruleWords).join(', or ')}.</Text>}
+                      {mode !== 'aws' && <Text component="li" size={FS.body}>{rules.remove.length ? `Take the newest it launched away, drained first, when ${rules.remove.map(ruleWords).join(', and ')}.` : 'Never take one away by itself.'}</Text>}
+                      <Text component="li" size={FS.body}>{mode === 'ask' ? 'Ask each time, in Approvals.' : mode === 'auto' ? 'Act by itself within the limits, naming you as who turned it on.' : 'Record what AWS did on the group page.'}</Text>
                     </Stack>
                     <Textarea label="Reason" placeholder="Why this group, for whoever approves it and the audit log" autosize minRows={2} value={reason}
                       onChange={(e) => setReason(e.currentTarget.value)} maxLength={500} />
@@ -233,7 +265,9 @@ function NewScaleGroup() {
                 </Card>
               )}
               <Alert color="sky" variant="light" icon={<IconInfoCircle size={16} />} title="If Argus is down">
-                <Text size={FS.meta}>The group stays as it is: the servers keep serving, and nothing is added or taken away until Argus is back.</Text>
+                <Text size={FS.meta}>{mode === 'aws'
+                  ? 'Nothing changes: AWS Auto Scaling keeps adding and taking away servers by itself.'
+                  : `The group never falls below ${limits.min}: AWS Auto Scaling replaces a failed server by itself. Growing above ${limits.min} waits for Argus.`}</Text>
               </Alert>
               <Group justify="space-between">
                 <Button variant="default" disabled={step === 0} onClick={() => setStep(step - 1)}>Back</Button>
@@ -248,6 +282,15 @@ function NewScaleGroup() {
       </PageBody>
     </>
   )
+}
+
+function floorName(group: string): string {
+  return `argus-${group || 'group'}`
+}
+
+function copies(n: number): string {
+  if (n <= 0) return 'no copies'
+  return `${n} cop${n === 1 ? 'y' : 'ies'}`
 }
 
 function StepBar({ step, onStep }: { step: number; onStep: (i: number) => void }) {

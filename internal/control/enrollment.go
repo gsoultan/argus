@@ -175,6 +175,14 @@ func (s *Store) Enroll(ctx context.Context, token, hostname string) (Enrollment,
 // only by an ordinary token: holding that credential is the proof that this
 // is the server, so a token alone never displaces a live agent.
 func (s *Store) EnrollReplacing(ctx context.Context, token, hostname, replaces string) (Enrollment, error) {
+	return s.EnrollChecked(ctx, token, hostname, replaces, false)
+}
+
+// EnrollChecked is EnrollReplacing that also takes a scale group's key,
+// which keyChecked says the caller has checked against AWS (scale_floor.go).
+// A key is never used up: each server AWS starts enrolls with it once, as
+// the one hostname that server has.
+func (s *Store) EnrollChecked(ctx context.Context, token, hostname, replaces string, keyChecked bool) (Enrollment, error) {
 	hostname = strings.TrimSpace(hostname)
 	if hostname == "" {
 		return Enrollment{}, errors.New("hostname is required")
@@ -191,12 +199,13 @@ func (s *Store) EnrollReplacing(ctx context.Context, token, hostname, replaces s
 	var out Enrollment
 	err = tx.QueryRow(ctx, `
 		UPDATE agent_enrollment_tokens
-		   SET used_at = now(), used_by_host = $2
+		   SET used_at = CASE WHEN scale_group_id IS NULL THEN now() END, used_by_host = $2
 		 WHERE token_hash = $1
 		   AND used_at IS NULL
 		   AND expires_at > now()
 		   AND (hostname = '' OR lower(hostname) = lower($2))
-		RETURNING id::text, created_by, control_host`, hashSecret(token), hostname).
+		   AND (scale_group_id IS NULL OR $3)
+		RETURNING id::text, created_by, control_host`, hashSecret(token), hostname, keyChecked).
 		Scan(&out.TokenID, &out.TokenCreatedBy, &out.ControlHost)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Asked on this transaction's own connection. Taking a second one from

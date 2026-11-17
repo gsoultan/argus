@@ -123,6 +123,7 @@ func _assertAgentEnrollmentTokenShape(m m0.AgentEnrollmentToken) {
 		m.UsedAt,
 		m.UsedByHost,
 		m.ControlHost,
+		m.ScaleGroup,
 	}
 }
 
@@ -1010,6 +1011,11 @@ func _assertScaleGroupShape(m m0.ScaleGroup) {
 		m.CheckedAt,
 		m.CreatedBy,
 		m.CreatedAt,
+		m.AwsTrack,
+		m.AwsGroup,
+		m.AwsTemplate,
+		m.AwsNote,
+		m.AwsTriedAt,
 	}
 }
 
@@ -1044,6 +1050,7 @@ func _assertScaleGroupMemberShape(m m0.ScaleGroupMember) {
 		m.RegisteredAt,
 		m.DrainUntil,
 		m.LeftAt,
+		m.InAWS,
 	}
 }
 

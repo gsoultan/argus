@@ -20,15 +20,16 @@ var (
 // Row is what a full read returns: the model struct with relations
 // replaced by their scalar foreign keys and *T rewritten to Null[T].
 type Row struct {
-	ID          [16]byte
-	TokenHash   string
-	Hostname    string
-	CreatedBy   string
-	CreatedAt   time.Time
-	ExpiresAt   time.Time
-	UsedAt      runtime.Null[time.Time]
-	UsedByHost  runtime.Null[string]
-	ControlHost bool
+	ID           [16]byte
+	TokenHash    string
+	Hostname     string
+	CreatedBy    string
+	CreatedAt    time.Time
+	ExpiresAt    time.Time
+	UsedAt       runtime.Null[time.Time]
+	UsedByHost   runtime.Null[string]
+	ControlHost  bool
+	ScaleGroupID runtime.Null[[16]byte]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -67,7 +68,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 9
+const nCols = 10
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -243,6 +244,13 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.bools[q.nbo] = r.ControlHost
 		q.nbo++
+	case 9:
+		if int(q.nr) >= len(q.raws) {
+			q.over = true
+			return
+		}
+		q.raws[q.nr] = r.ScaleGroupID.V
+		q.nr++
 	}
 }
 
@@ -409,15 +417,16 @@ func b2i(b bool) int64 {
 // Typed column handles. The type of the handle is what makes
 // Age.Like(...) fail to compile.
 var (
-	ID          = UUIDCol{0}
-	TokenHash   = TextCol{1}
-	Hostname    = TextCol{2}
-	CreatedBy   = TextCol{3}
-	CreatedAt   = TimeCol{4}
-	ExpiresAt   = TimeCol{5}
-	UsedAt      = NullTimeCol{6}
-	UsedByHost  = NullTextCol{7}
-	ControlHost = BoolCol{8}
+	ID           = UUIDCol{0}
+	TokenHash    = TextCol{1}
+	Hostname     = TextCol{2}
+	CreatedBy    = TextCol{3}
+	CreatedAt    = TimeCol{4}
+	ExpiresAt    = TimeCol{5}
+	UsedAt       = NullTimeCol{6}
+	UsedByHost   = NullTextCol{7}
+	ControlHost  = BoolCol{8}
+	ScaleGroupID = NullUUIDCol{9}
 )
 
 // UUIDCol addresses a uuid column.
@@ -553,6 +562,29 @@ func (h BoolCol) DescNullsLast() Sort {
 
 func (h BoolCol) Eq(v bool) Pred    { return Pred{col: h.c, op: opEq, bol: v} }
 func (h BoolCol) NotEq(v bool) Pred { return Pred{col: h.c, op: opNotEq, bol: v} }
+
+// NullUUIDCol addresses a uuid column.
+type NullUUIDCol struct{ c uint8 }
+
+func (h NullUUIDCol) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
+func (h NullUUIDCol) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
+func (h NullUUIDCol) AscNullsFirst() Sort {
+	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
+}
+func (h NullUUIDCol) DescNullsLast() Sort {
+	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
+}
+
+func (h NullUUIDCol) Eq(v [16]byte) Pred    { return Pred{col: h.c, op: opEq, raw: v} }
+func (h NullUUIDCol) NotEq(v [16]byte) Pred { return Pred{col: h.c, op: opNotEq, raw: v} }
+func (h NullUUIDCol) In(v ...[16]byte) Pred { return Pred{col: h.c, op: opIn, anyRaw: v} }
+
+// NotIn is `<> ALL($1)`. A NULL anywhere in v makes the
+// comparison NULL for every row and the result empty —
+// PostgreSQL's rule for NOT IN, not storm's.
+func (h NullUUIDCol) NotIn(v ...[16]byte) Pred { return Pred{col: h.c, op: opNotIn, anyRaw: v} }
+func (h NullUUIDCol) IsNull() Pred             { return Pred{col: h.c, op: opIsNull} }
+func (h NullUUIDCol) IsNotNull() Pred          { return Pred{col: h.c, op: opIsNotNull} }
 
 // Where applies predicates, ANDed together.
 func (q Query) Where(ps ...Pred) Query {
@@ -730,6 +762,13 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 9:
+			if int(q.nar) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyRaw[q.nar] = p.anyRaw
+			q.nar++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -802,85 +841,98 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.bools[q.nbo] = p.bol
 		q.nbo++
+	case 9:
+		if int(q.nr) >= 4 {
+			q.over = true
+			return
+		}
+		q.raws[q.nr] = p.raw
+		q.nr++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
 
 // Chained predicate sugar. Identical to Where(Col.Op(v)).
-func (q Query) IDEq(v [16]byte) Query             { return q.Where(ID.Eq(v)) }
-func (q Query) IDNotEq(v [16]byte) Query          { return q.Where(ID.NotEq(v)) }
-func (q Query) IDIn(v ...[16]byte) Query          { return q.Where(ID.In(v...)) }
-func (q Query) IDNotIn(v ...[16]byte) Query       { return q.Where(ID.NotIn(v...)) }
-func (q Query) TokenHashEq(v string) Query        { return q.Where(TokenHash.Eq(v)) }
-func (q Query) TokenHashNotEq(v string) Query     { return q.Where(TokenHash.NotEq(v)) }
-func (q Query) TokenHashGt(v string) Query        { return q.Where(TokenHash.Gt(v)) }
-func (q Query) TokenHashGte(v string) Query       { return q.Where(TokenHash.Gte(v)) }
-func (q Query) TokenHashLt(v string) Query        { return q.Where(TokenHash.Lt(v)) }
-func (q Query) TokenHashLte(v string) Query       { return q.Where(TokenHash.Lte(v)) }
-func (q Query) TokenHashEqLower(v string) Query   { return q.Where(TokenHash.EqLower(v)) }
-func (q Query) TokenHashLike(v string) Query      { return q.Where(TokenHash.Like(v)) }
-func (q Query) TokenHashILike(v string) Query     { return q.Where(TokenHash.ILike(v)) }
-func (q Query) TokenHashIn(v ...string) Query     { return q.Where(TokenHash.In(v...)) }
-func (q Query) TokenHashNotIn(v ...string) Query  { return q.Where(TokenHash.NotIn(v...)) }
-func (q Query) HostnameEq(v string) Query         { return q.Where(Hostname.Eq(v)) }
-func (q Query) HostnameNotEq(v string) Query      { return q.Where(Hostname.NotEq(v)) }
-func (q Query) HostnameGt(v string) Query         { return q.Where(Hostname.Gt(v)) }
-func (q Query) HostnameGte(v string) Query        { return q.Where(Hostname.Gte(v)) }
-func (q Query) HostnameLt(v string) Query         { return q.Where(Hostname.Lt(v)) }
-func (q Query) HostnameLte(v string) Query        { return q.Where(Hostname.Lte(v)) }
-func (q Query) HostnameEqLower(v string) Query    { return q.Where(Hostname.EqLower(v)) }
-func (q Query) HostnameLike(v string) Query       { return q.Where(Hostname.Like(v)) }
-func (q Query) HostnameILike(v string) Query      { return q.Where(Hostname.ILike(v)) }
-func (q Query) HostnameIn(v ...string) Query      { return q.Where(Hostname.In(v...)) }
-func (q Query) HostnameNotIn(v ...string) Query   { return q.Where(Hostname.NotIn(v...)) }
-func (q Query) CreatedByEq(v string) Query        { return q.Where(CreatedBy.Eq(v)) }
-func (q Query) CreatedByNotEq(v string) Query     { return q.Where(CreatedBy.NotEq(v)) }
-func (q Query) CreatedByGt(v string) Query        { return q.Where(CreatedBy.Gt(v)) }
-func (q Query) CreatedByGte(v string) Query       { return q.Where(CreatedBy.Gte(v)) }
-func (q Query) CreatedByLt(v string) Query        { return q.Where(CreatedBy.Lt(v)) }
-func (q Query) CreatedByLte(v string) Query       { return q.Where(CreatedBy.Lte(v)) }
-func (q Query) CreatedByEqLower(v string) Query   { return q.Where(CreatedBy.EqLower(v)) }
-func (q Query) CreatedByLike(v string) Query      { return q.Where(CreatedBy.Like(v)) }
-func (q Query) CreatedByILike(v string) Query     { return q.Where(CreatedBy.ILike(v)) }
-func (q Query) CreatedByIn(v ...string) Query     { return q.Where(CreatedBy.In(v...)) }
-func (q Query) CreatedByNotIn(v ...string) Query  { return q.Where(CreatedBy.NotIn(v...)) }
-func (q Query) CreatedAtEq(v time.Time) Query     { return q.Where(CreatedAt.Eq(v)) }
-func (q Query) CreatedAtNotEq(v time.Time) Query  { return q.Where(CreatedAt.NotEq(v)) }
-func (q Query) CreatedAtGt(v time.Time) Query     { return q.Where(CreatedAt.Gt(v)) }
-func (q Query) CreatedAtGte(v time.Time) Query    { return q.Where(CreatedAt.Gte(v)) }
-func (q Query) CreatedAtLt(v time.Time) Query     { return q.Where(CreatedAt.Lt(v)) }
-func (q Query) CreatedAtLte(v time.Time) Query    { return q.Where(CreatedAt.Lte(v)) }
-func (q Query) ExpiresAtEq(v time.Time) Query     { return q.Where(ExpiresAt.Eq(v)) }
-func (q Query) ExpiresAtNotEq(v time.Time) Query  { return q.Where(ExpiresAt.NotEq(v)) }
-func (q Query) ExpiresAtGt(v time.Time) Query     { return q.Where(ExpiresAt.Gt(v)) }
-func (q Query) ExpiresAtGte(v time.Time) Query    { return q.Where(ExpiresAt.Gte(v)) }
-func (q Query) ExpiresAtLt(v time.Time) Query     { return q.Where(ExpiresAt.Lt(v)) }
-func (q Query) ExpiresAtLte(v time.Time) Query    { return q.Where(ExpiresAt.Lte(v)) }
-func (q Query) UsedAtEq(v time.Time) Query        { return q.Where(UsedAt.Eq(v)) }
-func (q Query) UsedAtNotEq(v time.Time) Query     { return q.Where(UsedAt.NotEq(v)) }
-func (q Query) UsedAtGt(v time.Time) Query        { return q.Where(UsedAt.Gt(v)) }
-func (q Query) UsedAtGte(v time.Time) Query       { return q.Where(UsedAt.Gte(v)) }
-func (q Query) UsedAtLt(v time.Time) Query        { return q.Where(UsedAt.Lt(v)) }
-func (q Query) UsedAtLte(v time.Time) Query       { return q.Where(UsedAt.Lte(v)) }
-func (q Query) UsedAtIsNull() Query               { return q.Where(UsedAt.IsNull()) }
-func (q Query) UsedAtIsNotNull() Query            { return q.Where(UsedAt.IsNotNull()) }
-func (q Query) UsedByHostEq(v string) Query       { return q.Where(UsedByHost.Eq(v)) }
-func (q Query) UsedByHostNotEq(v string) Query    { return q.Where(UsedByHost.NotEq(v)) }
-func (q Query) UsedByHostGt(v string) Query       { return q.Where(UsedByHost.Gt(v)) }
-func (q Query) UsedByHostGte(v string) Query      { return q.Where(UsedByHost.Gte(v)) }
-func (q Query) UsedByHostLt(v string) Query       { return q.Where(UsedByHost.Lt(v)) }
-func (q Query) UsedByHostLte(v string) Query      { return q.Where(UsedByHost.Lte(v)) }
-func (q Query) UsedByHostEqLower(v string) Query  { return q.Where(UsedByHost.EqLower(v)) }
-func (q Query) UsedByHostLike(v string) Query     { return q.Where(UsedByHost.Like(v)) }
-func (q Query) UsedByHostILike(v string) Query    { return q.Where(UsedByHost.ILike(v)) }
-func (q Query) UsedByHostIn(v ...string) Query    { return q.Where(UsedByHost.In(v...)) }
-func (q Query) UsedByHostNotIn(v ...string) Query { return q.Where(UsedByHost.NotIn(v...)) }
-func (q Query) UsedByHostIsNull() Query           { return q.Where(UsedByHost.IsNull()) }
-func (q Query) UsedByHostIsNotNull() Query        { return q.Where(UsedByHost.IsNotNull()) }
-func (q Query) ControlHostEq(v bool) Query        { return q.Where(ControlHost.Eq(v)) }
-func (q Query) ControlHostNotEq(v bool) Query     { return q.Where(ControlHost.NotEq(v)) }
+func (q Query) IDEq(v [16]byte) Query                 { return q.Where(ID.Eq(v)) }
+func (q Query) IDNotEq(v [16]byte) Query              { return q.Where(ID.NotEq(v)) }
+func (q Query) IDIn(v ...[16]byte) Query              { return q.Where(ID.In(v...)) }
+func (q Query) IDNotIn(v ...[16]byte) Query           { return q.Where(ID.NotIn(v...)) }
+func (q Query) TokenHashEq(v string) Query            { return q.Where(TokenHash.Eq(v)) }
+func (q Query) TokenHashNotEq(v string) Query         { return q.Where(TokenHash.NotEq(v)) }
+func (q Query) TokenHashGt(v string) Query            { return q.Where(TokenHash.Gt(v)) }
+func (q Query) TokenHashGte(v string) Query           { return q.Where(TokenHash.Gte(v)) }
+func (q Query) TokenHashLt(v string) Query            { return q.Where(TokenHash.Lt(v)) }
+func (q Query) TokenHashLte(v string) Query           { return q.Where(TokenHash.Lte(v)) }
+func (q Query) TokenHashEqLower(v string) Query       { return q.Where(TokenHash.EqLower(v)) }
+func (q Query) TokenHashLike(v string) Query          { return q.Where(TokenHash.Like(v)) }
+func (q Query) TokenHashILike(v string) Query         { return q.Where(TokenHash.ILike(v)) }
+func (q Query) TokenHashIn(v ...string) Query         { return q.Where(TokenHash.In(v...)) }
+func (q Query) TokenHashNotIn(v ...string) Query      { return q.Where(TokenHash.NotIn(v...)) }
+func (q Query) HostnameEq(v string) Query             { return q.Where(Hostname.Eq(v)) }
+func (q Query) HostnameNotEq(v string) Query          { return q.Where(Hostname.NotEq(v)) }
+func (q Query) HostnameGt(v string) Query             { return q.Where(Hostname.Gt(v)) }
+func (q Query) HostnameGte(v string) Query            { return q.Where(Hostname.Gte(v)) }
+func (q Query) HostnameLt(v string) Query             { return q.Where(Hostname.Lt(v)) }
+func (q Query) HostnameLte(v string) Query            { return q.Where(Hostname.Lte(v)) }
+func (q Query) HostnameEqLower(v string) Query        { return q.Where(Hostname.EqLower(v)) }
+func (q Query) HostnameLike(v string) Query           { return q.Where(Hostname.Like(v)) }
+func (q Query) HostnameILike(v string) Query          { return q.Where(Hostname.ILike(v)) }
+func (q Query) HostnameIn(v ...string) Query          { return q.Where(Hostname.In(v...)) }
+func (q Query) HostnameNotIn(v ...string) Query       { return q.Where(Hostname.NotIn(v...)) }
+func (q Query) CreatedByEq(v string) Query            { return q.Where(CreatedBy.Eq(v)) }
+func (q Query) CreatedByNotEq(v string) Query         { return q.Where(CreatedBy.NotEq(v)) }
+func (q Query) CreatedByGt(v string) Query            { return q.Where(CreatedBy.Gt(v)) }
+func (q Query) CreatedByGte(v string) Query           { return q.Where(CreatedBy.Gte(v)) }
+func (q Query) CreatedByLt(v string) Query            { return q.Where(CreatedBy.Lt(v)) }
+func (q Query) CreatedByLte(v string) Query           { return q.Where(CreatedBy.Lte(v)) }
+func (q Query) CreatedByEqLower(v string) Query       { return q.Where(CreatedBy.EqLower(v)) }
+func (q Query) CreatedByLike(v string) Query          { return q.Where(CreatedBy.Like(v)) }
+func (q Query) CreatedByILike(v string) Query         { return q.Where(CreatedBy.ILike(v)) }
+func (q Query) CreatedByIn(v ...string) Query         { return q.Where(CreatedBy.In(v...)) }
+func (q Query) CreatedByNotIn(v ...string) Query      { return q.Where(CreatedBy.NotIn(v...)) }
+func (q Query) CreatedAtEq(v time.Time) Query         { return q.Where(CreatedAt.Eq(v)) }
+func (q Query) CreatedAtNotEq(v time.Time) Query      { return q.Where(CreatedAt.NotEq(v)) }
+func (q Query) CreatedAtGt(v time.Time) Query         { return q.Where(CreatedAt.Gt(v)) }
+func (q Query) CreatedAtGte(v time.Time) Query        { return q.Where(CreatedAt.Gte(v)) }
+func (q Query) CreatedAtLt(v time.Time) Query         { return q.Where(CreatedAt.Lt(v)) }
+func (q Query) CreatedAtLte(v time.Time) Query        { return q.Where(CreatedAt.Lte(v)) }
+func (q Query) ExpiresAtEq(v time.Time) Query         { return q.Where(ExpiresAt.Eq(v)) }
+func (q Query) ExpiresAtNotEq(v time.Time) Query      { return q.Where(ExpiresAt.NotEq(v)) }
+func (q Query) ExpiresAtGt(v time.Time) Query         { return q.Where(ExpiresAt.Gt(v)) }
+func (q Query) ExpiresAtGte(v time.Time) Query        { return q.Where(ExpiresAt.Gte(v)) }
+func (q Query) ExpiresAtLt(v time.Time) Query         { return q.Where(ExpiresAt.Lt(v)) }
+func (q Query) ExpiresAtLte(v time.Time) Query        { return q.Where(ExpiresAt.Lte(v)) }
+func (q Query) UsedAtEq(v time.Time) Query            { return q.Where(UsedAt.Eq(v)) }
+func (q Query) UsedAtNotEq(v time.Time) Query         { return q.Where(UsedAt.NotEq(v)) }
+func (q Query) UsedAtGt(v time.Time) Query            { return q.Where(UsedAt.Gt(v)) }
+func (q Query) UsedAtGte(v time.Time) Query           { return q.Where(UsedAt.Gte(v)) }
+func (q Query) UsedAtLt(v time.Time) Query            { return q.Where(UsedAt.Lt(v)) }
+func (q Query) UsedAtLte(v time.Time) Query           { return q.Where(UsedAt.Lte(v)) }
+func (q Query) UsedAtIsNull() Query                   { return q.Where(UsedAt.IsNull()) }
+func (q Query) UsedAtIsNotNull() Query                { return q.Where(UsedAt.IsNotNull()) }
+func (q Query) UsedByHostEq(v string) Query           { return q.Where(UsedByHost.Eq(v)) }
+func (q Query) UsedByHostNotEq(v string) Query        { return q.Where(UsedByHost.NotEq(v)) }
+func (q Query) UsedByHostGt(v string) Query           { return q.Where(UsedByHost.Gt(v)) }
+func (q Query) UsedByHostGte(v string) Query          { return q.Where(UsedByHost.Gte(v)) }
+func (q Query) UsedByHostLt(v string) Query           { return q.Where(UsedByHost.Lt(v)) }
+func (q Query) UsedByHostLte(v string) Query          { return q.Where(UsedByHost.Lte(v)) }
+func (q Query) UsedByHostEqLower(v string) Query      { return q.Where(UsedByHost.EqLower(v)) }
+func (q Query) UsedByHostLike(v string) Query         { return q.Where(UsedByHost.Like(v)) }
+func (q Query) UsedByHostILike(v string) Query        { return q.Where(UsedByHost.ILike(v)) }
+func (q Query) UsedByHostIn(v ...string) Query        { return q.Where(UsedByHost.In(v...)) }
+func (q Query) UsedByHostNotIn(v ...string) Query     { return q.Where(UsedByHost.NotIn(v...)) }
+func (q Query) UsedByHostIsNull() Query               { return q.Where(UsedByHost.IsNull()) }
+func (q Query) UsedByHostIsNotNull() Query            { return q.Where(UsedByHost.IsNotNull()) }
+func (q Query) ControlHostEq(v bool) Query            { return q.Where(ControlHost.Eq(v)) }
+func (q Query) ControlHostNotEq(v bool) Query         { return q.Where(ControlHost.NotEq(v)) }
+func (q Query) ScaleGroupIDEq(v [16]byte) Query       { return q.Where(ScaleGroupID.Eq(v)) }
+func (q Query) ScaleGroupIDNotEq(v [16]byte) Query    { return q.Where(ScaleGroupID.NotEq(v)) }
+func (q Query) ScaleGroupIDIn(v ...[16]byte) Query    { return q.Where(ScaleGroupID.In(v...)) }
+func (q Query) ScaleGroupIDNotIn(v ...[16]byte) Query { return q.Where(ScaleGroupID.NotIn(v...)) }
+func (q Query) ScaleGroupIDIsNull() Query             { return q.Where(ScaleGroupID.IsNull()) }
+func (q Query) ScaleGroupIDIsNotNull() Query          { return q.Where(ScaleGroupID.IsNotNull()) }
 
-const selectPrefix = `SELECT "id", "token_hash", "hostname", "created_by", "created_at", "expires_at", "used_at", "used_by_host", "control_host" FROM "agent_enrollment_tokens"`
+const selectPrefix = `SELECT "id", "token_hash", "hostname", "created_by", "created_at", "expires_at", "used_at", "used_by_host", "control_host", "scale_group_id" FROM "agent_enrollment_tokens"`
 const countPrefix = `SELECT count(*) FROM "agent_enrollment_tokens"`
 const existsPrefix = `SELECT 1 FROM "agent_enrollment_tokens"`
 const existsSuffix = ` LIMIT 1`
@@ -971,6 +1023,12 @@ var orderTable = [nCols][4]string{
 		"\"control_host\" ASC NULLS FIRST",
 		"\"control_host\" DESC NULLS LAST",
 	},
+	{ // scale_group_id
+		"\"scale_group_id\"",
+		"\"scale_group_id\" DESC",
+		"\"scale_group_id\" ASC NULLS FIRST",
+		"\"scale_group_id\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -985,6 +1043,7 @@ var identTable = [nCols]string{
 	"\"used_at\"",
 	"\"used_by_host\"",
 	"\"control_host\"",
+	"\"scale_group_id\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1017,7 +1076,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [9][28]runtime.Frag{
+var fragTable = [10][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -1288,6 +1347,36 @@ var fragTable = [9][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // scale_group_id
+		{}, // opNone
+		{A: "\"scale_group_id\" = $", B: ""},
+		{A: "\"scale_group_id\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"scale_group_id\" = ANY($", B: ")"},
+		{A: "\"scale_group_id\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"scale_group_id\" IS NULL", B: ""},
+		{A: "\"scale_group_id\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -1453,6 +1542,7 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.UsedAt = runtime.Nullable(rv[6], runtime.Timestamptz)
 	r.UsedByHost = runtime.NullText(rv[7], sl)
 	r.ControlHost = runtime.Bool(rv[8])
+	r.ScaleGroupID = runtime.Nullable(rv[9], runtime.UUID)
 	return nil
 }
 
@@ -1538,6 +1628,10 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 9:
+				b.anyRaw[nar] = q.anyRaw[nar]
+				v = append(v, &b.anyRaw[nar])
+				nar++
 			}
 			continue
 		}
@@ -1578,6 +1672,10 @@ func (q Query) bindPreds(b *binder) []any {
 			b.bools[nbo] = q.bools[nbo]
 			v = append(v, &b.bools[nbo])
 			nbo++
+		case 9:
+			b.raws[nr] = q.raws[nr]
+			v = append(v, &b.raws[nr])
+			nr++
 		}
 	}
 	b.vals = v
@@ -1715,7 +1813,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "agent_enrollment_tokens" ("id", "token_hash", "hostname", "created_by", "created_at", "expires_at", "used_at", "used_by_host", "control_host") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING "id", "token_hash", "hostname", "created_by", "created_at", "expires_at", "used_at", "used_by_host", "control_host"`
+const insertSQL = `INSERT INTO "agent_enrollment_tokens" ("id", "token_hash", "hostname", "created_by", "created_at", "expires_at", "used_at", "used_by_host", "control_host", "scale_group_id") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING "id", "token_hash", "hostname", "created_by", "created_at", "expires_at", "used_at", "used_by_host", "control_host", "scale_group_id"`
 
 const updatePrefix = `UPDATE "agent_enrollment_tokens" SET `
 const deletePrefix = `DELETE FROM "agent_enrollment_tokens"`
@@ -1723,28 +1821,30 @@ const deletePrefix = `DELETE FROM "agent_enrollment_tokens"`
 // Dirty bits. One per updatable column; the set of them is an UPDATE's
 // identity, exactly as a token stream is a SELECT's.
 const (
-	dTokenHash   uint64 = 1 << 0
-	dHostname    uint64 = 1 << 1
-	dCreatedBy   uint64 = 1 << 2
-	dCreatedAt   uint64 = 1 << 3
-	dExpiresAt   uint64 = 1 << 4
-	dUsedAt      uint64 = 1 << 5
-	dUsedByHost  uint64 = 1 << 6
-	dControlHost uint64 = 1 << 7
+	dTokenHash    uint64 = 1 << 0
+	dHostname     uint64 = 1 << 1
+	dCreatedBy    uint64 = 1 << 2
+	dCreatedAt    uint64 = 1 << 3
+	dExpiresAt    uint64 = 1 << 4
+	dUsedAt       uint64 = 1 << 5
+	dUsedByHost   uint64 = 1 << 6
+	dControlHost  uint64 = 1 << 7
+	dScaleGroupID uint64 = 1 << 8
 )
 
-const nUpdatable = 8
+const nUpdatable = 9
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
-	{A: "\"token_hash\" = $", B: ""},   // token_hash
-	{A: "\"hostname\" = $", B: ""},     // hostname
-	{A: "\"created_by\" = $", B: ""},   // created_by
-	{A: "\"created_at\" = $", B: ""},   // created_at
-	{A: "\"expires_at\" = $", B: ""},   // expires_at
-	{A: "\"used_at\" = $", B: ""},      // used_at
-	{A: "\"used_by_host\" = $", B: ""}, // used_by_host
-	{A: "\"control_host\" = $", B: ""}, // control_host
+	{A: "\"token_hash\" = $", B: ""},     // token_hash
+	{A: "\"hostname\" = $", B: ""},       // hostname
+	{A: "\"created_by\" = $", B: ""},     // created_by
+	{A: "\"created_at\" = $", B: ""},     // created_at
+	{A: "\"expires_at\" = $", B: ""},     // expires_at
+	{A: "\"used_at\" = $", B: ""},        // used_at
+	{A: "\"used_by_host\" = $", B: ""},   // used_by_host
+	{A: "\"control_host\" = $", B: ""},   // control_host
+	{A: "\"scale_group_id\" = $", B: ""}, // scale_group_id
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -1759,6 +1859,7 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{A: "\"used_at\" = now()", B: ""},    // used_at = the database's clock
 	{},                                   // used_by_host has no server-side form
 	{},                                   // control_host has no server-side form
+	{},                                   // scale_group_id has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -1770,18 +1871,19 @@ var pkFrags = [1]runtime.Frag{
 // assigned, so every other column takes its database default — which is
 // the only way a DEFAULT gen_random_uuid() can ever fire.
 const (
-	iID          uint64 = 1 << 0
-	iTokenHash   uint64 = 1 << 1
-	iHostname    uint64 = 1 << 2
-	iCreatedBy   uint64 = 1 << 3
-	iCreatedAt   uint64 = 1 << 4
-	iExpiresAt   uint64 = 1 << 5
-	iUsedAt      uint64 = 1 << 6
-	iUsedByHost  uint64 = 1 << 7
-	iControlHost uint64 = 1 << 8
+	iID           uint64 = 1 << 0
+	iTokenHash    uint64 = 1 << 1
+	iHostname     uint64 = 1 << 2
+	iCreatedBy    uint64 = 1 << 3
+	iCreatedAt    uint64 = 1 << 4
+	iExpiresAt    uint64 = 1 << 5
+	iUsedAt       uint64 = 1 << 6
+	iUsedByHost   uint64 = 1 << 7
+	iControlHost  uint64 = 1 << 8
+	iScaleGroupID uint64 = 1 << 9
 )
 
-const nInsertable = 9
+const nInsertable = 10
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -1794,6 +1896,7 @@ var insCols = [nInsertable]string{
 	"\"used_at\"",
 	"\"used_by_host\"",
 	"\"control_host\"",
+	"\"scale_group_id\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -1802,7 +1905,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"agent_enrollment_tokens\""
-const insReturning = " RETURNING \"id\", \"token_hash\", \"hostname\", \"created_by\", \"created_at\", \"expires_at\", \"used_at\", \"used_by_host\", \"control_host\""
+const insReturning = " RETURNING \"id\", \"token_hash\", \"hostname\", \"created_by\", \"created_at\", \"expires_at\", \"used_at\", \"used_by_host\", \"control_host\", \"scale_group_id\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -1821,7 +1924,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"token_hash\", \"hostname\", \"created_by\", \"created_at\", \"expires_at\", \"used_at\", \"used_by_host\", \"control_host\""
+const updReturning = " RETURNING \"id\", \"token_hash\", \"hostname\", \"created_by\", \"created_at\", \"expires_at\", \"used_at\", \"used_by_host\", \"control_host\", \"scale_group_id\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -1966,6 +2069,20 @@ func (m *Mut) SetControlHost(v bool) {
 	m.expr &^= dControlHost
 }
 
+func (m *Mut) SetScaleGroupID(v [16]byte) {
+	m.row.ScaleGroupID = runtime.Null[[16]byte]{V: v, Valid: true}
+	m.dirty |= dScaleGroupID
+	m.expr &^= dScaleGroupID
+}
+
+// SetScaleGroupIDNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetScaleGroupIDNull() {
+	m.row.ScaleGroupID = runtime.Null[[16]byte]{}
+	m.dirty |= dScaleGroupID
+	m.expr &^= dScaleGroupID
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -2050,6 +2167,18 @@ func (n *Ins) SetControlHost(v bool) {
 	n.set |= iControlHost
 }
 
+func (n *Ins) SetScaleGroupID(v [16]byte) {
+	n.row.ScaleGroupID = runtime.Null[[16]byte]{V: v, Valid: true}
+	n.set |= iScaleGroupID
+}
+
+// SetScaleGroupIDNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetScaleGroupIDNull() {
+	n.row.ScaleGroupID = runtime.Null[[16]byte]{}
+	n.set |= iScaleGroupID
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -2096,7 +2225,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 8)
+	set := make([]string, 0, 9)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -2123,6 +2252,9 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<8) != 0 {
 			set = append(set, "control_host")
 		}
+		if mask&(1<<9) != 0 {
+			set = append(set, "scale_group_id")
+		}
 	case 1:
 		if mask&(1<<2) != 0 {
 			set = append(set, "hostname")
@@ -2144,6 +2276,9 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<8) != 0 {
 			set = append(set, "control_host")
+		}
+		if mask&(1<<9) != 0 {
+			set = append(set, "scale_group_id")
 		}
 	}
 	return set
@@ -2203,14 +2338,15 @@ func joinAssign(set []string) string {
 }
 
 var assignFor = map[string]string{
-	"token_hash":   "\"token_hash\" = EXCLUDED.\"token_hash\"",
-	"hostname":     "\"hostname\" = EXCLUDED.\"hostname\"",
-	"created_by":   "\"created_by\" = EXCLUDED.\"created_by\"",
-	"created_at":   "\"created_at\" = EXCLUDED.\"created_at\"",
-	"expires_at":   "\"expires_at\" = EXCLUDED.\"expires_at\"",
-	"used_at":      "\"used_at\" = EXCLUDED.\"used_at\"",
-	"used_by_host": "\"used_by_host\" = EXCLUDED.\"used_by_host\"",
-	"control_host": "\"control_host\" = EXCLUDED.\"control_host\"",
+	"token_hash":     "\"token_hash\" = EXCLUDED.\"token_hash\"",
+	"hostname":       "\"hostname\" = EXCLUDED.\"hostname\"",
+	"created_by":     "\"created_by\" = EXCLUDED.\"created_by\"",
+	"created_at":     "\"created_at\" = EXCLUDED.\"created_at\"",
+	"expires_at":     "\"expires_at\" = EXCLUDED.\"expires_at\"",
+	"used_at":        "\"used_at\" = EXCLUDED.\"used_at\"",
+	"used_by_host":   "\"used_by_host\" = EXCLUDED.\"used_by_host\"",
+	"control_host":   "\"control_host\" = EXCLUDED.\"control_host\"",
+	"scale_group_id": "\"scale_group_id\" = EXCLUDED.\"scale_group_id\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -2272,6 +2408,8 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.UsedByHost.Arg())
 		case 8:
 			args = append(args, n.row.ControlHost)
+		case 9:
+			args = append(args, n.row.ScaleGroupID.Arg())
 		}
 	}
 	var out Row
@@ -2309,7 +2447,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 9)
+	args := make([]any, 0, 10)
 	args = append(args, r.ID)
 	args = append(args, r.TokenHash)
 	args = append(args, r.Hostname)
@@ -2319,6 +2457,7 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.UsedAt.Arg())
 	args = append(args, r.UsedByHost.Arg())
 	args = append(args, r.ControlHost)
+	args = append(args, r.ScaleGroupID.Arg())
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -2354,13 +2493,14 @@ var copyCols = []string{
 	"used_at",
 	"used_by_host",
 	"control_host",
+	"scale_group_id",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [9]any
+	buf  [10]any
 }
 
 func (s *rowSource) Next() bool {
@@ -2387,6 +2527,7 @@ func (s *rowSource) Values() []any {
 	s.buf[6] = r.UsedAt.Ptr()
 	s.buf[7] = r.UsedByHost.Ptr()
 	s.buf[8] = &r.ControlHost
+	s.buf[9] = r.ScaleGroupID.Ptr()
 	return s.buf[:]
 }
 
@@ -2426,8 +2567,9 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 6
 	mask |= 1 << 7
 	mask |= 1 << 8
+	mask |= 1 << 9
 	st := stmtForInsertNoReturn(mask, 0)
-	args := make([]any, 0, 9)
+	args := make([]any, 0, 10)
 	args = append(args, r.ID)
 	args = append(args, r.TokenHash)
 	args = append(args, r.Hostname)
@@ -2437,6 +2579,7 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.UsedAt.Arg())
 	args = append(args, r.UsedByHost.Arg())
 	args = append(args, r.ControlHost)
+	args = append(args, r.ScaleGroupID.Arg())
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -2488,6 +2631,8 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.UsedByHost.Arg())
 		case 8:
 			args = append(args, n.row.ControlHost)
+		case 9:
+			args = append(args, n.row.ScaleGroupID.Arg())
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -2550,6 +2695,8 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.UsedByHost.Arg())
 		case 7:
 			args = append(args, m.row.ControlHost)
+		case 8:
+			args = append(args, m.row.ScaleGroupID.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -2648,6 +2795,8 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.UsedByHost.Arg())
 		case 7:
 			args = append(args, m.row.ControlHost)
+		case 8:
+			args = append(args, m.row.ScaleGroupID.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -2812,6 +2961,8 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.UsedByHost.Arg())
 		case 7:
 			args = append(args, m.row.ControlHost)
+		case 8:
+			args = append(args, m.row.ScaleGroupID.Arg())
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

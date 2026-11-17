@@ -67,6 +67,8 @@ type Fake struct {
 	Stack FakeStack
 	// AccountErr fails the account-wide read.
 	AccountErr error
+	// Floors is every Auto Scaling group made for a scale group, by name.
+	Floors map[string]*FakeFloor
 
 	reqs, launched, made int
 }

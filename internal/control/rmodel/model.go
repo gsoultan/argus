@@ -142,6 +142,8 @@ type AgentEnrollmentToken struct {
 	// ControlHost marks a token argus-control minted for the helper on its
 	// own server (migration 076).
 	ControlHost bool
+	// ScaleGroup marks a scale group's key, never used up (migration 090).
+	ScaleGroup *ScaleGroup
 }
 
 func (m *AgentEnrollmentToken) Schema(t *storm.Table) {
@@ -149,6 +151,9 @@ func (m *AgentEnrollmentToken) Schema(t *storm.Table) {
 	t.Col(&m.Hostname).Default("''::text")
 	t.Col(&m.CreatedAt).Default("now()")
 	t.Col(&m.ControlHost).Default("false")
+	t.Col(&m.ScaleGroup).ConstraintName("agent_enrollment_tokens_scale_group_id_fkey")
+	t.Col(&m.ScaleGroup).OnDelete(storm.Cascade)
+	t.Index(&m.ScaleGroup).Where("(scale_group_id IS NOT NULL)").Named("agent_enrollment_tokens_scale_group")
 	t.UniqueNamed("agent_enrollment_tokens_token_hash_key", &m.TokenHash)
 }
 
@@ -681,6 +686,8 @@ type ScaleGroupMember struct {
 	RegisteredAt *time.Time
 	DrainUntil   *time.Time
 	LeftAt       *time.Time
+	// InAWS is a member AWS Auto Scaling started (migration 090).
+	InAWS bool
 }
 
 func (m *ScaleGroupMember) Schema(t *storm.Table) {
@@ -690,6 +697,7 @@ func (m *ScaleGroupMember) Schema(t *storm.Table) {
 	t.Col(&m.Zone).Default("''::text")
 	t.Col(&m.Subnet).Default("''::text")
 	t.Col(&m.JoinedAt).Default("now()")
+	t.Col(&m.InAWS).Default("false")
 	t.CheckNamed("scale_group_members_state_check", "state = ANY (ARRAY['joining'::text, 'member'::text, 'draining'::text, 'gone'::text, 'failed'::text])")
 }
 
@@ -725,6 +733,14 @@ type ScaleGroup struct {
 	CheckedAt    *time.Time
 	CreatedBy    string
 	CreatedAt    time.Time
+	// The AWS side (migration 090): what AWS keeps the group near when it
+	// decides, the Auto Scaling group and launch template, and why AWS
+	// refused them.
+	AwsTrack    storm.JSON
+	AwsGroup    string
+	AwsTemplate string
+	AwsNote     string
+	AwsTriedAt  *time.Time
 }
 
 func (m *ScaleGroup) Schema(t *storm.Table) {
@@ -746,10 +762,14 @@ func (m *ScaleGroup) Schema(t *storm.Table) {
 	t.Col(&m.EnrollBase).Default("''::text")
 	t.Col(&m.FailedStarts).Default("0")
 	t.Col(&m.CreatedAt).Default("now()")
+	t.Col(&m.AwsTrack).Default("'{}'::jsonb")
+	t.Col(&m.AwsGroup).Default("''::text")
+	t.Col(&m.AwsTemplate).Default("''::text")
+	t.Col(&m.AwsNote).Default("''::text")
 	t.CheckNamed("scale_groups_check", "max_size >= min_size")
 	t.CheckNamed("scale_groups_environment_check", "environment = ANY (ARRAY['production'::text, 'staging'::text, 'development'::text])")
 	t.CheckNamed("scale_groups_min_size_check", "min_size >= 1")
-	t.CheckNamed("scale_groups_mode_check", "mode = ANY (ARRAY['ask'::text, 'auto'::text])")
+	t.CheckNamed("scale_groups_mode_check", "mode = ANY (ARRAY['ask'::text, 'auto'::text, 'aws'::text])")
 	t.CheckNamed("scale_groups_name_check", "name ~ '^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$'::text")
 	t.CheckNamed("scale_groups_state_check", "state = ANY (ARRAY['active'::text, 'paused'::text])")
 	t.Index(&m.Account, &m.Region, &m.Name).Unique().Named("scale_groups_name")

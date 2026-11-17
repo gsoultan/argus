@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 )
 
 // CreateTargetGroup adds a target group with its health check, as AWS's
@@ -106,4 +107,99 @@ func (f *Fake) SetGroupSize(_ context.Context, a Account, actor Actor, region, g
 	d["min"], d["max"], d["desired"] = strconv.Itoa(int(g.Min)), strconv.Itoa(int(g.Max)), strconv.Itoa(int(g.Desired))
 	f.Resources[region][i].Size = d["desired"]
 	return Result{ResourceID: group, RequestID: f.request()}, nil
+}
+
+// Floors the fake made and the policies on them, by group name.
+type FakeFloor struct {
+	Spec   FloorSpec
+	Policy *FloorPolicy
+}
+
+// CreateFloor adds an Auto Scaling group with its launch template, as
+// AWS's read would show it. It starts no servers: ScaleOut does, as AWS
+// would.
+func (f *Fake) CreateFloor(_ context.Context, a Account, actor Actor, region string, s FloorSpec) (Result, error) {
+	if err := f.storageCall(a, ActionFloorCreate, s.Name, actor); err != nil {
+		return Result{}, err
+	}
+	if err := s.Check(); err != nil {
+		return Result{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.Floors == nil {
+		f.Floors = map[string]*FakeFloor{}
+	}
+	if _, ok := f.Floors[s.Name]; ok {
+		return Result{}, fmt.Errorf("AlreadyExists: an Auto Scaling group named %s already exists", s.Name)
+	}
+	f.made++
+	tpl := fmt.Sprintf("lt-0fake%012d", f.made)
+	f.Floors[s.Name] = &FakeFloor{Spec: s}
+	if f.Resources == nil {
+		f.Resources = map[string][]Resource{}
+	}
+	d := map[string]string{"min": strconv.Itoa(int(s.Count.Min)), "max": strconv.Itoa(int(s.Count.Max)),
+		"desired": strconv.Itoa(int(s.Count.Desired)), "running": "0", "healthCheck": "ELB", "launchTemplate": s.Template}
+	f.Resources[region] = append(f.Resources[region], Resource{Kind: KindScalingGroup, ID: s.Name, Name: s.Name, Region: region,
+		State: "active", Size: d["desired"], Tags: s.Tags, Details: d,
+		Links: []Ref{{Kind: KindTargetGroup, ID: s.TargetGroup}}})
+	return Result{ResourceID: s.Name, Detail: tpl, RequestID: f.request()}, nil
+}
+
+// SetFloorPolicy records the target-tracking policy on a group.
+func (f *Fake) SetFloorPolicy(_ context.Context, a Account, actor Actor, region, group string, p FloorPolicy) (Result, error) {
+	if err := f.storageCall(a, ActionFloorPolicy, group, actor); err != nil {
+		return Result{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	fl := f.Floors[group]
+	if fl == nil {
+		return Result{}, fmt.Errorf("ValidationError: no Auto Scaling group named %s", group)
+	}
+	fl.Policy = &p
+	return Result{ResourceID: group, RequestID: f.request()}, nil
+}
+
+// FloorInstance reads one server's Auto Scaling group and start.
+func (f *Fake) FloorInstance(_ context.Context, a Account, _ Actor, region, instance string) (FloorInstance, error) {
+	if err := f.admit(a); err != nil {
+		return FloorInstance{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	i, err := f.find(region, instance)
+	if err != nil {
+		return FloorInstance{}, err
+	}
+	r := f.Resources[region][i]
+	at := time.Now()
+	if r.CreatedAt != nil {
+		at = *r.CreatedAt
+	}
+	return FloorInstance{Group: r.Tags["aws:autoscaling:groupName"], State: r.State, LaunchedAt: at}, nil
+}
+
+// ScaleOut starts one server in an Auto Scaling group the fake made, as
+// AWS does to keep its desired count, and answers its id.
+func (f *Fake) ScaleOut(region, group string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	fl := f.Floors[group]
+	f.launched++
+	id := fmt.Sprintf("i-0fa4e%012d", f.launched)
+	now := time.Now()
+	tags := map[string]string{"aws:autoscaling:groupName": group}
+	size := ""
+	if fl != nil {
+		size = fl.Spec.Size
+		for k, v := range fl.Spec.Tags {
+			tags[k] = v
+		}
+		f.LastUserData = fl.Spec.UserData
+	}
+	f.Resources[region] = append(f.Resources[region], Resource{Kind: KindInstance, ID: id, Name: id, Region: region,
+		State: "running", Size: size, Tags: tags, CreatedAt: &now, Details: map[string]string{}})
+	return id
 }

@@ -361,6 +361,9 @@ var actionNeeds = map[cloud.Action][]string{
 	cloud.ActionHealthCheck:       {"elasticloadbalancing:ModifyTargetGroup"},
 	cloud.ActionBalancerCreate:    {"elasticloadbalancing:CreateLoadBalancer", "elasticloadbalancing:CreateListener", "elasticloadbalancing:AddTags"},
 	cloud.ActionGroupSize:         {"autoscaling:UpdateAutoScalingGroup"},
+	cloud.ActionFloorCreate: {"ec2:CreateLaunchTemplate", "ec2:RunInstances", "ec2:CreateTags",
+		"autoscaling:CreateAutoScalingGroup", "autoscaling:CreateOrUpdateTags"},
+	cloud.ActionFloorPolicy: {"autoscaling:PutScalingPolicy", "autoscaling:UpdateAutoScalingGroup"},
 }
 
 // Needs is the permissions an action takes.
