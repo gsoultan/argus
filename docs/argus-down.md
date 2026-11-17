@@ -53,7 +53,10 @@ asks you to confirm what Argus cannot see. In short:
       down. The way in is the provider's console with a local password; see
       [lockout.md](lockout.md#3-if-nobody-can-ssh-in-use-the-provider-console).
       Make sure one local admin account on each server has a password stored
-      in your password manager.
+      in your password manager. Or turn on *While Argus cannot be reached* in
+      Settings › Logins, so named admin groups can SSH in, recorded, after a
+      wait. Weigh it: anyone who can cut a server off from Argus and holds a
+      key or password for one of those groups gets in after that wait.
 
 ## When it happens
 
@@ -80,8 +83,15 @@ curl -fsS --cacert /var/lib/argus-control/tls/ca.crt https://localhost:8080/heal
 
 - A server set to **allow** direct logins: SSH in as usual. The agent records
   the session on the server and sends it to Argus later.
-- A server set to **refuse** or **ask for approval**: plain SSH is refused for
-  everyone while Argus is down. Use the provider's console
+- A server set to **refuse** or **ask for approval**: plain SSH is refused
+  while Argus is down, unless **Settings › Logins › While Argus cannot be
+  reached** is on. Then members of the groups it names get in once the server
+  has not heard from Argus for the wait it sets (5 minutes, 15 minutes or an
+  hour), still recorded; they are told so on their terminal, and the session
+  is audited and put in the bell when Argus is back. Everyone else is still
+  refused, and told which groups are let in. A server's Access tab can turn
+  it off for that server.
+- Otherwise use the provider's console
   ([lockout.md](lockout.md#3-if-nobody-can-ssh-in-use-the-provider-console)).
   Do not stop the agent to get in: stopping it lets root and the
   `sudo`/`wheel`/`admin` groups in **unrecorded**.

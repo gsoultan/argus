@@ -30,6 +30,7 @@ import { ControlStatusSection, useStatusProblems } from '~/components/ControlSta
 import { ControlUpdateSection } from '~/components/ControlUpdate'
 import { ControlBackupsSection } from '~/components/ControlBackups'
 import { ControlReadinessSection, useReadinessNeeds } from '~/components/ControlReadiness'
+import { OutageLoginsCard } from '~/components/OutageLogins'
 import {
   CONTROL_SECTIONS, ControlSection, useControlSettings, type ControlSectionId,
   type ControlSettingsState,
@@ -336,6 +337,7 @@ function Settings() {
                   disabled={policyDisabled}
                   onChange={setDirectSsh}
                 />
+                {isConfigured() && <OutageLoginsCard canEdit={canEdit} />}
               </>
             )}
 

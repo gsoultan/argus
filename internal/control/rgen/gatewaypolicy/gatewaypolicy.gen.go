@@ -36,6 +36,8 @@ type Row struct {
 	LogCleanPaths             []string
 	LogProtectPaths           []string
 	ConnectRules              runtime.JSON
+	OutageLoginsAfter         int32
+	OutageLoginsGroups        []string
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -74,7 +76,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 16
+const nCols = 18
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -84,14 +86,16 @@ type Query struct {
 	nt   uint8
 	top  uint8 // top-level conjuncts, ANDed at compile time
 
-	strs              [6]string
-	tims              [4]time.Time
-	bools             [4]bool
-	jsns              [2]runtime.JSON
-	ns, ntm, nbo, njs uint8
+	strs                  [6]string
+	nums                  [6]int64
+	tims                  [4]time.Time
+	bools                 [4]bool
+	jsns                  [2]runtime.JSON
+	ns, nn, ntm, nbo, njs uint8
 
-	anyStr [3][]string
-	nas    uint8
+	anyStr     [3][]string
+	anyI32     [3][]int32
+	nas, nai32 uint8
 
 	// Order terms live in their own buffer and are appended to the stream
 	// after the predicate tree. Sharing one buffer would let a Where after
@@ -270,6 +274,13 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.bools[q.nbo] = r.AgentAutoUpdate
 		q.nbo++
+	case 16:
+		if int(q.nn) >= len(q.nums) {
+			q.over = true
+			return
+		}
+		q.nums[q.nn] = int64(r.OutageLoginsAfter)
+		q.nn++
 	}
 }
 
@@ -423,6 +434,7 @@ type Pred struct {
 	bol    bool
 	jsn    runtime.JSON
 	anyStr []string
+	anyI32 []int32
 }
 
 // b2i lets a bool ride in the numeric slot of a Pred.
@@ -452,6 +464,8 @@ var (
 	LogCleanPaths             = TextArrayCol{13}
 	LogProtectPaths           = TextArrayCol{14}
 	ConnectRules              = JSONCol{15}
+	OutageLoginsAfter         = Int32Col{16}
+	OutageLoginsGroups        = TextArrayCol{17}
 )
 
 // BoolCol addresses a bool column.
@@ -563,6 +577,31 @@ func (h JSONCol) ContainedBy(v runtime.JSON) Pred {
 }
 func (h JSONCol) HasAnyKey(v ...string) Pred  { return Pred{col: h.c, op: opHasAnyKey, anyStr: v} }
 func (h JSONCol) HasAllKeys(v ...string) Pred { return Pred{col: h.c, op: opHasAllKeys, anyStr: v} }
+
+// Int32Col addresses a int4 column.
+type Int32Col struct{ c uint8 }
+
+func (h Int32Col) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
+func (h Int32Col) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
+func (h Int32Col) AscNullsFirst() Sort {
+	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
+}
+func (h Int32Col) DescNullsLast() Sort {
+	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
+}
+
+func (h Int32Col) Eq(v int32) Pred    { return Pred{col: h.c, op: opEq, num: int64(v)} }
+func (h Int32Col) NotEq(v int32) Pred { return Pred{col: h.c, op: opNotEq, num: int64(v)} }
+func (h Int32Col) Gt(v int32) Pred    { return Pred{col: h.c, op: opGt, num: int64(v)} }
+func (h Int32Col) Gte(v int32) Pred   { return Pred{col: h.c, op: opGte, num: int64(v)} }
+func (h Int32Col) Lt(v int32) Pred    { return Pred{col: h.c, op: opLt, num: int64(v)} }
+func (h Int32Col) Lte(v int32) Pred   { return Pred{col: h.c, op: opLte, num: int64(v)} }
+func (h Int32Col) In(v ...int32) Pred { return Pred{col: h.c, op: opIn, anyI32: v} }
+
+// NotIn is `<> ALL($1)`. A NULL anywhere in v makes the
+// comparison NULL for every row and the result empty —
+// PostgreSQL's rule for NOT IN, not storm's.
+func (h Int32Col) NotIn(v ...int32) Pred { return Pred{col: h.c, op: opNotIn, anyI32: v} }
 
 // Where applies predicates, ANDed together.
 func (q Query) Where(ps ...Pred) Query {
@@ -747,6 +786,20 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 16:
+			if int(q.nai32) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyI32[q.nai32] = p.anyI32
+			q.nai32++
+		case 17:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -847,6 +900,13 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.jsns[q.njs] = p.jsn
 		q.njs++
+	case 16:
+		if int(q.nn) >= 6 {
+			q.over = true
+			return
+		}
+		q.nums[q.nn] = p.num
+		q.nn++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -929,8 +989,27 @@ func (q Query) ConnectRulesHasAnyKey(v ...string) Query { return q.Where(Connect
 func (q Query) ConnectRulesHasAllKeys(v ...string) Query {
 	return q.Where(ConnectRules.HasAllKeys(v...))
 }
+func (q Query) OutageLoginsAfterEq(v int32) Query    { return q.Where(OutageLoginsAfter.Eq(v)) }
+func (q Query) OutageLoginsAfterNotEq(v int32) Query { return q.Where(OutageLoginsAfter.NotEq(v)) }
+func (q Query) OutageLoginsAfterGt(v int32) Query    { return q.Where(OutageLoginsAfter.Gt(v)) }
+func (q Query) OutageLoginsAfterGte(v int32) Query   { return q.Where(OutageLoginsAfter.Gte(v)) }
+func (q Query) OutageLoginsAfterLt(v int32) Query    { return q.Where(OutageLoginsAfter.Lt(v)) }
+func (q Query) OutageLoginsAfterLte(v int32) Query   { return q.Where(OutageLoginsAfter.Lte(v)) }
+func (q Query) OutageLoginsAfterIn(v ...int32) Query { return q.Where(OutageLoginsAfter.In(v...)) }
+func (q Query) OutageLoginsAfterNotIn(v ...int32) Query {
+	return q.Where(OutageLoginsAfter.NotIn(v...))
+}
+func (q Query) OutageLoginsGroupsContains(v ...string) Query {
+	return q.Where(OutageLoginsGroups.Contains(v...))
+}
+func (q Query) OutageLoginsGroupsContainedBy(v ...string) Query {
+	return q.Where(OutageLoginsGroups.ContainedBy(v...))
+}
+func (q Query) OutageLoginsGroupsOverlaps(v ...string) Query {
+	return q.Where(OutageLoginsGroups.Overlaps(v...))
+}
 
-const selectPrefix = `SELECT "id", "allow_local_forward", "allow_remote_forward", "allow_agent_forward", "allow_x11_forward", "proxy_sftp_subsystem", "fail_closed_on_recording_loss", "require_ebpf_for_root", "updated_at", "updated_by", "direct_ssh", "agent_auto_update", "package_holds", "log_clean_paths", "log_protect_paths", "connect_rules" FROM "gateway_policy"`
+const selectPrefix = `SELECT "id", "allow_local_forward", "allow_remote_forward", "allow_agent_forward", "allow_x11_forward", "proxy_sftp_subsystem", "fail_closed_on_recording_loss", "require_ebpf_for_root", "updated_at", "updated_by", "direct_ssh", "agent_auto_update", "package_holds", "log_clean_paths", "log_protect_paths", "connect_rules", "outage_logins_after", "outage_logins_groups" FROM "gateway_policy"`
 const countPrefix = `SELECT count(*) FROM "gateway_policy"`
 const existsPrefix = `SELECT 1 FROM "gateway_policy"`
 const existsSuffix = ` LIMIT 1`
@@ -1063,6 +1142,18 @@ var orderTable = [nCols][4]string{
 		"\"connect_rules\" ASC NULLS FIRST",
 		"\"connect_rules\" DESC NULLS LAST",
 	},
+	{ // outage_logins_after
+		"\"outage_logins_after\"",
+		"\"outage_logins_after\" DESC",
+		"\"outage_logins_after\" ASC NULLS FIRST",
+		"\"outage_logins_after\" DESC NULLS LAST",
+	},
+	{ // outage_logins_groups
+		"\"outage_logins_groups\"",
+		"\"outage_logins_groups\" DESC",
+		"\"outage_logins_groups\" ASC NULLS FIRST",
+		"\"outage_logins_groups\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1084,6 +1175,8 @@ var identTable = [nCols]string{
 	"\"log_clean_paths\"",
 	"\"log_protect_paths\"",
 	"\"connect_rules\"",
+	"\"outage_logins_after\"",
+	"\"outage_logins_groups\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1116,7 +1209,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [16][28]runtime.Frag{
+var fragTable = [18][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -1597,6 +1690,66 @@ var fragTable = [16][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // outage_logins_after
+		{}, // opNone
+		{A: "\"outage_logins_after\" = $", B: ""},
+		{A: "\"outage_logins_after\" <> $", B: ""},
+		{A: "\"outage_logins_after\" > $", B: ""},
+		{A: "\"outage_logins_after\" >= $", B: ""},
+		{A: "\"outage_logins_after\" < $", B: ""},
+		{A: "\"outage_logins_after\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"outage_logins_after\" = ANY($", B: ")"},
+		{A: "\"outage_logins_after\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // outage_logins_groups
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"outage_logins_groups\" @> $", B: ""},
+		{A: "\"outage_logins_groups\" <@ $", B: ""},
+		{A: "\"outage_logins_groups\" && $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -1779,16 +1932,23 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 		return decErr
 	}
 	r.ConnectRules = runtime.JSON(runtime.JSONB(rv[15], sl))
+	r.OutageLoginsAfter = runtime.Int4(rv[16])
+	r.OutageLoginsGroups, decErr = runtime.TextArray(rv[17], sl)
+	if decErr != nil {
+		return decErr
+	}
 	return decErr
 }
 
 type binder struct {
 	vals   []any
 	strs   [6]string
+	nums   [6]int64
 	tims   [4]time.Time
 	bools  [4]bool
 	jsns   [2]runtime.JSON
 	anyStr [3][]string
+	anyI32 [3][]int32
 	limit  int64
 	offset int64
 }
@@ -1816,6 +1976,9 @@ func putBinder(b *binder) {
 	for i := range b.anyStr {
 		b.anyStr[i] = nil
 	}
+	for i := range b.anyI32 {
+		b.anyI32[i] = nil
+	}
 	binders.Put(b)
 }
 
@@ -1824,7 +1987,7 @@ func putBinder(b *binder) {
 // Count and Exists stop here: their statements carry no LIMIT or OFFSET.
 func (q Query) bindPreds(b *binder) []any {
 	v := b.vals[:0]
-	var ns, ntm, nbo, njs, nas uint8
+	var ns, nn, ntm, nbo, njs, nas, nai32 uint8
 	for i := uint8(0); i < q.nt; i++ {
 		t := q.toks[i]
 		// KLeaf binds a predicate's value; KCol binds a keyset cursor's.
@@ -1861,6 +2024,14 @@ func (q Query) bindPreds(b *binder) []any {
 				v = append(v, &b.anyStr[nas])
 				nas++
 			case 15:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 16:
+				b.anyI32[nai32] = q.anyI32[nai32]
+				v = append(v, &b.anyI32[nai32])
+				nai32++
+			case 17:
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
@@ -1920,6 +2091,10 @@ func (q Query) bindPreds(b *binder) []any {
 			b.jsns[njs] = q.jsns[njs]
 			v = append(v, &b.jsns[njs])
 			njs++
+		case 16:
+			b.nums[nn] = q.nums[nn]
+			v = append(v, &b.nums[nn])
+			nn++
 		}
 	}
 	b.vals = v
@@ -2057,7 +2232,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "gateway_policy" ("id", "allow_local_forward", "allow_remote_forward", "allow_agent_forward", "allow_x11_forward", "proxy_sftp_subsystem", "fail_closed_on_recording_loss", "require_ebpf_for_root", "updated_at", "updated_by", "direct_ssh", "agent_auto_update", "package_holds", "log_clean_paths", "log_protect_paths", "connect_rules") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING "id", "allow_local_forward", "allow_remote_forward", "allow_agent_forward", "allow_x11_forward", "proxy_sftp_subsystem", "fail_closed_on_recording_loss", "require_ebpf_for_root", "updated_at", "updated_by", "direct_ssh", "agent_auto_update", "package_holds", "log_clean_paths", "log_protect_paths", "connect_rules"`
+const insertSQL = `INSERT INTO "gateway_policy" ("id", "allow_local_forward", "allow_remote_forward", "allow_agent_forward", "allow_x11_forward", "proxy_sftp_subsystem", "fail_closed_on_recording_loss", "require_ebpf_for_root", "updated_at", "updated_by", "direct_ssh", "agent_auto_update", "package_holds", "log_clean_paths", "log_protect_paths", "connect_rules", "outage_logins_after", "outage_logins_groups") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING "id", "allow_local_forward", "allow_remote_forward", "allow_agent_forward", "allow_x11_forward", "proxy_sftp_subsystem", "fail_closed_on_recording_loss", "require_ebpf_for_root", "updated_at", "updated_by", "direct_ssh", "agent_auto_update", "package_holds", "log_clean_paths", "log_protect_paths", "connect_rules", "outage_logins_after", "outage_logins_groups"`
 
 const updatePrefix = `UPDATE "gateway_policy" SET `
 const deletePrefix = `DELETE FROM "gateway_policy"`
@@ -2080,9 +2255,11 @@ const (
 	dLogCleanPaths             uint64 = 1 << 12
 	dLogProtectPaths           uint64 = 1 << 13
 	dConnectRules              uint64 = 1 << 14
+	dOutageLoginsAfter         uint64 = 1 << 15
+	dOutageLoginsGroups        uint64 = 1 << 16
 )
 
-const nUpdatable = 15
+const nUpdatable = 17
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -2101,6 +2278,8 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"log_clean_paths\" = $", B: ""},               // log_clean_paths
 	{A: "\"log_protect_paths\" = $", B: ""},             // log_protect_paths
 	{A: "\"connect_rules\" = $", B: ""},                 // connect_rules
+	{A: "\"outage_logins_after\" = $", B: ""},           // outage_logins_after
+	{A: "\"outage_logins_groups\" = $", B: ""},          // outage_logins_groups
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -2122,6 +2301,8 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{},                                   // log_clean_paths has no server-side form
 	{},                                   // log_protect_paths has no server-side form
 	{},                                   // connect_rules has no server-side form
+	{A: "\"outage_logins_after\" = \"outage_logins_after\" + 1", B: ""}, // outage_logins_after = its own value plus one
+	{}, // outage_logins_groups has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -2149,9 +2330,11 @@ const (
 	iLogCleanPaths             uint64 = 1 << 13
 	iLogProtectPaths           uint64 = 1 << 14
 	iConnectRules              uint64 = 1 << 15
+	iOutageLoginsAfter         uint64 = 1 << 16
+	iOutageLoginsGroups        uint64 = 1 << 17
 )
 
-const nInsertable = 16
+const nInsertable = 18
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -2171,6 +2354,8 @@ var insCols = [nInsertable]string{
 	"\"log_clean_paths\"",
 	"\"log_protect_paths\"",
 	"\"connect_rules\"",
+	"\"outage_logins_after\"",
+	"\"outage_logins_groups\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -2179,7 +2364,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"gateway_policy\""
-const insReturning = " RETURNING \"id\", \"allow_local_forward\", \"allow_remote_forward\", \"allow_agent_forward\", \"allow_x11_forward\", \"proxy_sftp_subsystem\", \"fail_closed_on_recording_loss\", \"require_ebpf_for_root\", \"updated_at\", \"updated_by\", \"direct_ssh\", \"agent_auto_update\", \"package_holds\", \"log_clean_paths\", \"log_protect_paths\", \"connect_rules\""
+const insReturning = " RETURNING \"id\", \"allow_local_forward\", \"allow_remote_forward\", \"allow_agent_forward\", \"allow_x11_forward\", \"proxy_sftp_subsystem\", \"fail_closed_on_recording_loss\", \"require_ebpf_for_root\", \"updated_at\", \"updated_by\", \"direct_ssh\", \"agent_auto_update\", \"package_holds\", \"log_clean_paths\", \"log_protect_paths\", \"connect_rules\", \"outage_logins_after\", \"outage_logins_groups\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -2198,7 +2383,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"allow_local_forward\", \"allow_remote_forward\", \"allow_agent_forward\", \"allow_x11_forward\", \"proxy_sftp_subsystem\", \"fail_closed_on_recording_loss\", \"require_ebpf_for_root\", \"updated_at\", \"updated_by\", \"direct_ssh\", \"agent_auto_update\", \"package_holds\", \"log_clean_paths\", \"log_protect_paths\", \"connect_rules\""
+const updReturning = " RETURNING \"id\", \"allow_local_forward\", \"allow_remote_forward\", \"allow_agent_forward\", \"allow_x11_forward\", \"proxy_sftp_subsystem\", \"fail_closed_on_recording_loss\", \"require_ebpf_for_root\", \"updated_at\", \"updated_by\", \"direct_ssh\", \"agent_auto_update\", \"package_holds\", \"log_clean_paths\", \"log_protect_paths\", \"connect_rules\", \"outage_logins_after\", \"outage_logins_groups\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -2347,6 +2532,28 @@ func (m *Mut) SetConnectRules(v runtime.JSON) {
 	m.expr &^= dConnectRules
 }
 
+func (m *Mut) SetOutageLoginsAfter(v int32) {
+	m.row.OutageLoginsAfter = v
+	m.dirty |= dOutageLoginsAfter
+	m.expr &^= dOutageLoginsAfter
+}
+
+// IncOutageLoginsAfter adds one to the column's OWN value, in the database.
+//
+// Computing it in Go makes it a read-modify-write: two callers
+// who both read N both write N+1, and one increment is lost
+// with nothing to show that it happened.
+func (m *Mut) IncOutageLoginsAfter() {
+	m.expr |= dOutageLoginsAfter
+	m.dirty &^= dOutageLoginsAfter
+}
+
+func (m *Mut) SetOutageLoginsGroups(v []string) {
+	m.row.OutageLoginsGroups = v
+	m.dirty |= dOutageLoginsGroups
+	m.expr &^= dOutageLoginsGroups
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -2364,6 +2571,10 @@ type Ins struct {
 	// — which is the right default: silently updating a row you meant to
 	// create is a data-loss bug that looks like success.
 	conflict uint8
+
+	// add marks the assigned columns an upsert ACCUMULATES into rather
+	// than overwrites. Part of the statement key, beside the mask.
+	add uint64
 }
 
 // Create stages a new row.
@@ -2452,6 +2663,32 @@ func (n *Ins) SetConnectRules(v runtime.JSON) {
 	n.set |= iConnectRules
 }
 
+func (n *Ins) SetOutageLoginsAfter(v int32) {
+	n.row.OutageLoginsAfter = v
+	n.set |= iOutageLoginsAfter
+	n.add &^= iOutageLoginsAfter
+}
+
+// AddOutageLoginsAfterOnConflict inserts v, or — when the insert conflicts and an
+// OnConflict… target updates the row already there — ADDS v to it:
+//
+//	"outage_logins_after" = "gateway_policy"."outage_logins_after" + EXCLUDED."outage_logins_after"
+//
+// The sum is the database's, in the same statement, so two writers
+// counting into one row both land. Reading the row, adding in Go and
+// upserting the total loses one of them, with nothing to show it.
+// Without an OnConflict target, or with DoNothing, it is SetOutageLoginsAfter.
+func (n *Ins) AddOutageLoginsAfterOnConflict(v int32) {
+	n.row.OutageLoginsAfter = v
+	n.set |= iOutageLoginsAfter
+	n.add |= iOutageLoginsAfter
+}
+
+func (n *Ins) SetOutageLoginsGroups(v []string) {
+	n.row.OutageLoginsGroups = v
+	n.set |= iOutageLoginsGroups
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -2469,7 +2706,11 @@ const conflictAny = 1
 // columns the caller ASSIGNED. Assigning every column would revert
 // each one the caller left out to its default, on the row that
 // already exists — a silent data loss that reads as an upsert working.
-func upsertTail(conflict uint8, mask uint64) string {
+//
+// add marks the assigned columns that ACCUMULATE instead: the row
+// that already exists keeps its value plus the one this insert
+// carried. See the Add…OnConflict setters.
+func upsertTail(conflict uint8, mask uint64, add uint64) string {
 	if conflict == conflictAny {
 		return " ON CONFLICT DO NOTHING"
 	}
@@ -2483,7 +2724,7 @@ func upsertTail(conflict uint8, mask uint64) string {
 		// SQL, and leaving the row alone is what the caller asked for.
 		return spec + " DO NOTHING"
 	}
-	return spec + " DO UPDATE SET " + joinAssign(set)
+	return spec + " DO UPDATE SET " + joinAssign(set, add)
 }
 
 // conflictSpecs is one inference specification per target, in
@@ -2497,7 +2738,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 15)
+	set := make([]string, 0, 17)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -2545,6 +2786,12 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<15) != 0 {
 			set = append(set, "connect_rules")
 		}
+		if mask&(1<<16) != 0 {
+			set = append(set, "outage_logins_after")
+		}
+		if mask&(1<<17) != 0 {
+			set = append(set, "outage_logins_groups")
+		}
 	}
 	return set
 }
@@ -2581,15 +2828,31 @@ func (n *Ins) DoNothing() *Ins {
 
 // joinAssign renders the DO UPDATE SET list for the columns the caller
 // assigned. The punctuation comes from the back end, never from here.
-func joinAssign(set []string) string {
+func joinAssign(set []string, add uint64) string {
 	out := ""
 	for i, c := range set {
 		if i > 0 {
 			out += ", "
 		}
+		if a, ok := assignAdded(c, add); ok {
+			out += a
+			continue
+		}
 		out += assignExcluded(c)
 	}
 	return out
+}
+
+// assignAdded is the accumulating assignment for column c, when the
+// caller asked for one: the existing row's value plus the rejected
+// row's, added by the database in the same statement, so two
+// concurrent upserts both land rather than one overwriting the other.
+func assignAdded(c string, add uint64) (string, bool) {
+	switch c {
+	case "outage_logins_after":
+		return "\"outage_logins_after\" = \"gateway_policy\".\"outage_logins_after\" + EXCLUDED.\"outage_logins_after\"", add&iOutageLoginsAfter != 0
+	}
+	return "", false
 }
 
 var assignFor = map[string]string{
@@ -2608,15 +2871,24 @@ var assignFor = map[string]string{
 	"log_clean_paths":               "\"log_clean_paths\" = EXCLUDED.\"log_clean_paths\"",
 	"log_protect_paths":             "\"log_protect_paths\" = EXCLUDED.\"log_protect_paths\"",
 	"connect_rules":                 "\"connect_rules\" = EXCLUDED.\"connect_rules\"",
+	"outage_logins_after":           "\"outage_logins_after\" = EXCLUDED.\"outage_logins_after\"",
+	"outage_logins_groups":          "\"outage_logins_groups\" = EXCLUDED.\"outage_logins_groups\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
 
-func stmtForInsert(mask uint64, conflict uint8) *runtime.Stmt {
+func stmtForInsert(mask uint64, conflict uint8, add uint64) *runtime.Stmt {
 	// The conflict clause is part of the statement, so it must be part of
 	// the key. Packing it above the column bits keeps one cache for both.
 	key := mask | uint64(conflict)<<nInsertable
-	if st := insCache.Get(runtime.MaskKey{Dirty: key}); st != nil {
+	// Accumulating only means something in a DO UPDATE (an even code
+	// from 2): anywhere else it is an ordinary insert of the value, and
+	// keying it apart would compile the same statement twice.
+	if conflict < 2 || conflict%2 == 1 {
+		add = 0
+	}
+	add &= mask
+	if st := insCache.Get(runtime.MaskKey{Dirty: key, Expr: add}); st != nil {
 		return st
 	}
 	cols := make([]string, 0, nInsertable)
@@ -2627,9 +2899,9 @@ func stmtForInsert(mask uint64, conflict uint8) *runtime.Stmt {
 	}
 	suffix := insReturning
 	if conflict > 0 {
-		suffix = upsertTail(conflict, mask) + insReturning
+		suffix = upsertTail(conflict, mask, add) + insReturning
 	}
-	return insCache.Put(runtime.MaskKey{Dirty: key}, runtime.SpliceInsertWith(insPrefix, insParts, cols, insPlaceholder, suffix))
+	return insCache.Put(runtime.MaskKey{Dirty: key, Expr: add}, runtime.SpliceInsertWith(insPrefix, insParts, cols, insPlaceholder, suffix))
 }
 
 // Insert writes the assigned columns and reads every column back, so
@@ -2639,7 +2911,7 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 	if n.set == 0 {
 		return Row{}, runtime.ErrNothingAssigned
 	}
-	st := stmtForInsert(n.set, n.conflict)
+	st := stmtForInsert(n.set, n.conflict, n.add)
 	if st.Err != nil {
 		// A malformed token stream is a code-generation bug. Executing it
 		// would run a query whose filter is not the one that was asked for.
@@ -2683,6 +2955,10 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.LogProtectPaths)
 		case 15:
 			args = append(args, n.row.ConnectRules)
+		case 16:
+			args = append(args, n.row.OutageLoginsAfter)
+		case 17:
+			args = append(args, n.row.OutageLoginsGroups)
 		}
 	}
 	var out Row
@@ -2720,7 +2996,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 16)
+	args := make([]any, 0, 18)
 	args = append(args, r.ID)
 	args = append(args, r.AllowLocalForward)
 	args = append(args, r.AllowRemoteForward)
@@ -2737,6 +3013,8 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.LogCleanPaths)
 	args = append(args, r.LogProtectPaths)
 	args = append(args, r.ConnectRules)
+	args = append(args, r.OutageLoginsAfter)
+	args = append(args, r.OutageLoginsGroups)
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -2779,13 +3057,15 @@ var copyCols = []string{
 	"log_clean_paths",
 	"log_protect_paths",
 	"connect_rules",
+	"outage_logins_after",
+	"outage_logins_groups",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [16]any
+	buf  [18]any
 }
 
 func (s *rowSource) Next() bool {
@@ -2819,6 +3099,8 @@ func (s *rowSource) Values() []any {
 	s.buf[13] = &r.LogCleanPaths
 	s.buf[14] = &r.LogProtectPaths
 	s.buf[15] = &r.ConnectRules
+	s.buf[16] = &r.OutageLoginsAfter
+	s.buf[17] = &r.OutageLoginsGroups
 	return s.buf[:]
 }
 
@@ -2865,8 +3147,10 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 13
 	mask |= 1 << 14
 	mask |= 1 << 15
-	st := stmtForInsertNoReturn(mask, 0)
-	args := make([]any, 0, 16)
+	mask |= 1 << 16
+	mask |= 1 << 17
+	st := stmtForInsertNoReturn(mask, 0, 0)
+	args := make([]any, 0, 18)
 	args = append(args, r.ID)
 	args = append(args, r.AllowLocalForward)
 	args = append(args, r.AllowRemoteForward)
@@ -2883,6 +3167,8 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.LogCleanPaths)
 	args = append(args, r.LogProtectPaths)
 	args = append(args, r.ConnectRules)
+	args = append(args, r.OutageLoginsAfter)
+	args = append(args, r.OutageLoginsGroups)
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -2906,7 +3192,7 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 	if n.set == 0 {
 		return runtime.BatchOp{}, runtime.ErrNothingAssigned
 	}
-	st := stmtForInsertNoReturn(n.set, n.conflict)
+	st := stmtForInsertNoReturn(n.set, n.conflict, n.add)
 	if st.Err != nil {
 		return runtime.BatchOp{}, st.Err
 	}
@@ -2948,6 +3234,10 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.LogProtectPaths)
 		case 15:
 			args = append(args, n.row.ConnectRules)
+		case 16:
+			args = append(args, n.row.OutageLoginsAfter)
+		case 17:
+			args = append(args, n.row.OutageLoginsGroups)
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -2956,9 +3246,18 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 // stmtForInsertNoReturn is stmtForInsert without RETURNING, for the
 // batch path. Its own cache: the two differ by a suffix, and sharing
 // one would hand a batch the statement that asks for rows back.
-func stmtForInsertNoReturn(mask uint64, conflict uint8) *runtime.Stmt {
+func stmtForInsertNoReturn(mask uint64, conflict uint8, add uint64) *runtime.Stmt {
+	// The conflict clause is part of the statement, so it must be part of
+	// the key. Packing it above the column bits keeps one cache for both.
 	key := mask | uint64(conflict)<<nInsertable
-	if st := insOpCache.Get(runtime.MaskKey{Dirty: key}); st != nil {
+	// Accumulating only means something in a DO UPDATE (an even code
+	// from 2): anywhere else it is an ordinary insert of the value, and
+	// keying it apart would compile the same statement twice.
+	if conflict < 2 || conflict%2 == 1 {
+		add = 0
+	}
+	add &= mask
+	if st := insOpCache.Get(runtime.MaskKey{Dirty: key, Expr: add}); st != nil {
 		return st
 	}
 	cols := make([]string, 0, nInsertable)
@@ -2969,9 +3268,9 @@ func stmtForInsertNoReturn(mask uint64, conflict uint8) *runtime.Stmt {
 	}
 	suffix := ""
 	if conflict > 0 {
-		suffix = upsertTail(conflict, mask)
+		suffix = upsertTail(conflict, mask, add)
 	}
-	return insOpCache.Put(runtime.MaskKey{Dirty: key}, runtime.SpliceInsertWith(insPrefix, insParts, cols, insPlaceholder, suffix))
+	return insOpCache.Put(runtime.MaskKey{Dirty: key, Expr: add}, runtime.SpliceInsertWith(insPrefix, insParts, cols, insPlaceholder, suffix))
 }
 
 // UpdateOp is this Mut's update as a queueable statement.
@@ -3024,6 +3323,10 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.LogProtectPaths)
 		case 14:
 			args = append(args, m.row.ConnectRules)
+		case 15:
+			args = append(args, m.row.OutageLoginsAfter)
+		case 16:
+			args = append(args, m.row.OutageLoginsGroups)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -3136,6 +3439,10 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.LogProtectPaths)
 		case 14:
 			args = append(args, m.row.ConnectRules)
+		case 15:
+			args = append(args, m.row.OutageLoginsAfter)
+		case 16:
+			args = append(args, m.row.OutageLoginsGroups)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -3314,6 +3621,10 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.LogProtectPaths)
 		case 14:
 			args = append(args, m.row.ConnectRules)
+		case 15:
+			args = append(args, m.row.OutageLoginsAfter)
+		case 16:
+			args = append(args, m.row.OutageLoginsGroups)
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

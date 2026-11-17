@@ -412,6 +412,10 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/v1/assets/{id}", a.patchAsset)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}", a.deleteAsset)
 	mux.HandleFunc("PUT /api/v1/assets/{id}/direct-ssh", a.putAssetDirectSSH)
+	mux.HandleFunc("GET /api/v1/assets/{id}/outage-logins", a.getAssetOutageLogins)
+	mux.HandleFunc("PUT /api/v1/assets/{id}/outage-logins", a.putAssetOutageLogins)
+	mux.HandleFunc("GET /api/v1/policy/outage-logins", a.getOutageLogins)
+	mux.HandleFunc("PUT /api/v1/policy/outage-logins", a.putOutageLogins)
 	a.registerPackageRoutes(mux)
 	a.registerSoftwareRoutes(mux)
 	a.registerLogonsRoutes(mux)
@@ -819,8 +823,9 @@ func (a *API) postSession(w http.ResponseWriter, r *http.Request) {
 	var report struct {
 		Session
 		// DirectLoginID is the approval a direct login was let in on, and
-		// DirectApproval is "approved" for one, or "allowed" for a login let
-		// in because the server is set to allow and record. Checked against
+		// DirectApproval is "approved" for one, "allowed" for a login let
+		// in because the server is set to allow and record, or "outage" for
+		// one let in while the server could not reach Argus. Checked against
 		// what the control plane holds before either is believed.
 		DirectLoginID  string `json:"directLoginId"`
 		DirectApproval string `json:"directApproval"`
@@ -941,6 +946,10 @@ func (a *API) postSession(w http.ResponseWriter, r *http.Request) {
 		if ok, detail := a.directSessionAdmitted(r.Context(), in, report.DirectLoginID,
 			report.DirectApproval); ok {
 			e.Action, e.Severity, e.Detail = "session.direct_recorded", "notice", detail
+			if report.DirectApproval == "outage" {
+				e.Action, e.Severity = "session.outage_login", "warning"
+				a.alertOutageSession(r.Context(), in)
+			}
 		}
 		e.Detail += report.Auth.bounded().describe()
 		if _, err := a.store.AppendAudit(r.Context(), e); err != nil {
@@ -1040,6 +1049,13 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		reply["direct_ssh_accounts"] = accounts
 	} else {
 		a.log.Error("heartbeat: cannot read the direct ssh setting", "error", merr)
+	}
+	// Who may log in while this server cannot reach Argus. Left out on a
+	// failed read, so the agent keeps what it last heard.
+	if o, off, oerr := a.store.OutageLoginsFor(r.Context(), in.Hostname); oerr == nil {
+		reply["outage_logins"] = o.agentOrder(off)
+	} else {
+		a.log.Error("heartbeat: cannot read logins while Argus is unreachable", "error", oerr)
 	}
 	// The personal accounts this server should hold, for a heartbeat from a
 	// server the inventory knows. Left out on an unknown host or a failed

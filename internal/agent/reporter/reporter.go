@@ -138,6 +138,10 @@ type HeartbeatReply struct {
 	// account gets, for an agent that reads neither.
 	DirectSSHDefault  *string           `json:"direct_ssh_default"`
 	DirectSSHAccounts map[string]string `json:"direct_ssh_accounts"`
+	// OutageLogins is who may log in while this host cannot reach the
+	// control plane. Nil from a control plane older than the setting, or one
+	// that could not read it: the agent keeps what it last heard.
+	OutageLogins *OutageLogins `json:"outage_logins"`
 	// PersonalAccounts is the personal accounts this host should hold, as
 	// the agent decodes them. Absent from a control plane older than them,
 	// or one that could not read them: the agent keeps what it has.
@@ -175,6 +179,13 @@ type HeartbeatReply struct {
 	// plane older than signed orders. See agent.OrderGate.
 	Body      []byte `json:"-"`
 	Signature string `json:"-"`
+}
+
+// OutageLogins lets members of Groups in once the host has gone
+// AfterMinutes without hearing from the control plane; 0 is off.
+type OutageLogins struct {
+	AfterMinutes int      `json:"after_minutes"`
+	Groups       []string `json:"groups"`
 }
 
 // maxReply bounds what is read of a reply: a reply is a few fields, and a
