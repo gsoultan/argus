@@ -456,6 +456,17 @@ func (s *Store) CreateDatabase(ctx context.Context, d Database, actor string) (D
 	if err := d.validate(); err != nil {
 		return d, err
 	}
+	// Adding an entry again updates where it is, which is right for a
+	// socket that moved, but two Postgres servers elsewhere (a primary and
+	// its read replica behind one PgBouncer) are two databases: the second
+	// must not quietly repoint the first.
+	var was string
+	if err := s.db(ctx).QueryRow(ctx, `SELECT host FROM databases WHERE asset_id::text = $1 AND port = $2 AND dbname = $3`,
+		d.AssetID, d.Port, d.Name).Scan(&was); err == nil && !strings.EqualFold(was, d.Host) &&
+		tunnel.RemotePGHost(was) && tunnel.RemotePGHost(d.Host) {
+		return d, ErrInvalidDatabase{fmt.Sprintf("this server's entry for %s on port %d is the one at %s; Argus keeps one per server, "+
+			"port and name, so add %s from another server that reaches it", d.Name, d.Port, was, d.Host)}
+	}
 	policy, _ := json.Marshal(d.Policy)
 	var id string
 	err := s.db(ctx).QueryRow(ctx, `

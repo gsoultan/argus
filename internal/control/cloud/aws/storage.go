@@ -363,7 +363,9 @@ var actionNeeds = map[cloud.Action][]string{
 	cloud.ActionGroupSize:         {"autoscaling:UpdateAutoScalingGroup"},
 	cloud.ActionFloorCreate: {"ec2:CreateLaunchTemplate", "ec2:RunInstances", "ec2:CreateTags",
 		"autoscaling:CreateAutoScalingGroup", "autoscaling:CreateOrUpdateTags"},
-	cloud.ActionFloorPolicy: {"autoscaling:PutScalingPolicy", "autoscaling:UpdateAutoScalingGroup"},
+	cloud.ActionFloorPolicy:   {"autoscaling:PutScalingPolicy", "autoscaling:UpdateAutoScalingGroup"},
+	cloud.ActionReplicaCreate: {"rds:CreateDBInstanceReadReplica", "rds:AddTagsToResource"},
+	cloud.ActionReplicaRemove: {"rds:ModifyDBInstance", "rds:DeleteDBInstance"},
 }
 
 // Needs is the permissions an action takes.
@@ -428,7 +430,7 @@ func MissingFrom(doc string) ([]string, error) {
 		}
 	}
 	missing := []string{}
-	for _, want := range ManagePolicy {
+	for _, want := range append(append([]string(nil), ManagePolicy...), ManageTagged...) {
 		if !have[strings.ToLower(want)] {
 			missing = append(missing, want)
 		}

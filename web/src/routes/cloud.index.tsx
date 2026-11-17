@@ -13,6 +13,7 @@ import { InstancesTable, NetworkTables, ScalingGroupsTable, StorageTables } from
 import { NewBalancer, NewTargetGroup } from '~/components/cloud/BalancerActions'
 import { SuggestionsCard } from '~/components/cloud/Suggestion'
 import { ScaleGroupsCard } from '~/components/cloud/ScaleGroups'
+import { ReadReplicasCard } from '~/components/cloud/ReadReplicas'
 import { cloudSuggestionsQuery } from '~/lib/cloudSuggestions'
 import { scaleGroupsQuery } from '~/lib/cloudScale'
 import { NewFirewall } from '~/components/cloud/NetworkActions'
@@ -74,6 +75,7 @@ function Cloud() {
     'load-balancer': useQuery(cloudItemsQuery('load-balancer')),
     'target-group': useQuery(cloudItemsQuery('target-group')),
     'scaling-group': useQuery(cloudItemsQuery('scaling-group')),
+    database: useQuery({ ...cloudItemsQuery('database'), enabled: tab === 'scaling' }),
   }
   const [making, setMaking] = useState<'disk' | 'address' | 'firewall' | 'balancer' | 'target-group' | null>(null)
   const [account, setAccount] = useState<string | null>(null)
@@ -210,6 +212,7 @@ function Cloud() {
               </Text>
               <ScalingGroupsTable items={narrow(q['scaling-group'].data)} loading={q['scaling-group'].isPending} names={names} filtered={filtered}
                 targetGroups={q['target-group'].data} />
+              <ReadReplicasCard items={narrow(q.database.data)} loading={q.database.isPending} canChange={admin && canChange} />
             </Stack>
           )}
         </Stack>

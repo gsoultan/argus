@@ -32,7 +32,8 @@ var ReadPolicy = []string{
 // load balancer targets, target groups and load balancers (made, never
 // deleted), Auto Scaling group sizes, launch templates and Auto Scaling
 // groups for scale groups (made, never deleted) and their target-tracking
-// policy, capacity reservations, buying Reserved
+// policy, RDS read replicas (made, and removed only through ManageTagged),
+// capacity reservations, buying Reserved
 // Instances and Savings Plans (which Argus only does with a second person's
 // approval, every time), and nothing else. No
 // IAM, so a change cannot grant itself more; no iam:PassRole, so an
@@ -63,7 +64,13 @@ var ManagePolicy = []string{
 	"autoscaling:UpdateAutoScalingGroup",
 	"ec2:CreateLaunchTemplate", "autoscaling:CreateAutoScalingGroup", "autoscaling:CreateOrUpdateTags",
 	"autoscaling:PutScalingPolicy",
+	"rds:DescribeDBInstances", "rds:CreateDBInstanceReadReplica", "rds:AddTagsToResource",
 }
+
+// ManageTagged is what the manage role may do only to an RDS database
+// tagged argus:replica-of, which only a replica Argus made carries: turn
+// off its deletion protection and delete it. A primary is out of reach.
+var ManageTagged = []string{"rds:ModifyDBInstance", "rds:DeleteDBInstance"}
 
 // ReadRoleName and ManageRoleName are the roles the template makes.
 const (
@@ -155,7 +162,9 @@ func roleYAML(logical, name, policy, principal, externalID string, actions []str
 // extraStatements are statements beside a role's one list of actions. The
 // manage role may make Auto Scaling's own service-linked role, which AWS
 // makes the first time an account has an Auto Scaling group, and no other
-// role: AWS defines that role's rights, so this grants nothing else.
+// role: AWS defines that role's rights, so this grants nothing else. It may
+// remove an RDS database only when it is a replica Argus made
+// (ManageTagged).
 var extraStatements = map[string]string{
 	"argus-manage": `              - Effect: Allow
                 Action:
@@ -164,6 +173,14 @@ var extraStatements = map[string]string{
                 Condition:
                   StringLike:
                     iam:AWSServiceName: autoscaling.amazonaws.com
+              - Effect: Allow
+                Action:
+                  - rds:ModifyDBInstance
+                  - rds:DeleteDBInstance
+                Resource: "*"
+                Condition:
+                  StringLike:
+                    rds:db-tag/argus:replica-of: "*"
 `,
 }
 

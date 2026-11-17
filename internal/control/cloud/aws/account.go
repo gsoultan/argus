@@ -263,6 +263,25 @@ func databases(ctx context.Context, c *rds.Client, region string) ([]cloud.Resou
 				set(r.Details, "port", strconv.Itoa(int(awssdk.ToInt32(d.Endpoint.Port))))
 				set(r.Details, "address", awssdk.ToString(d.Endpoint.Address))
 			}
+			// What a read replica needs to know: which primary a replica
+			// copies, the replicas a primary has, and whether backups (which
+			// AWS needs to make one) are on.
+			r.Zone = awssdk.ToString(d.AvailabilityZone)
+			set(r.Details, "version", awssdk.ToString(d.EngineVersion))
+			set(r.Details, "replica_of", awssdk.ToString(d.ReadReplicaSourceDBInstanceIdentifier))
+			set(r.Details, "replicas", strings.Join(d.ReadReplicaDBInstanceIdentifiers, ","))
+			r.Details["backup_days"] = strconv.Itoa(int(awssdk.ToInt32(d.BackupRetentionPeriod)))
+			r.Details["storage_gb"] = strconv.Itoa(int(awssdk.ToInt32(d.AllocatedStorage)))
+			set(r.Details, "storage_type", awssdk.ToString(d.StorageType))
+			r.Details["multi_az"] = yesNo(awssdk.ToBool(d.MultiAZ))
+			r.Details["deletion_protection"] = yesNo(awssdk.ToBool(d.DeletionProtection))
+			set(r.Details, "cluster", awssdk.ToString(d.DBClusterIdentifier))
+			for _, t := range d.TagList {
+				if r.Tags == nil {
+					r.Tags = map[string]string{}
+				}
+				r.Tags[awssdk.ToString(t.Key)] = awssdk.ToString(t.Value)
+			}
 			for _, g := range d.VpcSecurityGroups {
 				r.Links = append(r.Links, cloud.Ref{Kind: cloud.KindFirewall, ID: awssdk.ToString(g.VpcSecurityGroupId)})
 			}
