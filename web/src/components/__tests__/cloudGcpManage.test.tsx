@@ -1,7 +1,8 @@
 import { fireEvent, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
+import { TagsChange } from '~/components/cloud/ChangeModal'
 import { GcpSetup } from '~/components/cloud/GcpSetup'
-import { allows, type CloudPrepared } from '~/lib/cloud'
+import { allows, allowsTags, labelProblem, type CloudItem, type CloudPrepared } from '~/lib/cloud'
 import { renderWithProviders } from '~/test/render'
 
 /**
@@ -40,5 +41,35 @@ describe('Changes in a Google Cloud project', () => {
     expect(screen.getByText(/Argus connects as soon as argus-read works/)).toBeInTheDocument()
     fireEvent.click(screen.getByText(/Rather click through the console/))
     expect(screen.queryByText(/argus-manage/)).toBeNull()
+  })
+
+  it('labels only the kinds the account lists', () => {
+    const gcp = { actions: ['tags'], tagKinds: ['instance', 'volume'] }
+    expect(allowsTags(gcp, 'volume')).toBe(true)
+    expect(allowsTags(gcp, 'snapshot')).toBe(false)
+    expect(allowsTags({ actions: ['start'] }, 'instance')).toBe(false)
+    expect(allowsTags({}, 'firewall')).toBe(true)
+  })
+
+  it('knows what Google takes as a label', () => {
+    expect(labelProblem('team', 'payments')).toBeUndefined()
+    expect(labelProblem('argusschedule', 'office-hours')).toBeUndefined()
+    expect(labelProblem('Team', 'payments')).toMatch(/Lowercase/)
+    expect(labelProblem('goog-x', 'y')).toMatch(/Google keeps/)
+    expect(labelProblem('team', 'Payments')).toMatch(/Lowercase/)
+  })
+
+  it('says a label must be lowercase as it is typed, and will not save it', () => {
+    const it: CloudItem = {
+      accountId: 'a1', accountName: 'web-gcp', provider: 'gcp', environment: 'development',
+      resource: { kind: 'instance', id: '101', name: 'web-1', region: 'us-central1', state: 'running', tags: { team: 'payments' } },
+    } as unknown as CloudItem
+    renderWithProviders(<TagsChange it={it} env="development" gcp onClose={() => {}} />)
+    expect(screen.getByText('Labels on web-1')).toBeInTheDocument()
+    fireEvent.change(screen.getAllByLabelText('Label key')[0]!, { target: { value: 'Team' } })
+    expect(screen.getByText(/starting with a letter/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Save/ })).toBeDisabled()
+    fireEvent.change(screen.getAllByLabelText('Label key')[0]!, { target: { value: 'owner' } })
+    expect(screen.getByRole('button', { name: 'Save 2 changes' })).toBeEnabled()
   })
 })

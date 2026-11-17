@@ -53,7 +53,7 @@ test('allowing changes in a project makes argus-manage with the same command', a
   await page.getByLabel(/Name in Argus/).fill('payments-gcp')
   await page.getByLabel(/Project id/).fill('payments-prod-418203')
   await page.getByText('Read and change').click()
-  await expect(page.getByText(/start, stop and reset VMs and grow disks/)).toBeVisible()
+  await expect(page.getByText(/start, stop and reset VMs, change their machine type, labels and deletion protection/)).toBeVisible()
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/06-read-and-change.png`, fullPage: true })
   await page.getByRole('button', { name: 'Next: give Argus access' }).click()
   await expect(page.getByText('Argus needs two service accounts in payments-prod-418203')).toBeVisible()
@@ -87,7 +87,7 @@ async function manageableProject(page: Page) {
     const res = await route.fetch()
     const body = await res.json()
     body.accounts = body.accounts.map((a: { provider: string }) => a.provider === 'gcp'
-      ? { ...a, access: 'manage', manageRoleArn: 'argus-manage@analytics-prod-4182.iam.gserviceaccount.com', actions: ['start', 'stop', 'reboot', 'volume-grow'] }
+      ? { ...a, access: 'manage', manageRoleArn: 'argus-manage@analytics-prod-4182.iam.gserviceaccount.com', actions: ['start', 'stop', 'reboot', 'resize', 'tags', 'protect', 'unprotect', 'volume-grow'], tagKinds: ['instance', 'volume'] }
       : a)
     await route.fulfill({ response: res, json: body })
   })
@@ -100,7 +100,9 @@ async function manageableProject(page: Page) {
           size: '200 GiB', details: { type: 'pd-balanced' }, links: [{ kind: 'instance', id: '3301', name: 'etl-1' }] } }]
       : kind === 'instance'
         ? [{ ...base, resource: { kind: 'instance', id: '3301', name: 'etl-1', region: 'us-central1', zone: 'us-central1-a', state: 'running',
-            size: 'e2-standard-4', addresses: ['10.128.0.7'] } }]
+            size: 'e2-standard-4', addresses: ['10.128.0.7'], tags: { team: 'data' } } },
+          { ...base, resource: { kind: 'instance', id: '3302', name: 'etl-2', region: 'us-central1', zone: 'us-central1-a', state: 'stopped',
+            size: 'e2-standard-4', addresses: ['10.128.0.8'], details: { deletionProtection: 'on' } } }]
         : []
     await route.fulfill({ json: { items } })
   })
@@ -114,6 +116,7 @@ test('a Google disk grows by size alone, and only built changes are offered', as
   const drawer = page.getByRole('dialog')
   await expect(drawer.getByRole('button', { name: 'Grow' })).toBeVisible()
   for (const absent of ['Snapshot', 'Detach', 'Tags']) await expect(drawer.getByRole('button', { name: absent })).toHaveCount(0)
+  await expect(drawer.getByRole('button', { name: 'Labels' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'New disk' })).toHaveCount(0)
   await drawer.getByRole('button', { name: 'Grow' }).click()
   const grow = page.getByRole('dialog', { name: /Grow etl-data/ })
@@ -128,8 +131,65 @@ test('a Google disk grows by size alone, and only built changes are offered', as
   const vm = page.getByRole('dialog')
   await expect(vm.getByRole('button', { name: 'Reset' })).toBeVisible()
   await expect(vm.getByRole('button', { name: 'Stop' })).toBeVisible()
-  for (const absent of ['Change size', 'Tags', 'More actions', 'Boot log']) await expect(vm.getByRole('button', { name: absent })).toHaveCount(0)
+  for (const absent of ['Change size', 'Tags', 'Boot log']) await expect(vm.getByRole('button', { name: absent })).toHaveCount(0)
+  await expect(vm.getByRole('button', { name: 'Change machine type' })).toBeVisible()
   await vm.getByRole('button', { name: 'Reset' }).click()
   await expect(page.getByText(/no gentle reboot/)).toBeVisible()
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/10-reset.png` })
+})
+
+test('a Google VM changes machine type, labels and deletion protection', async ({ page }) => {
+  await manageableProject(page)
+  const asked: Record<string, unknown>[] = []
+  await page.route('**/api/v1/cloud/instance-sizes?*', (route) => route.fulfill({ json: { sizes: ['e2-medium', 'e2-standard-4', 'n2-standard-4'] } }))
+  await page.route('**/api/v1/cloud/changes', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const body = route.request().postDataJSON() as Record<string, unknown>
+    asked.push(body)
+    await route.fulfill({ json: { id: 'c' + asked.length, state: 'applied', summary: 'done', action: body.action } })
+  })
+  await signIn(page)
+
+  // A running VM: Google changes the machine type of a stopped one only.
+  await page.goto('/cloud?tab=instances')
+  await page.getByText('etl-1').first().click()
+  let vm = page.getByRole('dialog')
+  await vm.getByRole('button', { name: 'Change machine type' }).click()
+  await expect(page.getByText(/Google changes the machine type of a stopped VM only/)).toBeVisible()
+  await page.getByRole('button', { name: 'Cancel' }).click()
+
+  // Labels are lowercase, said as they are typed.
+  await vm.getByRole('button', { name: 'Labels' }).click()
+  const labels = page.getByRole('dialog', { name: /Labels on etl-1/ })
+  await labels.getByRole('button', { name: 'Add a label' }).click()
+  await labels.getByLabel('Label key').nth(1).fill('Owner')
+  await expect(labels.getByText(/starting with a letter/)).toBeVisible()
+  await expect(labels.getByRole('button', { name: /^Save/ })).toBeDisabled()
+  await labels.getByLabel('Label key').nth(1).fill('owner')
+  await labels.getByLabel('Label value').nth(1).fill('dana')
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/11-labels.png` })
+  await labels.getByRole('button', { name: 'Save 1 change' }).click()
+  await expect.poll(() => asked.length).toBe(1)
+  expect(asked[0]).toMatchObject({ action: 'tags', resourceId: '3301', spec: { set: { owner: 'dana' }, remove: [] } })
+
+  // A stopped one: the zone's machine types, and protection the way it can go.
+  await page.goto('/cloud?tab=instances')
+  await page.getByText('etl-2').first().click()
+  vm = page.getByRole('dialog')
+  await vm.getByRole('button', { name: 'More actions' }).click()
+  await expect(page.getByRole('menuitem', { name: 'Turn off deletion protection' })).toBeVisible()
+  for (const absent of ['Turn on deletion protection', 'Remove instance…', 'Make an image…', 'Instance settings…', 'Launch another like this…']) {
+    await expect(page.getByRole('menuitem', { name: absent })).toHaveCount(0)
+  }
+  await page.keyboard.press('Escape')
+  await vm.getByRole('button', { name: 'Change machine type' }).click()
+  const resize = page.getByRole('dialog', { name: /Change the machine type of etl-2/ })
+  await resize.getByLabel('New machine type').click()
+  await page.getByRole('option', { name: 'n2-standard-4' }).click()
+  // A production VM: someone else approves, and is told why.
+  await resize.getByLabel('Why').fill('The nightly job runs out of memory')
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/12-machine-type.png` })
+  await resize.getByRole('button', { name: 'Ask for approval' }).click()
+  await expect.poll(() => asked.length).toBe(2)
+  expect(asked[1]).toMatchObject({ action: 'resize', resourceId: '3302', spec: { size: 'n2-standard-4', from: 'e2-standard-4' } })
 })

@@ -26,6 +26,7 @@ type fakeManage struct {
 	posts   []string
 	bodies  []string
 	agents  []string
+	queries []string
 }
 
 func (g *fakeManage) handler() http.Handler {
@@ -70,12 +71,26 @@ func (g *fakeManage) handler() http.Handler {
 			_, _ = w.Write([]byte(`{"items":{}}`))
 		}
 	}))
+	mux.HandleFunc("GET /compute/v1/projects/{p}/zones/{z}/instances/{id}", auth(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"labels":{"team":"payments","environment":"production"},"labelFingerprint":"fp-101"}`))
+	}))
+	mux.HandleFunc("GET /compute/v1/projects/{p}/regions/{rg}/disks/{id}", auth(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"labelFingerprint":"fp-202"}`))
+	}))
+	mux.HandleFunc("GET /compute/v1/projects/{p}/zones/{z}/machineTypes", auth(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("pageToken") == "" {
+			_, _ = w.Write([]byte(`{"items":[{"name":"n2-standard-4"},{"name":"n1-highcpu-2","deprecated":{"state":"DEPRECATED"}}],"nextPageToken":"p2"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"items":[{"name":"e2-medium"}]}`))
+	}))
 	mux.HandleFunc("POST /compute/v1/", auth(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		g.mu.Lock()
 		g.posts = append(g.posts, r.URL.Path)
 		g.bodies = append(g.bodies, string(b))
 		g.agents = append(g.agents, r.Header.Get("User-Agent"))
+		g.queries = append(g.queries, r.URL.RawQuery)
 		g.mu.Unlock()
 		if strings.Contains(r.URL.Path, "/zones/us-central1-a/instances/101/reset") {
 			_, _ = w.Write([]byte(`{"name":"operation-9","status":"DONE","error":{"errors":[{"message":"The resource is not ready"}]}}`))
@@ -168,12 +183,13 @@ func TestArgusManageMustCarryTheExternalID(t *testing.T) {
 
 func TestOnlyBuiltChangesAreSupported(t *testing.T) {
 	p := New(Options{})
-	for _, a := range []cloud.Action{cloud.ActionStart, cloud.ActionStop, cloud.ActionReboot, cloud.ActionVolumeGrow} {
+	for _, a := range []cloud.Action{cloud.ActionStart, cloud.ActionStop, cloud.ActionReboot, cloud.ActionVolumeGrow,
+		cloud.ActionResize, cloud.ActionTags, cloud.ActionProtect, cloud.ActionUnprotect} {
 		if !cloud.Supports(p, a) {
 			t.Errorf("%s should be supported", a)
 		}
 	}
-	for _, a := range []cloud.Action{cloud.ActionLaunch, cloud.ActionRemove, cloud.ActionHibernate, cloud.ActionResize, cloud.ActionVolumeDelete} {
+	for _, a := range []cloud.Action{cloud.ActionLaunch, cloud.ActionRemove, cloud.ActionHibernate, cloud.ActionVolumeDelete, cloud.ActionSnapshotCreate} {
 		if cloud.Supports(p, a) {
 			t.Errorf("%s is not built for Google Cloud yet", a)
 		}
@@ -209,5 +225,100 @@ func TestSetupCommandMakesArgusManageOnlyWhenAsked(t *testing.T) {
 		if strings.HasPrefix(l, "#") && i > 2 {
 			t.Fatalf("a comment inside the chain breaks it, line %d: %s", i, l)
 		}
+	}
+}
+
+func TestResizeSetsTheMachineTypeInTheZone(t *testing.T) {
+	p, g, acct := newManageFake(t, "argus-0123", ManageDescription("argus-0123"))
+	if _, err := p.Resize(context.Background(), acct, "alice@example.com", "us-central1", "101", "n2-standard-4"); err != nil {
+		t.Fatal(err)
+	}
+	if len(g.posts) != 1 || g.posts[0] != "/compute/v1/projects/payments-prod-4182/zones/us-central1-a/instances/101/setMachineType" {
+		t.Fatalf("posts = %v", g.posts)
+	}
+	if g.bodies[0] != `{"machineType":"zones/us-central1-a/machineTypes/n2-standard-4"}` {
+		t.Errorf("body = %s", g.bodies[0])
+	}
+	for _, bad := range []string{"t3.medium", "N2-standard-4", "../x", "e2"} {
+		if _, err := p.Resize(context.Background(), acct, "alice@example.com", "us-central1", "101", bad); err == nil {
+			t.Errorf("%q is not a machine type", bad)
+		}
+	}
+	if len(g.posts) != 1 {
+		t.Fatalf("nothing more should be changed: %v", g.posts)
+	}
+}
+
+func TestSizesAreTheZonesCurrentMachineTypes(t *testing.T) {
+	p, _, acct := newManageFake(t, "argus-0123", ManageDescription("argus-0123"))
+	got, err := p.Sizes(context.Background(), acct, "alice@example.com", "us-central1", "101")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "e2-medium,n2-standard-4" {
+		t.Fatalf("sizes = %v (every page, sorted, no deprecated ones)", got)
+	}
+}
+
+func TestLabelsAreMergedAndWrittenWithTheFingerprint(t *testing.T) {
+	p, g, acct := newManageFake(t, "argus-0123", ManageDescription("argus-0123"))
+	if _, err := p.SetTagsOf(context.Background(), acct, "alice@example.com", "us-central1", cloud.KindInstance, "101",
+		map[string]string{"owner": "alice"}, []string{"team"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.SetTagsOf(context.Background(), acct, "alice@example.com", "us-central1", cloud.KindVolume, "202",
+		map[string]string{"backup": "daily"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/compute/v1/projects/payments-prod-4182/zones/us-central1-a/instances/101/setLabels",
+		"/compute/v1/projects/payments-prod-4182/regions/us-central1/disks/202/setLabels"}
+	if len(g.posts) != 2 || g.posts[0] != want[0] || g.posts[1] != want[1] {
+		t.Fatalf("posts = %v", g.posts)
+	}
+	if g.bodies[0] != `{"labelFingerprint":"fp-101","labels":{"environment":"production","owner":"alice"}}` {
+		t.Errorf("instance body = %s", g.bodies[0])
+	}
+	if g.bodies[1] != `{"labelFingerprint":"fp-202","labels":{"backup":"daily"}}` {
+		t.Errorf("disk body = %s", g.bodies[1])
+	}
+	if _, err := p.SetTagsOf(context.Background(), acct, "alice@example.com", "us-central1", cloud.KindInstance, "101",
+		map[string]string{"Owner": "alice"}, nil); err == nil {
+		t.Fatal("Google keeps labels lowercase")
+	}
+	if _, err := p.SetTagsOf(context.Background(), acct, "alice@example.com", "us-central1", cloud.KindSnapshot, "101",
+		map[string]string{"owner": "alice"}, nil); !errors.Is(err, cloud.ErrUnsupported) {
+		t.Fatalf("snapshots are not labelled yet: %v", err)
+	}
+	if len(g.posts) != 2 {
+		t.Fatalf("nothing more should be changed: %v", g.posts)
+	}
+}
+
+func TestLabelProblems(t *testing.T) {
+	for k, v := range map[string]string{"env": "prod", "argusschedule": "office-hours", "a_b-1": ""} {
+		if why := LabelProblem(k, v); why != "" {
+			t.Errorf("%s=%s: %s", k, v, why)
+		}
+	}
+	for _, kv := range [][2]string{{"Env", "prod"}, {"env", "Prod"}, {"1env", "x"}, {"goog-managed", "x"}, {"env", strings.Repeat("x", 64)}} {
+		if LabelProblem(kv[0], kv[1]) == "" {
+			t.Errorf("%s=%s should be refused", kv[0], kv[1])
+		}
+	}
+}
+
+func TestProtectSetsDeletionProtection(t *testing.T) {
+	p, g, acct := newManageFake(t, "argus-0123", ManageDescription("argus-0123"))
+	if _, err := p.Protect(context.Background(), acct, "alice@example.com", "us-central1", "101", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Protect(context.Background(), acct, "alice@example.com", "us-central1", "101", false); err != nil {
+		t.Fatal(err)
+	}
+	if len(g.posts) != 2 || g.posts[0] != "/compute/v1/projects/payments-prod-4182/zones/us-central1-a/instances/101/setDeletionProtection" {
+		t.Fatalf("posts = %v", g.posts)
+	}
+	if g.queries[0] != "deletionProtection=true" || g.queries[1] != "deletionProtection=false" {
+		t.Fatalf("queries = %v", g.queries)
 	}
 }

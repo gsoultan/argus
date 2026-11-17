@@ -8,7 +8,7 @@ import {
 import { useState } from 'react'
 import { Field, relTime } from '~/components/primitives'
 import {
-  cloudAccountsQuery, cloudItemsQuery, envOf, exposures, firewallEnv, firewallUsers, normalSource, portText, roleLacks, sameRule,
+  allows, allowsTags, cloudAccountsQuery, cloudItemsQuery, envOf, exposures, firewallEnv, firewallUsers, normalSource, portText, roleLacks, sameRule,
   stricterEnv, targetsOf, validSource, type CloudAccount, type CloudEnvironment, type CloudItem, type CloudRule,
 } from '~/lib/cloud'
 import { FS, INK, SP } from '~/theme'
@@ -124,6 +124,7 @@ export function FirewallActions({ it }: { it: CloudItem }) {
   const users = firewallUsers(it, instances.data, balancers.data)
   const env = firewallEnv(it, users)
   const close = () => setOpen(null)
+  const gcp = account?.provider === 'gcp'
   return (
     <Gate it={it} account={account}>
       <Stack gap="xs">
@@ -133,25 +134,31 @@ export function FirewallActions({ it }: { it: CloudItem }) {
           </Alert>
         )}
         <Group gap="xs">
-          <Button size="xs" variant="default" leftSection={<IconShield size={14} />} disabled={Boolean(waiting)} onClick={() => setOpen('rules')}>Edit rules</Button>
-          <Button size="xs" variant="default" leftSection={<IconTag size={14} />} disabled={Boolean(waiting)} onClick={() => setOpen('tags')}>Tags</Button>
-          <Menu position="bottom-end" withinPortal>
-            <Menu.Target>
-              <ActionIcon variant="default" size={30} aria-label="More actions" disabled={Boolean(waiting)}><IconDots size={15} /></ActionIcon>
-            </Menu.Target>
-            <Menu.Dropdown>
-              <Menu.Item color="rose" leftSection={<IconTrash size={14} />} onClick={() => setOpen('delete')}>
-                Delete security group…
-              </Menu.Item>
-            </Menu.Dropdown>
-          </Menu>
+          {allows(account, 'firewall-rules') && (
+            <Button size="xs" variant="default" leftSection={<IconShield size={14} />} disabled={Boolean(waiting)} onClick={() => setOpen('rules')}>Edit rules</Button>
+          )}
+          {allowsTags(account, 'firewall') && (
+            <Button size="xs" variant="default" leftSection={<IconTag size={14} />} disabled={Boolean(waiting)} onClick={() => setOpen('tags')}>Tags</Button>
+          )}
+          {allows(account, 'firewall-delete') && (
+            <Menu position="bottom-end" withinPortal>
+              <Menu.Target>
+                <ActionIcon variant="default" size={30} aria-label="More actions" disabled={Boolean(waiting)}><IconDots size={15} /></ActionIcon>
+              </Menu.Target>
+              <Menu.Dropdown>
+                <Menu.Item color="rose" leftSection={<IconTrash size={14} />} onClick={() => setOpen('delete')}>
+                  Delete security group…
+                </Menu.Item>
+              </Menu.Dropdown>
+            </Menu>
+          )}
         </Group>
         <Text size={FS.meta} c="dimmed">
           {users.length === 0 ? 'Nothing uses this group.' : `Used by ${users.map((u) => u.resource.name).join(', ')}.`}
           {users.length > 0 && env !== envOf(it.resource.tags, it.environment) && ` Changes to it are ${env} changes, as the strictest of them.`}
         </Text>
         {open === 'rules' && <RulesEditor it={it} env={env} users={users} account={account} onClose={close} />}
-        {open === 'tags' && <TagsChange it={it} env={env} onClose={close} />}
+        {open === 'tags' && <TagsChange it={it} env={env} gcp={gcp} onClose={close} />}
         {open === 'delete' && <FirewallDelete it={it} env={env} users={users} account={account} onClose={close} />}
       </Stack>
     </Gate>

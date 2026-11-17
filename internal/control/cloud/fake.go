@@ -36,6 +36,9 @@ type Fake struct {
 	Now func() time.Time
 	// Protected is termination protection, by instance id.
 	Protected map[string]bool
+	// Labelled is every resource labelled by kind, as "kind id", for a
+	// provider that labels that way.
+	Labelled []string
 	// Console is what each instance wrote to its console, by id.
 	Console map[string]string
 	// Configs is each instance's settings, by id, beyond termination

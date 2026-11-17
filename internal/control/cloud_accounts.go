@@ -59,6 +59,9 @@ type CloudAccount struct {
 	// Actions, when set, are the only changes Argus makes in this account
 	// so far: a provider still being built. Empty is every change.
 	Actions []cloud.Action `json:"actions,omitempty"`
+	// TagKinds, when set, are the only kinds Argus tags in this account so
+	// far. Empty is every kind Argus tags.
+	TagKinds []cloud.Kind `json:"tagKinds,omitempty"`
 }
 
 // ErrCloudAccountExists is an account that is already connected.

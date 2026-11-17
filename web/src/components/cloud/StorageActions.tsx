@@ -6,7 +6,7 @@ import {
 import { useState } from 'react'
 import { Field, relTime } from '~/components/primitives'
 import {
-  ACTION_LEVEL, PRICE, VOLUME_TYPES, allows, attachment, cloudAccountsQuery, cloudChangesQuery, cloudItemsQuery, envOf, freeDevice, money,
+  ACTION_LEVEL, PRICE, VOLUME_TYPES, allows, allowsTags, attachment, cloudAccountsQuery, cloudChangesQuery, cloudItemsQuery, envOf, freeDevice, money,
   roleLacks, volumeMonthly, volumeOf, type CloudAccount, type CloudAction, type CloudEnvironment, type CloudItem,
 } from '~/lib/cloud'
 import { meQuery } from '~/lib/queries'
@@ -117,7 +117,7 @@ export function StorageActions({ it }: { it: CloudItem }) {
         )}
         <Group gap="xs">
           {buttons}
-          {can('tags') && <Button size="xs" variant="default" leftSection={<IconTag size={14} />} disabled={busy} onClick={() => setOpen('tags')}>Tags</Button>}
+          {allowsTags(account, r.kind) && <Button size="xs" variant="default" leftSection={<IconTag size={14} />} disabled={busy} onClick={() => setOpen('tags')}>{gcp ? 'Labels' : 'Tags'}</Button>}
           {rm && (
             <Menu position="bottom-end" withinPortal>
               <Menu.Target>
@@ -129,7 +129,7 @@ export function StorageActions({ it }: { it: CloudItem }) {
             </Menu>
           )}
         </Group>
-        {open === 'tags' && <TagsChange it={it} env={env} onClose={close} />}
+        {open === 'tags' && <TagsChange it={it} env={env} gcp={gcp} onClose={close} />}
         {open === 'volume-grow' && (gcp
           ? <GcpDiskGrow it={it} env={env} onClose={close} />
           : <VolumeGrow it={it} env={env} account={account} onClose={close} />)}

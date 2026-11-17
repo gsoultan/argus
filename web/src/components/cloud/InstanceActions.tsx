@@ -6,7 +6,7 @@ import {
 import { useState } from 'react'
 import { Field, absTime, relTime } from '~/components/primitives'
 import {
-  ACTION_LEVEL, allows, cloudAccountsQuery, cloudChangesQuery, cloudConsoleQuery, cloudInstanceSettingsQuery, cloudLaunchOptionsQuery, cloudRemovePlanQuery, envOf,
+  ACTION_LEVEL, allows, cloudAccountsQuery, cloudChangesQuery, cloudConsoleQuery, cloudInstanceSettingsQuery, cloudInstanceSizesQuery, cloudLaunchOptionsQuery, cloudRemovePlanQuery, envOf,
   type CloudAction, type CloudEnvironment, type CloudInstanceConfig, type CloudItem,
 } from '~/lib/cloud'
 import { meQuery } from '~/lib/queries'
@@ -51,7 +51,10 @@ export function InstanceActions({ it }: { it: CloudItem }) {
   const close = () => setOpen(null)
   const can = (a: CloudAction) => allows(account, a)
   const gcp = account.provider === 'gcp'
-  const more = !gone && (['launch', 'settings', 'protect', 'image-create', 'instance-firewalls', 'remove'] as CloudAction[]).some(can)
+  const more = !gone && (['launch', 'scale-group-create', 'settings', 'protect', 'unprotect', 'image-create', 'instance-firewalls', 'remove'] as CloudAction[]).some(can)
+  const protectWord = gcp ? 'deletion protection' : 'termination protection'
+  // Google's inventory says whether it is on, so only the way it can go is offered.
+  const protectedNow = gcp ? r.details?.deletionProtection === 'on' : undefined
 
   return (
     <Stack gap="xs">
@@ -67,29 +70,35 @@ export function InstanceActions({ it }: { it: CloudItem }) {
           <Button size="xs" variant="default" leftSection={<IconMoon size={14} />} disabled={!!waiting} onClick={() => setOpen('hibernate')}>Hibernate</Button>
         )}
         {running && can('reboot') && <Button size="xs" variant="default" leftSection={<IconRefresh size={14} />} disabled={!!waiting} onClick={() => setOpen('reboot')}>{gcp ? 'Reset' : 'Reboot'}</Button>}
-        {!gone && can('resize') && <Button size="xs" variant="default" leftSection={<IconResize size={14} />} disabled={!!waiting} onClick={() => setOpen('resize')}>Change size</Button>}
-        {!gone && can('tags') && <Button size="xs" variant="default" leftSection={<IconTag size={14} />} disabled={!!waiting} onClick={() => setOpen('tags')}>Tags</Button>}
+        {!gone && can('resize') && <Button size="xs" variant="default" leftSection={<IconResize size={14} />} disabled={!!waiting} onClick={() => setOpen('resize')}>{gcp ? 'Change machine type' : 'Change size'}</Button>}
+        {!gone && can('tags') && <Button size="xs" variant="default" leftSection={<IconTag size={14} />} disabled={!!waiting} onClick={() => setOpen('tags')}>{gcp ? 'Labels' : 'Tags'}</Button>}
         {more && (
           <Menu position="bottom-end" withinPortal>
             <Menu.Target>
               <ActionIcon variant="default" size={30} aria-label="More actions" disabled={!!waiting}><IconDots size={15} /></ActionIcon>
             </Menu.Target>
             <Menu.Dropdown>
-              <Menu.Item leftSection={<IconCopy size={14} />}
-                onClick={() => void navigate({ to: '/cloud/launch', search: { like: it.resource.id, account: it.accountId } })}>Launch another like this…</Menu.Item>
-              {running && (
+              {can('launch') && (
+                <Menu.Item leftSection={<IconCopy size={14} />}
+                  onClick={() => void navigate({ to: '/cloud/launch', search: { like: it.resource.id, account: it.accountId } })}>Launch another like this…</Menu.Item>
+              )}
+              {running && can('scale-group-create') && (
                 <Menu.Item leftSection={<IconStack3 size={14} />}
                   onClick={() => void navigate({ to: '/cloud/scale/new', search: { account: it.accountId, region: it.resource.region, from: it.resource.id } })}>
                   Put in a scale group…
                 </Menu.Item>
               )}
-              <Menu.Item leftSection={<IconSettings size={14} />} onClick={() => setOpen('settings')}>Instance settings…</Menu.Item>
-              <Menu.Item leftSection={<IconLock size={14} />} onClick={() => setOpen('protect')}>Turn on termination protection</Menu.Item>
-              <Menu.Item leftSection={<IconLockOpen size={14} />} onClick={() => setOpen('unprotect')}>Turn off termination protection</Menu.Item>
-              <Menu.Item leftSection={<IconPhoto size={14} />} onClick={() => setOpen('image-create')}>Make an image…</Menu.Item>
-              <Menu.Item leftSection={<IconShield size={14} />} onClick={() => setOpen('instance-firewalls')}>Change security groups…</Menu.Item>
-              <Menu.Divider />
-              <Menu.Item color="rose" leftSection={<IconTrash size={14} />} onClick={() => setOpen('remove')}>Remove instance…</Menu.Item>
+              {can('settings') && <Menu.Item leftSection={<IconSettings size={14} />} onClick={() => setOpen('settings')}>Instance settings…</Menu.Item>}
+              {can('protect') && protectedNow !== true && <Menu.Item leftSection={<IconLock size={14} />} onClick={() => setOpen('protect')}>Turn on {protectWord}</Menu.Item>}
+              {can('unprotect') && protectedNow !== false && <Menu.Item leftSection={<IconLockOpen size={14} />} onClick={() => setOpen('unprotect')}>Turn off {protectWord}</Menu.Item>}
+              {can('image-create') && <Menu.Item leftSection={<IconPhoto size={14} />} onClick={() => setOpen('image-create')}>Make an image…</Menu.Item>}
+              {can('instance-firewalls') && <Menu.Item leftSection={<IconShield size={14} />} onClick={() => setOpen('instance-firewalls')}>Change security groups…</Menu.Item>}
+              {can('remove') && (
+                <>
+                  <Menu.Divider />
+                  <Menu.Item color="rose" leftSection={<IconTrash size={14} />} onClick={() => setOpen('remove')}>Remove instance…</Menu.Item>
+                </>
+              )}
             </Menu.Dropdown>
           </Menu>
         )}
@@ -97,9 +106,9 @@ export function InstanceActions({ it }: { it: CloudItem }) {
       {(open === 'start' || open === 'stop' || open === 'hibernate' || open === 'reboot' || open === 'protect' || open === 'unprotect') && (
         <SimpleChange it={it} env={env} action={open} gcp={gcp} onClose={close} />
       )}
-      {open === 'resize' && <ResizeChange it={it} env={env} onClose={close} />}
+      {open === 'resize' && <ResizeChange it={it} env={env} gcp={gcp} onClose={close} />}
       {open === 'settings' && <SettingsChange it={it} env={env} onClose={close} />}
-      {open === 'tags' && <TagsChange it={it} env={env} onClose={close} />}
+      {open === 'tags' && <TagsChange it={it} env={env} gcp={gcp} onClose={close} />}
       {open === 'remove' && <RemoveChange it={it} onClose={close} />}
       {open === 'image-create' && <ImageCreate it={it} env={env} onClose={close} />}
       {open === 'instance-firewalls' && <InstanceFirewalls it={it} env={env} onClose={close} />}
@@ -190,6 +199,8 @@ const GCP_SIMPLE: Record<string, { title: string; verb: string; done: string; te
   start: { title: 'Start', verb: 'Start', done: 'Starting', text: 'Google starts the VM. It keeps its disks; an ephemeral external address changes, a reserved one does not.' },
   stop: { title: 'Stop', verb: 'Stop', done: 'Stopping', color: 'amber', text: 'Google shuts the VM down. Its disks stay and are still billed; the VM is not. Anything only in memory is lost.' },
   reboot: { title: 'Reset', verb: 'Reset', done: 'Resetting', color: 'amber', text: 'Google Cloud has no gentle reboot: a reset is like pressing the power button. The operating system is not asked to shut down first, so unsaved work in memory is lost and anyone signed in is disconnected.' },
+  protect: { title: 'Turn on deletion protection for', verb: 'Turn on', done: 'Protected', text: 'Nobody can delete the VM, from Argus or Google Cloud, until protection is turned off again. It can still be stopped and reset.' },
+  unprotect: { title: 'Turn off deletion protection for', verb: 'Turn off', done: 'Protection off', color: 'amber', text: 'The VM can be deleted again by anyone allowed to in the project.' },
 }
 
 function SimpleChange({ it, env, action, gcp, onClose }: { it: CloudItem; env: CloudEnvironment; action: CloudAction; gcp?: boolean; onClose: () => void }) {
@@ -266,27 +277,37 @@ export function SettingsChange({ it, env, onClose, preset }: {
 }
 
 /** Changing an instance's size; a suggestion opens it with the size it names. */
-export function ResizeChange({ it, env, initial, onClose }: { it: CloudItem; env: CloudEnvironment; initial?: string; onClose: () => void }) {
+export function ResizeChange({ it, env, initial, gcp, onClose }: { it: CloudItem; env: CloudEnvironment; initial?: string; gcp?: boolean; onClose: () => void }) {
   const r = it.resource
-  const opts = useQuery(cloudLaunchOptionsQuery(it.accountId, r.region))
+  // Google's machine types depend on the VM's zone, so they are read for it.
+  const opts = useQuery({ ...cloudLaunchOptionsQuery(it.accountId, r.region), enabled: !gcp })
+  const zoneSizes = useQuery({ ...cloudInstanceSizesQuery(it), enabled: Boolean(gcp) })
+  const sizes = gcp ? zoneSizes.data?.sizes : opts.data?.sizes
+  const loading = gcp ? zoneSizes.isPending : opts.isPending
   const [size, setSize] = useState<string | null>(initial ?? null)
   const [reason, setReason] = useState('')
   const { submit, busy } = useSubmit(onClose)
   const stopped = r.state === 'stopped'
+  const noun = gcp ? 'machine type' : 'size'
   return (
-    <ChangeModal title={`Change the size of ${r.name}`} env={env} level="change" reason={reason} setReason={setReason}
-      onClose={onClose} busy={busy} submit="Change size" disabled={!stopped || !size || size === r.size}
+    <ChangeModal title={`Change the ${noun} of ${r.name}`} env={env} level="change" reason={reason} setReason={setReason}
+      onClose={onClose} busy={busy} submit={gcp ? 'Change machine type' : 'Change size'} disabled={!stopped || !size || size === r.size}
       onSubmit={() => void submit({ accountId: it.accountId, region: r.region, action: 'resize', resourceId: r.id,
-        spec: { size, from: r.size }, reason }, 'Size changed')}>
+        spec: { size, from: r.size }, reason }, gcp ? 'Machine type changed' : 'Size changed')}>
       {!stopped && (
         <Alert color="sky" variant="light" p="sm">
-          <Text size={FS.meta}>AWS changes the size of a stopped instance only. Stop it first, then come back here.</Text>
+          <Text size={FS.meta}>
+            {gcp ? 'Google changes the machine type of a stopped VM only. Stop it first, then come back here.'
+              : 'AWS changes the size of a stopped instance only. Stop it first, then come back here.'}
+          </Text>
         </Alert>
       )}
+      {gcp && zoneSizes.error && <Alert color="rose" variant="light" p="sm">{(zoneSizes.error as Error).message}</Alert>}
       <Group grow align="flex-end">
         <Field label="Now"><Text ff="monospace" size={FS.body} mt={6}>{r.size}</Text></Field>
-        <Select label="New size" searchable placeholder={opts.isPending ? 'Loading…' : 'Pick a size'} value={size} onChange={setSize}
-          data={[...new Set([...(opts.data?.sizes ?? []), ...(initial ? [initial] : [])])].filter((x) => x !== r.size)} disabled={!stopped} nothingFoundMessage="No such size"
+        <Select label={gcp ? 'New machine type' : 'New size'} searchable placeholder={loading ? 'Loading…' : gcp ? 'Pick a machine type' : 'Pick a size'} value={size} onChange={setSize}
+          data={[...new Set([...(sizes ?? []), ...(initial ? [initial] : [])])].filter((x) => x !== r.size)} disabled={!stopped} nothingFoundMessage={gcp ? `No such machine type in ${r.zone ?? 'its zone'}` : 'No such size'}
+          limit={gcp ? 200 : undefined}
           styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }} />
       </Group>
     </ChangeModal>

@@ -145,10 +145,10 @@ export function ResourceDrawer({ it, onClose, names }: {
           )}
           {(r.rules?.length ?? 0) > 0 && <RulesTable r={r} />}
           {r.tags && Object.keys(r.tags).length > 0 && (
-            <Field label="Tags"><KeyValues m={r.tags} /></Field>
+            <Field label={it.provider === 'gcp' ? 'Labels' : 'Tags'}><KeyValues m={r.tags} /></Field>
           )}
           {r.details && Object.keys(r.details).length > 0 && (
-            <Field label="AWS details"><KeyValues m={r.details} /></Field>
+            <Field label={it.provider === 'gcp' ? 'Google Cloud details' : 'AWS details'}><KeyValues m={r.details} /></Field>
           )}
         </Stack>
       )}

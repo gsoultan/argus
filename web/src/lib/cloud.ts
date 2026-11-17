@@ -53,6 +53,8 @@ export interface CloudAccount {
   identityMissing?: boolean
   /** When set, the only changes Argus makes in this account so far. */
   actions?: string[]
+  /** When set, the only kinds Argus tags in this account so far. */
+  tagKinds?: string[]
 }
 
 /** One of argus-control's identities this organization may use, and what the cloud says about it. */
@@ -473,6 +475,16 @@ export interface CloudInstanceConfig {
   /** "standard" or "unlimited"; "" for a size that is not burstable. */
   creditMode: '' | 'standard' | 'unlimited'
 }
+
+/** The sizes one instance can change to: Google's depend on its zone. */
+export const cloudInstanceSizesQuery = (it: CloudItem | null) =>
+  queryOptions({
+    queryKey: ['cloud', 'instance-sizes', it?.accountId, it?.resource.region, it?.resource.id],
+    queryFn: () => get<{ sizes: string[] }>(`/api/v1/cloud/instance-sizes?accountId=${encodeURIComponent(it!.accountId)}` +
+      `&region=${encodeURIComponent(it!.resource.region)}&resourceId=${encodeURIComponent(it!.resource.id)}`),
+    enabled: isConfigured() && Boolean(it),
+    staleTime: 5 * 60_000,
+  })
 
 export const cloudInstanceSettingsQuery = (it: CloudItem | null) =>
   queryOptions({
@@ -1084,4 +1096,17 @@ export function groupSizeOf(r: CloudResource): { min: number; max: number; desir
 /** Whether Argus makes this change in this account: a provider still being built lists the few it does. */
 export function allows(account: Pick<CloudAccount, 'actions'> | undefined, action: string): boolean {
   return !account?.actions || account.actions.includes(action)
+}
+
+/** Whether Argus tags (labels, in Google Cloud) a resource of kind in account. */
+export function allowsTags(account: Pick<CloudAccount, 'actions' | 'tagKinds'> | undefined, kind: string): boolean {
+  return allows(account, 'tags') && (!account?.tagKinds || account.tagKinds.includes(kind))
+}
+
+/** Google keeps labels lowercase, and its own start with goog-. Says why k=v cannot be one, or undefined. */
+export function labelProblem(k: string, v: string): string | undefined {
+  if (!/^[a-z][a-z0-9_-]{0,62}$/.test(k)) return 'Lowercase letters, digits, _ and -, starting with a letter'
+  if (k.startsWith('goog-')) return 'Google keeps goog- labels'
+  if (!/^[a-z0-9_-]{0,63}$/.test(v)) return 'Lowercase letters, digits, _ and -'
+  return undefined
 }
