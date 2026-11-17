@@ -74,7 +74,7 @@ type Settings struct {
 	// OutsideCheck is nil from a console older than it, which keeps what
 	// is configured.
 	OutsideCheck *OutsideCheckSettings `json:"outsideCheck,omitempty"`
-	Security     *SecuritySettings    `json:"security,omitempty"`
+	Security     *SecuritySettings     `json:"security,omitempty"`
 	// Cloud is the identity argus-control has for each cloud. Nil from a
 	// console older than it, which keeps what is configured.
 	Cloud *CloudSettings `json:"cloud,omitempty"`
