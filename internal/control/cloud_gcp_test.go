@@ -316,14 +316,15 @@ func TestCloudGoogleProjectChangesMachineTypeLabelsAndProtection(t *testing.T) {
 	if strings.Join(fake.Labelled, ",") != "instance 101,volume 201" {
 		t.Fatalf("labelled = %v; Google needs the kind", fake.Labelled)
 	}
+	// Deletion protection, in Google's words. Asked before the VM is
+	// labelled into production below, which would send it for approval.
+	if ch := ask(`"action":"protect","resourceId":"101"`, http.StatusOK); ch.Summary != "Turn on deletion protection for web-1" || !fake.Protected["101"] {
+		t.Fatalf("protect: %+v", ch)
+	}
+
 	// A lowercase environment label moves the VM between rules, as the
 	// Environment tag does in AWS.
 	if ch := ask(`"action":"tags","resourceId":"101","spec":{"set":{"environment":"production"}}`, http.StatusOK); ch.Level != cloud.LevelChange {
 		t.Fatalf("an environment label is a bigger change: %+v", ch)
-	}
-
-	// Deletion protection, in Google's words.
-	if ch := ask(`"action":"protect","resourceId":"101"`, http.StatusOK); ch.Summary != "Turn on deletion protection for web-1" || !fake.Protected["101"] {
-		t.Fatalf("protect: %+v", ch)
 	}
 }
