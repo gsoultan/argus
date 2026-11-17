@@ -80,7 +80,9 @@ jobs:
         # -count=1 because these tests also migrate the service database that
         # the drift check below reads. A cached result runs nothing, so a PR that
         # leaves internal/control alone would hand that check an empty database.
-        run: go test -race -count=1 -timeout 5m $(go list ./... | grep -v '/node_modules/')
+        # internal/control alone takes 3 to 5 minutes under -race on a hosted
+        # runner, so 5m timed out runs that had nothing wrong with them.
+        run: go test -race -count=1 -timeout 10m $(go list ./... | grep -v '/node_modules/')
 
       - name: Check the agent links no control-plane code
         # The agent goes on every managed host; everything it links is attack
