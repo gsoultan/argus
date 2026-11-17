@@ -180,5 +180,16 @@ func FirewallText(reach string, sources []string) string {
 	return "FIREWALL REMOVE ARGUS RULES"
 }
 
+// OpensToAnywhere says an approval's text is a network change that opens a
+// database to anywhere, which waits for approval on every database.
+func OpensToAnywhere(text string) bool {
+	for _, l := range strings.Split(text, "\n") {
+		if l == FirewallText(ReachAny, nil) {
+			return true
+		}
+	}
+	return false
+}
+
 // FirewallComment is the comment on every ufw rule Argus adds for port.
 func FirewallComment(port int) string { return "argus " + strconv.Itoa(port) }

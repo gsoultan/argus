@@ -267,13 +267,15 @@ type statementAskInput struct {
 
 // POST /api/v1/databases/{id}/statements
 func (a *API) postStatementAsk(w http.ResponseWriter, r *http.Request, email string, db Database, _ string) {
-	if !db.WritesNeedApproval() {
-		writeErr(w, http.StatusBadRequest, "statements on "+db.Name+" run without approval")
-		return
-	}
 	var in statementAskInput
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// Opening a database to anywhere waits for approval on every database,
+	// so it may be asked for where nothing else is.
+	if !db.WritesNeedApproval() && !opensToAnywhere(in.Items) {
+		writeErr(w, http.StatusBadRequest, "statements on "+db.Name+" run without approval")
 		return
 	}
 	for i := range in.Items {
@@ -418,4 +420,18 @@ func (a *API) pgNetworkGate(ctx context.Context, email string, db Database, req 
 	a.auditDB(ctx, "db.network_change", "notice", email, db.Hostname,
 		"Changed which machines can connect to "+db.Noun()+" "+db.Hostname+" under approval "+req.Approval+": "+oneLine(text)+".")
 	return nil
+}
+
+// opensToAnywhere says every item is a change that opens a database to
+// anywhere: the ones that wait for approval whatever the database's rules.
+func opensToAnywhere(items []StatementItem) bool {
+	if len(items) == 0 {
+		return false
+	}
+	for _, it := range items {
+		if !tunnel.OpensToAnywhere(it.SQL) {
+			return false
+		}
+	}
+	return true
 }

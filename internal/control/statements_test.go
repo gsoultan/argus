@@ -294,6 +294,11 @@ func TestPostgresNetworkChangeWaits(t *testing.T) {
 		fmt.Sprintf(`{"userEmail":%q,"level":"dba"}`, ana)); w.Code >= 300 {
 		t.Fatalf("assign: %d %s", w.Code, w.Body)
 	}
+	// Staging, stored: its changes run without approval, but opening it to
+	// anywhere still waits, so asking for that approval must be taken.
+	if w := do(t, h, http.MethodPatch, "/api/v1/databases/"+db.ID, "admin-token", `{"label":"staging","policy":{}}`); w.Code != http.StatusOK {
+		t.Fatalf("patch: %d %s", w.Code, w.Body)
+	}
 	db.Label = "staging"
 	gate := func(op tunnel.PGAdminOp, approval string) *tunnel.PGAnswer {
 		op.Kind = tunnel.AdminNetworkSet
@@ -326,6 +331,11 @@ func TestPostgresNetworkChangeWaits(t *testing.T) {
 	// Approved for anywhere with a restart, not without one.
 	noRestart := anyOp
 	noRestart.Restart = false
+	// Anything else on staging still runs without asking.
+	plain, _ := json.Marshal(map[string]any{"items": []map[string]any{{"sql": "DELETE FROM orders"}}, "justification": "cleanup"})
+	if w := do(t, h, http.MethodPost, "/api/v1/databases/"+db.ID+"/statements", "ana", string(plain)); w.Code != http.StatusBadRequest {
+		t.Fatalf("a plain statement ask on staging: %d %s", w.Code, w.Body)
+	}
 	if no := gate(noRestart, ask.RequestID); no == nil {
 		t.Fatal("a different change ran under the approval")
 	}
