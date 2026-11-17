@@ -271,7 +271,24 @@ func (a *API) postEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r = r.WithContext(ctx)
-	enr, err := a.store.EnrollReplacing(r.Context(), in.Token, in.Hostname, in.Replaces)
+	// A scale group's key is checked against AWS before it is taken: the
+	// hostname must be that of a server AWS started in the group's Auto
+	// Scaling group a short while ago (scale_floor.go).
+	keyChecked := false
+	if gid, err := a.store.ScaleKeyGroup(r.Context(), in.Token); err != nil {
+		a.fail(w, "enroll agent", err)
+		return
+	} else if gid != "" {
+		if err := a.checkScaleKey(r.Context(), gid, in.Hostname); err != nil {
+			a.RecordAuthFailure(r)
+			a.log.Warn("enrollment refused: scale group key", "hostname", in.Hostname,
+				"remote", a.clientAddr(r), "reason", err.Error())
+			writeErr(w, http.StatusUnauthorized, err.Error())
+			return
+		}
+		keyChecked = true
+	}
+	enr, err := a.store.EnrollChecked(r.Context(), in.Token, in.Hostname, in.Replaces, keyChecked)
 	switch {
 	case errors.Is(err, ErrHostAlreadyEnrolled):
 		// Not charged as a failure: the token was good, and someone

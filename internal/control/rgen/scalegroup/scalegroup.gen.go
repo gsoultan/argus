@@ -49,6 +49,11 @@ type Row struct {
 	CheckedAt    runtime.Null[time.Time]
 	CreatedBy    string
 	CreatedAt    time.Time
+	AwsTrack     runtime.JSON
+	AwsGroup     string
+	AwsTemplate  string
+	AwsNote      string
+	AwsTriedAt   runtime.Null[time.Time]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -87,7 +92,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 29
+const nCols = 34
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -392,6 +397,34 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.tims[q.ntm] = r.CreatedAt
 		q.ntm++
+	case 30:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.AwsGroup
+		q.ns++
+	case 31:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.AwsTemplate
+		q.ns++
+	case 32:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.AwsNote
+		q.ns++
+	case 33:
+		if int(q.ntm) >= len(q.tims) {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = r.AwsTriedAt.V
+		q.ntm++
 	}
 }
 
@@ -582,6 +615,11 @@ var (
 	CheckedAt    = NullTimeCol{26}
 	CreatedBy    = TextCol{27}
 	CreatedAt    = TimeCol{28}
+	AwsTrack     = JSONCol{29}
+	AwsGroup     = TextCol{30}
+	AwsTemplate  = TextCol{31}
+	AwsNote      = TextCol{32}
+	AwsTriedAt   = NullTimeCol{33}
 )
 
 // UUIDCol addresses a uuid column.
@@ -1038,6 +1076,34 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 29:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 30:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 31:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 32:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1244,6 +1310,41 @@ func (q *Query) leaf(p Pred) {
 		q.strs[q.ns] = p.str
 		q.ns++
 	case 28:
+		if int(q.ntm) >= 4 {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = p.tim
+		q.ntm++
+	case 29:
+		if int(q.njs) >= 2 {
+			q.over = true
+			return
+		}
+		q.jsns[q.njs] = p.jsn
+		q.njs++
+	case 30:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 31:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 32:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 33:
 		if int(q.ntm) >= 4 {
 			q.over = true
 			return
@@ -1506,8 +1607,53 @@ func (q Query) CreatedAtGt(v time.Time) Query            { return q.Where(Create
 func (q Query) CreatedAtGte(v time.Time) Query           { return q.Where(CreatedAt.Gte(v)) }
 func (q Query) CreatedAtLt(v time.Time) Query            { return q.Where(CreatedAt.Lt(v)) }
 func (q Query) CreatedAtLte(v time.Time) Query           { return q.Where(CreatedAt.Lte(v)) }
+func (q Query) AwsTrackContains(v runtime.JSON) Query    { return q.Where(AwsTrack.Contains(v)) }
+func (q Query) AwsTrackContainedBy(v runtime.JSON) Query { return q.Where(AwsTrack.ContainedBy(v)) }
+func (q Query) AwsTrackHasAnyKey(v ...string) Query      { return q.Where(AwsTrack.HasAnyKey(v...)) }
+func (q Query) AwsTrackHasAllKeys(v ...string) Query     { return q.Where(AwsTrack.HasAllKeys(v...)) }
+func (q Query) AwsGroupEq(v string) Query                { return q.Where(AwsGroup.Eq(v)) }
+func (q Query) AwsGroupNotEq(v string) Query             { return q.Where(AwsGroup.NotEq(v)) }
+func (q Query) AwsGroupGt(v string) Query                { return q.Where(AwsGroup.Gt(v)) }
+func (q Query) AwsGroupGte(v string) Query               { return q.Where(AwsGroup.Gte(v)) }
+func (q Query) AwsGroupLt(v string) Query                { return q.Where(AwsGroup.Lt(v)) }
+func (q Query) AwsGroupLte(v string) Query               { return q.Where(AwsGroup.Lte(v)) }
+func (q Query) AwsGroupEqLower(v string) Query           { return q.Where(AwsGroup.EqLower(v)) }
+func (q Query) AwsGroupLike(v string) Query              { return q.Where(AwsGroup.Like(v)) }
+func (q Query) AwsGroupILike(v string) Query             { return q.Where(AwsGroup.ILike(v)) }
+func (q Query) AwsGroupIn(v ...string) Query             { return q.Where(AwsGroup.In(v...)) }
+func (q Query) AwsGroupNotIn(v ...string) Query          { return q.Where(AwsGroup.NotIn(v...)) }
+func (q Query) AwsTemplateEq(v string) Query             { return q.Where(AwsTemplate.Eq(v)) }
+func (q Query) AwsTemplateNotEq(v string) Query          { return q.Where(AwsTemplate.NotEq(v)) }
+func (q Query) AwsTemplateGt(v string) Query             { return q.Where(AwsTemplate.Gt(v)) }
+func (q Query) AwsTemplateGte(v string) Query            { return q.Where(AwsTemplate.Gte(v)) }
+func (q Query) AwsTemplateLt(v string) Query             { return q.Where(AwsTemplate.Lt(v)) }
+func (q Query) AwsTemplateLte(v string) Query            { return q.Where(AwsTemplate.Lte(v)) }
+func (q Query) AwsTemplateEqLower(v string) Query        { return q.Where(AwsTemplate.EqLower(v)) }
+func (q Query) AwsTemplateLike(v string) Query           { return q.Where(AwsTemplate.Like(v)) }
+func (q Query) AwsTemplateILike(v string) Query          { return q.Where(AwsTemplate.ILike(v)) }
+func (q Query) AwsTemplateIn(v ...string) Query          { return q.Where(AwsTemplate.In(v...)) }
+func (q Query) AwsTemplateNotIn(v ...string) Query       { return q.Where(AwsTemplate.NotIn(v...)) }
+func (q Query) AwsNoteEq(v string) Query                 { return q.Where(AwsNote.Eq(v)) }
+func (q Query) AwsNoteNotEq(v string) Query              { return q.Where(AwsNote.NotEq(v)) }
+func (q Query) AwsNoteGt(v string) Query                 { return q.Where(AwsNote.Gt(v)) }
+func (q Query) AwsNoteGte(v string) Query                { return q.Where(AwsNote.Gte(v)) }
+func (q Query) AwsNoteLt(v string) Query                 { return q.Where(AwsNote.Lt(v)) }
+func (q Query) AwsNoteLte(v string) Query                { return q.Where(AwsNote.Lte(v)) }
+func (q Query) AwsNoteEqLower(v string) Query            { return q.Where(AwsNote.EqLower(v)) }
+func (q Query) AwsNoteLike(v string) Query               { return q.Where(AwsNote.Like(v)) }
+func (q Query) AwsNoteILike(v string) Query              { return q.Where(AwsNote.ILike(v)) }
+func (q Query) AwsNoteIn(v ...string) Query              { return q.Where(AwsNote.In(v...)) }
+func (q Query) AwsNoteNotIn(v ...string) Query           { return q.Where(AwsNote.NotIn(v...)) }
+func (q Query) AwsTriedAtEq(v time.Time) Query           { return q.Where(AwsTriedAt.Eq(v)) }
+func (q Query) AwsTriedAtNotEq(v time.Time) Query        { return q.Where(AwsTriedAt.NotEq(v)) }
+func (q Query) AwsTriedAtGt(v time.Time) Query           { return q.Where(AwsTriedAt.Gt(v)) }
+func (q Query) AwsTriedAtGte(v time.Time) Query          { return q.Where(AwsTriedAt.Gte(v)) }
+func (q Query) AwsTriedAtLt(v time.Time) Query           { return q.Where(AwsTriedAt.Lt(v)) }
+func (q Query) AwsTriedAtLte(v time.Time) Query          { return q.Where(AwsTriedAt.Lte(v)) }
+func (q Query) AwsTriedAtIsNull() Query                  { return q.Where(AwsTriedAt.IsNull()) }
+func (q Query) AwsTriedAtIsNotNull() Query               { return q.Where(AwsTriedAt.IsNotNull()) }
 
-const selectPrefix = `SELECT "id", "account_id", "region", "name", "environment", "target_group", "target_name", "port", "balancer", "template", "min_size", "max_size", "cost_cap", "add_wait", "remove_wait", "rules", "mode", "auto_by", "auto_at", "state", "paused_reason", "note", "enroll_base", "failed_starts", "last_add_at", "last_remove_at", "checked_at", "created_by", "created_at" FROM "scale_groups"`
+const selectPrefix = `SELECT "id", "account_id", "region", "name", "environment", "target_group", "target_name", "port", "balancer", "template", "min_size", "max_size", "cost_cap", "add_wait", "remove_wait", "rules", "mode", "auto_by", "auto_at", "state", "paused_reason", "note", "enroll_base", "failed_starts", "last_add_at", "last_remove_at", "checked_at", "created_by", "created_at", "aws_track", "aws_group", "aws_template", "aws_note", "aws_tried_at" FROM "scale_groups"`
 const countPrefix = `SELECT count(*) FROM "scale_groups"`
 const existsPrefix = `SELECT 1 FROM "scale_groups"`
 const existsSuffix = ` LIMIT 1`
@@ -1718,6 +1864,36 @@ var orderTable = [nCols][4]string{
 		"\"created_at\" ASC NULLS FIRST",
 		"\"created_at\" DESC NULLS LAST",
 	},
+	{ // aws_track
+		"\"aws_track\"",
+		"\"aws_track\" DESC",
+		"\"aws_track\" ASC NULLS FIRST",
+		"\"aws_track\" DESC NULLS LAST",
+	},
+	{ // aws_group
+		"\"aws_group\"",
+		"\"aws_group\" DESC",
+		"\"aws_group\" ASC NULLS FIRST",
+		"\"aws_group\" DESC NULLS LAST",
+	},
+	{ // aws_template
+		"\"aws_template\"",
+		"\"aws_template\" DESC",
+		"\"aws_template\" ASC NULLS FIRST",
+		"\"aws_template\" DESC NULLS LAST",
+	},
+	{ // aws_note
+		"\"aws_note\"",
+		"\"aws_note\" DESC",
+		"\"aws_note\" ASC NULLS FIRST",
+		"\"aws_note\" DESC NULLS LAST",
+	},
+	{ // aws_tried_at
+		"\"aws_tried_at\"",
+		"\"aws_tried_at\" DESC",
+		"\"aws_tried_at\" ASC NULLS FIRST",
+		"\"aws_tried_at\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1752,6 +1928,11 @@ var identTable = [nCols]string{
 	"\"checked_at\"",
 	"\"created_by\"",
 	"\"created_at\"",
+	"\"aws_track\"",
+	"\"aws_group\"",
+	"\"aws_template\"",
+	"\"aws_note\"",
+	"\"aws_tried_at\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1784,7 +1965,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [29][28]runtime.Frag{
+var fragTable = [34][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -2655,6 +2836,156 @@ var fragTable = [29][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // aws_track
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"aws_track\" @> $", B: ""},
+		{A: "\"aws_track\" <@ $", B: ""},
+		{A: "\"aws_track\" ?| $", B: ""},
+		{A: "\"aws_track\" ?& $", B: ""},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // aws_group
+		{}, // opNone
+		{A: "\"aws_group\" = $", B: ""},
+		{A: "\"aws_group\" <> $", B: ""},
+		{A: "\"aws_group\" > $", B: ""},
+		{A: "\"aws_group\" >= $", B: ""},
+		{A: "\"aws_group\" < $", B: ""},
+		{A: "\"aws_group\" <= $", B: ""},
+		{A: "lower(\"aws_group\") = lower($", B: ")"},
+		{A: "\"aws_group\" LIKE $", B: ""},
+		{A: "\"aws_group\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"aws_group\" = ANY($", B: ")"},
+		{A: "\"aws_group\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // aws_template
+		{}, // opNone
+		{A: "\"aws_template\" = $", B: ""},
+		{A: "\"aws_template\" <> $", B: ""},
+		{A: "\"aws_template\" > $", B: ""},
+		{A: "\"aws_template\" >= $", B: ""},
+		{A: "\"aws_template\" < $", B: ""},
+		{A: "\"aws_template\" <= $", B: ""},
+		{A: "lower(\"aws_template\") = lower($", B: ")"},
+		{A: "\"aws_template\" LIKE $", B: ""},
+		{A: "\"aws_template\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"aws_template\" = ANY($", B: ")"},
+		{A: "\"aws_template\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // aws_note
+		{}, // opNone
+		{A: "\"aws_note\" = $", B: ""},
+		{A: "\"aws_note\" <> $", B: ""},
+		{A: "\"aws_note\" > $", B: ""},
+		{A: "\"aws_note\" >= $", B: ""},
+		{A: "\"aws_note\" < $", B: ""},
+		{A: "\"aws_note\" <= $", B: ""},
+		{A: "lower(\"aws_note\") = lower($", B: ")"},
+		{A: "\"aws_note\" LIKE $", B: ""},
+		{A: "\"aws_note\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"aws_note\" = ANY($", B: ")"},
+		{A: "\"aws_note\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // aws_tried_at
+		{}, // opNone
+		{A: "\"aws_tried_at\" = $", B: ""},
+		{A: "\"aws_tried_at\" <> $", B: ""},
+		{A: "\"aws_tried_at\" > $", B: ""},
+		{A: "\"aws_tried_at\" >= $", B: ""},
+		{A: "\"aws_tried_at\" < $", B: ""},
+		{A: "\"aws_tried_at\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"aws_tried_at\" IS NULL", B: ""},
+		{A: "\"aws_tried_at\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -2840,6 +3171,11 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.CheckedAt = runtime.Nullable(rv[26], runtime.Timestamptz)
 	r.CreatedBy = sl.Str(rv[27])
 	r.CreatedAt = runtime.Timestamptz(rv[28])
+	r.AwsTrack = runtime.JSON(runtime.JSONB(rv[29], sl))
+	r.AwsGroup = sl.Str(rv[30])
+	r.AwsTemplate = sl.Str(rv[31])
+	r.AwsNote = sl.Str(rv[32])
+	r.AwsTriedAt = runtime.Nullable(rv[33], runtime.Timestamptz)
 	return nil
 }
 
@@ -3003,6 +3339,22 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 29:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 30:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 31:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 32:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -3120,6 +3472,26 @@ func (q Query) bindPreds(b *binder) []any {
 			v = append(v, &b.strs[ns])
 			ns++
 		case 28:
+			b.tims[ntm] = q.tims[ntm]
+			v = append(v, &b.tims[ntm])
+			ntm++
+		case 29:
+			b.jsns[njs] = q.jsns[njs]
+			v = append(v, &b.jsns[njs])
+			njs++
+		case 30:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 31:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 32:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 33:
 			b.tims[ntm] = q.tims[ntm]
 			v = append(v, &b.tims[ntm])
 			ntm++
@@ -3260,7 +3632,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "scale_groups" ("id", "account_id", "region", "name", "environment", "target_group", "target_name", "port", "balancer", "template", "min_size", "max_size", "cost_cap", "add_wait", "remove_wait", "rules", "mode", "auto_by", "auto_at", "state", "paused_reason", "note", "enroll_base", "failed_starts", "last_add_at", "last_remove_at", "checked_at", "created_by", "created_at") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29) RETURNING "id", "account_id", "region", "name", "environment", "target_group", "target_name", "port", "balancer", "template", "min_size", "max_size", "cost_cap", "add_wait", "remove_wait", "rules", "mode", "auto_by", "auto_at", "state", "paused_reason", "note", "enroll_base", "failed_starts", "last_add_at", "last_remove_at", "checked_at", "created_by", "created_at"`
+const insertSQL = `INSERT INTO "scale_groups" ("id", "account_id", "region", "name", "environment", "target_group", "target_name", "port", "balancer", "template", "min_size", "max_size", "cost_cap", "add_wait", "remove_wait", "rules", "mode", "auto_by", "auto_at", "state", "paused_reason", "note", "enroll_base", "failed_starts", "last_add_at", "last_remove_at", "checked_at", "created_by", "created_at", "aws_track", "aws_group", "aws_template", "aws_note", "aws_tried_at") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34) RETURNING "id", "account_id", "region", "name", "environment", "target_group", "target_name", "port", "balancer", "template", "min_size", "max_size", "cost_cap", "add_wait", "remove_wait", "rules", "mode", "auto_by", "auto_at", "state", "paused_reason", "note", "enroll_base", "failed_starts", "last_add_at", "last_remove_at", "checked_at", "created_by", "created_at", "aws_track", "aws_group", "aws_template", "aws_note", "aws_tried_at"`
 
 const updatePrefix = `UPDATE "scale_groups" SET `
 const deletePrefix = `DELETE FROM "scale_groups"`
@@ -3296,9 +3668,14 @@ const (
 	dCheckedAt    uint64 = 1 << 25
 	dCreatedBy    uint64 = 1 << 26
 	dCreatedAt    uint64 = 1 << 27
+	dAwsTrack     uint64 = 1 << 28
+	dAwsGroup     uint64 = 1 << 29
+	dAwsTemplate  uint64 = 1 << 30
+	dAwsNote      uint64 = 1 << 31
+	dAwsTriedAt   uint64 = 1 << 32
 )
 
-const nUpdatable = 28
+const nUpdatable = 33
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -3330,6 +3707,11 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"checked_at\" = $", B: ""},     // checked_at
 	{A: "\"created_by\" = $", B: ""},     // created_by
 	{A: "\"created_at\" = $", B: ""},     // created_at
+	{A: "\"aws_track\" = $", B: ""},      // aws_track
+	{A: "\"aws_group\" = $", B: ""},      // aws_group
+	{A: "\"aws_template\" = $", B: ""},   // aws_template
+	{A: "\"aws_note\" = $", B: ""},       // aws_note
+	{A: "\"aws_tried_at\" = $", B: ""},   // aws_tried_at
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -3364,6 +3746,11 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{A: "\"checked_at\" = now()", B: ""},                    // checked_at = the database's clock
 	{},                                                      // created_by has no server-side form
 	{A: "\"created_at\" = now()", B: ""},                    // created_at = the database's clock
+	{},                                                      // aws_track has no server-side form
+	{},                                                      // aws_group has no server-side form
+	{},                                                      // aws_template has no server-side form
+	{},                                                      // aws_note has no server-side form
+	{A: "\"aws_tried_at\" = now()", B: ""},                  // aws_tried_at = the database's clock
 }
 
 // pkFrags addresses one row.
@@ -3404,9 +3791,14 @@ const (
 	iCheckedAt    uint64 = 1 << 26
 	iCreatedBy    uint64 = 1 << 27
 	iCreatedAt    uint64 = 1 << 28
+	iAwsTrack     uint64 = 1 << 29
+	iAwsGroup     uint64 = 1 << 30
+	iAwsTemplate  uint64 = 1 << 31
+	iAwsNote      uint64 = 1 << 32
+	iAwsTriedAt   uint64 = 1 << 33
 )
 
-const nInsertable = 29
+const nInsertable = 34
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -3439,6 +3831,11 @@ var insCols = [nInsertable]string{
 	"\"checked_at\"",
 	"\"created_by\"",
 	"\"created_at\"",
+	"\"aws_track\"",
+	"\"aws_group\"",
+	"\"aws_template\"",
+	"\"aws_note\"",
+	"\"aws_tried_at\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -3447,7 +3844,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"scale_groups\""
-const insReturning = " RETURNING \"id\", \"account_id\", \"region\", \"name\", \"environment\", \"target_group\", \"target_name\", \"port\", \"balancer\", \"template\", \"min_size\", \"max_size\", \"cost_cap\", \"add_wait\", \"remove_wait\", \"rules\", \"mode\", \"auto_by\", \"auto_at\", \"state\", \"paused_reason\", \"note\", \"enroll_base\", \"failed_starts\", \"last_add_at\", \"last_remove_at\", \"checked_at\", \"created_by\", \"created_at\""
+const insReturning = " RETURNING \"id\", \"account_id\", \"region\", \"name\", \"environment\", \"target_group\", \"target_name\", \"port\", \"balancer\", \"template\", \"min_size\", \"max_size\", \"cost_cap\", \"add_wait\", \"remove_wait\", \"rules\", \"mode\", \"auto_by\", \"auto_at\", \"state\", \"paused_reason\", \"note\", \"enroll_base\", \"failed_starts\", \"last_add_at\", \"last_remove_at\", \"checked_at\", \"created_by\", \"created_at\", \"aws_track\", \"aws_group\", \"aws_template\", \"aws_note\", \"aws_tried_at\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -3466,7 +3863,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"account_id\", \"region\", \"name\", \"environment\", \"target_group\", \"target_name\", \"port\", \"balancer\", \"template\", \"min_size\", \"max_size\", \"cost_cap\", \"add_wait\", \"remove_wait\", \"rules\", \"mode\", \"auto_by\", \"auto_at\", \"state\", \"paused_reason\", \"note\", \"enroll_base\", \"failed_starts\", \"last_add_at\", \"last_remove_at\", \"checked_at\", \"created_by\", \"created_at\""
+const updReturning = " RETURNING \"id\", \"account_id\", \"region\", \"name\", \"environment\", \"target_group\", \"target_name\", \"port\", \"balancer\", \"template\", \"min_size\", \"max_size\", \"cost_cap\", \"add_wait\", \"remove_wait\", \"rules\", \"mode\", \"auto_by\", \"auto_at\", \"state\", \"paused_reason\", \"note\", \"enroll_base\", \"failed_starts\", \"last_add_at\", \"last_remove_at\", \"checked_at\", \"created_by\", \"created_at\", \"aws_track\", \"aws_group\", \"aws_template\", \"aws_note\", \"aws_tried_at\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -3829,6 +4226,55 @@ func (m *Mut) SetCreatedAtNow() {
 	m.dirty &^= dCreatedAt
 }
 
+func (m *Mut) SetAwsTrack(v runtime.JSON) {
+	m.row.AwsTrack = v
+	m.dirty |= dAwsTrack
+	m.expr &^= dAwsTrack
+}
+
+func (m *Mut) SetAwsGroup(v string) {
+	m.row.AwsGroup = v
+	m.dirty |= dAwsGroup
+	m.expr &^= dAwsGroup
+}
+
+func (m *Mut) SetAwsTemplate(v string) {
+	m.row.AwsTemplate = v
+	m.dirty |= dAwsTemplate
+	m.expr &^= dAwsTemplate
+}
+
+func (m *Mut) SetAwsNote(v string) {
+	m.row.AwsNote = v
+	m.dirty |= dAwsNote
+	m.expr &^= dAwsNote
+}
+
+func (m *Mut) SetAwsTriedAt(v time.Time) {
+	m.row.AwsTriedAt = runtime.Null[time.Time]{V: v, Valid: true}
+	m.dirty |= dAwsTriedAt
+	m.expr &^= dAwsTriedAt
+}
+
+// SetAwsTriedAtNow assigns the database's clock, not this process's.
+//
+// Binding time.Now() instead would record when THIS server
+// thought it was. Servers skew, so rows written seconds apart
+// can land out of order, and an event stamped by a fast clock
+// reads as preceding the thing that caused it.
+func (m *Mut) SetAwsTriedAtNow() {
+	m.expr |= dAwsTriedAt
+	m.dirty &^= dAwsTriedAt
+}
+
+// SetAwsTriedAtNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetAwsTriedAtNull() {
+	m.row.AwsTriedAt = runtime.Null[time.Time]{}
+	m.dirty |= dAwsTriedAt
+	m.expr &^= dAwsTriedAt
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -4143,6 +4589,38 @@ func (n *Ins) SetCreatedAt(v time.Time) {
 	n.set |= iCreatedAt
 }
 
+func (n *Ins) SetAwsTrack(v runtime.JSON) {
+	n.row.AwsTrack = v
+	n.set |= iAwsTrack
+}
+
+func (n *Ins) SetAwsGroup(v string) {
+	n.row.AwsGroup = v
+	n.set |= iAwsGroup
+}
+
+func (n *Ins) SetAwsTemplate(v string) {
+	n.row.AwsTemplate = v
+	n.set |= iAwsTemplate
+}
+
+func (n *Ins) SetAwsNote(v string) {
+	n.row.AwsNote = v
+	n.set |= iAwsNote
+}
+
+func (n *Ins) SetAwsTriedAt(v time.Time) {
+	n.row.AwsTriedAt = runtime.Null[time.Time]{V: v, Valid: true}
+	n.set |= iAwsTriedAt
+}
+
+// SetAwsTriedAtNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetAwsTriedAtNull() {
+	n.row.AwsTriedAt = runtime.Null[time.Time]{}
+	n.set |= iAwsTriedAt
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -4193,7 +4671,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 28)
+	set := make([]string, 0, 33)
 	switch i {
 	case 0:
 		if mask&(1<<1) != 0 {
@@ -4280,6 +4758,21 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<28) != 0 {
 			set = append(set, "created_at")
 		}
+		if mask&(1<<29) != 0 {
+			set = append(set, "aws_track")
+		}
+		if mask&(1<<30) != 0 {
+			set = append(set, "aws_group")
+		}
+		if mask&(1<<31) != 0 {
+			set = append(set, "aws_template")
+		}
+		if mask&(1<<32) != 0 {
+			set = append(set, "aws_note")
+		}
+		if mask&(1<<33) != 0 {
+			set = append(set, "aws_tried_at")
+		}
 	case 1:
 		if mask&(1<<4) != 0 {
 			set = append(set, "environment")
@@ -4355,6 +4848,21 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<28) != 0 {
 			set = append(set, "created_at")
+		}
+		if mask&(1<<29) != 0 {
+			set = append(set, "aws_track")
+		}
+		if mask&(1<<30) != 0 {
+			set = append(set, "aws_group")
+		}
+		if mask&(1<<31) != 0 {
+			set = append(set, "aws_template")
+		}
+		if mask&(1<<32) != 0 {
+			set = append(set, "aws_note")
+		}
+		if mask&(1<<33) != 0 {
+			set = append(set, "aws_tried_at")
 		}
 	}
 	return set
@@ -4470,6 +4978,11 @@ var assignFor = map[string]string{
 	"checked_at":     "\"checked_at\" = EXCLUDED.\"checked_at\"",
 	"created_by":     "\"created_by\" = EXCLUDED.\"created_by\"",
 	"created_at":     "\"created_at\" = EXCLUDED.\"created_at\"",
+	"aws_track":      "\"aws_track\" = EXCLUDED.\"aws_track\"",
+	"aws_group":      "\"aws_group\" = EXCLUDED.\"aws_group\"",
+	"aws_template":   "\"aws_template\" = EXCLUDED.\"aws_template\"",
+	"aws_note":       "\"aws_note\" = EXCLUDED.\"aws_note\"",
+	"aws_tried_at":   "\"aws_tried_at\" = EXCLUDED.\"aws_tried_at\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -4578,6 +5091,16 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.CreatedBy)
 		case 28:
 			args = append(args, n.row.CreatedAt)
+		case 29:
+			args = append(args, n.row.AwsTrack)
+		case 30:
+			args = append(args, n.row.AwsGroup)
+		case 31:
+			args = append(args, n.row.AwsTemplate)
+		case 32:
+			args = append(args, n.row.AwsNote)
+		case 33:
+			args = append(args, n.row.AwsTriedAt.Arg())
 		}
 	}
 	var out Row
@@ -4615,7 +5138,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 29)
+	args := make([]any, 0, 34)
 	args = append(args, r.ID)
 	args = append(args, r.AccountID)
 	args = append(args, r.Region)
@@ -4645,6 +5168,11 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.CheckedAt.Arg())
 	args = append(args, r.CreatedBy)
 	args = append(args, r.CreatedAt)
+	args = append(args, r.AwsTrack)
+	args = append(args, r.AwsGroup)
+	args = append(args, r.AwsTemplate)
+	args = append(args, r.AwsNote)
+	args = append(args, r.AwsTriedAt.Arg())
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -4700,13 +5228,18 @@ var copyCols = []string{
 	"checked_at",
 	"created_by",
 	"created_at",
+	"aws_track",
+	"aws_group",
+	"aws_template",
+	"aws_note",
+	"aws_tried_at",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [29]any
+	buf  [34]any
 }
 
 func (s *rowSource) Next() bool {
@@ -4753,6 +5286,11 @@ func (s *rowSource) Values() []any {
 	s.buf[26] = r.CheckedAt.Ptr()
 	s.buf[27] = &r.CreatedBy
 	s.buf[28] = &r.CreatedAt
+	s.buf[29] = &r.AwsTrack
+	s.buf[30] = &r.AwsGroup
+	s.buf[31] = &r.AwsTemplate
+	s.buf[32] = &r.AwsNote
+	s.buf[33] = r.AwsTriedAt.Ptr()
 	return s.buf[:]
 }
 
@@ -4812,8 +5350,13 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 26
 	mask |= 1 << 27
 	mask |= 1 << 28
+	mask |= 1 << 29
+	mask |= 1 << 30
+	mask |= 1 << 31
+	mask |= 1 << 32
+	mask |= 1 << 33
 	st := stmtForInsertNoReturn(mask, 0, 0)
-	args := make([]any, 0, 29)
+	args := make([]any, 0, 34)
 	args = append(args, r.ID)
 	args = append(args, r.AccountID)
 	args = append(args, r.Region)
@@ -4843,6 +5386,11 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.CheckedAt.Arg())
 	args = append(args, r.CreatedBy)
 	args = append(args, r.CreatedAt)
+	args = append(args, r.AwsTrack)
+	args = append(args, r.AwsGroup)
+	args = append(args, r.AwsTemplate)
+	args = append(args, r.AwsNote)
+	args = append(args, r.AwsTriedAt.Arg())
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -4934,6 +5482,16 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.CreatedBy)
 		case 28:
 			args = append(args, n.row.CreatedAt)
+		case 29:
+			args = append(args, n.row.AwsTrack)
+		case 30:
+			args = append(args, n.row.AwsGroup)
+		case 31:
+			args = append(args, n.row.AwsTemplate)
+		case 32:
+			args = append(args, n.row.AwsNote)
+		case 33:
+			args = append(args, n.row.AwsTriedAt.Arg())
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -5045,6 +5603,16 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.CreatedBy)
 		case 27:
 			args = append(args, m.row.CreatedAt)
+		case 28:
+			args = append(args, m.row.AwsTrack)
+		case 29:
+			args = append(args, m.row.AwsGroup)
+		case 30:
+			args = append(args, m.row.AwsTemplate)
+		case 31:
+			args = append(args, m.row.AwsNote)
+		case 32:
+			args = append(args, m.row.AwsTriedAt.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -5183,6 +5751,16 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.CreatedBy)
 		case 27:
 			args = append(args, m.row.CreatedAt)
+		case 28:
+			args = append(args, m.row.AwsTrack)
+		case 29:
+			args = append(args, m.row.AwsGroup)
+		case 30:
+			args = append(args, m.row.AwsTemplate)
+		case 31:
+			args = append(args, m.row.AwsNote)
+		case 32:
+			args = append(args, m.row.AwsTriedAt.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -5387,6 +5965,16 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.CreatedBy)
 		case 27:
 			args = append(args, m.row.CreatedAt)
+		case 28:
+			args = append(args, m.row.AwsTrack)
+		case 29:
+			args = append(args, m.row.AwsGroup)
+		case 30:
+			args = append(args, m.row.AwsTemplate)
+		case 31:
+			args = append(args, m.row.AwsNote)
+		case 32:
+			args = append(args, m.row.AwsTriedAt.Arg())
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

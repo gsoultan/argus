@@ -212,6 +212,14 @@ func TestManageTemplate(t *testing.T) {
 			t.Fatalf("the manage role must not touch IAM or have wildcards: %s", a)
 		}
 	}
+	// Its one other statement makes Auto Scaling's own service-linked role,
+	// and nothing else.
+	sts := m.Properties.Policies[0].PolicyDocument.Statement
+	if len(sts) != 2 || len(sts[1].Action) != 1 || sts[1].Action[0] != "iam:CreateServiceLinkedRole" ||
+		!strings.Contains(tpl, "iam:AWSServiceName: autoscaling.amazonaws.com") ||
+		!strings.Contains(tpl, "role/aws-service-role/autoscaling.amazonaws.com/") {
+		t.Fatalf("the manage role's second statement must only make Auto Scaling's service-linked role: %+v", sts)
+	}
 	if _, ok := doc.Outputs["ManageRoleArn"]; !ok {
 		t.Fatal("no ManageRoleArn output")
 	}

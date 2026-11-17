@@ -1,7 +1,7 @@
-import { Alert, Badge, Box, Button, Card, Group, Modal, NumberInput, SegmentedControl, SimpleGrid, Stack, Table, Text, Textarea, Tooltip } from '@mantine/core'
+import { Alert, Badge, Box, Button, Card, Group, Modal, NumberInput, SegmentedControl, Select, SimpleGrid, Stack, Table, Text, Textarea, Tooltip } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
-import { IconInfoCircle, IconPlayerPause, IconPlayerPlay, IconPlus } from '@tabler/icons-react'
+import { IconBrandAws, IconInfoCircle, IconPlayerPause, IconPlayerPlay, IconPlus } from '@tabler/icons-react'
 import { useState } from 'react'
 import { EnvBadge } from '~/components/cloud/common'
 import { GroupChart } from '~/components/cloud/ScaleGroups'
@@ -10,7 +10,8 @@ import { DataTable, PageBody, PageHeader, SectionCard } from '~/components/page'
 import { absTime, relTime } from '~/components/primitives'
 import { money, needsApproval, useAskCloudChange, type CloudChangeInput } from '~/lib/cloud'
 import {
-  MODE_WORDS, askerName, limitsProblem, ruleProblem, ruleWords, scaleGroupQuery, serving, type ScaleGroupDetail, type ScaleLimits, type ScaleMode, type ScaleRules,
+  DEFAULT_TRACK, MODE_WORDS, askerName, limitsProblem, ruleProblem, ruleWords, scaleGroupQuery, serving, trackProblem, trackWords,
+  type AWSTrack, type ScaleGroupDetail, type ScaleLimits, type ScaleMode, type ScaleRules,
 } from '~/lib/cloudScale'
 import { guard } from '~/lib/guard'
 import { notifyError, notifyOk } from '~/lib/notify'
@@ -36,6 +37,12 @@ const MEMBER_STATE: Record<string, { label: string; color: string }> = {
 const ACTIVITY_DOT: Record<string, string> = {
   added: 'azure', removed: 'azure', terminated: 'azure', healthy: 'teal', joined: 'teal', rule: 'orange', minimum: 'orange', asked: 'amber',
   lapsed: 'slate', declined: 'slate', failed: 'rose', paused: 'rose', created: 'slate', changed: 'slate', resumed: 'slate', gone: 'slate',
+  aws: 'azure',
+}
+
+/** The group's tracking target, when AWS decides. */
+function trackOf(g: ScaleGroupDetail): AWSTrack {
+  return 'metric' in g.awsTrack && g.awsTrack.metric ? g.awsTrack as AWSTrack : DEFAULT_TRACK
 }
 
 function ScaleGroupPage() {
@@ -66,6 +73,7 @@ function ScaleGroupPage() {
     }
   }
   const atMax = n >= g.limits.max
+  const byAWS = g.mode === 'aws'
   return (
     <>
       <PageHeader crumbs={[{ label: 'Cloud', to: '/cloud' }, { label: 'Scaling', to: '/cloud?tab=scaling' }]} title={g.name}
@@ -84,9 +92,9 @@ function ScaleGroupPage() {
                   onClick={() => void change({ action: 'scale-group-change', spec: { pause: true } }, 'Paused')}>Pause</Button>
               : <Button variant="default" leftSection={<IconPlayerPlay size={15} />} loading={ask.isPending}
                   onClick={() => void change({ action: 'scale-group-change', spec: { pause: false } }, 'Resumed')}>Resume</Button>}
-            <Button variant="default" onClick={() => setEditing(true)}>Change rules</Button>
-            <Tooltip label={atMax ? `At its maximum of ${g.limits.max}` : 'Launch one more now, through the usual approval'} disabled={false}>
-              <Button variant="default" leftSection={<IconPlus size={15} />} disabled={atMax || !!g.open} loading={ask.isPending}
+            <Button variant="default" onClick={() => setEditing(true)}>{byAWS ? 'Change' : 'Change rules'}</Button>
+            <Tooltip label={byAWS ? 'AWS decides how many; change who decides first' : atMax ? `At its maximum of ${g.limits.max}` : 'Launch one more now, through the usual approval'} disabled={false}>
+              <Button variant="default" leftSection={<IconPlus size={15} />} disabled={byAWS || atMax || !!g.open} loading={ask.isPending}
                 onClick={() => void change({ action: 'scale-add', reason: 'Added by hand from the group page' }, 'Adding a server')}>Add a server now</Button>
             </Tooltip>
           </Group>
@@ -114,7 +122,13 @@ function ScaleGroupPage() {
                     const h = g.health[m.instanceId]
                     return (
                       <Table.Tr key={m.instanceId}>
-                        <Table.Td><Text fw={600} size={FS.meta}>{m.hostname}</Text><Text size={FS.micro} c="dimmed" ff="monospace">{m.instanceId}</Text></Table.Td>
+                        <Table.Td>
+                          <Group gap={6} wrap="nowrap">
+                            <Text fw={600} size={FS.meta}>{m.hostname}</Text>
+                            {m.inAws && <Tooltip label={`Started by AWS Auto Scaling in ${g.awsGroup}, which replaces it if it fails`}><Badge size="xs" variant="light" color="orange" radius="sm">AWS</Badge></Tooltip>}
+                          </Group>
+                          {m.inAws ? null : <Text size={FS.micro} c="dimmed" ff="monospace">{m.instanceId}</Text>}
+                        </Table.Td>
                         <Table.Td><Text size={FS.meta}>{m.zone ? m.zone.slice(-2) : '—'}</Text></Table.Td>
                         <Table.Td><Text size={FS.meta}>{u?.cpu != null ? `${Math.round(u.cpu)}%` : '—'}</Text></Table.Td>
                         <Table.Td><Text size={FS.meta}>{u?.mem != null ? `${Math.round(u.mem)}%` : '—'}</Text></Table.Td>
@@ -137,23 +151,49 @@ function ScaleGroupPage() {
                   <Group key={i} gap="sm" wrap="nowrap" align="flex-start" py={8} style={{ borderTop: i ? '1px solid var(--color-line)' : undefined }}>
                     <Tooltip label={absTime(a.at)}><Text size={FS.micro} c="dimmed" ff="monospace" w={74} style={{ flexShrink: 0 }}>{relTime(a.at)}</Text></Tooltip>
                     <Box mt={5} w={7} h={7} style={{ borderRadius: 7, flexShrink: 0, background: `var(--mantine-color-${ACTIVITY_DOT[a.kind] ?? 'slate'}-6)` }} />
-                    <Text size={FS.meta}>{a.detail}{a.actor !== 'argus' && a.actor !== 'argus-scale' && !a.detail.includes(a.actor) ? ` · ${a.actor}` : ''}</Text>
+                    <Text size={FS.meta}>{a.detail}{a.actor !== 'argus' && a.actor !== 'argus-scale' && a.actor !== 'aws' && !a.detail.includes(a.actor) ? ` · ${a.actor}` : ''}</Text>
                   </Group>
                 ))}
-                <Text size={FS.micro} c="dimmed" mt="xs">Argus's own adds and take-aways run as argus-scale in CloudTrail; automatic ones name the person who turned automatic on.</Text>
+                <Text size={FS.micro} c="dimmed" mt="xs">Argus's own adds and take-aways run as argus-scale in CloudTrail; automatic ones name the person who turned automatic on. What AWS Auto Scaling does is recorded as Argus sees it.</Text>
               </Stack>
             </SectionCard>
           </SimpleGrid>
-          <SectionCard title="Rules" icon={IconInfoCircle}>
-            <Stack gap={4}>
-              <Text size={FS.meta}><b>Add a server</b> when {g.rules.add.map(ruleWords).join(', or ')}.</Text>
-              <Text size={FS.meta}><b>Take one away</b> {g.rules.remove.length ? `when ${g.rules.remove.map(ruleWords).join(', and ')}` : 'never by itself'}.</Text>
-              <Text size={FS.meta} c="dimmed">
-                Waits {g.limits.addWait} min after adding and {g.limits.removeWait} after taking away. At most 3 automatic adds a day; two new servers in a row that do not become healthy pause the group.
-                {g.mode === 'auto' && g.autoBy ? ` Automatic since ${absTime(g.autoAt ?? g.createdAt)}, turned on by ${g.autoBy}.` : ''}
-              </Text>
-            </Stack>
-          </SectionCard>
+          <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="md">
+            <SectionCard title={byAWS ? 'What AWS keeps' : 'Rules'} icon={IconInfoCircle}>
+              {byAWS ? (
+                <Stack gap={4}>
+                  <Text size={FS.meta}><b>AWS Auto Scaling</b> adds and takes away servers to keep {trackWords(trackOf(g))}, between {g.limits.min} and {g.limits.max} with {g.template.fromName}.</Text>
+                  <Text size={FS.meta} c="dimmed">On CloudWatch's free 5-minute metrics, so it does not see memory. Argus's rules wait: add when {g.rules.add.map(ruleWords).join(', or ')}.</Text>
+                </Stack>
+              ) : (
+                <Stack gap={4}>
+                  <Text size={FS.meta}><b>Add a server</b> when {g.rules.add.map(ruleWords).join(', or ')}.</Text>
+                  <Text size={FS.meta}><b>Take one away</b> {g.rules.remove.length ? `when ${g.rules.remove.map(ruleWords).join(', and ')}` : 'never by itself'}.</Text>
+                  <Text size={FS.meta} c="dimmed">
+                    Waits {g.limits.addWait} min after adding and {g.limits.removeWait} after taking away. At most 3 automatic adds a day; two new servers in a row that do not become healthy pause the group.
+                    {g.mode === 'auto' && g.autoBy ? ` Automatic since ${absTime(g.autoAt ?? g.createdAt)}, turned on by ${g.autoBy}.` : ''}
+                  </Text>
+                </Stack>
+              )}
+            </SectionCard>
+            <SectionCard title="If Argus is down" icon={IconBrandAws}>
+              <Stack gap={4} data-testid="scale-aws">
+                {g.awsNote && !g.awsGroup
+                  ? <Alert color="amber" variant="light" p="xs"><Text size={FS.meta}>{g.awsNote}</Text></Alert>
+                  : <Text size={FS.meta}>{byAWS
+                    ? 'Nothing changes: AWS Auto Scaling keeps adding and taking away servers by itself.'
+                    : `${g.name} never falls below ${g.limits.min}: ${g.aws.words}, replacing a failed one by itself. Growing above ${g.limits.min} waits for Argus.`}</Text>}
+                {g.awsGroup && (
+                  <Text size={FS.meta} c="dimmed">
+                    Auto Scaling group <Text span ff="monospace" size={FS.meta}>{g.awsGroup}</Text>
+                    {g.aws.desired != null ? ` · wants ${g.aws.desired} (${g.aws.min} to ${g.aws.max})` : ''} · launch template <Text span ff="monospace" size={FS.meta}>{g.awsTemplate}</Text>.
+                    {' '}Its servers enroll their agent with the group's key, which Argus checks with AWS.
+                  </Text>
+                )}
+                {!g.awsGroup && !g.awsNote && <Text size={FS.meta} c="dimmed">{g.aws.words}.</Text>}
+              </Stack>
+            </SectionCard>
+          </SimpleGrid>
         </Stack>
       </PageBody>
       {editing && <EditRules g={g} busy={ask.isPending} onClose={() => setEditing(false)}
@@ -164,19 +204,34 @@ function ScaleGroupPage() {
 
 function EditRules({ g, busy, onClose, onSave }: {
   g: ScaleGroupDetail; busy: boolean; onClose: () => void
-  onSave: (spec: { limits: ScaleLimits; rules: ScaleRules; mode: ScaleMode }, reason: string) => void
+  onSave: (spec: { limits: ScaleLimits; rules?: ScaleRules; mode: ScaleMode; track?: AWSTrack }, reason: string) => void
 }) {
   const [limits, setLimits] = useState(g.limits)
   const [rules, setRules] = useState(g.rules)
   const [mode, setMode] = useState<ScaleMode>(g.mode)
+  const [track, setTrack] = useState<AWSTrack>(trackOf(g))
   const [reason, setReason] = useState('')
-  const problem = limitsProblem(limits, mode) || [...rules.add, ...rules.remove].map(ruleProblem).find(Boolean) || (rules.add.length ? '' : 'Give at least one rule for adding a server.')
+  const problem = limitsProblem(limits, mode, g.each) || (mode === 'aws'
+    ? trackProblem(track)
+    : [...rules.add, ...rules.remove].map(ruleProblem).find(Boolean) || (rules.add.length ? '' : 'Give at least one rule for adding a server.'))
   const waits = needsApproval(g.environment, 'change')
   return (
     <Modal opened onClose={onClose} title={`Change ${g.name}`} size="xl">
       <Stack gap="md">
-        <RuleList title="Add a server when" join="or" rules={rules.add} onChange={(add) => setRules({ ...rules, add })} fresh={{ signal: 'cpu', over: 'average', op: 'above', value: 75, minutes: 10 }} />
-        <RuleList title="Take one away when" join="and" rules={rules.remove} onChange={(remove) => setRules({ ...rules, remove })} fresh={{ signal: 'cpu', over: 'average', op: 'below', value: 25, minutes: 30 }} />
+        {mode === 'aws' ? (
+          <Group align="flex-end" gap="sm">
+            <Select label="AWS keeps" w={260} allowDeselect={false} value={track.metric}
+              data={[{ value: 'cpu', label: "The group's average processor" }, { value: 'requests', label: 'Requests per server a minute' }]}
+              onChange={(v) => setTrack(v === 'requests' ? { metric: 'requests', target: 1000 } : { metric: 'cpu', target: 60 })} />
+            <NumberInput label="Near" w={140} suffix={track.metric === 'cpu' ? ' %' : ''} min={1} value={track.target}
+              onChange={(v) => setTrack({ ...track, target: Number(v) || 0 })} />
+          </Group>
+        ) : (
+          <>
+            <RuleList title="Add a server when" join="or" rules={rules.add} onChange={(add) => setRules({ ...rules, add })} fresh={{ signal: 'cpu', over: 'average', op: 'above', value: 75, minutes: 10 }} />
+            <RuleList title="Take one away when" join="and" rules={rules.remove} onChange={(remove) => setRules({ ...rules, remove })} fresh={{ signal: 'cpu', over: 'average', op: 'below', value: 25, minutes: 30 }} />
+          </>
+        )}
         <SimpleGrid cols={{ base: 2, sm: 5 }}>
           <NumberInput label="Fewest" min={1} max={20} value={limits.min} onChange={(v) => setLimits({ ...limits, min: Number(v) || 0 })} />
           <NumberInput label="Most" min={1} max={20} value={limits.max} onChange={(v) => setLimits({ ...limits, max: Number(v) || 0 })} />
@@ -186,7 +241,9 @@ function EditRules({ g, busy, onClose, onSave }: {
         </SimpleGrid>
         <Box>
           <Text size={FS.meta} fw={600} mb={6}>Who decides</Text>
-          <SegmentedControl value={mode} onChange={(v) => setMode(v as ScaleMode)} data={[{ value: 'ask', label: 'Ask each time' }, { value: 'auto', label: 'Automatic within limits' }]} />
+          <SegmentedControl value={mode} onChange={(v) => setMode(v as ScaleMode)} data={[{ value: 'ask', label: 'Ask each time' }, { value: 'auto', label: 'Automatic within limits' }, { value: 'aws', label: 'AWS decides' }]} />
+          {mode === 'aws' && g.mode !== 'aws' && <Text size={FS.micro} c="dimmed" mt={6}>AWS Auto Scaling takes over above the minimum; it keeps working if Argus is down, and does not see memory.</Text>}
+          {mode !== 'aws' && g.mode === 'aws' && <Text size={FS.micro} c="dimmed" mt={6}>Argus decides again; AWS ends the servers it added above the minimum.</Text>}
         </Box>
         <Textarea label="Reason" autosize minRows={2} value={reason} onChange={(e) => setReason(e.currentTarget.value)} maxLength={500} />
         {problem && <Text size={FS.meta} c="rose">{problem}</Text>}
@@ -194,7 +251,7 @@ function EditRules({ g, busy, onClose, onSave }: {
           <Text size={FS.micro} c="dimmed">{waits ? `This is ${g.environment}, so someone else approves the change.` : 'It takes effect at once.'}</Text>
           <Group gap="xs">
             <Button variant="default" onClick={onClose}>Cancel</Button>
-            <Button disabled={!!problem} loading={busy} onClick={() => onSave({ limits, rules, mode }, reason)}>{waits ? 'Ask for approval' : 'Save'}</Button>
+            <Button disabled={!!problem} loading={busy} onClick={() => onSave(mode === 'aws' ? { limits, mode, track } : { limits, rules, mode }, reason)}>{waits ? 'Ask for approval' : 'Save'}</Button>
           </Group>
         </Group>
       </Stack>

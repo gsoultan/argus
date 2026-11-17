@@ -55,64 +55,64 @@ import (
 // runtime code inspects a schema and no constraint has to be deferred for
 // a graph write to succeed.
 var FlushOrder = map[string]int{
-	"agent_enrollment_tokens":   0,
-	"agents":                    1,
-	"assets":                    2,
-	"audit_events":              3,
-	"cloud_accounts":            4,
-	"cloud_budgets":             5,
-	"cloud_changes":             6,
-	"cloud_costs":               7,
-	"cloud_finding_keeps":       8,
-	"cloud_keep_running":        9,
-	"cloud_resources":           10,
-	"cloud_schedules":           11,
-	"console_alert_prefs":       12,
-	"console_alerts":            13,
-	"databases":                 14,
-	"direct_login_requests":     15,
-	"disk_grow_rules":           16,
-	"disk_grow_runs":            17,
-	"gateway_policy":            18,
-	"host_key_pins":             19,
-	"log_cleanup_rules":         20,
-	"log_cleanup_runs":          21,
-	"package_runs":              22,
-	"package_update_rules":      23,
-	"redeemed_tickets":          24,
-	"revoked_sessions":          25,
-	"saved_queries":             26,
-	"scale_groups":              27,
-	"schema_migrations":         28,
-	"server_logins":             29,
-	"sessions":                  30,
-	"sign_in_devices":           31,
-	"software_files":            32,
-	"software_previews":         33,
-	"software_scripts":          34,
-	"teams":                     35,
-	"usage_history":             36,
-	"usage_hourly":              37,
-	"users":                     38,
-	"access_requests":           39,
-	"agent_credentials":         40,
-	"asset_assignments":         41,
-	"asset_team_assignments":    42,
-	"cloud_access":              43,
-	"cloud_schedule_runs":       44,
-	"console_alert_reads":       45,
-	"database_access_rules":     46,
-	"database_assignments":      47,
-	"database_backup_schedules": 48,
-	"database_backups":          49,
-	"database_changes":          50,
-	"database_restores":         51,
-	"database_statements":       52,
-	"recovery_codes":            53,
-	"scale_group_activity":      54,
-	"scale_group_members":       55,
-	"software_script_versions":  56,
-	"team_members":              57,
+	"agents":                    0,
+	"assets":                    1,
+	"audit_events":              2,
+	"cloud_accounts":            3,
+	"cloud_budgets":             4,
+	"cloud_changes":             5,
+	"cloud_costs":               6,
+	"cloud_finding_keeps":       7,
+	"cloud_keep_running":        8,
+	"cloud_resources":           9,
+	"cloud_schedules":           10,
+	"console_alert_prefs":       11,
+	"console_alerts":            12,
+	"databases":                 13,
+	"direct_login_requests":     14,
+	"disk_grow_rules":           15,
+	"disk_grow_runs":            16,
+	"gateway_policy":            17,
+	"host_key_pins":             18,
+	"log_cleanup_rules":         19,
+	"log_cleanup_runs":          20,
+	"package_runs":              21,
+	"package_update_rules":      22,
+	"redeemed_tickets":          23,
+	"revoked_sessions":          24,
+	"saved_queries":             25,
+	"scale_groups":              26,
+	"schema_migrations":         27,
+	"server_logins":             28,
+	"sessions":                  29,
+	"sign_in_devices":           30,
+	"software_files":            31,
+	"software_previews":         32,
+	"software_scripts":          33,
+	"teams":                     34,
+	"usage_history":             35,
+	"usage_hourly":              36,
+	"users":                     37,
+	"access_requests":           38,
+	"agent_enrollment_tokens":   39,
+	"asset_assignments":         40,
+	"asset_team_assignments":    41,
+	"cloud_access":              42,
+	"cloud_schedule_runs":       43,
+	"console_alert_reads":       44,
+	"database_access_rules":     45,
+	"database_assignments":      46,
+	"database_backup_schedules": 47,
+	"database_backups":          48,
+	"database_changes":          49,
+	"database_restores":         50,
+	"database_statements":       51,
+	"recovery_codes":            52,
+	"scale_group_activity":      53,
+	"scale_group_members":       54,
+	"software_script_versions":  55,
+	"team_members":              56,
+	"agent_credentials":         57,
 	"database_backup_tests":     58,
 	"database_statement_items":  59,
 }
@@ -366,6 +366,131 @@ func (p AgentCredentialWithTokenQuery) All(ctx context.Context, ex runtime.Execu
 			return nil, fmt.Errorf("storm: %s references a missing %s row", "agent_credentials", "agent_enrollment_tokens")
 		}
 		out[i].Token = targets[j]
+	}
+	return out, nil
+}
+
+// AgentEnrollmentTokenWithScaleGroupRow is agent_enrollment_tokens with its ScaleGroup loaded.
+type AgentEnrollmentTokenWithScaleGroupRow struct {
+	agentenrollmenttoken.Row
+	// A pointer because the link is optional. nil means the row has no
+	// ScaleGroup, which is different from having one that failed to load.
+	ScaleGroup *scalegroup.Row
+}
+
+type AgentEnrollmentTokenWithScaleGroupQuery struct {
+	q agentenrollmenttoken.Query
+}
+
+// AgentEnrollmentTokenWithScaleGroup starts the plan.
+func AgentEnrollmentTokenWithScaleGroup() AgentEnrollmentTokenWithScaleGroupQuery {
+	return AgentEnrollmentTokenWithScaleGroupQuery{q: agentenrollmenttoken.New()}
+}
+
+func (p AgentEnrollmentTokenWithScaleGroupQuery) Where(ps ...agentenrollmenttoken.Pred) AgentEnrollmentTokenWithScaleGroupQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p AgentEnrollmentTokenWithScaleGroupQuery) WhereIf(cond bool, pr agentenrollmenttoken.Pred) AgentEnrollmentTokenWithScaleGroupQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p AgentEnrollmentTokenWithScaleGroupQuery) Any(ps ...agentenrollmenttoken.Pred) AgentEnrollmentTokenWithScaleGroupQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p AgentEnrollmentTokenWithScaleGroupQuery) Not(pr agentenrollmenttoken.Pred) AgentEnrollmentTokenWithScaleGroupQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p AgentEnrollmentTokenWithScaleGroupQuery) NotAny(ps ...agentenrollmenttoken.Pred) AgentEnrollmentTokenWithScaleGroupQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p AgentEnrollmentTokenWithScaleGroupQuery) Order(ts ...agentenrollmenttoken.Sort) AgentEnrollmentTokenWithScaleGroupQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p AgentEnrollmentTokenWithScaleGroupQuery) Limit(n int64) AgentEnrollmentTokenWithScaleGroupQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p AgentEnrollmentTokenWithScaleGroupQuery) Offset(n int64) AgentEnrollmentTokenWithScaleGroupQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p AgentEnrollmentTokenWithScaleGroupQuery) After(r AgentEnrollmentTokenWithScaleGroupRow) AgentEnrollmentTokenWithScaleGroupQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p AgentEnrollmentTokenWithScaleGroupQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p AgentEnrollmentTokenWithScaleGroupQuery) All(ctx context.Context, ex runtime.Executor) ([]AgentEnrollmentTokenWithScaleGroupRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]AgentEnrollmentTokenWithScaleGroupRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = AgentEnrollmentTokenWithScaleGroupRow{Row: r}
+		key, ok := r.ScaleGroupID.Get()
+		if !ok {
+			continue
+		}
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := scalegroup.New().Unordered().
+		Where(scalegroup.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key, ok := out[i].Row.ScaleGroupID.Get()
+		if !ok {
+			continue
+		}
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "agent_enrollment_tokens", "scale_groups")
+		}
+		out[i].ScaleGroup = &targets[j]
 	}
 	return out, nil
 }

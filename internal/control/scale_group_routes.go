@@ -59,7 +59,9 @@ type scaleCreateSpec struct {
 	Subnets     []string          `json:"subnets"`
 	Limits      cloud.ScaleLimits `json:"limits"`
 	Rules       cloud.ScaleRules  `json:"rules"`
-	Mode        string            `json:"mode"`
+	// Mode is ask, auto, or aws (AWS Auto Scaling decides, keeping Track).
+	Mode  string         `json:"mode"`
+	Track cloud.AWSTrack `json:"track"`
 
 	// Worked out when planned.
 	Template   scaleTemplate `json:"template"`
@@ -74,6 +76,8 @@ type scaleChangeSpec struct {
 	Limits *cloud.ScaleLimits `json:"limits,omitempty"`
 	Rules  *cloud.ScaleRules  `json:"rules,omitempty"`
 	Mode   string             `json:"mode,omitempty"`
+	// Track is what AWS keeps the group near when it decides.
+	Track *cloud.AWSTrack `json:"track,omitempty"`
 	// Pause pauses (true) or resumes (false) the group.
 	Pause *bool `json:"pause,omitempty"`
 }
@@ -136,7 +140,7 @@ func (a *API) planScale(r *http.Request, m cloudManaged, actor string, in *cloud
 		// A change to the settings has its own slot, so a question Argus
 		// asked about adding never blocks a person changing the rules.
 		ch.ResourceID = scaleSettings + g.ID
-		return planScaleChange(g, in, ch)
+		return a.planScaleChange(r.Context(), g, in, ch)
 	case cloud.ActionScaleAdd:
 		return a.planScaleAdd(r.Context(), g, ch, false)
 	}
@@ -165,8 +169,18 @@ func (a *API) planScaleCreate(r *http.Request, m cloudManaged, in *cloudChangeIn
 	if s.Mode == "" {
 		s.Mode = cloud.ScaleAsk
 	}
-	if s.Mode != cloud.ScaleAsk && s.Mode != cloud.ScaleAuto {
-		return ch, http.StatusBadRequest, errors.New("who decides is ask (each time) or auto (within the limits)")
+	if s.Mode != cloud.ScaleAsk && s.Mode != cloud.ScaleAuto && s.Mode != cloud.ScaleAWS {
+		return ch, http.StatusBadRequest, errors.New("who decides is ask (each time), auto (within the limits) or aws (AWS Auto Scaling)")
+	}
+	if s.Mode == cloud.ScaleAWS {
+		if _, ok := m.manager.(cloud.Floors); !ok {
+			return ch, http.StatusNotImplemented, errors.New(m.acct.Provider + " cannot make Auto Scaling groups from Argus yet")
+		}
+		if s.Track.Metric == "" {
+			s.Track = cloud.DefaultAWSTrack()
+		}
+	} else {
+		s.Track = cloud.AWSTrack{}
 	}
 	src, err := a.store.CloudInstance(ctx, m.acct.ID, in.Region, s.From)
 	if err != nil {
@@ -244,6 +258,11 @@ func (a *API) planScaleCreate(r *http.Request, m cloudManaged, in *cloudChangeIn
 		}
 	}
 	s.TargetName, s.Port, s.Balancer = tg.Name, int32(port), lbOf(tg)
+	if s.Mode == cloud.ScaleAWS {
+		if err := awsModeProblem(s.Track, s.Limits, s.Size, a.requestLabelOf(tg)); err != nil {
+			return ch, http.StatusBadRequest, err
+		}
+	}
 	s.EnrollBase = strings.TrimRight(a.enrolAddress(r), "/")
 	ch.Environment = cloudEnvOf(src.Tags, m.acct.Environment)
 	ch.ResourceID, ch.ResourceName = "scale:"+s.Name, s.Name
@@ -262,7 +281,41 @@ func (a *API) planScaleCreate(r *http.Request, m cloudManaged, in *cloudChangeIn
 	ch.Summary = fmt.Sprintf("Make scale group %s from %s: %s, %s in %d zone%s, in %s behind %s, %d to %d servers%s, %s",
 		s.Name, src.Name, what, s.Size, len(zones), plural(len(zones)), tg.Name, s.Balancer, s.Limits.Min, s.Limits.Max,
 		costRange(s.Size, s.Limits), modeWords(s.Mode))
+	if s.Mode == cloud.ScaleAWS {
+		ch.Summary += ", keeping " + s.Track.Words()
+	}
 	return ch, http.StatusOK, nil
+}
+
+// requestLabelOf is CloudWatch's name for a target group behind an
+// application load balancer, or "".
+func (a *API) requestLabelOf(tg cloud.Resource) string {
+	for _, l := range tg.Links {
+		if l.Kind == cloud.KindLoadBalancer {
+			if label := cloud.RequestLabel(l.ID, tg.ID); label != "" {
+				return label
+			}
+		}
+	}
+	return ""
+}
+
+// awsModeProblem says why AWS cannot decide for a group with these
+// settings, or nil. AWS knows nothing of Argus's cost cap, so the maximum
+// has to keep under it.
+func awsModeProblem(t cloud.AWSTrack, l cloud.ScaleLimits, size, label string) error {
+	if err := t.Check(); err != nil {
+		return err
+	}
+	if t.Metric == cloud.TrackRequests && label == "" {
+		return errors.New("AWS tracks requests per server only behind an application load balancer; track the processor instead")
+	}
+	if p, ok := monthly(size); ok && l.CostCap > 0 && p*float64(l.Max) > l.CostCap {
+		fit := int(l.CostCap / p)
+		return fmt.Errorf("AWS does not know the cost cap, so the maximum has to keep under it: %d %s are about %s a month, over %s; lower the maximum to %d or raise the cap",
+			l.Max, size, money(p*float64(l.Max)), money(l.CostCap), fit)
+	}
+	return nil
 }
 
 // costRange is " (about $122 to $366 a month, cap $600)" for a group's
@@ -280,20 +333,23 @@ func costRange(size string, l cloud.ScaleLimits) string {
 }
 
 func modeWords(mode string) string {
-	if mode == cloud.ScaleAuto {
+	switch mode {
+	case cloud.ScaleAuto:
 		return "Argus adds and takes away by itself within the limits"
+	case cloud.ScaleAWS:
+		return "AWS Auto Scaling decides, even when Argus is down"
 	}
 	return "ask each time"
 }
 
-func planScaleChange(g ScaleGroup, in *cloudChangeIn, ch CloudChange) (CloudChange, int, error) {
+func (a *API) planScaleChange(ctx context.Context, g ScaleGroup, in *cloudChangeIn, ch CloudChange) (CloudChange, int, error) {
 	var s scaleChangeSpec
 	if err := json.Unmarshal(in.Spec, &s); err != nil {
 		return ch, http.StatusBadRequest, errors.New("a group change takes {limits, rules, mode, pause}")
 	}
 	var parts []string
 	if s.Pause != nil {
-		if s.Limits != nil || s.Rules != nil || s.Mode != "" {
+		if s.Limits != nil || s.Rules != nil || s.Mode != "" || s.Track != nil {
 			return ch, http.StatusBadRequest, errors.New("pause or resume on its own")
 		}
 		if *s.Pause == (g.State == "paused") {
@@ -302,7 +358,9 @@ func planScaleChange(g ScaleGroup, in *cloudChangeIn, ch CloudChange) (CloudChan
 		// Pausing only stops Argus acting, so it never waits for anyone;
 		// resuming lets it act again within limits already approved.
 		ch.Level = cloud.LevelOperate
-		if *s.Pause {
+		if *s.Pause && g.Mode == cloud.ScaleAWS {
+			ch.Summary = "Pause scale group " + g.Name + ": AWS stops adding and taking away, and keeps the servers it has"
+		} else if *s.Pause {
 			ch.Summary = "Pause scale group " + g.Name + ": Argus stops adding and taking away"
 		} else {
 			ch.Summary = "Resume scale group " + g.Name
@@ -331,18 +389,59 @@ func planScaleChange(g ScaleGroup, in *cloudChangeIn, ch CloudChange) (CloudChan
 		}
 		parts = append(parts, "add when "+ruleList(s.Rules.Add, " or ")+"; take away when "+ruleList(s.Rules.Remove, " and "))
 	}
+	limits, mode := g.Limits, g.Mode
+	if s.Limits != nil {
+		limits = *s.Limits
+	}
+	if s.Mode != "" {
+		mode = s.Mode
+	}
 	if s.Mode != "" && s.Mode != g.Mode {
-		if s.Mode != cloud.ScaleAsk && s.Mode != cloud.ScaleAuto {
-			return ch, http.StatusBadRequest, errors.New("who decides is ask or auto")
+		if s.Mode != cloud.ScaleAsk && s.Mode != cloud.ScaleAuto && s.Mode != cloud.ScaleAWS {
+			return ch, http.StatusBadRequest, errors.New("who decides is ask, auto or aws")
 		}
-		capped := g.Limits.CostCap
-		if s.Limits != nil {
-			capped = s.Limits.CostCap
-		}
-		if s.Mode == cloud.ScaleAuto && capped == 0 {
+		if s.Mode == cloud.ScaleAuto && limits.CostCap == 0 {
 			return ch, http.StatusBadRequest, errors.New("automatic needs a cost cap, so the limits say what it may spend")
 		}
-		parts = append(parts, modeWords(s.Mode))
+		if s.Mode == cloud.ScaleAWS {
+			// AWS takes over from the floor up; what Argus launched itself
+			// above it is Argus's to take away first.
+			if extra := g.argusCopies(); len(extra) > 0 {
+				return ch, http.StatusConflict, fmt.Errorf("Argus launched %s itself; take %s away first, then AWS can decide",
+					extra[0].Hostname, map[bool]string{true: "it", false: "them"}[len(extra) == 1])
+			}
+		}
+		words := modeWords(s.Mode)
+		if g.Mode == cloud.ScaleAWS && g.AWSGroup != "" {
+			if d, ok := a.floorDesired(ctx, g); ok && d > floorCopies(g) {
+				words += fmt.Sprintf("; AWS ends the %d server%s it added above the minimum", d-floorCopies(g), plural(int(d-floorCopies(g))))
+			}
+		}
+		parts = append(parts, words)
+	}
+	if mode == cloud.ScaleAWS {
+		t := g.AWSTrack
+		if s.Track != nil {
+			t = *s.Track
+		}
+		if t.Metric == "" {
+			t = cloud.DefaultAWSTrack()
+		}
+		label := ""
+		if tg, err := a.store.CloudResourceOf(ctx, g.AccountID, g.Region, cloud.KindTargetGroup, g.TargetGroup); err == nil {
+			label = a.requestLabelOf(tg)
+		}
+		if err := awsModeProblem(t, limits, g.Template.Size, label); err != nil {
+			return ch, http.StatusBadRequest, err
+		}
+		if s.Track != nil || s.Mode == cloud.ScaleAWS {
+			s.Track = &t
+			if t != g.AWSTrack || s.Mode == cloud.ScaleAWS {
+				parts = append(parts, "AWS keeps "+t.Words())
+			}
+		}
+	} else {
+		s.Track = nil
 	}
 	if len(parts) == 0 {
 		return ch, http.StatusBadRequest, errors.New("nothing to change")
@@ -396,6 +495,9 @@ func (g ScaleGroup) serving() []ScaleMember {
 // planScaleAdd plans one more server; keep is an add to get back to the
 // minimum.
 func (a *API) planScaleAdd(ctx context.Context, g ScaleGroup, ch CloudChange, keep bool) (CloudChange, int, error) {
+	if g.Mode == cloud.ScaleAWS {
+		return ch, http.StatusConflict, errors.New("AWS decides how many servers " + g.Name + " has; change who decides first")
+	}
 	n := len(g.serving())
 	if n >= g.Limits.Max {
 		return ch, http.StatusConflict, fmt.Errorf("%s is at its maximum of %d; raise it first, which is its own change", g.Name, g.Limits.Max)
@@ -439,6 +541,9 @@ func imageWords(t scaleTemplate) string {
 
 // planScaleRemove plans taking the newest server away that can be.
 func (a *API) planScaleRemove(ctx context.Context, g ScaleGroup, ch CloudChange) (CloudChange, int, error) {
+	if g.Mode == cloud.ScaleAWS {
+		return ch, http.StatusConflict, errors.New("AWS decides how many servers " + g.Name + " has; change who decides first")
+	}
 	serving := g.serving()
 	if len(serving) <= g.Limits.Min {
 		return ch, http.StatusConflict, fmt.Errorf("%s is at its minimum of %d", g.Name, g.Limits.Min)
@@ -454,11 +559,16 @@ func (a *API) planScaleRemove(ctx context.Context, g ScaleGroup, ch CloudChange)
 		if m.InstanceID == g.Template.From {
 			continue
 		}
+		// What AWS started is the floor it keeps; ending one, AWS would
+		// start another.
+		if m.InAWS {
+			continue
+		}
 		pick = &m
 		break
 	}
 	if pick == nil {
-		return ch, http.StatusConflict, errors.New("every server " + g.Name + " could take away is still starting")
+		return ch, http.StatusConflict, errors.New("every server " + g.Name + " could take away is still starting, or kept by AWS")
 	}
 	s := scaleRemoveSpec{Instance: pick.InstanceID, Hostname: pick.Hostname}
 	ch.Spec, _ = json.Marshal(s)
@@ -594,7 +704,7 @@ func (a *API) applyScale(ctx context.Context, r *http.Request, m cloudManaged, c
 		}
 		g := ScaleGroup{AccountID: m.acct.ID, Region: ch.Region, Name: s.Name, Environment: ch.Environment,
 			TargetGroup: s.TargetGroup, TargetName: s.TargetName, Port: s.Port, Balancer: s.Balancer, Template: s.Template,
-			Limits: s.Limits, Rules: s.Rules, Mode: s.Mode, EnrollBase: s.EnrollBase, CreatedBy: ch.RequestedBy}
+			Limits: s.Limits, Rules: s.Rules, Mode: s.Mode, AWSTrack: s.Track, EnrollBase: s.EnrollBase, CreatedBy: ch.RequestedBy}
 		if s.Mode == cloud.ScaleAuto {
 			now := time.Now().UTC()
 			g.AutoBy, g.AutoAt = ch.RequestedBy, &now
@@ -655,12 +765,20 @@ func (a *API) applyScale(ctx context.Context, r *http.Request, m cloudManaged, c
 		if s.Rules != nil {
 			g.Rules = *s.Rules
 		}
+		was := g.Mode
 		if s.Mode != "" && s.Mode != g.Mode {
 			g.Mode = s.Mode
 			if s.Mode == cloud.ScaleAuto {
 				now := time.Now().UTC()
 				g.AutoBy, g.AutoAt = ch.RequestedBy, &now
 			}
+		}
+		if s.Track != nil {
+			g.AWSTrack = *s.Track
+		}
+		// AWS first: if it refuses, nothing changes in Argus either.
+		if err := a.floorChange(ctx, m, actor, g, was); err != nil {
+			return cloud.Result{}, err
 		}
 		if err := a.store.SetScaleGroupSettings(ctx, g); err != nil {
 			return cloud.Result{}, err
@@ -803,6 +921,16 @@ type scaleGroupView struct {
 	Open    *CloudChange         `json:"open"`
 	Health  map[string]string    `json:"health"`
 	Usage   map[string]memberNow `json:"usage"`
+	// AWS is the Auto Scaling group under the group, as last read.
+	AWS awsSide `json:"aws"`
+}
+
+// awsSide is the Auto Scaling group in words, and its size when read.
+type awsSide struct {
+	Words   string `json:"words"`
+	Min     *int   `json:"min"`
+	Max     *int   `json:"max"`
+	Desired *int   `json:"desired"`
 }
 
 type memberNow struct {
@@ -854,6 +982,18 @@ func (a *API) scaleView(ctx context.Context, g ScaleGroup, now time.Time) scaleG
 		v.Last = &acts[0]
 	}
 	v.Open, _ = a.store.OpenScaleChange(ctx, g.AccountID, g.ID)
+	v.AWS.Words = floorWords(g)
+	if g.AWSGroup != "" {
+		if r, err := a.store.CloudResourceOf(ctx, g.AccountID, g.Region, cloud.KindScalingGroup, g.AWSGroup); err == nil {
+			num := func(k string) *int {
+				if n, err := strconv.Atoi(r.Details[k]); err == nil {
+					return &n
+				}
+				return nil
+			}
+			v.AWS.Min, v.AWS.Max, v.AWS.Desired = num("min"), num("max"), num("desired")
+		}
+	}
 	return v
 }
 

@@ -26,7 +26,24 @@ export interface ScaleLimits {
   removeWait: number
 }
 
-export type ScaleMode = 'ask' | 'auto'
+export type ScaleMode = 'ask' | 'auto' | 'aws'
+
+/** What AWS keeps the group near when it decides. */
+export interface AWSTrack { metric: 'cpu' | 'requests'; target: number }
+
+export const DEFAULT_TRACK: AWSTrack = { metric: 'cpu', target: 60 }
+
+/** "the group's processor near 60%". */
+export function trackWords(t: AWSTrack): string {
+  return t.metric === 'requests' ? `about ${t.target} requests a minute per server` : `the group's processor near ${t.target}%`
+}
+
+/** What is wrong with a tracking target, or "". */
+export function trackProblem(t: AWSTrack): string {
+  if (t.metric === 'cpu' && !(t.target >= 10 && t.target <= 90)) return 'Keep the processor near 10% to 90%.'
+  if (t.metric === 'requests' && !(t.target >= 1 && t.target <= 1_000_000)) return 'Keep requests per server at 1 to 1,000,000 a minute.'
+  return ''
+}
 
 export interface ScaleMember {
   instanceId: string
@@ -39,6 +56,8 @@ export interface ScaleMember {
   registeredAt: string | null
   drainUntil: string | null
   leftAt: string | null
+  /** A server AWS Auto Scaling started, replaces and ends. */
+  inAws: boolean
 }
 
 export interface ScaleActivity { at: string; kind: string; actor: string; detail: string; changeId: string }
@@ -80,6 +99,14 @@ export interface ScaleGroup {
   /** Target health by instance id. */
   health: Record<string, string>
   usage: Record<string, { cpu: number | null; mem: number | null }>
+  awsTrack: AWSTrack | Record<string, never>
+  /** The Auto Scaling group and launch template under the group, once made. */
+  awsGroup: string
+  awsTemplate: string
+  /** Why AWS refused to make them. */
+  awsNote: string
+  /** The AWS side in words, and the Auto Scaling group's size as last read. */
+  aws: { words: string; min: number | null; max: number | null; desired: number | null }
 }
 
 export interface ScalePoint { at: string; value: number }
@@ -176,11 +203,14 @@ export function ruleProblem(r: ScaleRule): string {
 }
 
 /** What is wrong with the limits, or "". */
-export function limitsProblem(l: ScaleLimits, mode: ScaleMode): string {
+export function limitsProblem(l: ScaleLimits, mode: ScaleMode, each?: number | null): string {
   if (!(l.min >= 1)) return 'A group keeps at least 1 server.'
   if (!(l.max >= l.min && l.max <= 20)) return 'The maximum is from the minimum up to 20.'
   if (l.costCap < 0) return 'The cost cap is a monthly amount, or 0 for none.'
   if (mode === 'auto' && !l.costCap) return 'Automatic needs a cost cap, so the limits say what it may spend.'
+  if (mode === 'aws' && l.costCap && each && each * l.max > l.costCap) {
+    return `AWS does not know the cost cap, so the maximum keeps under it: ${Math.floor(l.costCap / each)} servers at most.`
+  }
   if (l.addWait < 5 || l.addWait > 240 || l.removeWait < 5 || l.removeWait > 240) return 'Wait 5 to 240 minutes after a change.'
   return ''
 }
@@ -188,6 +218,7 @@ export function limitsProblem(l: ScaleLimits, mode: ScaleMode): string {
 export const MODE_WORDS: Record<ScaleMode, string> = {
   ask: 'Argus decides · ask each time',
   auto: 'Argus decides · automatic',
+  aws: 'AWS decides',
 }
 
 /** The servers a group has now and that count towards its size. */

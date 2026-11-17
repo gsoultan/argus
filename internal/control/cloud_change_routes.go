@@ -202,6 +202,12 @@ func (a *API) getCloudLaunchOptions(w http.ResponseWriter, r *http.Request) {
 // shows. It returns why it cannot, when the control plane's address for
 // servers is unknown.
 func (a *API) agentUserData(r *http.Request, hostname, token string) (string, string) {
+	return a.agentUserDataNaming(r, "hostnamectl set-hostname '"+hostname+"' 2>/dev/null || hostname '"+hostname+"'\n", token)
+}
+
+// agentUserDataNaming is agentUserData with its own lines naming the
+// server, which run before the install.
+func (a *API) agentUserDataNaming(r *http.Request, naming, token string) (string, string) {
 	base := strings.TrimRight(a.enrolAddress(r), "/")
 	u, err := CheckURL(base, "the address servers use", true)
 	if err != nil || base == "" {
@@ -224,7 +230,7 @@ func (a *API) agentUserData(r *http.Request, hostname, token string) (string, st
 	}
 	return "#!/bin/sh\n" +
 		"# Written by Argus: name this server, then install and enroll its agent.\n" +
-		"hostnamectl set-hostname '" + hostname + "' 2>/dev/null || hostname '" + hostname + "'\n" +
+		naming +
 		curl + "'" + base + "/api/v1/install/agent.sh?" + q.Encode() + "' | sh\n", ""
 }
 

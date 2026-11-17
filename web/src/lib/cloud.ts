@@ -878,7 +878,8 @@ export const ACTION_NEEDS: Partial<Record<CloudAction, string[]>> = {
   'health-check': ['elasticloadbalancing:ModifyTargetGroup'],
   'balancer-create': ['elasticloadbalancing:CreateLoadBalancer', 'elasticloadbalancing:CreateListener', 'elasticloadbalancing:AddTags'],
   'group-size': ['autoscaling:UpdateAutoScalingGroup'],
-  'scale-group-create': ['ec2:CreateImage', 'elasticloadbalancing:RegisterTargets'],
+  'scale-group-create': ['ec2:CreateImage', 'elasticloadbalancing:RegisterTargets', 'ec2:CreateLaunchTemplate',
+    'autoscaling:CreateAutoScalingGroup', 'autoscaling:PutScalingPolicy'],
   'scale-add': ['ec2:RunInstances', 'elasticloadbalancing:RegisterTargets'],
   'scale-remove': ['elasticloadbalancing:DeregisterTargets', 'ec2:TerminateInstances'],
 }

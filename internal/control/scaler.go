@@ -32,6 +32,12 @@ The scaler. Every minute, for every organization:
     asks.
 
 Never above the maximum or the cost cap, never twice inside a wait.
+
+Under each group sits an AWS Auto Scaling group (scale_floor.go), made once
+its image is ready, that keeps the minimum even when argus-control is
+down; what AWS starts there joins the group as AWS's, and Argus fills
+below the minimum only what AWS does not hold. When AWS decides, Argus
+only records what AWS did.
 */
 
 // RunScaleGroups follows every organization's scale groups each interval
@@ -83,6 +89,8 @@ func (a *API) tickScaleGroup(ctx context.Context, g ScaleGroup, now time.Time) {
 		return
 	}
 	r := a.scaleRequest(ctx, g)
+	a.ensureFloor(ctx, m, &g, now)
+	a.syncFloorMembers(ctx, &g)
 	a.tendMembers(ctx, m, &g, now)
 	if g.State != "active" {
 		return
@@ -98,6 +106,11 @@ func (a *API) tickScaleGroup(ctx context.Context, g ScaleGroup, now time.Time) {
 		}
 		return
 	}
+	serving := g.serving()
+	if g.Mode == cloud.ScaleAWS {
+		note(fmt.Sprintf("AWS decides, keeping %s; %d server%s now", g.AWSTrack.Words(), len(serving), plural(len(serving))))
+		return
+	}
 	// A question nobody answered is not asked again until the wait after
 	// adding has passed, so a group busy overnight does not ask every
 	// minute.
@@ -106,8 +119,13 @@ func (a *API) tickScaleGroup(ctx context.Context, g ScaleGroup, now time.Time) {
 		note(acts[0].Detail + ". Argus asks again after " + strconv.Itoa(g.Limits.AddWait) + " minutes if it is still needed")
 		return
 	}
-	serving := g.serving()
 	if len(serving) < g.Limits.Min {
+		// What AWS keeps is AWS's to start again; Argus only fills what
+		// the Auto Scaling group does not hold, like the source server.
+		if short := int(floorCopies(g)) - g.awsServing(); g.AWSGroup != "" && short > 0 {
+			note(fmt.Sprintf("Below its minimum of %d: AWS is starting %d in %s", g.Limits.Min, short, g.AWSGroup))
+			return
+		}
 		if g.LastAddAt != nil && now.Sub(*g.LastAddAt) < time.Duration(g.Limits.AddWait)*time.Minute {
 			note(fmt.Sprintf("Below its minimum of %d; waiting %d minutes after the last add", g.Limits.Min, g.Limits.AddWait))
 			return
@@ -338,6 +356,13 @@ func (a *API) tendMembers(ctx context.Context, m cloudManaged, g *ScaleGroup, no
 			}
 			if now.Sub(*mem.RegisteredAt) > cloud.ScaleHealthWait {
 				_ = a.store.SetScaleMember(ctx, g.ID, mem.InstanceID, "failed", now)
+				if mem.InAWS {
+					act("failed", fmt.Sprintf("%s did not become healthy in %s within %d minutes (it is %s). AWS replaces it by itself",
+						mem.Hostname, g.TargetName, int(cloud.ScaleHealthWait.Minutes()), orWord(health[mem.InstanceID], "not checked")))
+					a.failedStart(ctx, g, mem.Hostname)
+					changed = true
+					continue
+				}
 				if nw != nil {
 					_, _ = nw.DeregisterTarget(ctx, m.target, actor, g.Region, g.TargetGroup, mem.InstanceID, g.Port)
 				}
@@ -349,7 +374,11 @@ func (a *API) tendMembers(ctx context.Context, m cloudManaged, g *ScaleGroup, no
 		case "member":
 			if missing {
 				_ = a.store.SetScaleMember(ctx, g.ID, mem.InstanceID, "gone", now)
-				act("gone", mem.Hostname+" is gone: it was terminated outside Argus")
+				if mem.InAWS {
+					act("gone", "AWS ended "+mem.Hostname+" in "+g.AWSGroup)
+				} else {
+					act("gone", mem.Hostname+" is gone: it was terminated outside Argus")
+				}
 				changed = true
 			}
 		case "draining":
