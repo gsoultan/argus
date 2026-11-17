@@ -133,7 +133,10 @@ function Launch() {
     if (o && size && !o.sizes.includes(size)) setSize(o.sizes.includes('e2-medium') ? 'e2-medium' : o.sizes.includes('t3.small') ? 't3.small' : o.sizes[0] ?? null)
   }, [o])
   const img = o?.images.find((i) => i.id === image)
-  useEffect(() => { if (img && !img.linux) { setAgent(false); setDisk((d) => Math.max(d, gcp ? 50 : 30)) } else setAgent(true) }, [img?.id])
+  useEffect(() => {
+    if (img && !img.linux) { setAgent(false); setDisk((d) => Math.max(d, gcp ? 50 : 30)) } else setAgent(true)
+    if (img?.minDiskGb) setDisk((d) => Math.max(d, img.minDiskGb ?? 0))
+  }, [img?.id])
   const sub = o?.subnets.find((s) => s.resource.id === subnet)
   const groups = useMemo(() => (o?.firewalls ?? []).filter((f) => !sub || f.resource.network === sub.resource.network), [o, sub])
   useEffect(() => { setFirewalls((fs) => fs.filter((f) => groups.some((g) => g.resource.id === f))) }, [groups])
@@ -151,7 +154,7 @@ function Launch() {
   const names = launchNames(host, count)
   // A Google VM's name starts with a letter.
   const nameOk = HOSTNAME.test(host) && names.every((n) => HOSTNAME.test(n)) && (!gcp || /^[a-z]/.test(host))
-  const minDisk = gcp ? 10 : 8
+  const minDisk = Math.max(gcp ? 10 : 8, img?.minDiskGb ?? 0)
   const disksOk = extraDisks.every((g) => g >= (gcp ? 10 : 1) && g <= (gcp ? 65536 : 16384))
   const approval = o?.needsApproval ?? false
   const ready = account && region && nameOk && img && size && disk >= minDisk && disksOk && count >= 1 && count <= MAX_COUNT && sub &&

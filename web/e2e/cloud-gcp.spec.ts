@@ -89,7 +89,7 @@ async function manageableProject(page: Page) {
     body.accounts = body.accounts.map((a: { provider: string }) => a.provider === 'gcp'
       ? { ...a, access: 'manage', manageRoleArn: 'argus-manage@analytics-prod-4182.iam.gserviceaccount.com', actions: ['start', 'stop', 'reboot', 'resize', 'tags', 'protect', 'unprotect', 'volume-grow',
         'volume-create', 'volume-attach', 'volume-detach', 'volume-delete', 'snapshot-create', 'snapshot-delete',
-        'address-allocate', 'address-associate', 'address-disassociate', 'address-release', 'remove'], tagKinds: ['instance', 'volume'] }
+        'address-allocate', 'address-associate', 'address-disassociate', 'address-release', 'remove', 'image-create', 'image-delete'], tagKinds: ['instance', 'volume'] }
       : a)
     await route.fulfill({ response: res, json: body })
   })
@@ -107,6 +107,8 @@ async function manageableProject(page: Page) {
             size: 'e2-standard-4', addresses: ['10.128.0.8'], details: { deletionProtection: 'on' } } }]
         : kind === 'snapshot'
           ? [{ ...base, resource: { kind: 'snapshot', id: '5501', name: 'etl-data-nightly', region: 'global', state: 'ready', size: '200 GiB' } }]
+          : kind === 'image'
+          ? [{ ...base, resource: { kind: 'image', id: '9001', name: 'etl-golden', region: 'global', state: 'ready', size: '20 GiB' } }]
           : kind === 'address'
             ? [{ ...base, resource: { kind: 'address', id: '7701', name: 'etl-ip', region: 'us-central1', state: 'unattached', publicIp: '35.1.1.1', addresses: ['35.1.1.1'] } },
               { ...base, resource: { kind: 'address', id: '7702', name: 'etl-2-ip', region: 'us-central1', state: 'attached', publicIp: '35.2.2.2', addresses: ['35.2.2.2'],
@@ -186,7 +188,7 @@ test('a Google VM changes machine type, labels and deletion protection', async (
   await vm.getByRole('button', { name: 'More actions' }).click()
   await expect(page.getByRole('menuitem', { name: 'Turn off deletion protection' })).toBeVisible()
   await expect(page.getByRole('menuitem', { name: 'Remove VM…' })).toBeVisible()
-  for (const absent of ['Turn on deletion protection', 'Remove instance…', 'Make an image…', 'Instance settings…', 'Launch another like this…']) {
+  for (const absent of ['Turn on deletion protection', 'Remove instance…', 'Instance settings…', 'Launch another like this…']) {
     await expect(page.getByRole('menuitem', { name: absent })).toHaveCount(0)
   }
   await page.keyboard.press('Escape')
@@ -419,4 +421,47 @@ test('a Google VM is launched in a zone, from an image family, with firewall rul
   expect(asked[0]).toMatchObject({ accountId: 'ca2', region: 'us-central1', action: 'launch',
     spec: { name: 'web-2', size: 'e2-standard-2', zone: 'us-central1-b', subnet: '601', firewalls: ['901'],
       image: 'projects/ubuntu-os-cloud/global/images/family/ubuntu-2404-lts-amd64' } })
+})
+
+test('a Google image is made of a VM\'s boot disk and deleted with nothing else', async ({ page }) => {
+  await manageableProject(page)
+  const asked: Record<string, unknown>[] = []
+  await page.route('**/api/v1/cloud/changes', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const body = route.request().postDataJSON() as Record<string, unknown>
+    asked.push(body)
+    await route.fulfill({ status: 202, json: { id: 'c' + asked.length, state: 'awaiting_approval', summary: 'Image', action: body.action } })
+  })
+  await signIn(page)
+  await page.goto('/cloud?tab=instances')
+  await page.getByText('etl-1').first().click()
+  await page.getByRole('dialog').getByRole('button', { name: 'More actions' }).click()
+  await page.getByRole('menuitem', { name: 'Make an image…' }).click()
+  const mk = page.getByRole('dialog', { name: /Make an image of etl-1/ })
+  await expect(mk.getByText(/a copy of the VM's boot disk/)).toBeVisible()
+  await expect(mk.getByText(/stop the VM first for a consistent copy/)).toBeVisible()
+  await expect(mk.getByRole('checkbox', { name: /Reboot/ })).toHaveCount(0)
+  await expect(mk.getByLabel('Name')).toHaveValue(/^etl-1-\d{4}-\d{2}-\d{2}$/)
+  await mk.getByLabel('Name').fill('ETL Golden')
+  await expect(mk.getByText(/Lowercase letters, digits and -/)).toBeVisible()
+  await mk.getByLabel('Name').fill('etl-golden-2')
+  await mk.getByLabel('Why').fill('A base for the next ETL nodes')
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/19-make-image.png` })
+  await mk.getByRole('button', { name: /Make image|Ask for approval/ }).click()
+  await expect.poll(() => asked.length).toBe(1)
+  expect(asked[0]).toMatchObject({ action: 'image-create', resourceId: '3301', spec: { name: 'etl-golden-2', reboot: false } })
+
+  await page.goto('/cloud?tab=disks')
+  await page.getByText(/^Images/).click()
+  await page.getByText('etl-golden').first().click()
+  await page.getByRole('dialog').getByRole('button', { name: 'More actions' }).click()
+  await page.getByRole('menuitem', { name: 'Delete image…' }).click()
+  const del = page.getByRole('dialog', { name: /Delete etl-golden/ })
+  await expect(del.getByText(/VMs already launched from it keep running/)).toBeVisible()
+  await expect(del.getByRole('checkbox')).toHaveCount(0)
+  await del.getByLabel(/to confirm/).fill('etl-golden')
+  await del.getByLabel('Why').fill('Replaced by etl-golden-2')
+  await del.getByRole('button', { name: /Delete image|Ask for approval/ }).click()
+  await expect.poll(() => asked.length).toBe(2)
+  expect(asked[1]).toMatchObject({ action: 'image-delete', resourceId: '9001', confirm: 'etl-golden', spec: { withSnapshots: false } })
 })

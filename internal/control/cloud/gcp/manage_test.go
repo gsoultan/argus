@@ -111,6 +111,12 @@ func (g *fakeManage) handler() http.Handler {
 		}
 		_, _ = w.Write([]byte(`{"name":"` + r.PathValue("f") + `-v20261101"}`))
 	}))
+	mux.HandleFunc("GET /compute/v1/projects/{p}/global/images", auth(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"items":[{"name":"web-golden","status":"READY","diskSizeGb":"30"},
+			{"name":"old-golden","status":"READY","diskSizeGb":"10","deprecated":{"state":"DEPRECATED"}},
+			{"name":"baking","status":"PENDING","diskSizeGb":"10"},
+			{"name":"win-golden","status":"READY","diskSizeGb":"50","guestOsFeatures":[{"type":"WINDOWS"}]}]}`))
+	}))
 	mux.HandleFunc("GET /compute/v1/projects/{p}/regions/{rg}", auth(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"zones":["` + link + `/zones/us-central1-c","` + link + `/zones/us-central1-a"]}`))
 	}))
@@ -184,6 +190,10 @@ func (g *fakeManage) handler() http.Handler {
 		if strings.HasSuffix(r.URL.Path, "/zones/us-central1-a/disks") {
 			_, _ = w.Write([]byte(`{"name":"operation-c","status":"RUNNING","targetId":"301",
 				"selfLink":"` + link + `/zones/us-central1-a/operations/operation-c"}`))
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/global/images") {
+			_, _ = w.Write([]byte(`{"name":"operation-i","status":"RUNNING","targetId":"9001"}`))
 			return
 		}
 		if strings.HasSuffix(r.URL.Path, "/zones/us-central1-a/instances") {
@@ -288,18 +298,18 @@ func TestOnlyBuiltChangesAreSupported(t *testing.T) {
 	p := New(Options{})
 	for _, a := range []cloud.Action{cloud.ActionStart, cloud.ActionStop, cloud.ActionReboot, cloud.ActionVolumeGrow,
 		cloud.ActionResize, cloud.ActionTags, cloud.ActionProtect, cloud.ActionUnprotect, cloud.ActionAddressAllocate, cloud.ActionAddressRelease,
-		cloud.ActionLaunch, cloud.ActionRemove} {
+		cloud.ActionLaunch, cloud.ActionRemove, cloud.ActionImageCreate, cloud.ActionImageDelete} {
 		if !cloud.Supports(p, a) {
 			t.Errorf("%s should be supported", a)
 		}
 	}
-	for _, a := range []cloud.Action{cloud.ActionHibernate, cloud.ActionImageCreate, cloud.ActionFirewallCreate} {
+	for _, a := range []cloud.Action{cloud.ActionHibernate, cloud.ActionFirewallCreate} {
 		if cloud.Supports(p, a) {
 			t.Errorf("%s is not built for Google Cloud yet", a)
 		}
 	}
-	if _, err := p.CreateImage(context.Background(), cloud.Account{}, "alice@example.com", "us-central1", "101", "x", false); !errors.Is(err, cloud.ErrUnsupported) {
-		t.Fatalf("image: %v", err)
+	if _, err := p.Power(context.Background(), cloud.Account{}, "alice@example.com", "us-central1", "101", cloud.ActionHibernate); !errors.Is(err, cloud.ErrUnsupported) {
+		t.Fatalf("hibernate: %v", err)
 	}
 }
 
@@ -609,7 +619,7 @@ func TestAVMIsLaunchedFromAnImageFamilyWithNoServiceAccount(t *testing.T) {
 	p, g, acct := newManageFake(t, "argus-0123", ManageDescription("argus-0123"))
 	ctx := context.Background()
 	imgs, err := p.Images(ctx, acct, "alice@example.com", "us-central1")
-	if err != nil || len(imgs) != len(imageFamilies)-1 || imgs[0].ID != "projects/debian-cloud/global/images/family/debian-12" || imgs[0].Name != "debian-12-v20261101" || !imgs[0].Linux {
+	if err != nil || len(imgs) != len(imageFamilies)-1+2 || imgs[0].ID != "projects/debian-cloud/global/images/family/debian-12" || imgs[0].Name != "debian-12-v20261101" || !imgs[0].Linux {
 		t.Fatalf("images = %+v %v", imgs, err)
 	}
 	zones, err := p.Zones(ctx, acct, "alice@example.com", "us-central1")
@@ -688,5 +698,66 @@ func TestAVMIsLaunchedFromAnImageFamilyWithNoServiceAccount(t *testing.T) {
 	}
 	if len(g.posts) != 1 {
 		t.Fatalf("nothing more should be made: %v", g.posts)
+	}
+}
+
+func TestAnImageIsMadeOfTheBootDiskAndLaunchedFrom(t *testing.T) {
+	p, g, acct := newManageFake(t, "argus-0123", ManageDescription("argus-0123"))
+	ctx := context.Background()
+	if _, err := p.CreateImage(ctx, acct, "alice@example.com", "us-central1", "101", "Web Golden", false); err == nil {
+		t.Fatal("an uppercase name was taken")
+	}
+	if _, err := p.CreateImage(ctx, acct, "alice@example.com", "us-central1", "101", "web-golden-2", true); err == nil {
+		t.Fatal("a reboot was taken")
+	}
+	res, err := p.CreateImage(ctx, acct, "alice@example.com", "us-central1", "101", "web-golden-2", false)
+	if err != nil || res.ResourceID != "9001" || res.RequestID != "operation-i" {
+		t.Fatalf("create: %+v %v", res, err)
+	}
+	if len(g.posts) != 1 || g.posts[0] != "/compute/v1/projects/payments-prod-4182/global/images" || g.queries[0] != "forceCreate=true" {
+		t.Fatalf("posts = %v %v", g.posts, g.queries)
+	}
+	var body struct {
+		Name       string            `json:"name"`
+		SourceDisk string            `json:"sourceDisk"`
+		Labels     map[string]string `json:"labels"`
+	}
+	_ = json.Unmarshal([]byte(g.bodies[0]), &body)
+	if body.Name != "web-golden-2" || !strings.HasSuffix(body.SourceDisk, "/zones/us-central1-a/disks/web-1-boot") || body.Labels["argus-from-instance"] != "101" {
+		t.Fatalf("body = %s", g.bodies[0])
+	}
+
+	imgs, err := p.Images(ctx, acct, "alice@example.com", "us-central1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	own := map[string]cloud.Image{}
+	for _, im := range imgs {
+		if im.Family == "own" {
+			own[im.Name] = im
+		}
+	}
+	if len(own) != 2 || own["web-golden"].ID != "projects/payments-prod-4182/global/images/web-golden" || own["web-golden"].MinDiskGB != 30 ||
+		!own["web-golden"].Linux || own["win-golden"].Linux {
+		t.Fatalf("own images = %+v", own)
+	}
+	spec := cloud.LaunchSpec{Region: "us-central1", Zone: "us-central1-a", Name: "web-4", Image: own["web-golden"].ID, Size: "e2-medium", DiskGB: 30, Subnet: "801"}
+	if _, err := p.Launch(ctx, acct, "alice@example.com", spec); err != nil {
+		t.Fatalf("launch from an own image: %v", err)
+	}
+	spec.Image = "projects/someone-else/global/images/web-golden"
+	if _, err := p.Launch(ctx, acct, "alice@example.com", spec); err == nil {
+		t.Fatal("another project's image was taken")
+	}
+
+	if _, err := p.DeleteImage(ctx, acct, "alice@example.com", "global", "9001", true); err == nil {
+		t.Fatal("deleting with snapshots was taken")
+	}
+	g.posts = nil
+	if res, err := p.DeleteImage(ctx, acct, "alice@example.com", "global", "9001", false); err != nil || res.ResourceID != "9001" {
+		t.Fatalf("delete: %+v %v", res, err)
+	}
+	if len(g.posts) != 1 || g.posts[0] != "DELETE /compute/v1/projects/payments-prod-4182/global/images/9001" {
+		t.Fatalf("posts = %v", g.posts)
 	}
 }

@@ -402,7 +402,7 @@ export interface CloudChange {
   error: string
 }
 
-export interface CloudImage { family: string; label: string; id: string; name: string; linux: boolean }
+export interface CloudImage { family: string; label: string; id: string; name: string; linux: boolean; minDiskGb?: number }
 
 export interface CloudLaunchOptions {
   images: CloudImage[]

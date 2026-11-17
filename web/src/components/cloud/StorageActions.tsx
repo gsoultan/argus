@@ -320,7 +320,7 @@ function Delete({ it, env, account, action, onClose }: { it: CloudItem; env: Clo
   const [typed, setTyped] = useState('')
   const [reason, setReason] = useState('')
   const gcp = account?.provider === 'gcp'
-  const [extra, setExtra] = useState<boolean>(action === 'volume-delete' ? env === 'production' && !gcp : action === 'image-delete')
+  const [extra, setExtra] = useState<boolean>(action === 'volume-delete' ? env === 'production' && !gcp : action === 'image-delete' && !gcp)
   const { submit, busy } = useSubmit(onClose)
   const word = r.kind === 'address' ? r.publicIp || r.name : r.name
   const usedBy = r.kind === 'snapshot'
@@ -345,14 +345,14 @@ function Delete({ it, env, account, action, onClose }: { it: CloudItem; env: Clo
             {action === 'volume-delete' && `${gcp ? 'Google' : 'AWS'} deletes the disk and everything on it (${r.size}). This cannot be undone.`}
             {action === 'volume-delete' && gcp && ' To keep a copy, take a snapshot of it first and delete it once that is ready.'}
             {action === 'snapshot-delete' && `${gcp ? 'Google' : 'AWS'} deletes the snapshot (${r.size}). Disks already made from it are not touched. This cannot be undone.`}
-            {action === 'image-delete' && 'Nobody can launch from this image afterwards. Instances already launched from it keep running.'}
+            {action === 'image-delete' && `Nobody can launch from this image afterwards. ${gcp ? 'VMs' : 'Instances'} already launched from it keep running.`}
             {action === 'address-release' && `${r.publicIp ?? r.addresses?.[0] ?? r.name} goes back to ${gcp ? 'Google' : 'Amazon'} and is gone for good; anything that points at it (DNS, allow lists) stops reaching you.`}
           </Text>
           {action === 'volume-delete' && !gcp && (
             <Checkbox checked={extra} onChange={(e) => setExtra(e.currentTarget.checked)} label="Take a final snapshot first"
               description="It is kept and billed until someone deletes it. On by default in production." />
           )}
-          {action === 'image-delete' && (
+          {action === 'image-delete' && !gcp && (
             <Checkbox checked={extra} onChange={(e) => setExtra(e.currentTarget.checked)} label="Delete the snapshots it was made of too"
               description="Otherwise they stay, and are billed, after the image is gone." />
           )}
@@ -364,29 +364,46 @@ function Delete({ it, env, account, action, onClose }: { it: CloudItem; env: Clo
   )
 }
 
+/** A Google image name from a VM's and a day: lowercase, at most 63. */
+function gcpImageName(vm: string, day: string) {
+  const tail = `-${day}`
+  let head = vm.toLowerCase().replace(/[^-a-z0-9]/g, '-').slice(0, 63 - tail.length).replace(/-+$/, '')
+  if (!/^[a-z]/.test(head)) head = `vm-${head}`.slice(0, 63 - tail.length)
+  return head + tail
+}
+
 /** Making an image of an instance, from its panel. */
 export function ImageCreate({ it, env, onClose }: { it: CloudItem; env: CloudEnvironment; onClose: () => void }) {
   const r = it.resource
   const accounts = useQuery(cloudAccountsQuery())
   const account = accounts.data?.accounts.find((a) => a.id === it.accountId)
-  const [name, setName] = useState(`${r.name} ${new Date().toISOString().slice(0, 10)}`)
+  const gcp = account?.provider === 'gcp' || it.provider === 'gcp'
+  const day = new Date().toISOString().slice(0, 10)
+  const [name, setName] = useState(gcp ? gcpImageName(r.name, day) : `${r.name} ${day}`)
   const [reboot, setReboot] = useState(true)
   const [reason, setReason] = useState('')
   const { submit, busy } = useSubmit(onClose)
-  const valid = /^[A-Za-z0-9()[\] ./'@_-]{3,128}$/.test(name.trim())
+  const valid = gcp ? /^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$/.test(name.trim()) : /^[A-Za-z0-9()[\] ./'@_-]{3,128}$/.test(name.trim())
   return (
     <ChangeModal title={`Make an image of ${r.name}`} env={env} level="change" reason={reason} setReason={setReason} onClose={onClose}
       busy={busy} submit="Make image" disabled={!valid || roleLacks(account, 'image-create')}
       onSubmit={() => void submit({ accountId: it.accountId, region: r.region, action: 'image-create', resourceId: r.id,
-        spec: { name: name.trim(), reboot: reboot && r.state === 'running' }, reason }, 'Image started')}>
+        spec: { name: name.trim(), reboot: !gcp && reboot && r.state === 'running' }, reason }, 'Image started')}>
       <RoleNeedsUpdate account={account} action="image-create" />
-      <Text size={FS.body} lh={1.55}>
-        An image is a snapshot of every disk plus what AWS needs to launch new instances from it. Launch it from AWS, or use it
-        to bring this server back as it is today.
-      </Text>
-      <TextInput label="Name" value={name} onChange={(e) => setName(e.currentTarget.value)} maxLength={128}
-        error={name && !valid ? 'Letters, digits, spaces and ( ) [ ] . / \' @ _ -, 3 to 128' : undefined} />
-      {r.state === 'running' && (
+      {gcp ? (
+        <Text size={FS.body} lh={1.55}>
+          An image is a copy of the VM's boot disk; other disks are not in it. Launch new VMs from it in any region of the project,
+          from Launch an instance.{r.state === 'running' && ' Google copies the disk while the VM runs, so files being written may be caught half-written; stop the VM first for a consistent copy.'}
+        </Text>
+      ) : (
+        <Text size={FS.body} lh={1.55}>
+          An image is a snapshot of every disk plus what AWS needs to launch new instances from it. Launch it from AWS, or use it
+          to bring this server back as it is today.
+        </Text>
+      )}
+      <TextInput label="Name" value={name} onChange={(e) => setName(e.currentTarget.value)} maxLength={gcp ? 63 : 128}
+        error={name && !valid ? (gcp ? 'Lowercase letters, digits and -, up to 63, starting with a letter' : 'Letters, digits, spaces and ( ) [ ] . / \' @ _ -, 3 to 128') : undefined} />
+      {r.state === 'running' && !gcp && (
         <Checkbox checked={reboot} onChange={(e) => setReboot(e.currentTarget.checked)} label="Reboot it for a consistent image"
           description="The instance restarts, and anyone signed in is disconnected. Without it, files being written may be caught half-written." />
       )}
