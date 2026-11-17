@@ -93,6 +93,9 @@ type ReadinessBackups struct {
 type ReadinessDirectSSH struct {
 	Refusing int `json:"refusing"`
 	Total    int `json:"total"`
+	// LetIn is how many of the refusing ones let named groups in once they
+	// have not heard from Argus for a while (outage_logins.go).
+	LetIn int `json:"letIn"`
 }
 
 /* ── Store ───────────────────────────────────────────────────────────────── */
@@ -186,6 +189,11 @@ func (a *API) readiness(ctx context.Context) (ReadinessView, error) {
 		}
 		v.DirectSSH.Refusing += r
 		v.DirectSSH.Total += n
+		if l, err := a.store.OutageLoginsReach(tctx); err == nil {
+			v.DirectSSH.LetIn += l
+		} else {
+			a.log.Warn("readiness: cannot count servers' outage logins", "organization", t.Slug, "error", err)
+		}
 	}); err != nil {
 		return v, fmt.Errorf("organizations: %w", err)
 	}

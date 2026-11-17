@@ -41,7 +41,7 @@ export interface ReadinessView {
   servers: ControlInstance[]
   running: number
   backups: { installed: boolean; timerOn: boolean; lastAt?: string; lastOk: boolean; lastError?: string }
-  directSsh: { refusing: number; total: number }
+  directSsh: { refusing: number; total: number; letIn?: number }
   confirmations: Record<ReadinessItem, ReadinessConfirmation | null>
   lastOutage?: { startedAt: string; endedAt: string; foundBy: string }
   confirmDays: number
@@ -147,9 +147,16 @@ export function readinessChecks(v: ReadinessView, now = Date.now()): ReadinessLi
   }
 
   const d = v.directSsh
-  if (d.total > 0 && d.refusing > 0) {
+  const letIn = d.letIn ?? 0
+  if (d.total > 0 && d.refusing > 0 && letIn >= d.refusing) {
+    out.push({ id: 'ssh', tone: 'ok', title: `${d.refusing} of ${d.total} servers refuse plain SSH, but let admins in while Argus is down`,
+      detail: 'Settings › Logins lets the named groups in, recorded, once a server has not heard from Argus for a while. Everyone else still needs the provider\'s console.' })
+  } else if (d.total > 0 && d.refusing > 0 && letIn > 0) {
+    out.push({ id: 'ssh', tone: 'warn', title: `${d.refusing - letIn} of ${d.total} servers refuse plain SSH to everyone while Argus is down`,
+      detail: `${letIn} more let admins in after a wait (Settings › Logins); the rest have it off on their Access tab. For those, the way in is the provider's console with a local password.` })
+  } else if (d.total > 0 && d.refusing > 0) {
     out.push({ id: 'ssh', tone: 'warn', title: `${d.refusing} of ${d.total} servers refuse plain SSH while Argus is down`,
-      detail: 'They are set to refuse direct logins or ask for approval, which needs Argus to answer. During an outage the way in is the provider\'s console (Nutanix Prism, the cloud\'s serial console) with a local password.' })
+      detail: 'They are set to refuse direct logins or ask for approval, which needs Argus to answer. During an outage the way in is the provider\'s console (Nutanix Prism, the cloud\'s serial console) with a local password, or let admins in after a wait in Settings › Logins.' })
   } else if (d.total > 0) {
     out.push({ id: 'ssh', tone: 'ok', title: 'Every server lets plain SSH in, recorded',
       detail: 'While Argus is down, people can still log in, and the agent records them on the server.' })

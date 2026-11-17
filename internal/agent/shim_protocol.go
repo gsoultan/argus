@@ -59,6 +59,8 @@ type decision struct {
 	restarting bool
 	// sessionID names the recording, when the login is recorded.
 	sessionID string
+	// notice is said to the person before a recorded login goes ahead.
+	notice string
 }
 
 // record reports whether the decision is to record the login.
@@ -108,5 +110,5 @@ func awaitDecision(conn net.Conn, dec *json.Decoder, wait time.Duration) decisio
 		}
 		return decision{skip: true, reason: reason}
 	}
-	return decision{sessionID: r.SessionID}
+	return decision{sessionID: r.SessionID, notice: r.Notice}
 }

@@ -95,6 +95,18 @@ type Collector struct {
 	// it gets directSSH.
 	directSSHAccounts atomic.Pointer[map[string]string]
 
+	// outageLogins is who may log in while the control plane cannot be
+	// reached, as of the last heartbeat; heard is when it last answered
+	// (UnixNano), and unreachable whether the latest heartbeat went
+	// unanswered. See outage_logins.go.
+	outageLogins atomic.Pointer[OutageLogins]
+	heard        atomic.Int64
+	unreachable  atomic.Bool
+	// Now and GroupsOf stand in for the clock and the group lookup in
+	// tests; nil is the real ones.
+	Now      func() time.Time
+	GroupsOf func(account string) []string
+
 	// personal is the personal accounts this server holds, by name, as of
 	// the last heartbeat. Nil until the control plane says: no account is
 	// treated as personal before then.
@@ -148,8 +160,9 @@ type SessionRecord struct {
 	// on top of what the daemon derives itself.
 	Flags []string `json:"flags,omitempty"`
 	// DirectApproval says how a direct login was let in: "approved" by an
-	// admin, under the approval DirectLoginID, or "allowed" by the server's
-	// setting. Empty for a login let in before the agent heard any setting.
+	// admin, under the approval DirectLoginID, "allowed" by the server's
+	// setting, or "outage" for one let in while the control plane could not
+	// be reached. Empty for a login let in before the agent heard any setting.
 	DirectApproval string `json:"direct_approval,omitempty"`
 	DirectLoginID  string `json:"direct_login_id,omitempty"`
 	// Auth is how a direct login signed in: a password, or which key.
@@ -214,6 +227,11 @@ type Approval struct {
 	ID string
 	// Reason is said to the person when the login is refused.
 	Reason string
+	// Outage means it was let in because the control plane could not be
+	// reached and the account is in a group let in meanwhile; Notice is
+	// what the person is told on their terminal.
+	Outage bool
+	Notice string
 }
 
 // SetDirectSSH applies the control plane's direct SSH mode. Anything other
@@ -594,11 +612,16 @@ func (c *Collector) handle(conn net.Conn) {
 				if c.OnAllowed != nil {
 					c.OnAllowed(m)
 				}
+			case approval.Outage:
+				sess.directApproval = "outage"
+				if c.OnAllowed != nil {
+					c.OnAllowed(m)
+				}
 			case approval.Approved:
 				sess.directApproval, sess.directLoginID = "approved", approval.ID
 			}
 			_ = json.NewEncoder(conn).Encode(Decision{
-				Type: "decision", Record: true, SessionID: sess.id,
+				Type: "decision", Record: true, SessionID: sess.id, Notice: approval.Notice,
 			})
 			// Reported as running, and again every minute with the tunnel's
 			// sessions, so the console shows it while it runs -- and it can
@@ -900,12 +923,23 @@ func (c *Collector) admitDirect(conn net.Conn, m SessionStart) (Approval, bool) 
 				"principal", m.Principal, "owner", p.Owner, "client", m.ClientAddr, "command", m.Command)
 			return Approval{Approved: true, Allowed: true, Personal: true, Owner: p.Owner}, true
 		case DirectSSHApprove:
+			if a, admit, handled, why := c.outageAdmit(m); handled {
+				if !admit {
+					if c.OnRefused != nil {
+						c.OnRefused(m)
+					}
+					return refuse(why)
+				}
+				a.Owner = p.Owner
+				return a, true
+			}
 			a, ok := c.awaitApproval(conn, m, refuse)
 			a.Owner = p.Owner
 			return a, ok
 		}
 	}
-	switch c.DirectSSHFor(m.Principal) {
+	mode := c.DirectSSHFor(m.Principal)
+	switch mode {
 	case "":
 		// Never heard from the control plane: record, do not refuse.
 		return Approval{}, true
@@ -913,7 +947,17 @@ func (c *Collector) admitDirect(conn net.Conn, m SessionStart) (Approval, bool) 
 		c.log.Warn("DIRECT LOGIN ALLOWED — this account is set to allow and record them",
 			"principal", m.Principal, "client", m.ClientAddr, "command", m.Command)
 		return Approval{Approved: true, Allowed: true}, true
-	case DirectSSHApprove:
+	}
+	// Refused or held: unless the control plane has been out of reach long
+	// enough for the console's outage setting to let this account in.
+	outageReason := ""
+	if a, admit, handled, why := c.outageAdmit(m); handled {
+		if admit {
+			return a, true
+		}
+		outageReason = why
+	}
+	if mode == DirectSSHApprove && outageReason == "" {
 		return c.awaitApproval(conn, m, refuse)
 	}
 
@@ -923,7 +967,11 @@ func (c *Collector) admitDirect(conn net.Conn, m SessionStart) (Approval, bool) 
 		"command", m.Command,
 		"detail", "the login reached sshd without Argus; whoever holds its "+
 			"key or password can still reach sshd directly")
-	a, ok := refuse(ConsoleOnlyReason)
+	reason := ConsoleOnlyReason
+	if outageReason != "" {
+		reason = outageReason
+	}
+	a, ok := refuse(reason)
 	if c.OnRefused != nil {
 		c.OnRefused(m)
 	}

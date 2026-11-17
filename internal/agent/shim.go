@@ -88,6 +88,14 @@ func RunShim(cfg ShimConfig) int {
 		return execSession(cfg, origCmd, nil)
 	}
 
+	// Why a recorded login went ahead, when the person should know: one let
+	// in while the server cannot reach Argus, say.
+	for _, line := range strings.Split(d.notice, "\n") {
+		if line != "" {
+			fmt.Fprintf(os.Stderr, "argus: %s\n", line)
+		}
+	}
+
 	stream := newStream(rc, d.sessionID)
 	stream.socket, stream.start = cfg.SocketPath, start
 	code := execSession(cfg, origCmd, stream)
