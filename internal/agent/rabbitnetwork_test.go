@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -69,11 +70,13 @@ func (f *rabbitNetFake) ctl(_ context.Context, args []string, _ string) ([]byte,
 			}
 			ls = append(ls, fmt.Sprintf(`{"interface":"[%s]","port":5672,"protocol":"amqp"}`, ip))
 		}
-		files := `["` + f.conf + `"]`
+		// Quoted as JSON: on Windows the paths hold backslashes.
+		paths := []string{f.conf}
 		if f.advanced != "" {
-			files = `["` + f.conf + `","` + f.advanced + `"]`
+			paths = append(paths, f.advanced)
 		}
-		return []byte(`{"pid":42,"rabbitmq_version":"3.13.7","config_files":` + files + `,"listeners":[{"interface":"[::]","port":25672,"protocol":"clustering"},` +
+		files, _ := json.Marshal(paths)
+		return []byte(`{"pid":42,"rabbitmq_version":"3.13.7","config_files":` + string(files) + `,"listeners":[{"interface":"[::]","port":25672,"protocol":"clustering"},` +
 			strings.Join(ls, ",") + `]}`), nil
 	case "authenticate_user":
 		if f.guest {
