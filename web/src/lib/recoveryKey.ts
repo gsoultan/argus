@@ -26,10 +26,18 @@ export interface MadeRecoveryKey {
 
 const key = ['platform', 'recovery-key'] as const
 
+/** The answer, if it is one: anything else fails the query, not the page. */
+export function checkedRecoveryKey(v: RecoveryKeyView): RecoveryKeyView {
+  if (!v || typeof v !== 'object' || typeof v.set !== 'boolean') {
+    throw new Error('argus-control did not say whether it has a recovery key')
+  }
+  return v
+}
+
 export function useRecoveryKey(enabled: boolean) {
   return useQuery({
     queryKey: key,
-    queryFn: () => get<RecoveryKeyView>('/api/v1/platform/recovery-key'),
+    queryFn: async () => checkedRecoveryKey(await get<RecoveryKeyView>('/api/v1/platform/recovery-key')),
     enabled: enabled && isConfigured(),
   })
 }

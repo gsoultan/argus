@@ -262,6 +262,9 @@ type Asset struct {
 	// OutageLoginsOff keeps this server from letting anyone in while Argus
 	// cannot be reached, whatever the organization's setting (migration 091).
 	OutageLoginsOff bool
+	// AgentRecoveryKey is the fingerprint of the fleet recovery key the
+	// agent said it holds at its last check-in (migration 092).
+	AgentRecoveryKey *string
 }
 
 func (m *Asset) Schema(t *storm.Table) {

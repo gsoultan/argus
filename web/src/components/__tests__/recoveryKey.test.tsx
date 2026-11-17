@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { FleetRecoveryKey } from '~/components/FleetRecoveryKey'
 import { readinessChecks, type ReadinessView } from '~/lib/controlReadiness'
-import { holdingLabel } from '~/lib/recoveryKey'
+import { checkedRecoveryKey, holdingLabel } from '~/lib/recoveryKey'
 import { renderWithProviders } from '~/test/render'
 
 const live = vi.hoisted(() => ({ get: vi.fn(), send: vi.fn(), isConfigured: () => true }))
@@ -44,5 +44,15 @@ describe('the readiness page', () => {
     expect(line(v({ set: true, holding: 3, total: 4 }))?.title).toMatch(/^1 of 4/)
     expect(line(v({ set: true, holding: 4, total: 4 }))?.tone).toBe('ok')
     expect(line(v(undefined))).toBeUndefined()
+  })
+})
+
+describe('the answer the card draws from', () => {
+  it('fails the query, not the page, when it is not a recovery key view', () => {
+    for (const bad of [[], {}, null]) {
+      expect(() => checkedRecoveryKey(bad as never)).toThrow(/recovery key/)
+    }
+    const ok = { set: false, holding: 0, total: 0 }
+    expect(checkedRecoveryKey(ok)).toBe(ok)
   })
 })
