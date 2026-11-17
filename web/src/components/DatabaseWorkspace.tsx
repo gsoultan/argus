@@ -9,7 +9,7 @@ import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import {
   IconChevronDown, IconChevronRight, IconDownload, IconLock, IconMenu2, IconPlayerPlay,
   IconPlayerStop, IconTable, IconEye, IconFunction, IconHash, IconActivity, IconUsersGroup, IconPuzzle,
-  IconArrowsExchange, IconArchive, IconDots, IconStar, IconIndentIncrease, IconTrash, IconHistory,
+  IconArrowsExchange, IconArchive, IconNetwork, IconDots, IconStar, IconIndentIncrease, IconTrash, IconHistory,
   IconAdjustmentsHorizontal, IconSettings,
 } from '@tabler/icons-react'
 import { Link } from '@tanstack/react-router'
@@ -29,6 +29,7 @@ import {
   ActivityPanel, RolesPanel, type Admin, type AdminOp, type AdminResult, type Collect, type Collected,
 } from '~/components/DatabaseAdmin'
 import { ExtensionsPanel } from '~/components/DatabaseExtensions'
+import { NetworkPanel } from '~/components/DatabaseNetwork'
 import { ReplicationPanel } from '~/components/DatabaseReplication'
 import { BackupsPanel } from '~/components/DatabaseBackups'
 import { ExplainView, planSummary, type PlanRun } from '~/components/ExplainView'
@@ -110,6 +111,8 @@ interface PGAnswer {
   position?: number
   detail?: string
   hint?: string
+  /** The text an approval is asked for, with a refusal that waits for one. */
+  approve?: string
   objects?: Obj[]
   admin?: unknown
   role?: string
@@ -126,7 +129,7 @@ interface PGAnswer {
   trash?: TrashItem[]
 }
 
-type Panel = 'query' | 'activity' | 'roles' | 'extensions' | 'replication' | 'backups' | 'trash' | 'changes'
+type Panel = 'query' | 'activity' | 'roles' | 'extensions' | 'replication' | 'network' | 'backups' | 'trash' | 'changes'
 type ManagePanel = Exclude<Panel, 'query'>
 type WorkspaceTab = 'query' | 'diagram' | 'manage'
 
@@ -253,7 +256,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   // Statements the administration panels run: collected whole, by request
   // id, without touching the editor's result.
   const collectors = useRef(new Map<number, Collected>())
-  const [panel, setPanel] = useState<Panel>(!mysql && (initialPanel === 'changes' || initialPanel === 'trash' || initialPanel === 'backups') ? initialPanel : 'query')
+  const [panel, setPanel] = useState<Panel>(!mysql && (initialPanel === 'changes' || initialPanel === 'trash' || initialPanel === 'backups' || initialPanel === 'network') ? initialPanel : 'query')
   const [view, setView] = useState<'query' | 'diagram'>('query')
   // The three tabs under the header. Manage is any administration panel;
   // it reopens the one last looked at.
@@ -943,18 +946,26 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   // admin sends one administrative operation to the agent's helper. The
   // agent records a mutation (redacted) before running it and refuses the
   // whole thing below dba, whatever this console asked.
-  const admin = useCallback(<T,>(op: AdminOp) => new Promise<AdminResult<T>>((resolve) => {
+  const adminOnce = useCallback(<T,>(op: AdminOp, approval?: string) => new Promise<AdminResult<T> & { approve?: string }>((resolve) => {
     const id = nextId.current++
     pending.current.set(id, (a) => {
       pending.current.delete(id)
       if (a.type === 'admin') resolve({ data: a.admin as T, tag: a.tag, ms: a.ms })
-      else resolve({ error: { error: a.error, code: a.code, detail: a.detail, hint: a.hint } })
+      else resolve({ error: { error: a.error, code: a.code, detail: a.detail, hint: a.hint }, approve: a.approve })
     })
-    if (!send({ id, op: 'admin', admin: op })) {
+    if (!send({ id, op: 'admin', admin: op, approval })) {
       pending.current.delete(id)
       resolve({ error: { error: 'the session ended' } })
     }
-  }), [send]) as Admin
+  }), [send])
+  // An operation that waits for approval (a network change) is asked for
+  // with the text the control plane names, and sent again under it.
+  const admin = useCallback(async <T,>(op: AdminOp) => {
+    const r = await adminOnce<T>(op)
+    if (r.error?.code !== NEEDS_APPROVAL || !r.approve) return r
+    const id = await askApproval([{ sql: r.approve }], { why: r.error.error, noCheck: true })
+    return id ? adminOnce<T>(op, id) : r
+  }, [adminOnce, askApproval]) as Admin
 
   const cancel = useCallback(() => {
     const r = runningRef.current
@@ -1390,7 +1401,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       ) : (
         <Box w={tabNow === 'manage' ? 220 : 280} style={{ flexShrink: 0, borderRight: '1px solid var(--color-line)', overflow: 'hidden', background: 'var(--color-surface)' }}>
           <ScrollArea h="100%" type="auto">
-            {tabNow === 'manage' ? <ManageNav panel={panel as ManagePanel} level={level} narrow={false} onPick={setPanel} /> : bar}
+            {tabNow === 'manage' ? <ManageNav panel={panel as ManagePanel} level={level} narrow={false} onPick={setPanel} mysql={mysql} /> : bar}
           </ScrollArea>
         </Box>
       )}
@@ -1399,7 +1410,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         <WorkspaceHeader database={database} narrow={Boolean(narrow)} level={level} status={status} version={ready?.version} viaPooler={ready?.via === 'pgbouncer'}
           canAsk={Boolean((access.approvable || onAskForAccess) && level === 'read')} onAskForAccess={onAskForAccess}
           settings={orgAdmin} tab={tabNow} onTab={goTab} onOpenTree={tree.open} />
-        {tabNow === 'manage' && narrow && <ManageNav panel={panel as ManagePanel} level={level} narrow onPick={setPanel} />}
+        {tabNow === 'manage' && narrow && <ManageNav panel={panel as ManagePanel} level={level} narrow onPick={setPanel} mysql={mysql} />}
 
         {writesNeedApproval(database) && <ChangesWaitingBanner database={database} me={me?.email} />}
         {fatal && (
@@ -1420,6 +1431,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         {view === 'query' && panel === 'roles' && <RolesPanel {...adminProps} />}
         {view === 'query' && panel === 'extensions' && <ExtensionsPanel {...adminProps} />}
         {view === 'query' && panel === 'replication' && <ReplicationPanel {...adminProps} />}
+        {view === 'query' && panel === 'network' && <NetworkPanel {...adminProps} assetId={database.assetId} />}
         {view === 'query' && panel === 'trash' && <TrashPanel collect={collect} level={level} narrow={narrow} />}
         {view === 'query' && panel === 'changes' && <ChangesPanel databaseId={database.id} narrow={Boolean(narrow)} />}
         {view === 'query' && panel === 'backups' && <BackupsPanel database={database} level={level} narrow={narrow} admin={Boolean(orgAdmin)} />}
@@ -1859,7 +1871,7 @@ function WorkspaceHeader({ database, narrow, level, status, version, viaPooler, 
   )
 }
 
-const MANAGE: { key: ManagePanel; label: string; icon: typeof IconTable; hint: string; dba?: boolean; group: 'care' | 'dba' }[] = [
+const MANAGE: { key: ManagePanel; label: string; icon: typeof IconTable; hint: string; dba?: boolean; group: 'care' | 'dba'; pgOnly?: boolean }[] = [
   { key: 'activity', label: 'Activity & locks', icon: IconActivity, hint: 'What is running on this database now, and what waits on what', group: 'care' },
   { key: 'backups', label: 'Backups', icon: IconArchive, hint: 'Backups of this database, and putting one back', group: 'care' },
   { key: 'changes', label: 'Data changes', icon: IconHistory, hint: 'Who inserted, updated or deleted what, from the console', group: 'care' },
@@ -1867,17 +1879,19 @@ const MANAGE: { key: ManagePanel; label: string; icon: typeof IconTable; hint: s
   { key: 'roles', label: 'Roles & access', icon: IconUsersGroup, hint: 'Who holds which level; give or take a level from an application role', dba: true, group: 'dba' },
   { key: 'extensions', label: 'Extensions', icon: IconPuzzle, hint: 'Installed and available extensions; install, update, remove', dba: true, group: 'dba' },
   { key: 'replication', label: 'Replication', icon: IconArrowsExchange, hint: 'Publications and subscriptions: logical replication in and out of this database', dba: true, group: 'dba' },
+  { key: 'network', label: 'Network', icon: IconNetwork, hint: 'Which machines can connect: listen_addresses, pg_hba.conf and the server’s firewall', dba: true, group: 'dba', pgOnly: true },
 ]
 
 /** The list of administration panels: a column on a wide screen, a row of chips on a phone. */
-function ManageNav({ panel, level, narrow, onPick }: {
-  panel: ManagePanel; level: DBLevel | ''; narrow: boolean; onPick: (p: ManagePanel) => void
+function ManageNav({ panel, level, narrow, onPick, mysql = false }: {
+  panel: ManagePanel; level: DBLevel | ''; narrow: boolean; onPick: (p: ManagePanel) => void; mysql?: boolean
 }) {
+  const panels = MANAGE.filter((m) => !(mysql && m.pgOnly))
   if (narrow) {
     return (
       <Group gap={6} px="sm" py={8} wrap="nowrap" role="tablist" aria-label="Manage"
         style={{ overflowX: 'auto', scrollbarWidth: 'none', borderBottom: '1px solid var(--color-line)' }}>
-        {MANAGE.map((m) => (
+        {panels.map((m) => (
           <UnstyledButton key={m.key} role="tab" aria-selected={m.key === panel} onClick={() => onPick(m.key)}
             px={10} py={5}
             style={{ flexShrink: 0, borderRadius: 999, border: '1px solid', fontSize: 12.5,
@@ -1893,7 +1907,7 @@ function ManageNav({ panel, level, narrow, onPick }: {
   const section = (group: 'care' | 'dba', title: string) => (
     <Box mb="sm">
       <Text size={FS.micro} c="dimmed" tt="uppercase" fw={600} px={10} py={4} style={{ letterSpacing: '.06em' }}>{title}</Text>
-      {MANAGE.filter((m) => m.group === group).map((m) => {
+      {panels.filter((m) => m.group === group).map((m) => {
         const on = m.key === panel
         const Icon = m.icon
         return (

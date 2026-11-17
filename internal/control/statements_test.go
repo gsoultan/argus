@@ -281,3 +281,55 @@ func sortedLower(xs ...string) []string {
 	sort.Strings(out)
 	return out
 }
+
+// A change of which machines can connect to a Postgres waits where the
+// database's changes do, and opening it to anywhere always waits, for its own
+// text.
+func TestPostgresNetworkChangeWaits(t *testing.T) {
+	a, s, h, db, admin := dbFixture(t)
+	ctx := context.Background()
+	ana, _ := newAccount(t, s, "operator")
+	a.UserTokens["ana"] = ana
+	if w := do(t, h, http.MethodPut, "/api/v1/databases/"+db.ID+"/assignments", "admin-token",
+		fmt.Sprintf(`{"userEmail":%q,"level":"dba"}`, ana)); w.Code >= 300 {
+		t.Fatalf("assign: %d %s", w.Code, w.Body)
+	}
+	db.Label = "staging"
+	gate := func(op tunnel.PGAdminOp, approval string) *tunnel.PGAnswer {
+		op.Kind = tunnel.AdminNetworkSet
+		return a.statementGate(ctx, ana, db, tunnel.LevelDBA, &tunnel.PGRequest{ID: 1, Op: "admin", Admin: &op, Approval: approval})
+	}
+	sel := tunnel.PGAdminOp{Reach: tunnel.ReachSelected, Addresses: []string{"10.0.0.183"}, Sources: []string{"10.0.0.61"}}
+	if no := gate(sel, ""); no != nil {
+		t.Fatalf("selected machines on staging waited: %+v", no)
+	}
+	if !auditHas(t, s, "db.network_change") {
+		t.Fatal("the change is not in the audit log")
+	}
+	anyOp := tunnel.PGAdminOp{Reach: tunnel.ReachAny, Confirm: db.Hostname, Restart: true}
+	no := gate(anyOp, "")
+	if no == nil || no.Code != tunnel.GuardNeedsApproval || !strings.Contains(no.Error, "to anywhere") ||
+		!strings.Contains(no.Approve, "listen_addresses = '*'") {
+		t.Fatalf("anywhere did not wait: %+v", no)
+	}
+	body, _ := json.Marshal(map[string]any{"items": []map[string]any{{"sql": no.Approve}},
+		"justification": "the reporting service moves to the cloud this week"})
+	w := do(t, h, http.MethodPost, "/api/v1/databases/"+db.ID+"/statements", "ana", string(body))
+	var ask StatementAsk
+	_ = json.Unmarshal(w.Body.Bytes(), &ask)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("ask: %d %s", w.Code, w.Body)
+	}
+	if _, err := s.DecideRequest(ctx, ask.RequestID, "approved", "", admin, false); err != nil {
+		t.Fatal(err)
+	}
+	// Approved for anywhere with a restart, not without one.
+	noRestart := anyOp
+	noRestart.Restart = false
+	if no := gate(noRestart, ask.RequestID); no == nil {
+		t.Fatal("a different change ran under the approval")
+	}
+	if no := gate(anyOp, ask.RequestID); no != nil {
+		t.Fatalf("the approved change was stopped: %+v", no)
+	}
+}

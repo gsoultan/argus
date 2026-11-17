@@ -215,6 +215,12 @@ const (
 	AdminSubscriptionPublications = "subscription.publications"
 	AdminSubscriptionOptions      = "subscription.options"
 	AdminSubscriptionDrop         = "subscription.drop"
+
+	// AdminNetwork reads which machines can connect: listen_addresses,
+	// Argus's pg_hba.conf lines and the server's firewall. AdminNetworkSet
+	// changes them (see pgnetwork.go).
+	AdminNetwork    = "network"
+	AdminNetworkSet = "network.set"
 )
 
 // PGAdminOp is one administrative operation. Only the fields its Kind uses
@@ -261,6 +267,14 @@ type PGAdminOp struct {
 	// PublisherGone drops a subscription without contacting the publisher
 	// to remove its slot: the slot is then the publisher's to clean up.
 	PublisherGone bool `json:"publisherGone,omitempty"`
+	// For network.set: who may connect, the server's addresses Postgres
+	// listens on, the machines let in, the server's name typed to open it
+	// to anywhere, and whether Postgres may be restarted to listen anew.
+	Reach     string   `json:"reach,omitempty"`
+	Addresses []string `json:"addresses,omitempty"`
+	Sources   []string `json:"sources,omitempty"`
+	Confirm   string   `json:"confirm,omitempty"`
+	Restart   bool     `json:"restart,omitempty"`
 }
 
 // PGConnInfo is a publisher, as fields. The helper turns it into a libpq
@@ -279,7 +293,7 @@ type PGConnInfo struct {
 // and is neither recorded nor audited.
 func (o *PGAdminOp) Mutates() bool {
 	switch o.Kind {
-	case AdminExtensionList, AdminPublicationList, AdminSubscriptionList:
+	case AdminExtensionList, AdminPublicationList, AdminSubscriptionList, AdminNetwork:
 		return false
 	}
 	return true
@@ -352,6 +366,9 @@ type PGAnswer struct {
 	Objects []PGObject `json:"objects,omitempty"`
 	// Admin answers admin: the list, or the statement that ran (redacted).
 	Admin json.RawMessage `json:"admin,omitempty"`
+	// Approve is the text an approval is asked for, with a GuardNeedsApproval
+	// refusal of a change that is not a statement (a network change).
+	Approve string `json:"approve,omitempty"`
 	// Ready carries what the session opened as.
 	Role     string `json:"role,omitempty"`
 	Level    string `json:"level,omitempty"`
