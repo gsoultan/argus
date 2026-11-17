@@ -1429,3 +1429,33 @@ export interface HomeFrame {
   /** Sent instead when this person may no longer see Home's fleet numbers. */
   off?: boolean
 }
+
+/**
+ * A streaming replica of a Postgres on a server Argus manages, copied to
+ * another managed server (db_replica.go). It waits for an approver, then
+ * runs across both servers' agents and is added to Argus as a database.
+ */
+export interface DatabaseReplica {
+  id: UUID
+  databaseId: UUID
+  dbname: string
+  primaryHostname: string
+  /** The server the replica goes on. */
+  assetId: UUID
+  hostname: string
+  name: string
+  replicaAddress: string
+  primaryAddress: string
+  requestedBy: string
+  reason: string
+  requestId?: UUID
+  state: 'pending' | 'denied' | 'cancelled' | 'running' | 'done' | 'failed'
+  stage: string
+  detail: string
+  error: string
+  /** The database Argus added for the replica, once it streams. */
+  replicaDatabaseId?: UUID
+  createdAt: ISOTime
+  startedAt?: ISOTime
+  finishedAt?: ISOTime
+}

@@ -1430,7 +1430,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         {view === 'query' && panel === 'activity' && <ActivityPanel {...adminProps} />}
         {view === 'query' && panel === 'roles' && <RolesPanel {...adminProps} />}
         {view === 'query' && panel === 'extensions' && <ExtensionsPanel {...adminProps} />}
-        {view === 'query' && panel === 'replication' && <ReplicationPanel {...adminProps} />}
+        {view === 'query' && panel === 'replication' && <ReplicationPanel {...adminProps} database={database} />}
         {view === 'query' && panel === 'network' && <NetworkPanel {...adminProps} assetId={database.assetId} engine={mysql ? 'mysql' : 'postgres'} />}
         {view === 'query' && panel === 'trash' && <TrashPanel collect={collect} level={level} narrow={narrow} />}
         {view === 'query' && panel === 'changes' && <ChangesPanel databaseId={database.id} narrow={Boolean(narrow)} />}
@@ -1878,7 +1878,7 @@ const MANAGE: { key: ManagePanel; label: string; icon: typeof IconTable; hint: s
   { key: 'trash', label: 'Trash', icon: IconTrash, hint: 'Deleted rows, dropped tables and schemas, kept so they can be put back', group: 'care' },
   { key: 'roles', label: 'Roles & access', icon: IconUsersGroup, hint: 'Who holds which level; give or take a level from an application role', dba: true, group: 'dba' },
   { key: 'extensions', label: 'Extensions', icon: IconPuzzle, hint: 'Installed and available extensions; install, update, remove', dba: true, group: 'dba' },
-  { key: 'replication', label: 'Replication', icon: IconArrowsExchange, hint: 'Publications and subscriptions: logical replication in and out of this database', dba: true, group: 'dba' },
+  { key: 'replication', label: 'Replication', icon: IconArrowsExchange, hint: 'Publications, subscriptions and streaming replicas of this server', dba: true, group: 'dba' },
   { key: 'network', label: 'Network', icon: IconNetwork, hint: 'Which machines can connect: where it listens, pg_hba.conf on Postgres, and the server’s firewall', dba: true, group: 'dba' },
 ]
 

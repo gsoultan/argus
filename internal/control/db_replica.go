@@ -430,7 +430,12 @@ func (a *API) RunReplica(ctx context.Context, rep DatabaseReplica) {
 			PrimaryPort: primary.Port, PrimaryVersion: check.VersionNum / 10000}, Reason: "replica " + rep.Name},
 		func(p tunnel.BackupProgress, send func(tunnel.BackupRequest) error) {
 			if p.Stage != tunnel.ReplicaStageVerifier {
-				_ = a.store.setReplica(ctx, rep.ID, "running", p.Stage, p.Detail, "")
+				// pg_basebackup's own lines come without a stage.
+				stage := p.Stage
+				if stage == "" {
+					stage = "copying"
+				}
+				_ = a.store.setReplica(ctx, rep.ID, "running", stage, p.Detail, "")
 				return
 			}
 			if prepared || prepErr != nil {

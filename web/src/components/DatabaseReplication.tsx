@@ -11,6 +11,8 @@ import {
   type ConnInfo,
 } from '~/components/DatabaseAdmin'
 import { usePreview } from '~/components/DatabaseExtensions'
+import { StreamingReplicas } from '~/components/DatabaseStreamingReplicas'
+import type { Database } from '~/types/domain'
 
 /*
 Logical replication: what this database publishes and what it subscribes to.
@@ -86,7 +88,7 @@ export function subscriptionStatus(s: PGSubscription): { label: string; color: s
   return { label: 'streaming', color: 'teal' }
 }
 
-export function ReplicationPanel({ admin, level, narrow, onBack, onAskForAccess }: AdminPanelProps) {
+export function ReplicationPanel({ admin, level, narrow, onBack, onAskForAccess, database }: AdminPanelProps & { database?: Database }) {
   const [tab, setTab] = useState<string | null>('publications')
   const [pubs, setPubs] = useState<PGPublication[] | null>(null)
   const [subs, setSubs] = useState<PGSubscription[] | null>(null)
@@ -134,13 +136,17 @@ export function ReplicationPanel({ admin, level, narrow, onBack, onAskForAccess 
     void refresh()
   }
   const closeForm = () => { setForm(null); void refresh() }
+  const streaming = database?.engine === 'postgres'
   const newButton = tab === 'publications'
     ? <Button size="xs" onClick={() => setForm({ mode: 'new-publication' })}>New publication</Button>
-    : <Button size="xs" onClick={() => setForm({ mode: 'new-subscription' })}>New subscription</Button>
+    : tab === 'subscriptions' ? <Button size="xs" onClick={() => setForm({ mode: 'new-subscription' })}>New subscription</Button>
+    : null
 
   return (
     <PanelFrame title="Replication" narrow={narrow} onBack={onBack}
-      blurb="What this database publishes and what it subscribes to. Logical replication only; every change runs through the server’s postgres account and is recorded."
+      blurb={streaming
+        ? 'What this database publishes and subscribes to, and streaming replicas of its server. Every change runs through the server’s postgres account and is recorded.'
+        : 'What this database publishes and what it subscribes to. Logical replication only; every change runs through the server’s postgres account and is recorded.'}
       right={!form ? (
         <Group gap="xs" wrap="nowrap">
           <Switch size="xs" label={narrow ? '' : 'Every 10 s'} checked={auto} onChange={(e) => setAuto(e.currentTarget.checked)} aria-label="Refresh automatically" />
@@ -156,9 +162,13 @@ export function ReplicationPanel({ admin, level, narrow, onBack, onAskForAccess 
             <Tabs.List>
               <Tabs.Tab value="publications" fz={FS.meta}>Publications{pubs ? ` · ${pubs.length}` : ''}</Tabs.Tab>
               <Tabs.Tab value="subscriptions" fz={FS.meta}>Subscriptions{subs ? ` · ${subs.length}` : ''}</Tabs.Tab>
+              {streaming && <Tabs.Tab value="streaming" fz={FS.meta}>Streaming replicas</Tabs.Tab>}
               {asOf && <Text size={FS.micro} c="dimmed" ml="auto" style={{ alignSelf: 'center' }}>as of {asOf.toLocaleTimeString()}</Text>}
             </Tabs.List>
           </Tabs>
+          {tab === 'streaming' && streaming && database ? (
+            <ScrollArea style={{ flex: 1 }} type="auto"><StreamingReplicas database={database} narrow={narrow} /></ScrollArea>
+          ) : <>
           {failure && <Box p="md"><AdminRefused error={failure} /></Box>}
           {!pubs || !subs ? (!failure && <Loader size={16} m="md" />) : (
             <ScrollArea style={{ flex: 1 }} type="auto">
@@ -273,6 +283,7 @@ export function ReplicationPanel({ admin, level, narrow, onBack, onAskForAccess 
               )}
             </ScrollArea>
           )}
+          </>}
         </>
       )}
     </PanelFrame>
