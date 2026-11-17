@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"slices"
@@ -78,6 +79,27 @@ type RedisNetwork struct {
 	Addresses []RedisAddress `json:"addresses"`
 	// Firewall is the firewall found on this server: "ufw", "firewalld" or "".
 	Firewall string `json:"firewall"`
+	// Reach is who can connect now: local, selected, network or any
+	// (tunnel/firewall.go), from bind and the firewall together.
+	Reach string `json:"reach"`
+	// FirewallActive says the firewall filters traffic; FirewallSources are
+	// the machines Argus's rules let in, FirewallOthers the rules Argus did
+	// not add that mention the port, and FirewallOpenToAll says one of
+	// those already lets everyone in. FirewallError is why the firewall
+	// could not be read; the rest is then unknown.
+	FirewallActive    bool     `json:"firewallActive"`
+	FirewallSources   []string `json:"firewallSources,omitempty"`
+	FirewallAllowAll  bool     `json:"firewallAllowAll,omitempty"`
+	FirewallOthers    []string `json:"firewallOthers,omitempty"`
+	FirewallOpenToAll bool     `json:"firewallOpenToAll,omitempty"`
+	FirewallError     string   `json:"firewallError,omitempty"`
+	// Host is the server's name, which opening to anywhere is confirmed with.
+	Host string `json:"host"`
+	// NoPassUsers are users that are on and need no password: anyone who
+	// reaches Redis signs in as them. Opening to anywhere waits for none.
+	NoPassUsers []string `json:"noPassUsers"`
+	// Clients are the connections open now; a change of bind keeps them.
+	Clients int `json:"clients"`
 }
 
 // RedisLogin is how signing in went on one address.
@@ -204,7 +226,8 @@ func (s *redisSession) network(ctx context.Context) (tunnel.StoreAnswer, error) 
 }
 
 func (s *redisSession) networkView(ctx context.Context, c *respConn) (RedisNetwork, error) {
-	n := RedisNetwork{Bind: strings.Fields(configStr(ctx, c, "bind")), Addresses: hostAddresses(), Firewall: firewallFound()}
+	n := RedisNetwork{Bind: strings.Fields(configStr(ctx, c, "bind")), Addresses: hostAddresses(), Firewall: firewallFound(),
+		Host: s.g.Host, NoPassUsers: noPassUsers(ctx, c)}
 	n.Port = configInt(ctx, c, "port")
 	n.TLSPort = configInt(ctx, c, "tls-port")
 	n.ProtectedMode = configStr(ctx, c, "protected-mode") == "yes"
@@ -215,6 +238,10 @@ func (s *redisSession) networkView(ctx context.Context, c *respConn) (RedisNetwo
 	n.AgentConf = sameFile(n.ConfigFile, s.conf)
 	if v, err := adminDo(ctx, c, "CLIENT", "LIST"); err == nil {
 		for _, line := range strings.Split(v.V, "\n") {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			n.Clients++
 			if strings.Contains(" "+line+" ", " user=default ") {
 				n.DefaultClients++
 			}
@@ -226,7 +253,78 @@ func (s *redisSession) networkView(ctx context.Context, c *respConn) (RedisNetwo
 	for i := range n.Addresses {
 		n.Addresses[i].State, n.Addresses[i].Detail = probeRedis(ctx, n.Addresses[i].IP, n.Port)
 	}
+	fw := s.f.cfg.firewall()(ctx, tunnel.FirewallRequest{Port: n.Port, Check: true})
+	n.applyFirewall(fw)
+	n.Reach = redisReach(n)
 	return n, nil
+}
+
+func (n *RedisNetwork) applyFirewall(fw tunnel.FirewallResult) {
+	if fw.Error != "" {
+		n.FirewallError = fw.Error
+		return
+	}
+	n.Firewall, n.FirewallActive = fw.Firewall, fw.Active
+	n.FirewallSources, n.FirewallAllowAll = fw.Sources, fw.AllowAll
+	n.FirewallOthers, n.FirewallOpenToAll = fw.Others, fw.OpenToAll
+}
+
+// bindAny says a bind entry is every address.
+func bindAny(b string) bool {
+	switch strings.TrimPrefix(b, "-") {
+	case "*", "::*", "0.0.0.0", "::":
+		return true
+	}
+	return false
+}
+
+func bindLoopback(b string) bool {
+	b = strings.TrimPrefix(b, "-")
+	if b == "localhost" {
+		return true
+	}
+	a, err := netip.ParseAddr(b)
+	return err == nil && a.IsLoopback()
+}
+
+// redisReach is who can connect, from bind and the firewall: this server
+// only when Redis listens on the loopback alone; anywhere when it listens
+// on every address and no firewall rule narrows it; selected machines when
+// Argus's firewall rules name them; else the networks it listens on.
+func redisReach(n RedisNetwork) string {
+	lan, any := false, false
+	for _, b := range n.Bind {
+		switch {
+		case bindAny(b):
+			any = true
+		case !bindLoopback(b):
+			lan = true
+		}
+	}
+	switch {
+	case !lan && !any:
+		return tunnel.ReachLocal
+	case n.FirewallActive && len(n.FirewallSources) > 0 && !n.FirewallAllowAll && !n.FirewallOpenToAll:
+		return tunnel.ReachSelected
+	case any:
+		return tunnel.ReachAny
+	}
+	return tunnel.ReachNetwork
+}
+
+// noPassUsers are the users that are on and need no password.
+func noPassUsers(ctx context.Context, c *respConn) []string {
+	out := []string{}
+	v, err := adminDo(ctx, c, "ACL", "LIST")
+	if err != nil {
+		return out
+	}
+	for _, l := range v.A {
+		if u := parseACLLine(l.V); u.On && u.NoPass {
+			out = append(out, u.Name)
+		}
+	}
+	return out
 }
 
 func sameFile(a, b string) bool {
@@ -246,11 +344,48 @@ type RedisNetworkResult struct {
 	Network      RedisNetwork `json:"network"`
 	Rewritten    bool         `json:"rewritten"`
 	RewriteError string       `json:"rewriteError,omitempty"`
+	// FirewallRan are the firewall commands the change ran.
+	FirewallRan   []string `json:"firewallRan,omitempty"`
+	FirewallError string   `json:"firewallError,omitempty"`
 }
 
 func (s *redisSession) networkSet(ctx context.Context, req tunnel.StoreRequest, rec *stmtRecorder) (tunnel.StoreAnswer, error) {
 	if len(req.Addresses) > 8 {
 		return errAnswer("at most 8 addresses")
+	}
+	if req.Reach != "" {
+		if !tunnel.ValidReach(req.Reach) {
+			return errAnswer("%q is not who may connect", req.Reach)
+		}
+		src, err := tunnel.NormalSources(req.Sources)
+		if err != nil {
+			return errAnswer("%s", err)
+		}
+		req.Sources = src
+		switch req.Reach {
+		case tunnel.ReachLocal, tunnel.ReachAny:
+			if len(req.Addresses) > 0 || len(req.Sources) > 0 {
+				return errAnswer("this server only and anywhere take no addresses")
+			}
+		case tunnel.ReachSelected, tunnel.ReachNetwork:
+			if len(req.Addresses) == 0 {
+				return errAnswer("choose the address of this server that Redis listens on for them")
+			}
+			if len(req.Sources) == 0 {
+				return errAnswer("name the machines or networks that may connect")
+			}
+		}
+		if req.Reach == tunnel.ReachNetwork {
+			for _, src := range req.Sources {
+				if p, _ := tunnel.ParseSource(src); !p.Addr().IsPrivate() {
+					return errAnswer("%s is not a private network; choose Anywhere to open Redis to every network", src)
+				}
+			}
+		}
+		if req.Reach == tunnel.ReachAny && !strings.EqualFold(strings.TrimSpace(req.Confirm), s.g.Host) {
+			return tunnel.StoreAnswer{Type: "error", NeedsConfirm: true,
+				Error: "opening Redis to anywhere needs you to type the server's name, " + s.g.Host + ", to confirm"}, nil
+		}
 	}
 	mine := map[string]bool{}
 	for _, a := range hostAddresses() {
@@ -274,30 +409,93 @@ func (s *redisSession) networkSet(ctx context.Context, req tunnel.StoreRequest, 
 		return errAnswer("%s", err)
 	}
 	defer c.close()
-	if len(req.Addresses) > 0 && defaultOpen(ctx, c) {
-		return errAnswer("the default user has no password, so opening Redis to the LAN would let anyone there use it " +
+	opens := len(req.Addresses) > 0 || req.Reach == tunnel.ReachAny
+	if opens && defaultOpen(ctx, c) {
+		return errAnswer("the default user has no password, so opening Redis to other machines would let anyone who reaches it use it " +
 			"(and protected mode refuses them anyway); give the default user a password first")
+	}
+	if req.Reach == tunnel.ReachAny {
+		if users := noPassUsers(ctx, c); len(users) > 0 {
+			return errAnswer("%s %s no password, so anyone on the internet could sign in as %s; give %s a password or turn %s off first",
+				strings.Join(users, ", "), oneOr(len(users), "needs", "need"), oneOr(len(users), "it", "them"),
+				oneOr(len(users), "it", "each one"), oneOr(len(users), "it", "them"))
+		}
+	}
+	port := configInt(ctx, c, "port")
+	if port == 0 {
+		return errAnswer("Redis listens on no TCP port (port 0), so nothing on the network can reach it")
+	}
+	var fw tunnel.FirewallResult
+	if req.Reach != "" {
+		fw = s.f.cfg.firewall()(ctx, tunnel.FirewallRequest{Port: port, Check: true})
+		switch {
+		case fw.Error != "":
+			return errAnswer("the firewall on this server could not be read, so nothing was changed: %s", fw.Error)
+		case req.Reach == tunnel.ReachSelected && !fw.Active:
+			return errAnswer("no firewall is on here (Argus changes ufw or firewalld, and never turns one on), " +
+				"so Redis cannot be limited to selected machines; choose the private network, or turn a firewall on first")
+		case req.Reach == tunnel.ReachSelected && fw.OpenToAll:
+			return errAnswer("a firewall rule Argus did not add already lets everyone reach port %d (%s); "+
+				"remove it on the server first, or selected machines would not be what happens", port, strings.Join(fw.Others, "; "))
+		}
 	}
 	a, _ := tunnel.RedisApproval(req)
 	if err := rec.write(tunnel.PGRecord{Kind: "stmt", Request: req.ID, SQL: a.Text, Approval: req.Approval}); err != nil {
 		return tunnel.StoreAnswer{}, fmt.Errorf("the recording failed: %w", err)
 	}
 	start := time.Now()
-	if _, err := adminDo(ctx, c, "CONFIG", "SET", "bind", tunnel.RedisBind(req.Addresses)); err != nil {
-		if rerr := rec.fail(req.ID, err.Error(), time.Since(start).Milliseconds()); rerr != nil {
+	res := RedisNetworkResult{Rewritten: true}
+	fail := func(why string) (tunnel.StoreAnswer, error) {
+		if rerr := rec.fail(req.ID, why, time.Since(start).Milliseconds()); rerr != nil {
 			return tunnel.StoreAnswer{}, rerr
 		}
-		return errAnswer("Redis refused the new bind: %s", err)
+		return errAnswer("%s", why)
 	}
-	res := RedisNetworkResult{Rewritten: true}
+	firewall := func() bool {
+		if req.Reach == "" || !fw.Active {
+			return true
+		}
+		r := s.f.cfg.firewall()(ctx, tunnel.FirewallRequest{Port: port, Reach: req.Reach, Sources: req.Sources})
+		res.FirewallRan = r.Ran
+		if r.Error != "" {
+			res.FirewallError = r.Error
+			return false
+		}
+		return true
+	}
+	// Narrow the firewall before Redis listens wider, and Redis before the
+	// firewall when closing, so no moment is more open than either end.
+	if opens && !firewall() {
+		return fail("the firewall change failed, so Redis was left as it was: " + res.FirewallError)
+	}
+	if _, err := adminDo(ctx, c, "CONFIG", "SET", "bind", tunnel.RedisBindFor(req)); err != nil {
+		why := "Redis refused the new bind: " + err.Error()
+		if opens && len(res.FirewallRan) > 0 {
+			why += "; the firewall rules were already changed: " + strings.Join(res.FirewallRan, "; ")
+		}
+		return fail(why)
+	}
 	if _, err := adminDo(ctx, c, "CONFIG", "REWRITE"); err != nil {
 		res.Rewritten, res.RewriteError = false, err.Error()
+	}
+	if !opens && !firewall() {
+		if err := rec.done(req.ID, "config set bind", 1, time.Since(start).Milliseconds(), res, false); err != nil {
+			return tunnel.StoreAnswer{}, err
+		}
+		return errAnswer("Redis listens on this server only again, but removing Argus's firewall rules failed: %s", res.FirewallError)
 	}
 	if err := rec.done(req.ID, "config set bind", 1, time.Since(start).Milliseconds(), res, false); err != nil {
 		return tunnel.StoreAnswer{}, err
 	}
 	res.Network, _ = s.networkView(ctx, c)
 	return tunnel.StoreAnswer{Type: "result", Data: res}, nil
+}
+
+func oneOr(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 // RedisSecureResult is how giving the default user a password went.

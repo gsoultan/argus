@@ -127,12 +127,34 @@ func RedisApproval(req StoreRequest) (RedisApprovalNeed, bool) {
 	case RedisOpACLDel:
 		return RedisApprovalNeed{Text: JoinRedisCommand([]string{"ACL", "DELUSER", req.User})}, true
 	case RedisOpNetworkSet:
-		return RedisApprovalNeed{Text: JoinRedisCommand([]string{"CONFIG", "SET", "bind", RedisBind(req.Addresses)}) +
-			"\nCONFIG REWRITE"}, true
+		text := JoinRedisCommand([]string{"CONFIG", "SET", "bind", RedisBindFor(req)}) + "\nCONFIG REWRITE"
+		if req.Reach != "" {
+			text += "\n" + FirewallText(req.Reach, req.Sources)
+		}
+		return RedisApprovalNeed{Text: text}, true
 	case RedisOpDefaultSecure:
 		return RedisApprovalNeed{Text: "CONFIG SET requirepass <a new password made on the server>\nCONFIG REWRITE"}, true
 	}
 	return RedisApprovalNeed{}, false
+}
+
+// RedisAlwaysApproval says a request waits for a second person whatever the
+// entry's own setting: opening a Redis to anywhere.
+func RedisAlwaysApproval(req StoreRequest) bool {
+	return req.Op == RedisOpNetworkSet && req.Reach == ReachAny
+}
+
+// RedisBindFor is the bind a network_set asks for: every address for
+// anywhere, the loopback alone for this server only, else the loopback and
+// the listed LAN addresses.
+func RedisBindFor(req StoreRequest) string {
+	switch req.Reach {
+	case ReachAny:
+		return "* -::*"
+	case ReachLocal:
+		return RedisBind(nil)
+	}
+	return RedisBind(req.Addresses)
 }
 
 // RedisBulkText is a bulk change as one line: what it does, to which keys.

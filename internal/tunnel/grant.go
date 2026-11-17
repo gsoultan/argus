@@ -68,6 +68,9 @@ type Grant struct {
 	// Software is what a software grant may ask; nil for every other
 	// service.
 	Software *GrantSoftware `json:"software,omitempty"`
+	// Reach is the connection a reach check may make; nil for every other
+	// service.
+	Reach *GrantReach `json:"reach,omitempty"`
 	// Logons is what a logons grant may ask; nil for every other service.
 	Logons *GrantLogons `json:"logons,omitempty"`
 	// Ask is who must be asked or told at a workstation before a terminal,

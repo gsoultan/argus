@@ -315,6 +315,7 @@ function AddFound({ app, engine, added, onAdd }: {
     )
   }
   const listening = [...new Set(app.listen.map((l) => l.port))].sort((a, b) => a - b)
+  const localOnly = app.listen.length > 0 && app.listen.every((l) => l.localOnly)
   const ports: (number | undefined)[] = engine === 'rabbitmq'
     ? [listening.includes(15672) ? 15672 : undefined]
     : engine === 'kafka' ? [listening.includes(9092) ? 9092 : listening[0]]
@@ -334,6 +335,13 @@ function AddFound({ app, engine, added, onAdd }: {
                 size="compact-xs" variant="light" color="teal">
                 In Argus{engine === 'redis' ? '' : ` as ${db.dbname}`}
               </ButtonLink>
+            )}
+            {db && engine === 'redis' && localOnly && (
+              <Tooltip multiline w={260} label="It listens on the loopback only, so other machines get “connection refused”. Choose which machines may connect, and Argus changes its bind and this server's firewall.">
+                <ButtonLink to="/databases/$dbId" params={{ dbId: db.id }} search={{ panel: 'network' }} size="compact-xs" variant="default">
+                  Let other machines connect…
+                </ButtonLink>
+              </Tooltip>
             )}
             {(!db || again) && (
               <Button size="compact-xs" variant={db ? 'subtle' : 'default'}

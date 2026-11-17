@@ -341,6 +341,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/databases", a.getDatabases)
 	mux.HandleFunc("POST /api/v1/databases", a.dbAdmin(a.postDatabase))
 	mux.HandleFunc("GET /api/v1/assets/{id}/databases/discover", a.dbAdmin(a.getDiscoverDatabases))
+	mux.HandleFunc("POST /api/v1/assets/{id}/reach-check", a.dbAdmin(a.postReachCheck))
 	mux.HandleFunc("GET /api/v1/assets/{id}/databases/create-options", a.dbAdmin(a.getCreateOptions))
 	mux.HandleFunc("POST /api/v1/assets/{id}/databases/create", a.dbAdmin(a.postCreateDatabase))
 	mux.HandleFunc("POST /api/v1/databases/{id}/owner", a.dbAdmin(a.postDatabaseOwner))
