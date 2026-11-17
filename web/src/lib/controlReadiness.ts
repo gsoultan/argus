@@ -53,7 +53,14 @@ export const RUNBOOK_URL = 'https://github.com/gsoultan/argus/blob/main/docs/arg
 export const readinessKey = ['platform', 'readiness'] as const
 
 export async function readiness(): Promise<ReadinessView> {
-  return get<ReadinessView>('/api/v1/platform/readiness')
+  const v = await get<ReadinessView>('/api/v1/platform/readiness')
+  // A control plane, or a proxy in front of one, that answers with something
+  // else must not take the settings page down with it.
+  if (!v || typeof v !== 'object' || !v.outsideCheck || !Array.isArray(v.servers) || !v.backups ||
+      !v.directSsh || !v.confirmations) {
+    throw new Error('argus-control did not answer with a readiness report')
+  }
+  return v
 }
 
 export async function confirmReadiness(item: ReadinessItem): Promise<ReadinessConfirmation> {
