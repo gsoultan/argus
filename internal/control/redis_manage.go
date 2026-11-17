@@ -90,5 +90,8 @@ func (a *API) redisGate(ctx context.Context, email string, db Database, level st
 func oneLine(s string) string { return strings.ReplaceAll(s, "\n", "; ") }
 
 // approvalEngines are the engines whose changes can wait for approval:
-// Postgres's statements, and a Redis's bulk, configuration and user changes.
-var approvalEngines = []string{tunnel.EnginePostgres, tunnel.EngineRedis}
+// Postgres's statements, a Redis's bulk, configuration and user changes, and
+// a MySQL's, MongoDB's, RabbitMQ's or Kafka's change of which machines can
+// connect.
+var approvalEngines = []string{tunnel.EnginePostgres, tunnel.EngineRedis, tunnel.EngineMySQL,
+	tunnel.EngineMongoDB, tunnel.EngineRabbitMQ, tunnel.EngineKafka}

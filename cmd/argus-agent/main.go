@@ -391,28 +391,36 @@ func runDaemon(args []string) int {
 		// MongoDB the same way: a user in the entry's database for the
 		// session, every command recorded before it runs.
 		services[agent.MongoDBService] = agent.MongoDB(agent.StoreConfig{
-			Verifier:  &tunnel.GrantVerifier{Host: hostname},
-			RecordDir: *dir,
-			Log:       log,
+			Verifier:   &tunnel.GrantVerifier{Host: hostname},
+			RecordDir:  *dir,
+			Log:        log,
+			Executable: exe,
+			StateDir:   *stateDir,
 		})
 		// Kafka the same way: a SCRAM user with ACLs on the entry's topics for
 		// the session, every read of messages and change recorded before it runs.
 		services[agent.KafkaService] = agent.Kafka(agent.StoreConfig{
-			Verifier:  &tunnel.GrantVerifier{Host: hostname},
-			RecordDir: *dir,
-			Log:       log,
+			Verifier:   &tunnel.GrantVerifier{Host: hostname},
+			RecordDir:  *dir,
+			Log:        log,
+			Executable: exe,
+			StateDir:   *stateDir,
 		})
 		services[agent.RabbitMQService] = agent.RabbitMQ(agent.RabbitConfig{StoreConfig: agent.StoreConfig{
-			Verifier:  &tunnel.GrantVerifier{Host: hostname},
-			RecordDir: *dir,
-			Log:       log,
+			Verifier:   &tunnel.GrantVerifier{Host: hostname},
+			RecordDir:  *dir,
+			Log:        log,
+			Executable: exe,
+			StateDir:   *stateDir,
 		}})
 		// MySQL and MariaDB on this server, as the person's own user for the
 		// level, every statement recorded before it runs.
 		services[agent.MySQLService] = agent.MySQL(agent.MySQLConfig{StoreConfig: agent.StoreConfig{
-			Verifier:  &tunnel.GrantVerifier{Host: hostname},
-			RecordDir: *dir,
-			Log:       log,
+			Verifier:   &tunnel.GrantVerifier{Host: hostname},
+			RecordDir:  *dir,
+			Log:        log,
+			Executable: exe,
+			StateDir:   *stateDir,
 		}})
 		// Backups of those databases, as the postgres account, encrypted
 		// here before they touch a disk; see internal/agent/backup.go.

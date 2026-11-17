@@ -51,6 +51,9 @@ type RabbitConfig struct {
 	// Ctl runs rabbitmqctl with args and stdin; nil runs the one installed
 	// on this server.
 	Ctl func(ctx context.Context, args []string, stdin string) ([]byte, error)
+	// ConfPath is rabbitmq.conf when rabbitmqctl names none; empty is
+	// /etc/rabbitmq/rabbitmq.conf.
+	ConfPath string
 }
 
 // RabbitMQ is the rabbitmq service.
@@ -272,8 +275,11 @@ func (f *rabbitFactory) releaseVhost(key, vhost string) bool {
 }
 
 func (s *rabbitSession) ready() tunnel.StoreAnswer {
-	return tunnel.StoreAnswer{Engine: tunnel.EngineRabbitMQ, User: s.user, Version: s.version,
-		Ops: tunnel.RabbitOps(s.db.Level)}
+	ops := tunnel.RabbitOps(s.db.Level)
+	if s.db.Level == tunnel.LevelDBA {
+		ops = append(ops, tunnel.RabbitOpNetwork, tunnel.RabbitOpNetworkSet)
+	}
+	return tunnel.StoreAnswer{Engine: tunnel.EngineRabbitMQ, User: s.user, Version: s.version, Ops: ops}
 }
 
 // close deletes the user when this was its last session; RabbitMQ closes
@@ -394,6 +400,9 @@ const rabbitRates = "msg_rates_age=600&msg_rates_incr=30"
 const maxMove = 10_000
 
 func (s *rabbitSession) do(ctx context.Context, req tunnel.StoreRequest, rec *stmtRecorder) (tunnel.StoreAnswer, error) {
+	if req.Op == tunnel.RabbitOpNetwork || req.Op == tunnel.RabbitOpNetworkSet {
+		return s.network(ctx, req, rec)
+	}
 	if !tunnel.RabbitOpAllowed(req.Op, s.db.Level) {
 		if tunnel.RabbitOpAllowed(req.Op, tunnel.LevelDBA) {
 			why := req.Op + " needs a higher level than " + s.db.Level
