@@ -5,6 +5,10 @@ import { NetworkPanel } from '~/components/DatabaseNetwork'
 import type { Admin, AdminOp, Collect } from '~/components/DatabaseAdmin'
 import { pgHBALines, pgListenFor, pgReachPlan, type PGNetworkData } from '~/lib/pgNetwork'
 import { mysqlReachPlan, type MySQLNetworkData } from '~/lib/mysqlNetwork'
+import { mongoReachPlan, type MongoNetworkData } from '~/lib/mongoNetwork'
+import { MongoNetwork } from '~/components/mongo/MongoNetwork'
+import type { StoreAnswer, StoreRequest, StoreSession } from '~/components/useStoreSession'
+import type { Database } from '~/types/domain'
 
 /*
 Which machines can connect to a Postgres: the panel sends the agent fixed
@@ -127,5 +131,48 @@ describe('MySQL network panel', () => {
     expect(mysqlReachPlan({ ...my, noPassRemote: ["'legacy'@'%'"] }, 'any', [], true).blocked).toMatch(/legacy/)
     expect(mysqlReachPlan({ ...my, skipNetworking: true }, 'network', [], true).blocked).toMatch(/skip-networking/)
     expect(mysqlReachPlan({ ...my, remoteUsers: [] }, 'network', [], true).steps.some((s) => s.title === 'No user may sign in from another machine yet')).toBe(true)
+  })
+})
+
+describe('MongoDB network panel', () => {
+  const mg: MongoNetworkData = {
+    bind: '127.0.0.1', next: '127.0.0.1', pendingRestart: false, port: 27017, version: '7.0.14', configFile: '/etc/mongod.conf',
+    tls: false, clients: 5, remote: 0, reach: 'local', host: 'db-03', service: 'mongod.service', firewall: 'ufw', firewallActive: true,
+    addresses: [{ ip: '10.0.0.185', iface: 'eth0', prefix: '10.0.0.0/24', private: true, state: 'closed' }],
+  }
+  it('asks the MongoDB session, and changes bindIp for the next start with a restart', async () => {
+    const asked: StoreRequest[] = []
+    const s: StoreSession = {
+      status: 'ready', fatal: null, cancel: () => {}, lastId: () => 1,
+      ready: { id: 0, type: 'ready', level: 'dba', ops: ['run', 'scan', 'value', 'network', 'network_set'] },
+      ask: async (req) => {
+        asked.push(req)
+        const a: StoreAnswer = req.op === 'network'
+          ? { id: 1, type: 'result', data: mg }
+          : { id: 2, type: 'result', data: { network: { ...mg, bind: '127.0.0.1,10.0.0.185', next: '127.0.0.1,10.0.0.185', reach: 'selected', firewallSources: req.sources }, restarted: true } }
+        return a
+      },
+    }
+    const db = { id: 'd1', engine: 'mongodb', dbname: 'app', hostname: 'db-03', label: 'staging', assetId: 'a1' } as unknown as Database
+    ui(<MongoNetwork s={s} database={db} opened onClose={() => {}} narrow={false} />)
+    await screen.findByText(/Only programs on db-03 can connect. MongoDB listens on 127.0.0.1/)
+    expect(asked[0]).toEqual({ op: 'network' })
+    fireEvent.click(screen.getByRole('radio', { name: /Selected machines/ }))
+    fireEvent.change(screen.getByLabelText('Add an address or range'), { target: { value: '10.0.0.61' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    expect(screen.getByText(/bindIp: 127\.0\.0\.1,10\.0\.0\.185/)).toBeInTheDocument()
+    expect(screen.getByText('Restart mongod.service')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await screen.findByText('Now: selected machines. MongoDB was restarted and listens anew.')
+    expect(asked.at(-1)).toEqual({ op: 'network_set', reach: 'selected', addresses: ['10.0.0.185'], sources: ['10.0.0.61'], restart: true })
+  })
+  it('says what stops it', () => {
+    expect(mongoReachPlan({ ...mg, cmdLine: true }, 'network', [], true).blocked).toMatch(/--bind_ip/)
+    expect(mongoReachPlan({ ...mg, configFile: undefined }, 'network', [], true).blocked).toMatch(/no configuration file/)
+    expect(mongoReachPlan({ ...mg, firewallActive: false }, 'selected', ['10.0.0.61'], true).blocked).toMatch(/no firewall is on/)
+    const any = mongoReachPlan(mg, 'any', [], true)
+    expect(any.blocked).toBeNull()
+    expect(any.steps[0]).toMatchObject({ state: 'change', diff: { from: 'bindIp: 127.0.0.1', to: 'bindIpAll: true' } })
+    expect(any.steps.some((x) => x.title === 'TLS is off')).toBe(true)
   })
 })

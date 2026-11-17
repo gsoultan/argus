@@ -254,6 +254,8 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 		g.DB.Engine, g.DB.ConfigPath, g.DB.KeysLimit = db.Engine, db.ConfigPath, db.Policy.KeysLimit
 		if db.Engine == tunnel.EngineRedis {
 			g.DB.RedisRules = db.Policy.RedisLevels[level]
+		}
+		if db.Engine == tunnel.EngineRedis || db.Engine == tunnel.EngineMongoDB {
 			g.DB.ChangesNeedApproval = db.WritesNeedApproval()
 		}
 		g.DB.PoolHost, g.DB.PoolPort, g.DB.IdleTxTimeoutMS = "", 0, 0
@@ -462,6 +464,13 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 				}
 				if db.Engine == tunnel.EngineRedis {
 					if no := a.redisGate(ctx, email, db, level, &req); no != nil {
+						ans, _ := json.Marshal(no)
+						_ = sendJSON(pgBrowserMessage{Type: "ans", Ans: ans})
+						continue
+					}
+				}
+				if db.Engine == tunnel.EngineMongoDB {
+					if no := a.mongoGate(ctx, email, db, level, &req); no != nil {
 						ans, _ := json.Marshal(no)
 						_ = sendJSON(pgBrowserMessage{Type: "ans", Ans: ans})
 						continue
