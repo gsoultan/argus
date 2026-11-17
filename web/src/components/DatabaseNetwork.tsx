@@ -10,9 +10,10 @@ import { ClientTest, Copy, PlanSteps, SourcePicker, knownServers, plural } from 
 import { ADDRESS_STATE, REACH, listenFor, privateNetworks, type Reach } from '~/lib/redisManage'
 import { pgNowText, pgReachPlan, type PGNetworkData, type PGNetworkResult } from '~/lib/pgNetwork'
 import { mysqlNowText, mysqlReachPlan, type MySQLNetworkData } from '~/lib/mysqlNetwork'
+import { mongoNowText, mongoReachPlan, type MongoNetworkData } from '~/lib/mongoNetwork'
 
-type NetData = PGNetworkData | MySQLNetworkData
-const isMy = (n: NetData): n is MySQLNetworkData => 'bind' in n
+type NetData = PGNetworkData | MySQLNetworkData | MongoNetworkData
+export type NetworkEngine = 'postgres' | 'mysql' | 'mongodb'
 import { assetsQuery } from '~/lib/queries'
 import { isConfigured } from '~/lib/live'
 
@@ -30,9 +31,14 @@ server's name typed, and no pg_hba.conf line that asks for no password.
 MySQL and MariaDB decide with bind_address, read only when mysqld starts,
 and each user's host part, which Argus shows and leaves alone; opening to
 anywhere is refused while a user may sign in from elsewhere with no password.
+
+MongoDB decides with net.bindIp in mongod's configuration file, also read
+only at start; Argus adds only a MongoDB whose access control is on, so
+every machine still signs in as a user.
 */
 
-export function NetworkPanel({ admin, level, narrow, onBack, onAskForAccess, assetId, engine }: AdminPanelProps & { engine?: 'postgres' | 'mysql' }) {
+export function NetworkPanel({ admin, level, narrow, onBack, onAskForAccess, assetId, engine = 'postgres' }:
+  Pick<AdminPanelProps, 'admin' | 'level' | 'narrow' | 'onBack' | 'onAskForAccess' | 'assetId'> & { engine?: NetworkEngine }) {
   const [n, setN] = useState<NetData | null>(null)
   const [failure, setFailure] = useState<AdminFailure | null>(null)
   const [busy, setBusy] = useState(false)
@@ -66,7 +72,9 @@ export function NetworkPanel({ admin, level, narrow, onBack, onAskForAccess, ass
 
   const blurb = engine === 'mysql'
     ? 'Which machines can connect: the addresses MySQL listens on, and the server’s firewall.'
-    : 'Which machines can connect: the addresses Postgres listens on, pg_hba.conf, and the server’s firewall.'
+    : engine === 'mongodb'
+      ? 'Which machines can connect: the addresses MongoDB listens on, and the server’s firewall.'
+      : 'Which machines can connect: the addresses Postgres listens on, pg_hba.conf, and the server’s firewall.'
   if (level !== 'dba') {
     return (
       <PanelFrame title="Network" narrow={narrow} onBack={onBack} blurb={blurb}>
@@ -87,15 +95,19 @@ export function NetworkPanel({ admin, level, narrow, onBack, onAskForAccess, ass
   const nets = privateNetworks(n)
   const sent = reach === 'network' ? nets : reach === 'selected' ? sources : []
   const listen = listenFor(n, reach, sent)
-  const my = isMy(n)
-  const name = my ? (n.mariadb ? 'MariaDB' : 'MySQL') : 'Postgres'
-  const plan = my ? mysqlReachPlan(n, reach, sources, restart) : pgReachPlan(n, reach, sources, restart)
+  const my = engine === 'mysql'
+  const mongo = engine === 'mongodb'
+  const name = my ? ((n as MySQLNetworkData).mariadb ? 'MariaDB' : 'MySQL') : mongo ? 'MongoDB' : 'Postgres'
+  const plan = my ? mysqlReachPlan(n as MySQLNetworkData, reach, sources, restart)
+    : mongo ? mongoReachPlan(n as MongoNetworkData, reach, sources, restart)
+    : pgReachPlan(n as PGNetworkData, reach, sources, restart)
   const same = reach === n.reach && !n.pendingRestart &&
     (reach !== 'selected' || [...sources].sort().join() === [...(n.firewallSources ?? [])].sort().join())
   const ready = !same && !plan.blocked &&
     (reach !== 'any' || confirmName.trim().toLowerCase() === host.toLowerCase()) &&
     (reach !== 'network' || understood)
-  const now = my ? mysqlNowText(n) : pgNowText(n)
+  const now = my ? mysqlNowText(n as MySQLNetworkData) : mongo ? mongoNowText(n as MongoNetworkData) : pgNowText(n as PGNetworkData)
+  const tls = mongo ? (n as MongoNetworkData).tls : (n as PGNetworkData | MySQLNetworkData).ssl
   const publicIPs = n.addresses.filter((a) => !a.private).map((a) => a.ip)
 
   const apply = async () => {
@@ -146,7 +158,9 @@ export function NetworkPanel({ admin, level, narrow, onBack, onAskForAccess, ass
         </Alert>
       )}
       <Text size={FS.micro} c="dimmed">
-        {my ? `${name} ${n.version} · port ${n.port}` : `Port ${n.port} · ${n.hbaFile} · passwords ${n.method}`} · TLS {n.ssl ? 'on' : 'off'} · firewall: {n.firewall ? `${n.firewall} (${n.firewallActive ? 'on' : 'off'})` : n.firewallError ? 'could not be read' : 'none'}
+        {my ? `${name} ${(n as MySQLNetworkData).version} · port ${n.port}`
+          : mongo ? `MongoDB ${(n as MongoNetworkData).version} · port ${n.port}${(n as MongoNetworkData).configFile ? ` · ${(n as MongoNetworkData).configFile}` : ''}`
+          : `Port ${n.port} · ${(n as PGNetworkData).hbaFile} · passwords ${(n as PGNetworkData).method}`} · TLS {tls ? 'on' : 'off'} · firewall: {n.firewall ? `${n.firewall} (${n.firewallActive ? 'on' : 'off'})` : n.firewallError ? 'could not be read' : 'none'}
         {n.remote > 0 && ` · ${n.remote} ${plural(n.remote, 'connection', 'connections')} from other machines now`}
       </Text>
 
@@ -155,14 +169,14 @@ export function NetworkPanel({ admin, level, narrow, onBack, onAskForAccess, ass
           label={<Text size="sm" fw={600} mb={6}>Which machines can connect to this {name}</Text>}>
           <Stack gap={8}>
             {option('local', `Programs on ${host} only; every other machine is refused.`)}
-            {option('selected', `Only the machines you list, through ${my ? '' : 'pg_hba.conf and '}the firewall on ${host}.`,
+            {option('selected', `Only the machines you list, through ${my || mongo ? '' : 'pg_hba.conf and '}the firewall on ${host}.`,
               <SourcePicker n={n} sources={sources} setSources={setSources} servers={servers} />)}
-            {option('network', `Any machine on the same private network. Each still needs ${my ? 'a user made for its host' : 'a role'} and password.`,
+            {option('network', `Any machine on the same private network. Each still needs ${my ? 'a user made for its host' : mongo ? 'a MongoDB user' : 'a role'} and password.`,
               <Checkbox size="xs" checked={understood} onChange={(e) => setUnderstood(e.currentTarget.checked)}
                 label={`I understand every machine on ${nets.join(', ') || 'these networks'} can reach ${name}`} />)}
             {option('any', 'Every network this server is on, the internet included. Needs a second person’s approval.',
               <Stack gap={4}>
-                {!n.ssl && <Text size={FS.micro} c="rose">TLS is off: queries and data cross the network unencrypted. Prefer selected machines or a VPN.</Text>}
+                {!tls && <Text size={FS.micro} c="rose">TLS is off: queries and data cross the network unencrypted. Prefer selected machines or a VPN.</Text>}
                 {publicIPs.length > 0 && <Text size={FS.micro} c="rose">{publicIPs.join(', ')} {plural(publicIPs.length, 'is a public address', 'are public addresses')}: bots try port {n.port} within minutes.</Text>}
                 <TextInput size="xs" label={<>Type <Code>{host}</Code> to open it to anywhere</>} value={confirmName}
                   onChange={(e) => setConfirmName(e.currentTarget.value)} disabled={!!plan.blocked} aria-label="Type the server's name" />
@@ -175,7 +189,7 @@ export function NetworkPanel({ admin, level, narrow, onBack, onAskForAccess, ass
           <PlanSteps steps={plan.steps} />
           {n.service && (
             <Checkbox mt={6} size="xs" checked={restart} onChange={(e) => setRestart(e.currentTarget.checked)}
-              label={`Restart ${name} when ${my ? 'bind_address' : 'listen_addresses'} changes (${n.clients} open ${plural(n.clients, 'connection', 'connections')} end)`} />
+              label={`Restart ${name} when ${my ? 'bind_address' : mongo ? 'bindIp' : 'listen_addresses'} changes (${n.clients} open ${plural(n.clients, 'connection', 'connections')} end)`} />
           )}
           {plan.blocked && !same && <Text size={FS.micro} c="rose" mt={4}>Not yet: {plan.blocked}.</Text>}
           {!same && (
@@ -214,17 +228,19 @@ export function NetworkPanel({ admin, level, narrow, onBack, onAskForAccess, ass
           {n.addresses.length === 0 && <Table.Tr><Table.Td colSpan={3}><Text size={FS.meta} c="dimmed">This server has no address besides the loopback.</Text></Table.Td></Table.Tr>}
         </Table.Tbody>
       </Table>
-      <Text size={FS.micro} c="dimmed">Checked from {host} itself, which its own firewall does not stop, and before pg_hba.conf is asked. Test from the client’s side below.</Text>
-      {!my && (n.others?.length ?? 0) > 0 && (
+      <Text size={FS.micro} c="dimmed">Checked from {host} itself, which its own firewall does not stop{my || mongo ? '' : ', and before pg_hba.conf is asked'}. Test from the client’s side below.</Text>
+      {!my && !mongo && ((n as PGNetworkData).others?.length ?? 0) > 0 && (
         <Box>
           <Text size={FS.meta} fw={600}>The server’s own pg_hba.conf lines for other machines</Text>
           <Text size={FS.micro} c="dimmed">These come before Argus’s and still decide; Argus never changes them.</Text>
-          <Code block mt={4} style={{ fontSize: 11 }}>{n.others!.join('\n')}</Code>
+          <Code block mt={4} style={{ fontSize: 11 }}>{(n as PGNetworkData).others!.join('\n')}</Code>
         </Box>
       )}
       {n.reach !== 'local' && (
-        <ClientTest n={n} engine={my ? 'mysql' : 'postgres'} sources={n.reach === 'selected' ? n.firewallSources ?? [] : []} servers={servers}
-          command={(ip) => my ? `mysql -h ${ip} -P ${n.port} -u <user> -p -e 'select 1'` : `psql "host=${ip} port=${n.port} dbname=postgres user=<role>" -c 'select 1'`} />
+        <ClientTest n={n} engine={engine} sources={n.reach === 'selected' ? n.firewallSources ?? [] : []} servers={servers}
+          command={(ip) => my ? `mysql -h ${ip} -P ${n.port} -u <user> -p -e 'select 1'`
+            : mongo ? `mongosh "mongodb://<user>@${ip}:${n.port}/admin" --eval 'db.runCommand({ ping: 1 })'`
+            : `psql "host=${ip} port=${n.port} dbname=postgres user=<role>" -c 'select 1'`} />
       )}
     </Stack>,
   )

@@ -170,6 +170,9 @@ type StoreRequest struct {
 	// name typed by the person.
 	Reach   string   `json:"reach,omitempty"`
 	Sources []string `json:"sources,omitempty"`
+	// Restart asks a MongoDB network_set to restart mongod's service, since
+	// mongod reads net.bindIp only when it starts.
+	Restart bool `json:"restart,omitempty"`
 }
 
 // StoreAnswer is the agent's reply to a request, or news about the session.

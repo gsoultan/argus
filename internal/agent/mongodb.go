@@ -55,6 +55,8 @@ type mongoFactory struct {
 	uses *userUse
 	// mu serializes giving and taking users.
 	mu sync.Mutex
+	// netState stands in for reading how mongod runs, in tests.
+	netState func(ctx context.Context) (MongoNetwork, error)
 }
 
 type mongoSession struct {
@@ -340,8 +342,12 @@ func (s *mongoSession) connect(ctx context.Context) error {
 }
 
 func (s *mongoSession) ready() tunnel.StoreAnswer {
+	ops := []string{"run", "scan", "value"}
+	if s.db.Level == tunnel.LevelDBA {
+		ops = append(ops, tunnel.MongoOpNetwork, tunnel.MongoOpNetworkSet)
+	}
 	return tunnel.StoreAnswer{Engine: tunnel.EngineMongoDB, User: s.user, Version: s.version,
-		Ops: []string{"run", "scan", "value"}}
+		Ops: ops, ChangesNeedApproval: s.db.ChangesNeedApproval}
 }
 
 func (s *mongoSession) close(ctx context.Context) {
@@ -359,6 +365,8 @@ func (s *mongoSession) do(ctx context.Context, req tunnel.StoreRequest, rec *stm
 		return s.scan(ctx, req)
 	case "value":
 		return s.value(ctx, req, rec)
+	case tunnel.MongoOpNetwork, tunnel.MongoOpNetworkSet:
+		return s.network(ctx, req, rec)
 	}
 	return tunnel.StoreAnswer{Type: "error", Error: "unknown operation " + req.Op + " for MongoDB"}, nil
 }
