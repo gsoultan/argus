@@ -78,6 +78,9 @@ type PGAdminRequest struct {
 	// Create is what create-database, prepare-new-database, create-options
 	// and set-owner act on; see postgres_create.go.
 	Create *tunnel.GrantCreate `json:"create,omitempty"`
+	// Replica is what replica-check, replica-prepare and replica-drop act
+	// on; see pgreplica.go.
+	Replica *tunnel.PGReplica `json:"replica,omitempty"`
 }
 
 // PGAdminResult is the answer.
@@ -153,6 +156,8 @@ func RunPGAdmin(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PG
 		return pgCreateOp(ctx, conn, req)
 	case "database-size", "create-test", "drop-test", "test-checks", "run-checks":
 		return pgTestOp(ctx, conn, req)
+	case "replica-check", "replica-prepare", "replica-allow", "replica-drop":
+		return pgReplicaOp(ctx, conn, req)
 	}
 	if !tunnel.ValidPersonalRole(req.Role) {
 		return PGAdminResult{Error: "not a role name Argus will manage: " + req.Role}
