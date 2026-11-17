@@ -1,4 +1,4 @@
-import { Alert, Badge, Box, Button, Group, Select, Stack, Tabs, Text, TextInput } from '@mantine/core'
+import { Alert, Badge, Box, Button, Group, Select, SimpleGrid, Stack, Tabs, Text, TextInput } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { IconBrandAws, IconBrandGoogle, IconCalendarTime, IconCirclePlus, IconCloudPlus, IconInfoCircle, IconSearch, IconShieldPlus } from '@tabler/icons-react'
@@ -12,7 +12,9 @@ import { SchedulesList } from '~/components/cloud/Schedules'
 import { InstancesTable, NetworkTables, ScalingGroupsTable, StorageTables } from '~/components/cloud/CloudTables'
 import { NewBalancer, NewTargetGroup } from '~/components/cloud/BalancerActions'
 import { SuggestionsCard } from '~/components/cloud/Suggestion'
+import { ScaleGroupsCard } from '~/components/cloud/ScaleGroups'
 import { cloudSuggestionsQuery } from '~/lib/cloudSuggestions'
+import { scaleGroupsQuery } from '~/lib/cloudScale'
 import { NewFirewall } from '~/components/cloud/NetworkActions'
 import { NewAddress, NewDisk } from '~/components/cloud/StorageActions'
 import { FindingsPanel } from '~/components/cloud/Findings'
@@ -57,6 +59,7 @@ function Cloud() {
   const waitingAccess = access.data?.grants.length ?? 0
   const findings = useQuery(cloudFindingsQuery())
   const suggestions = useQuery(cloudSuggestionsQuery(tab === 'scaling'))
+  const scaleGroups = useQuery(scaleGroupsQuery(tab === 'scaling'))
   const highRisks = findings.data?.items.filter((f) => f.group === 'risk' && f.severity === 'high').length ?? 0
   const waitingSchedules = schedules.data?.schedules.filter((s) => s.state === 'awaiting_approval' || s.pending).length ?? 0
   const q: Record<CloudKind, { data?: CloudItem[]; isPending: boolean }> = {
@@ -194,8 +197,13 @@ function Cloud() {
               loading={q.firewall.isPending} names={names} filtered={filtered} onMake={admin && canChange ? setMaking : undefined} />
           )}
           {tab === 'scaling' && (
-            <Stack gap="xs">
-              <SuggestionsCard items={suggestions.data} />
+            <Stack gap="md">
+              <SimpleGrid cols={{ base: 1, lg: (suggestions.data?.length ?? 0) > 0 ? 3 : 1 }} spacing="md">
+                <Box style={{ gridColumn: (suggestions.data?.length ?? 0) > 0 ? 'span 2' : undefined, minWidth: 0 }}>
+                  <ScaleGroupsCard groups={scaleGroups.data} loading={scaleGroups.isPending} instances={q.instance.data} canMake={admin && canChange} />
+                </Box>
+                <SuggestionsCard items={suggestions.data} />
+              </SimpleGrid>
               <Text size={FS.meta} c="dimmed">
                 Auto Scaling groups in your AWS accounts. Each keeps how many servers it wants running, between its minimum and maximum, and replaces one that fails.
               </Text>

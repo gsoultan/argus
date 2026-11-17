@@ -629,6 +629,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	api.SetCloudIdentities("gcp", cfg.Cloud.gcpCloudIdentities())
 	go api.RunCloudSync(ctx, control.CloudSyncInterval)
 	go api.RunCloudSchedules(ctx, time.Minute)
+	go api.RunScaleGroups(ctx, time.Minute)
 	go api.RunCloudCosts(ctx, 30*time.Minute)
 	// The bell's daily digest of what is waiting to be updated.
 	go api.RunUpdateDigest(ctx, control.UpdateDigestInterval)

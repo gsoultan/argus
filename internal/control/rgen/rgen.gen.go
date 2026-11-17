@@ -37,6 +37,9 @@ import (
 	"github.com/gsoultan/argus/internal/control/rgen/databasestatementitem"
 	"github.com/gsoultan/argus/internal/control/rgen/recoverycode"
 	"github.com/gsoultan/argus/internal/control/rgen/savedquery"
+	"github.com/gsoultan/argus/internal/control/rgen/scalegroup"
+	"github.com/gsoultan/argus/internal/control/rgen/scalegroupactivity"
+	"github.com/gsoultan/argus/internal/control/rgen/scalegroupmember"
 	"github.com/gsoultan/argus/internal/control/rgen/serverlogin"
 	"github.com/gsoultan/argus/internal/control/rgen/session"
 	"github.com/gsoultan/argus/internal/control/rgen/softwarescript"
@@ -79,36 +82,39 @@ var FlushOrder = map[string]int{
 	"redeemed_tickets":          24,
 	"revoked_sessions":          25,
 	"saved_queries":             26,
-	"schema_migrations":         27,
-	"server_logins":             28,
-	"sessions":                  29,
-	"sign_in_devices":           30,
-	"software_files":            31,
-	"software_previews":         32,
-	"software_scripts":          33,
-	"teams":                     34,
-	"usage_history":             35,
-	"usage_hourly":              36,
-	"users":                     37,
-	"access_requests":           38,
-	"agent_credentials":         39,
-	"asset_assignments":         40,
-	"asset_team_assignments":    41,
-	"cloud_access":              42,
-	"cloud_schedule_runs":       43,
-	"console_alert_reads":       44,
-	"database_access_rules":     45,
-	"database_assignments":      46,
-	"database_backup_schedules": 47,
-	"database_backups":          48,
-	"database_changes":          49,
-	"database_restores":         50,
-	"database_statements":       51,
-	"recovery_codes":            52,
-	"software_script_versions":  53,
-	"team_members":              54,
-	"database_backup_tests":     55,
-	"database_statement_items":  56,
+	"scale_groups":              27,
+	"schema_migrations":         28,
+	"server_logins":             29,
+	"sessions":                  30,
+	"sign_in_devices":           31,
+	"software_files":            32,
+	"software_previews":         33,
+	"software_scripts":          34,
+	"teams":                     35,
+	"usage_history":             36,
+	"usage_hourly":              37,
+	"users":                     38,
+	"access_requests":           39,
+	"agent_credentials":         40,
+	"asset_assignments":         41,
+	"asset_team_assignments":    42,
+	"cloud_access":              43,
+	"cloud_schedule_runs":       44,
+	"console_alert_reads":       45,
+	"database_access_rules":     46,
+	"database_assignments":      47,
+	"database_backup_schedules": 48,
+	"database_backups":          49,
+	"database_changes":          50,
+	"database_restores":         51,
+	"database_statements":       52,
+	"recovery_codes":            53,
+	"scale_group_activity":      54,
+	"scale_group_members":       55,
+	"software_script_versions":  56,
+	"team_members":              57,
+	"database_backup_tests":     58,
+	"database_statement_items":  59,
 }
 
 // NewUnit stages writes across this context and flushes them in foreign-key
@@ -4150,6 +4156,357 @@ func (p SavedQueryWithDatabaseQuery) All(ctx context.Context, ex runtime.Executo
 			return nil, fmt.Errorf("storm: %s references a missing %s row", "saved_queries", "databases")
 		}
 		out[i].Database = targets[j]
+	}
+	return out, nil
+}
+
+// ScaleGroupActivityWithGroupRow is scale_group_activity with its Group loaded.
+type ScaleGroupActivityWithGroupRow struct {
+	scalegroupactivity.Row
+	Group scalegroup.Row
+}
+
+type ScaleGroupActivityWithGroupQuery struct {
+	q scalegroupactivity.Query
+}
+
+// ScaleGroupActivityWithGroup starts the plan.
+func ScaleGroupActivityWithGroup() ScaleGroupActivityWithGroupQuery {
+	return ScaleGroupActivityWithGroupQuery{q: scalegroupactivity.New()}
+}
+
+func (p ScaleGroupActivityWithGroupQuery) Where(ps ...scalegroupactivity.Pred) ScaleGroupActivityWithGroupQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p ScaleGroupActivityWithGroupQuery) WhereIf(cond bool, pr scalegroupactivity.Pred) ScaleGroupActivityWithGroupQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p ScaleGroupActivityWithGroupQuery) Any(ps ...scalegroupactivity.Pred) ScaleGroupActivityWithGroupQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p ScaleGroupActivityWithGroupQuery) Not(pr scalegroupactivity.Pred) ScaleGroupActivityWithGroupQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p ScaleGroupActivityWithGroupQuery) NotAny(ps ...scalegroupactivity.Pred) ScaleGroupActivityWithGroupQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p ScaleGroupActivityWithGroupQuery) Order(ts ...scalegroupactivity.Sort) ScaleGroupActivityWithGroupQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p ScaleGroupActivityWithGroupQuery) Limit(n int64) ScaleGroupActivityWithGroupQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p ScaleGroupActivityWithGroupQuery) Offset(n int64) ScaleGroupActivityWithGroupQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p ScaleGroupActivityWithGroupQuery) After(r ScaleGroupActivityWithGroupRow) ScaleGroupActivityWithGroupQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p ScaleGroupActivityWithGroupQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p ScaleGroupActivityWithGroupQuery) All(ctx context.Context, ex runtime.Executor) ([]ScaleGroupActivityWithGroupRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]ScaleGroupActivityWithGroupRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = ScaleGroupActivityWithGroupRow{Row: r}
+		key := r.GroupID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := scalegroup.New().Unordered().
+		Where(scalegroup.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.GroupID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "scale_group_activity", "scale_groups")
+		}
+		out[i].Group = targets[j]
+	}
+	return out, nil
+}
+
+// ScaleGroupMemberWithGroupRow is scale_group_members with its Group loaded.
+type ScaleGroupMemberWithGroupRow struct {
+	scalegroupmember.Row
+	Group scalegroup.Row
+}
+
+type ScaleGroupMemberWithGroupQuery struct {
+	q scalegroupmember.Query
+}
+
+// ScaleGroupMemberWithGroup starts the plan.
+func ScaleGroupMemberWithGroup() ScaleGroupMemberWithGroupQuery {
+	return ScaleGroupMemberWithGroupQuery{q: scalegroupmember.New()}
+}
+
+func (p ScaleGroupMemberWithGroupQuery) Where(ps ...scalegroupmember.Pred) ScaleGroupMemberWithGroupQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p ScaleGroupMemberWithGroupQuery) WhereIf(cond bool, pr scalegroupmember.Pred) ScaleGroupMemberWithGroupQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p ScaleGroupMemberWithGroupQuery) Any(ps ...scalegroupmember.Pred) ScaleGroupMemberWithGroupQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p ScaleGroupMemberWithGroupQuery) Not(pr scalegroupmember.Pred) ScaleGroupMemberWithGroupQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p ScaleGroupMemberWithGroupQuery) NotAny(ps ...scalegroupmember.Pred) ScaleGroupMemberWithGroupQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p ScaleGroupMemberWithGroupQuery) Order(ts ...scalegroupmember.Sort) ScaleGroupMemberWithGroupQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p ScaleGroupMemberWithGroupQuery) Limit(n int64) ScaleGroupMemberWithGroupQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p ScaleGroupMemberWithGroupQuery) Offset(n int64) ScaleGroupMemberWithGroupQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p ScaleGroupMemberWithGroupQuery) After(r ScaleGroupMemberWithGroupRow) ScaleGroupMemberWithGroupQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p ScaleGroupMemberWithGroupQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p ScaleGroupMemberWithGroupQuery) All(ctx context.Context, ex runtime.Executor) ([]ScaleGroupMemberWithGroupRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]ScaleGroupMemberWithGroupRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = ScaleGroupMemberWithGroupRow{Row: r}
+		key := r.GroupID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := scalegroup.New().Unordered().
+		Where(scalegroup.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.GroupID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "scale_group_members", "scale_groups")
+		}
+		out[i].Group = targets[j]
+	}
+	return out, nil
+}
+
+// ScaleGroupWithAccountRow is scale_groups with its Account loaded.
+type ScaleGroupWithAccountRow struct {
+	scalegroup.Row
+	Account cloudaccount.Row
+}
+
+type ScaleGroupWithAccountQuery struct {
+	q scalegroup.Query
+}
+
+// ScaleGroupWithAccount starts the plan.
+func ScaleGroupWithAccount() ScaleGroupWithAccountQuery {
+	return ScaleGroupWithAccountQuery{q: scalegroup.New()}
+}
+
+func (p ScaleGroupWithAccountQuery) Where(ps ...scalegroup.Pred) ScaleGroupWithAccountQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p ScaleGroupWithAccountQuery) WhereIf(cond bool, pr scalegroup.Pred) ScaleGroupWithAccountQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p ScaleGroupWithAccountQuery) Any(ps ...scalegroup.Pred) ScaleGroupWithAccountQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p ScaleGroupWithAccountQuery) Not(pr scalegroup.Pred) ScaleGroupWithAccountQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p ScaleGroupWithAccountQuery) NotAny(ps ...scalegroup.Pred) ScaleGroupWithAccountQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p ScaleGroupWithAccountQuery) Order(ts ...scalegroup.Sort) ScaleGroupWithAccountQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p ScaleGroupWithAccountQuery) Limit(n int64) ScaleGroupWithAccountQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p ScaleGroupWithAccountQuery) Offset(n int64) ScaleGroupWithAccountQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p ScaleGroupWithAccountQuery) After(r ScaleGroupWithAccountRow) ScaleGroupWithAccountQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p ScaleGroupWithAccountQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p ScaleGroupWithAccountQuery) All(ctx context.Context, ex runtime.Executor) ([]ScaleGroupWithAccountRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]ScaleGroupWithAccountRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = ScaleGroupWithAccountRow{Row: r}
+		key := r.AccountID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := cloudaccount.New().Unordered().
+		Where(cloudaccount.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.AccountID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "scale_groups", "cloud_accounts")
+		}
+		out[i].Account = targets[j]
 	}
 	return out, nil
 }

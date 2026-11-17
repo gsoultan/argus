@@ -57,7 +57,7 @@ test('a busy server behind a load balancer suggests another server', async ({ pa
   await expect(page.getByTestId('suggestion')).toBeVisible()
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/17-suggestion-metrics.png` })
   await page.getByRole('button', { name: 'Add a server behind web-lb' }).click()
-  await expect(page).toHaveURL(/\/cloud\/launch\?.*like=i-0a41c27b9e3f1d27d/)
+  await expect(page).toHaveURL(/\/cloud\/scale\/new\?.*from=i-0a41c27b9e3f1d27d/)
 })
 
 test('Not now hides it for a day', async ({ page }) => {

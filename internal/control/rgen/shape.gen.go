@@ -976,6 +976,77 @@ func _assertSavedQueryShape(m m0.SavedQuery) {
 	}
 }
 
+// _assertScaleGroupShape fails to compile if m0.ScaleGroup gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertScaleGroupShape(m m0.ScaleGroup) {
+	type shape m0.ScaleGroup
+	_ = shape{
+		m.ID,
+		m.Account,
+		m.Region,
+		m.Name,
+		m.Environment,
+		m.TargetGroup,
+		m.TargetName,
+		m.Port,
+		m.Balancer,
+		m.Template,
+		m.MinSize,
+		m.MaxSize,
+		m.CostCap,
+		m.AddWait,
+		m.RemoveWait,
+		m.Rules,
+		m.Mode,
+		m.AutoBy,
+		m.AutoAt,
+		m.State,
+		m.PausedReason,
+		m.Note,
+		m.EnrollBase,
+		m.FailedStarts,
+		m.LastAddAt,
+		m.LastRemoveAt,
+		m.CheckedAt,
+		m.CreatedBy,
+		m.CreatedAt,
+	}
+}
+
+// _assertScaleGroupActivityShape fails to compile if m0.ScaleGroupActivity gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertScaleGroupActivityShape(m m0.ScaleGroupActivity) {
+	type shape m0.ScaleGroupActivity
+	_ = shape{
+		m.ID,
+		m.Group,
+		m.At,
+		m.Kind,
+		m.Actor,
+		m.Detail,
+		m.ChangeID,
+	}
+}
+
+// _assertScaleGroupMemberShape fails to compile if m0.ScaleGroupMember gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertScaleGroupMemberShape(m m0.ScaleGroupMember) {
+	type shape m0.ScaleGroupMember
+	_ = shape{
+		m.Group,
+		m.InstanceID,
+		m.Hostname,
+		m.Zone,
+		m.Subnet,
+		m.State,
+		m.AddedBy,
+		m.JoinedAt,
+		m.RegisteredAt,
+		m.DrainUntil,
+		m.LeftAt,
+	}
+}
+
 // _assertSchemaMigrationShape fails to compile if m0.SchemaMigration gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertSchemaMigrationShape(m m0.SchemaMigration) {

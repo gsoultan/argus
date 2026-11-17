@@ -351,12 +351,13 @@ export type CloudNetworkAction =
   | 'firewall-create' | 'firewall-rules' | 'firewall-delete' | 'instance-firewalls' | 'target-register' | 'target-deregister'
 export type CloudCapacityAction = 'capacity-create' | 'capacity-cancel' | 'ri-buy' | 'sp-buy'
 export type CloudBalancingAction = 'target-group-create' | 'health-check' | 'balancer-create' | 'group-size'
+export type CloudScaleAction = 'scale-group-create' | 'scale-group-change' | 'scale-add' | 'scale-remove'
 
 /** Whether an action buys a one- or three-year commitment, which always needs someone else. */
 export const isBuy = (a: CloudAction) => a === 'ri-buy' || a === 'sp-buy'
 export type CloudAction = 'launch' | 'start' | 'stop' | 'hibernate' | 'reboot' | 'resize' | 'tags' | 'protect' | 'unprotect' | 'settings' | 'remove'
-  | CloudStorageAction | CloudNetworkAction | CloudCapacityAction | CloudBalancingAction
-export type CloudChangeState = 'awaiting_approval' | 'applying' | 'applied' | 'failed' | 'declined' | 'cancelled'
+  | CloudStorageAction | CloudNetworkAction | CloudCapacityAction | CloudBalancingAction | CloudScaleAction
+export type CloudChangeState = 'awaiting_approval' | 'applying' | 'applied' | 'failed' | 'declined' | 'cancelled' | 'lapsed'
 
 export interface CloudChange {
   id: string
@@ -545,6 +546,7 @@ export const CHANGE_STATE: Record<CloudChangeState, { label: string; color: stri
   failed: { label: 'Failed', color: 'rose' },
   declined: { label: 'Declined', color: 'slate' },
   cancelled: { label: 'Withdrawn', color: 'slate' },
+  lapsed: { label: 'Nobody answered', color: 'slate' },
 }
 
 /* ── Reading what came back ─────────────────────────────────────────────── */
@@ -855,6 +857,7 @@ export const ACTION_LEVEL: Record<CloudAction, CloudChange['level']> = {
   'target-register': 'change', 'target-deregister': 'change',
   'capacity-create': 'change', 'capacity-cancel': 'change', 'ri-buy': 'remove', 'sp-buy': 'remove',
   'target-group-create': 'change', 'health-check': 'change', 'balancer-create': 'change', 'group-size': 'change',
+  'scale-group-create': 'change', 'scale-group-change': 'change', 'scale-add': 'change', 'scale-remove': 'change',
 }
 
 /** The permissions each storage change takes, as the manage role must grant them. */
@@ -875,6 +878,9 @@ export const ACTION_NEEDS: Partial<Record<CloudAction, string[]>> = {
   'health-check': ['elasticloadbalancing:ModifyTargetGroup'],
   'balancer-create': ['elasticloadbalancing:CreateLoadBalancer', 'elasticloadbalancing:CreateListener', 'elasticloadbalancing:AddTags'],
   'group-size': ['autoscaling:UpdateAutoScalingGroup'],
+  'scale-group-create': ['ec2:CreateImage', 'elasticloadbalancing:RegisterTargets'],
+  'scale-add': ['ec2:RunInstances', 'elasticloadbalancing:RegisterTargets'],
+  'scale-remove': ['elasticloadbalancing:DeregisterTargets', 'ec2:TerminateInstances'],
 }
 
 /** Whether an account's manage role lacks what an action takes. */

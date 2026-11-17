@@ -431,6 +431,9 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 	if cloud.IsBalancing(in.Action) {
 		return a.planBalancing(r, m, in, ch)
 	}
+	if cloud.IsScale(in.Action) {
+		return a.planScale(r, m, actor, in, ch)
+	}
 	if cloud.IsStorage(in.Action) {
 		return a.planStorage(r, m, in, ch)
 	}
@@ -838,6 +841,8 @@ func (a *API) applyCloudChange(r *http.Request, m cloudManaged, ch CloudChange) 
 			res, err = a.applyBuy(ctx, m, ch)
 		} else if cloud.IsBalancing(ch.Action) {
 			res, err = a.applyBalancing(ctx, m, ch)
+		} else if cloud.IsScale(ch.Action) {
+			res, err = a.applyScale(ctx, r, m, ch)
 		} else if cloud.IsStorage(ch.Action) {
 			res, err = a.applyStorage(ctx, m, ch)
 		} else if cloud.IsNetwork(ch.Action) {
@@ -1098,8 +1103,15 @@ func (a *API) postCloudChangeDecision(approve bool) http.HandlerFunc {
 			a.fail(w, "cloud change", err)
 			return
 		}
+		if cloud.IsScale(ch.Action) {
+			a.closeAlerts(r.Context(), "cloud-change:"+ch.ID, map[bool]string{true: "Approved", false: "Declined"}[approve]+" by "+sess.Email)
+		}
 		if !approve {
 			a.auditCloudChange(r, ch, "declined", sess.Email, "Declined: "+ch.Summary+".")
+			if gid := scaleGroupIDOf(ch); cloud.IsScale(ch.Action) && gid != "" {
+				_ = a.store.AddScaleActivity(r.Context(), gid, ScaleActivity{Kind: "declined", Actor: sess.Email,
+					ChangeID: ch.ID, Detail: "Declined: " + ch.Summary})
+			}
 			writeJSON(w, http.StatusOK, ch)
 			return
 		}

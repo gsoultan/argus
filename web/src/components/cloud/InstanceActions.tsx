@@ -2,8 +2,7 @@ import { ActionIcon, Alert, Badge, Box, Button, Checkbox, Code, Group, Menu, Mod
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import {
-  IconAlertTriangle, IconCopy, IconDots, IconFileText, IconLock, IconLockOpen, IconMoon, IconPhoto, IconSettings, IconShield, IconPlayerPlay, IconPlayerStop, IconRefresh, IconResize, IconTag, IconTrash, IconUserCheck,
-} from '@tabler/icons-react'
+  IconAlertTriangle, IconCopy, IconDots, IconFileText, IconLock, IconLockOpen, IconMoon, IconPhoto, IconSettings, IconShield, IconPlayerPlay, IconPlayerStop, IconRefresh, IconResize, IconTag, IconTrash, IconUserCheck, IconStack3 } from '@tabler/icons-react'
 import { useState } from 'react'
 import { Field, absTime, relTime } from '~/components/primitives'
 import {
@@ -75,6 +74,12 @@ export function InstanceActions({ it }: { it: CloudItem }) {
             <Menu.Dropdown>
               <Menu.Item leftSection={<IconCopy size={14} />}
                 onClick={() => void navigate({ to: '/cloud/launch', search: { like: it.resource.id, account: it.accountId } })}>Launch another like this…</Menu.Item>
+              {running && (
+                <Menu.Item leftSection={<IconStack3 size={14} />}
+                  onClick={() => void navigate({ to: '/cloud/scale/new', search: { account: it.accountId, region: it.resource.region, from: it.resource.id } })}>
+                  Put in a scale group…
+                </Menu.Item>
+              )}
               <Menu.Item leftSection={<IconSettings size={14} />} onClick={() => setOpen('settings')}>Instance settings…</Menu.Item>
               <Menu.Item leftSection={<IconLock size={14} />} onClick={() => setOpen('protect')}>Turn on termination protection</Menu.Item>
               <Menu.Item leftSection={<IconLockOpen size={14} />} onClick={() => setOpen('unprotect')}>Turn off termination protection</Menu.Item>

@@ -37,6 +37,8 @@ import { Route as DatabasesDbIdRouteImport } from './routes/databases.$dbId'
 import { Route as SessionsIndexRouteImport } from './routes/sessions.index'
 import { Route as SessionsSessionIdRouteImport } from './routes/sessions.$sessionId'
 import { Route as BrokersBrokerIdSettingsRouteImport } from './routes/brokers.$brokerId_.settings'
+import { Route as CloudScaleGroupIdRouteImport } from './routes/cloud.scale.$groupId'
+import { Route as CloudScaleNewRouteImport } from './routes/cloud.scale.new'
 import { Route as DatabasesDbIdSettingsRouteImport } from './routes/databases.$dbId_.settings'
 
 const IndexRoute = IndexRouteImport.update({
@@ -179,6 +181,16 @@ const BrokersBrokerIdSettingsRoute = BrokersBrokerIdSettingsRouteImport.update({
   path: '/brokers/$brokerId/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CloudScaleGroupIdRoute = CloudScaleGroupIdRouteImport.update({
+  id: '/cloud/scale/$groupId',
+  path: '/cloud/scale/$groupId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CloudScaleNewRoute = CloudScaleNewRouteImport.update({
+  id: '/cloud/scale/new',
+  path: '/cloud/scale/new',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DatabasesDbIdSettingsRoute = DatabasesDbIdSettingsRouteImport.update({
   id: '/databases/$dbId_/settings',
   path: '/databases/$dbId/settings',
@@ -214,6 +226,8 @@ export interface FileRoutesByFullPath {
   '/databases/': typeof DatabasesIndexRoute
   '/sessions/': typeof SessionsIndexRoute
   '/brokers/$brokerId/settings': typeof BrokersBrokerIdSettingsRoute
+  '/cloud/scale/$groupId': typeof CloudScaleGroupIdRoute
+  '/cloud/scale/new': typeof CloudScaleNewRoute
   '/databases/$dbId/settings': typeof DatabasesDbIdSettingsRoute
 }
 export interface FileRoutesByTo {
@@ -245,6 +259,8 @@ export interface FileRoutesByTo {
   '/databases': typeof DatabasesIndexRoute
   '/sessions': typeof SessionsIndexRoute
   '/brokers/$brokerId/settings': typeof BrokersBrokerIdSettingsRoute
+  '/cloud/scale/$groupId': typeof CloudScaleGroupIdRoute
+  '/cloud/scale/new': typeof CloudScaleNewRoute
   '/databases/$dbId/settings': typeof DatabasesDbIdSettingsRoute
 }
 export interface FileRoutesById {
@@ -277,6 +293,8 @@ export interface FileRoutesById {
   '/databases/': typeof DatabasesIndexRoute
   '/sessions/': typeof SessionsIndexRoute
   '/brokers/$brokerId_/settings': typeof BrokersBrokerIdSettingsRoute
+  '/cloud/scale/$groupId': typeof CloudScaleGroupIdRoute
+  '/cloud/scale/new': typeof CloudScaleNewRoute
   '/databases/$dbId_/settings': typeof DatabasesDbIdSettingsRoute
 }
 export interface FileRouteTypes {
@@ -310,6 +328,8 @@ export interface FileRouteTypes {
     | '/databases/'
     | '/sessions/'
     | '/brokers/$brokerId/settings'
+    | '/cloud/scale/$groupId'
+    | '/cloud/scale/new'
     | '/databases/$dbId/settings'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -341,6 +361,8 @@ export interface FileRouteTypes {
     | '/databases'
     | '/sessions'
     | '/brokers/$brokerId/settings'
+    | '/cloud/scale/$groupId'
+    | '/cloud/scale/new'
     | '/databases/$dbId/settings'
   id:
     | '__root__'
@@ -372,6 +394,8 @@ export interface FileRouteTypes {
     | '/databases/'
     | '/sessions/'
     | '/brokers/$brokerId_/settings'
+    | '/cloud/scale/$groupId'
+    | '/cloud/scale/new'
     | '/databases/$dbId_/settings'
   fileRoutesById: FileRoutesById
 }
@@ -404,6 +428,8 @@ export interface RootRouteChildren {
   DatabasesIndexRoute: typeof DatabasesIndexRoute
   SessionsIndexRoute: typeof SessionsIndexRoute
   BrokersBrokerIdSettingsRoute: typeof BrokersBrokerIdSettingsRoute
+  CloudScaleGroupIdRoute: typeof CloudScaleGroupIdRoute
+  CloudScaleNewRoute: typeof CloudScaleNewRoute
   DatabasesDbIdSettingsRoute: typeof DatabasesDbIdSettingsRoute
 }
 
@@ -605,6 +631,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BrokersBrokerIdSettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/cloud/scale/$groupId': {
+      id: '/cloud/scale/$groupId'
+      path: '/cloud/scale/$groupId'
+      fullPath: '/cloud/scale/$groupId'
+      preLoaderRoute: typeof CloudScaleGroupIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cloud/scale/new': {
+      id: '/cloud/scale/new'
+      path: '/cloud/scale/new'
+      fullPath: '/cloud/scale/new'
+      preLoaderRoute: typeof CloudScaleNewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/databases/$dbId_/settings': {
       id: '/databases/$dbId_/settings'
       path: '/databases/$dbId/settings'
@@ -644,6 +684,8 @@ const rootRouteChildren: RootRouteChildren = {
   DatabasesIndexRoute: DatabasesIndexRoute,
   SessionsIndexRoute: SessionsIndexRoute,
   BrokersBrokerIdSettingsRoute: BrokersBrokerIdSettingsRoute,
+  CloudScaleGroupIdRoute: CloudScaleGroupIdRoute,
+  CloudScaleNewRoute: CloudScaleNewRoute,
   DatabasesDbIdSettingsRoute: DatabasesDbIdSettingsRoute,
 }
 export const routeTree = rootRouteImport
