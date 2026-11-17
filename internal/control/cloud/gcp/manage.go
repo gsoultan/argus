@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -55,6 +56,8 @@ var supported = map[cloud.Action]bool{
 	cloud.ActionVolumeDelete:   true,
 	cloud.ActionSnapshotCreate: true,
 	cloud.ActionSnapshotDelete: true,
+	cloud.ActionImageCreate:    true,
+	cloud.ActionImageDelete:    true,
 
 	cloud.ActionAddressAllocate:     true,
 	cloud.ActionAddressAssociate:    true,
@@ -78,7 +81,7 @@ func SupportedActions() []cloud.Action {
 	for _, a := range []cloud.Action{cloud.ActionStart, cloud.ActionStop, cloud.ActionReboot,
 		cloud.ActionResize, cloud.ActionTags, cloud.ActionProtect, cloud.ActionUnprotect, cloud.ActionVolumeGrow,
 		cloud.ActionVolumeCreate, cloud.ActionVolumeAttach, cloud.ActionVolumeDetach, cloud.ActionVolumeDelete,
-		cloud.ActionSnapshotCreate, cloud.ActionSnapshotDelete,
+		cloud.ActionSnapshotCreate, cloud.ActionSnapshotDelete, cloud.ActionImageCreate, cloud.ActionImageDelete,
 		cloud.ActionAddressAllocate, cloud.ActionAddressAssociate, cloud.ActionAddressDisassociate, cloud.ActionAddressRelease,
 		cloud.ActionRemove, cloud.ActionLaunch} {
 		if supported[a] {
@@ -872,9 +875,10 @@ var imageFamilies = []struct{ project, family, label string }{
 	{"windows-cloud", "windows-2022", "Windows Server 2022"},
 }
 
-// Images are the image families Argus offers, those Google still has. An
-// image's id is its family's path, which Google resolves to the latest
-// image when the VM is made.
+// Images are the image families Argus offers, those Google still has,
+// then the project's own ready images. A family's id is its path, which
+// Google resolves to the latest image when the VM is made; an own image's
+// is its path by name.
 func (p *Provider) Images(ctx context.Context, a cloud.Account, actor cloud.Actor, _ string) ([]cloud.Image, error) {
 	t, err := p.session(ctx, a, actor)
 	if err != nil {
@@ -893,11 +897,54 @@ func (p *Provider) Images(ctx context.Context, a cloud.Account, actor cloud.Acto
 		}
 		out = append(out, cloud.Image{Family: f.family, Label: f.label, ID: path, Name: img.Name, Linux: f.project != "windows-cloud"})
 	}
+	own, err := p.ownImages(ctx, t, actor, a.AccountID)
+	if err != nil {
+		last = err
+	}
+	out = append(out, own...)
 	if len(out) == 0 && last != nil {
 		return nil, last
 	}
 	return out, nil
 }
+
+// ownImages are the project's ready images that are not deprecated, by
+// name.
+func (p *Provider) ownImages(ctx context.Context, t token, actor cloud.Actor, project string) ([]cloud.Image, error) {
+	var r struct {
+		Items []struct {
+			Name            string `json:"name"`
+			Status          string `json:"status"`
+			DiskSizeGb      string `json:"diskSizeGb"`
+			GuestOsFeatures []struct {
+				Type string `json:"type"`
+			} `json:"guestOsFeatures"`
+			Deprecated *struct {
+				State string `json:"state"`
+			} `json:"deprecated"`
+		} `json:"items"`
+	}
+	if err := p.get(ctx, t, actor, p.ep.compute+"/compute/v1/projects/"+project+"/global/images?maxResults=500&fields=items(name,status,diskSizeGb,guestOsFeatures,deprecated)", &r); err != nil {
+		return nil, err
+	}
+	var out []cloud.Image
+	for _, im := range r.Items {
+		if im.Status != "READY" || (im.Deprecated != nil && im.Deprecated.State != "" && im.Deprecated.State != "ACTIVE") {
+			continue
+		}
+		linux := true
+		for _, f := range im.GuestOsFeatures {
+			linux = linux && f.Type != "WINDOWS"
+		}
+		gb, _ := strconv.Atoi(im.DiskSizeGb)
+		out = append(out, cloud.Image{Family: "own", Label: im.Name + " (this project)", ID: ownImage(project, im.Name), Name: im.Name, Linux: linux, MinDiskGB: gb})
+	}
+	slices.SortFunc(out, func(x, y cloud.Image) int { return strings.Compare(x.Name, y.Name) })
+	return out, nil
+}
+
+// ownImage is the path of a project's own image by name.
+func ownImage(project, name string) string { return "projects/" + project + "/global/images/" + name }
 
 // Zones are the zones of a region that are up, for a launch.
 func (p *Provider) Zones(ctx context.Context, a cloud.Account, actor cloud.Actor, region string) ([]string, error) {
@@ -970,6 +1017,9 @@ func (p *Provider) Launch(ctx context.Context, a cloud.Account, actor cloud.Acto
 	known := false
 	for _, f := range imageFamilies {
 		known = known || s.Image == "projects/"+f.project+"/global/images/family/"+f.family
+	}
+	if own := strings.TrimPrefix(s.Image, ownImage(a.AccountID, "")); own != s.Image && ValidName(own) {
+		known = true
 	}
 	if !known {
 		return cloud.Result{}, errors.New("pick one of the images offered")
@@ -1057,11 +1107,80 @@ func (p *Provider) Launch(ctx context.Context, a cloud.Account, actor cloud.Acto
 
 // The rest of cloud.Manager and cloud.Storage: refused until each is built.
 
-func (p *Provider) CreateImage(context.Context, cloud.Account, cloud.Actor, string, string, string, bool) (cloud.Result, error) {
-	return cloud.Result{}, errNotYet("make an image")
+// CreateImage makes an image of a VM's boot disk under name. Google copies
+// a running VM's disk as it is, so reboot cannot be asked for: stop the VM
+// first for a consistent copy. Other disks are not in the image. Images
+// are global in Google Cloud; the result names the new image's id.
+func (p *Provider) CreateImage(ctx context.Context, a cloud.Account, actor cloud.Actor, region, instance, name string, reboot bool) (cloud.Result, error) {
+	if !ValidName(name) {
+		return cloud.Result{}, fmt.Errorf("%q cannot name an image: lowercase letters, digits and -, up to 63, starting with a letter", name)
+	}
+	if reboot {
+		return cloud.Result{}, errors.New("Google does not reboot a VM for an image; stop it first for a consistent copy")
+	}
+	t, err := p.session(ctx, a, actor)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	w, err := p.locate(ctx, t, actor, a.AccountID, region, "instances", instance)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	var vm struct {
+		Name   string `json:"name"`
+		Status string `json:"status"`
+		Disks  []struct {
+			Boot   bool   `json:"boot"`
+			Source string `json:"source"`
+		} `json:"disks"`
+	}
+	if err := p.get(ctx, t, actor, p.ep.compute+w.path(a.AccountID, "instances")+instance+"?fields=name,status,disks(boot,source)", &vm); err != nil {
+		return cloud.Result{}, err
+	}
+	boot := ""
+	for _, d := range vm.Disks {
+		if d.Boot {
+			boot = d.Source
+		}
+	}
+	if boot == "" {
+		return cloud.Result{}, fmt.Errorf("%s has no boot disk to make an image of", vm.Name)
+	}
+	u := p.ep.compute + "/compute/v1/projects/" + a.AccountID + "/global/images"
+	if vm.Status == "RUNNING" {
+		// Google refuses a disk in use unless told to copy it as it is.
+		u += "?forceCreate=true"
+	}
+	op, err := p.send(ctx, t, actor, http.MethodPost, u, map[string]any{
+		"name":        name,
+		"sourceDisk":  boot,
+		"description": "Made by Argus from the boot disk of " + vm.Name,
+		"labels":      map[string]string{"argus-from-instance": instance},
+	})
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	return cloud.Result{ResourceID: op.TargetID, RequestID: op.Name}, nil
 }
-func (p *Provider) DeleteImage(context.Context, cloud.Account, cloud.Actor, string, string, bool) (cloud.Result, error) {
-	return cloud.Result{}, errNotYet("delete an image")
+
+// DeleteImage deletes one of the project's images. A Google image keeps
+// no snapshots of its own, so there are none to delete with it.
+func (p *Provider) DeleteImage(ctx context.Context, a cloud.Account, actor cloud.Actor, _ string, image string, withSnapshots bool) (cloud.Result, error) {
+	if !reID.MatchString(image) {
+		return cloud.Result{}, fmt.Errorf("%q is not a Compute Engine id", image)
+	}
+	if withSnapshots {
+		return cloud.Result{}, errors.New("a Google image has no snapshots of its own to delete with it")
+	}
+	t, err := p.session(ctx, a, actor)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	op, err := p.send(ctx, t, actor, http.MethodDelete, p.ep.compute+"/compute/v1/projects/"+a.AccountID+"/global/images/"+image, nil)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	return cloud.Result{ResourceID: image, RequestID: op.Name}, nil
 }
 
 // AllocateAddress reserves a static external address in region under

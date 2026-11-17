@@ -364,11 +364,29 @@ func (a *API) planStorage(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 			return ch, http.StatusBadRequest, errors.New("an image takes {name, reboot}")
 		}
 		s.Name = strings.TrimSpace(s.Name)
-		if !cloud.ValidImageName(s.Name) {
-			return ch, http.StatusBadRequest, errors.New("an image name is 3 to 128 letters, digits, spaces and ( ) [ ] . / ' @ _ -")
-		}
 		if !liveInstance(res) {
 			return ch, http.StatusConflict, errors.New(res.Name + " is being removed")
+		}
+		if gcpAcct {
+			// Images are global in Google Cloud, and made of the boot disk.
+			if !gcp.ValidName(s.Name) {
+				return ch, http.StatusBadRequest, errors.New("an image's name is lowercase letters, digits and -, up to 63, starting with a letter")
+			}
+			if s.Reboot {
+				return ch, http.StatusBadRequest, errors.New("Google does not reboot a VM for an image; stop it first for a consistent copy")
+			}
+			if a.imageNamed(ctx, m.acct.ID, gcp.GlobalRegion, s.Name) {
+				return ch, http.StatusConflict, errors.New("there is already an image named " + s.Name + " in this project")
+			}
+			ch.Spec, _ = json.Marshal(s)
+			ch.Summary = "Make the image \"" + s.Name + "\" from the boot disk of " + res.Name
+			if res.State == "running" {
+				ch.Summary += ", copied while it runs"
+			}
+			break
+		}
+		if !cloud.ValidImageName(s.Name) {
+			return ch, http.StatusBadRequest, errors.New("an image name is 3 to 128 letters, digits, spaces and ( ) [ ] . / ' @ _ -")
 		}
 		if a.imageNamed(ctx, m.acct.ID, in.Region, s.Name) {
 			return ch, http.StatusConflict, errors.New("there is already an image named " + s.Name + " in " + in.Region)
@@ -388,6 +406,9 @@ func (a *API) planStorage(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 		}
 		if err := confirmTyped(in, res); err != nil {
 			return ch, http.StatusBadRequest, err
+		}
+		if gcpAcct && s.WithSnapshots {
+			return ch, http.StatusBadRequest, errors.New("a Google image has no snapshots of its own to delete with it")
 		}
 		ch.Spec, _ = json.Marshal(cloudDeleteSpec{WithSnapshots: s.WithSnapshots})
 		ch.Summary = "Delete the image " + res.Name + " (" + res.ID + ")"

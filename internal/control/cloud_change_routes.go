@@ -877,6 +877,9 @@ func (a *API) planGCPLaunch(r *http.Request, m cloudManaged, actor string, in *c
 		return ch, http.StatusBadRequest, errors.New("pick one of the images offered")
 	}
 	s.ImageLabel = img.Label
+	if int32(img.MinDiskGB) > s.DiskGB {
+		return ch, http.StatusBadRequest, fmt.Errorf("%s needs a disk of at least %d GB", img.Label, img.MinDiskGB)
+	}
 	if s.Agent && !img.Linux {
 		return ch, http.StatusBadRequest, errors.New("the agent enrolls by itself on Linux images; add " + img.Label + " servers from Servers › Add a server")
 	}

@@ -80,6 +80,9 @@ type Image struct {
 	Name   string `json:"name"`
 	// Linux is whether the agent can enroll on it at first boot.
 	Linux bool `json:"linux"`
+	// MinDiskGB is the smallest disk it fits on, when more than the
+	// provider's least.
+	MinDiskGB int `json:"minDiskGb,omitempty"`
 }
 
 // LaunchSpec is one new instance.

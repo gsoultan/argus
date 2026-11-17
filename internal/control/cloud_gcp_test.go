@@ -615,3 +615,55 @@ func TestCloudGoogleProjectLaunchesVMsInAZone(t *testing.T) {
 		t.Fatalf("launch: %+v", ch)
 	}
 }
+
+func TestCloudGoogleProjectMakesAndDeletesImages(t *testing.T) {
+	e, fake, project := gcpEnv(t)
+	w := do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts/prepare", "admin-token", `{"provider":"gcp","accountId":"`+project+`","manage":true}`)
+	var p CloudPrepared
+	_ = json.Unmarshal(w.Body.Bytes(), &p)
+	fake.Roles[p.ReadRoleARN] = p.ExternalID
+	fake.Roles[p.ManageRoleARN] = p.ExternalID
+	fake.Resources["us-central1"] = []cloud.Resource{
+		{Kind: cloud.KindInstance, ID: "101", Name: "web-1", Region: "us-central1", Zone: "us-central1-a", State: "running", Size: "e2-small"},
+	}
+	fake.Resources[gcp.GlobalRegion] = []cloud.Resource{
+		{Kind: cloud.KindImage, ID: "9001", Name: "web-golden", Region: gcp.GlobalRegion, State: "ready", Size: "10 GiB"},
+	}
+	w = do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts", "admin-token",
+		`{"provider":"gcp","name":"web-gcp","accountId":"`+project+`","environment":"development","manage":true}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("connect with changes: %d %s", w.Code, w.Body)
+	}
+	var c CloudAccount
+	_ = json.Unmarshal(w.Body.Bytes(), &c)
+	deadline := time.Now().Add(5 * time.Second)
+	for !e.a.SyncCloudAccount(context.Background(), c) {
+		if time.Now().After(deadline) {
+			t.Fatal("the project was being read for too long")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	ask := func(region, body string, want int) CloudChange {
+		t.Helper()
+		w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes", "admin-token",
+			`{"accountId":"`+c.ID+`","region":"`+region+`",`+body+`}`)
+		if w.Code != want {
+			t.Fatalf("%s: %d %s, want %d", body, w.Code, w.Body, want)
+		}
+		var ch CloudChange
+		_ = json.Unmarshal(w.Body.Bytes(), &ch)
+		return ch
+	}
+	ask("us-central1", `"action":"image-create","resourceId":"101","spec":{"name":"Web Golden"}`, http.StatusBadRequest)
+	ask("us-central1", `"action":"image-create","resourceId":"101","spec":{"name":"web-2","reboot":true}`, http.StatusBadRequest)
+	ask("us-central1", `"action":"image-create","resourceId":"101","spec":{"name":"web-golden"}`, http.StatusConflict)
+	ch := ask("us-central1", `"action":"image-create","resourceId":"101","spec":{"name":"web-golden-2"}`, http.StatusOK)
+	if ch.State != "applied" || ch.Summary != `Make the image "web-golden-2" from the boot disk of web-1, copied while it runs` {
+		t.Fatalf("image: %+v", ch)
+	}
+	ask(gcp.GlobalRegion, `"action":"image-delete","resourceId":"9001","confirm":"web-golden","spec":{"withSnapshots":true}`, http.StatusBadRequest)
+	ch = ask(gcp.GlobalRegion, `"action":"image-delete","resourceId":"9001","confirm":"web-golden"`, http.StatusOK)
+	if ch.State != "applied" || ch.Summary != "Delete the image web-golden (9001)" {
+		t.Fatalf("delete: %+v", ch)
+	}
+}
