@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/gsoultan/argus/internal/control/cloud"
 )
@@ -174,4 +175,36 @@ func (a *API) getCloudInstanceSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, cur)
+}
+
+// getCloudInstanceSizes lists the sizes an instance can change to, where
+// the provider says (Google's depend on the zone), else the usual ones.
+func (a *API) getCloudInstanceSizes(w http.ResponseWriter, r *http.Request) {
+	actor, ok := a.cloudChanger(w, r)
+	if !ok {
+		return
+	}
+	q := r.URL.Query()
+	m, code, err := a.cloudManagedAccount(r.Context(), q.Get("accountId"))
+	if err != nil {
+		writeErr(w, code, err.Error())
+		return
+	}
+	inst, err := a.store.CloudInstance(r.Context(), m.acct.ID, q.Get("region"), q.Get("resourceId"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	sizes := CloudSizes
+	if sl, ok := m.manager.(cloud.SizeLister); ok {
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		sizes, err = sl.Sizes(ctx, m.target, cloud.Actor(actor), inst.Region, inst.ID)
+		cancel()
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, "Argus could not list the sizes it can change to: "+err.Error())
+			return
+		}
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"sizes": sizes})
 }

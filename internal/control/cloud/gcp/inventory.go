@@ -127,8 +127,9 @@ type raw struct {
 	ServiceAccounts []struct {
 		Email string `json:"email"`
 	} `json:"serviceAccounts"`
-	CPUPlatform string `json:"cpuPlatform"`
-	Scheduling  struct {
+	CPUPlatform        string `json:"cpuPlatform"`
+	DeletionProtection bool   `json:"deletionProtection"`
+	Scheduling         struct {
 		Preemptible       bool   `json:"preemptible"`
 		ProvisioningModel string `json:"provisioningModel"`
 	} `json:"scheduling"`
@@ -407,6 +408,9 @@ func instance(r raw, ids map[string]cloud.Ref, firewalls []raw) cloud.Resource {
 	set(res.Details, "cpuPlatform", r.CPUPlatform)
 	if r.Scheduling.Preemptible || r.Scheduling.ProvisioningModel == "SPOT" {
 		res.Details["lifecycle"] = "spot"
+	}
+	if r.DeletionProtection {
+		res.Details["deletionProtection"] = "on"
 	}
 	set(res.Details, "status", r.Status)
 	return res

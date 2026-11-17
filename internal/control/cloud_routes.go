@@ -155,6 +155,7 @@ func (a *API) getCloudAccounts(w http.ResponseWriter, r *http.Request) {
 		c.IdentityMissing = !slices.ContainsFunc(ids[c.Provider], func(i CloudIdentity) bool { return i.ID == c.Identity })
 		if c.Provider == "gcp" {
 			c.Actions = gcp.SupportedActions()
+			c.TagKinds = gcp.TaggableKinds
 		}
 	}
 	w.Header().Set("Cache-Control", "no-store")

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/control/cloud"
+	"github.com/gsoultan/argus/internal/control/cloud/gcp"
 )
 
 /*
@@ -46,6 +47,7 @@ func (a *API) registerCloudChangeRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/cloud/launch-options", a.getCloudLaunchOptions)
 	mux.HandleFunc("GET /api/v1/cloud/remove-plan", a.getCloudRemovePlan)
 	mux.HandleFunc("GET /api/v1/cloud/instance-settings", a.getCloudInstanceSettings)
+	mux.HandleFunc("GET /api/v1/cloud/instance-sizes", a.getCloudInstanceSizes)
 	mux.HandleFunc("GET /api/v1/cloud/console-output", a.getCloudConsoleOutput)
 	mux.HandleFunc("GET /api/v1/cloud/changes", a.getCloudChanges)
 	mux.HandleFunc("POST /api/v1/cloud/changes", a.postCloudChange)
@@ -298,6 +300,19 @@ type cloudTagsSpec struct {
 	Kind cloud.Kind `json:"kind,omitempty"`
 }
 
+// touchesTag reports whether s sets or removes any of keys, in any case.
+func touchesTag(s cloudTagsSpec, keys ...string) bool {
+	hit := func(k string) bool {
+		return slices.ContainsFunc(keys, func(x string) bool { return strings.EqualFold(x, k) })
+	}
+	for k := range s.Set {
+		if hit(k) {
+			return true
+		}
+	}
+	return slices.ContainsFunc(s.Remove, hit)
+}
+
 // cloudTaggable are the kinds Argus tags.
 var cloudTaggable = []cloud.Kind{cloud.KindInstance, cloud.KindVolume, cloud.KindSnapshot, cloud.KindImage, cloud.KindAddress, cloud.KindFirewall}
 
@@ -458,6 +473,9 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 		if !slices.Contains(cloudTaggable, in.Kind) {
 			return ch, http.StatusBadRequest, fmt.Errorf("Argus does not tag a %s", in.Kind)
 		}
+		if m.acct.Provider == "gcp" && !slices.Contains(gcp.TaggableKinds, in.Kind) {
+			return ch, http.StatusNotImplemented, fmt.Errorf("Argus cannot label a %s in Google Cloud yet; do it in the Google Cloud console", in.Kind)
+		}
 		kind = in.Kind
 	}
 	inst, err := a.store.CloudResourceOf(r.Context(), m.acct.ID, in.Region, kind, in.ResourceID)
@@ -490,19 +508,32 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 			// Google has no gentle reboot: it resets, like the power button.
 			ch.Summary = "Reset " + inst.Name + " (Google Cloud has no gentle reboot: the operating system is not asked to shut down first)"
 		}
-	case cloud.ActionProtect:
-		ch.Summary = "Turn on termination protection for " + inst.Name
-	case cloud.ActionUnprotect:
-		ch.Summary = "Turn off termination protection for " + inst.Name
+	case cloud.ActionProtect, cloud.ActionUnprotect:
+		what := "termination protection"
+		if m.acct.Provider == "gcp" {
+			what = "deletion protection"
+		}
+		if in.Action == cloud.ActionProtect {
+			ch.Summary = "Turn on " + what + " for " + inst.Name
+		} else {
+			ch.Summary = "Turn off " + what + " for " + inst.Name
+		}
 	case cloud.ActionResize:
 		var s cloudResizeSpec
-		if err := json.Unmarshal(in.Spec, &s); err != nil || !cloud.ValidSize(s.Size) {
+		gcpSize := m.acct.Provider == "gcp"
+		if err := json.Unmarshal(in.Spec, &s); err != nil || (!gcpSize && !cloud.ValidSize(s.Size)) || (gcpSize && !gcp.ValidMachineType(s.Size)) {
+			if gcpSize {
+				return ch, http.StatusBadRequest, errors.New("pick a machine type, like e2-medium")
+			}
 			return ch, http.StatusBadRequest, errors.New("pick an instance type, like t3.medium")
 		}
 		if s.Size == inst.Size {
 			return ch, http.StatusBadRequest, errors.New(inst.Name + " is already " + s.Size)
 		}
 		if inst.State != "stopped" {
+			if gcpSize {
+				return ch, http.StatusConflict, errors.New("stop " + inst.Name + " first; Google changes the machine type of a stopped VM only")
+			}
 			return ch, http.StatusConflict, errors.New("stop " + inst.Name + " first; AWS changes the type of a stopped instance only")
 		}
 		s.From = inst.Size
@@ -520,11 +551,23 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 			return ch, http.StatusBadRequest, errors.New("change at most 50 tags at once")
 		}
 		for k, v := range s.Set {
+			if m.acct.Provider == "gcp" {
+				if why := gcp.LabelProblem(k, v); why != "" {
+					return ch, http.StatusBadRequest, fmt.Errorf("%q cannot be a label: %s", k, why)
+				}
+				continue
+			}
 			if !cloud.ValidTagKey(k) || len(v) > 256 {
 				return ch, http.StatusBadRequest, fmt.Errorf("%q cannot be a tag here: keys are up to 128 characters and cannot start with aws:, values up to 256", k)
 			}
 		}
 		for _, k := range s.Remove {
+			if m.acct.Provider == "gcp" {
+				if gcp.LabelProblem(k, "") != "" {
+					return ch, http.StatusBadRequest, fmt.Errorf("%q cannot be removed from here", k)
+				}
+				continue
+			}
 			if !cloud.ValidTagKey(k) {
 				return ch, http.StatusBadRequest, fmt.Errorf("%q cannot be removed from here", k)
 			}
@@ -533,15 +576,17 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 			s.Kind = kind
 		}
 		ch.Spec, _ = json.Marshal(s)
-		ch.Summary = "Change tags on " + inst.Name + ": " + tagWords(s)
+		noun := "tags"
+		if m.acct.Provider == "gcp" {
+			noun = "labels"
+		}
+		ch.Summary = "Change " + noun + " on " + inst.Name + ": " + tagWords(s)
 		// Moving an instance out of Production by retagging it is a change
 		// to the rule that guards it, so it needs what Production needs.
-		if _, ok := s.Set["Environment"]; ok || slices.Contains(s.Remove, "Environment") {
-			ch.Level = cloud.LevelChange
-		}
 		// So is putting it on a schedule or taking it off one: a schedule
-		// stops and starts it from then on.
-		if _, ok := s.Set[cloud.ScheduleTag]; ok || slices.Contains(s.Remove, cloud.ScheduleTag) {
+		// stops and starts it from then on. Keys are matched as cloudEnvOf
+		// and schedules read them, whatever their case.
+		if touchesTag(s, "environment", "env", cloud.ScheduleTag) {
 			ch.Level = cloud.LevelChange
 		}
 	case cloud.ActionRemove:
@@ -843,7 +888,15 @@ func (a *API) applyCloudChange(r *http.Request, m cloudManaged, ch CloudChange) 
 	case cloud.ActionTags:
 		var s cloudTagsSpec
 		_ = json.Unmarshal(ch.Spec, &s)
-		res, err = m.manager.SetTags(ctx, m.target, actor, ch.Region, ch.ResourceID, s.Set, s.Remove)
+		if kt, ok := m.manager.(cloud.KindTagger); ok {
+			kind := s.Kind
+			if kind == "" {
+				kind = cloud.KindInstance
+			}
+			res, err = kt.SetTagsOf(ctx, m.target, actor, ch.Region, kind, ch.ResourceID, s.Set, s.Remove)
+		} else {
+			res, err = m.manager.SetTags(ctx, m.target, actor, ch.Region, ch.ResourceID, s.Set, s.Remove)
+		}
 	case cloud.ActionLaunch:
 		res, err = a.applyLaunch(ctx, r, m, ch)
 	case cloud.ActionRemove:

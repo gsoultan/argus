@@ -1,7 +1,7 @@
 import { ActionIcon, Alert, Button, Group, Modal, Stack, Text, TextInput, Textarea } from '@mantine/core'
 import { IconPlus, IconUserCheck, IconX } from '@tabler/icons-react'
 import { useState, type ReactNode } from 'react'
-import { needsApproval, useAskCloudChange, type CloudChange, type CloudChangeInput, type CloudEnvironment, type CloudItem } from '~/lib/cloud'
+import { labelProblem, needsApproval, useAskCloudChange, type CloudChange, type CloudChangeInput, type CloudEnvironment, type CloudItem } from '~/lib/cloud'
 import { notifyError, notifyOk } from '~/lib/notify'
 import { AloneOr } from '~/components/ApproveOwn'
 import { FS, INK } from '~/theme'
@@ -15,7 +15,7 @@ import { EnvBadge } from './common'
 /** Tells the person what happened to the change they asked for. */
 export function reportChange(c: CloudChange, done: string) {
   if (c.state === 'awaiting_approval') notifyOk('Asked for approval', `${c.summary}. Someone else approves it on Approvals or Cloud › Changes.`)
-  else if (c.state === 'failed') notifyError('AWS refused the change', new Error(c.error || 'No reason was given.'))
+  else if (c.state === 'failed') notifyError('The cloud refused the change', new Error(c.error || 'No reason was given.'))
   else notifyOk(done, c.summary)
 }
 
@@ -76,9 +76,9 @@ export function useSubmit(onClose: () => void) {
   return { submit, busy: ask.isPending }
 }
 
-export function TagsChange({ it, env, onClose }: { it: CloudItem; env: CloudEnvironment; onClose: () => void }) {
+export function TagsChange({ it, env, gcp, onClose }: { it: CloudItem; env: CloudEnvironment; gcp?: boolean; onClose: () => void }) {
   const r = it.resource
-  const start = Object.entries(r.tags ?? {}).filter(([k]) => !k.startsWith('aws:')).sort(([a], [b]) => a.localeCompare(b))
+  const start = Object.entries(r.tags ?? {}).filter(([k]) => !k.startsWith('aws:') && !(gcp && k.startsWith('goog-'))).sort(([a], [b]) => a.localeCompare(b))
   const [rows, setRows] = useState<[string, string][]>(start.length ? start : [['', '']])
   const [reason, setReason] = useState('')
   const { submit, busy } = useSubmit(onClose)
@@ -91,24 +91,35 @@ export function TagsChange({ it, env, onClose }: { it: CloudItem; env: CloudEnvi
   const touchesEnv = Object.keys(set).some(envKey) || remove.some(envKey)
   const changed = Object.keys(set).length + remove.length
   const edit = (i: number, j: 0 | 1, v: string) => setRows(rows.map((row, n) => n === i ? (j === 0 ? [v, row[1]] : [row[0], v]) : row))
+  // Google keeps labels lowercase; say so as they are typed, not after.
+  const keyError = (k: string) => gcp
+    ? (k.trim() && labelProblem(k.trim(), '')) || undefined
+    : k.toLowerCase().startsWith('aws:') ? 'AWS keeps aws: tags' : undefined
+  const valueError = (k: string, v: string) => gcp && k.trim() && !labelProblem(k.trim(), '') ? labelProblem(k.trim(), v) : undefined
+  const invalid = rows.some(([k, v]) => keyError(k) || valueError(k, v))
+  const noun = gcp ? 'label' : 'tag'
   return (
-    <ChangeModal title={`Tags on ${r.name}`} env={env} level={touchesEnv ? 'change' : 'operate'} reason={reason} setReason={setReason}
-      onClose={onClose} busy={busy} submit={changed ? `Save ${changed} change${changed === 1 ? '' : 's'}` : 'Save'} disabled={changed === 0}
+    <ChangeModal title={`${gcp ? 'Labels' : 'Tags'} on ${r.name}`} env={env} level={touchesEnv ? 'change' : 'operate'} reason={reason} setReason={setReason}
+      onClose={onClose} busy={busy} submit={changed ? `Save ${changed} change${changed === 1 ? '' : 's'}` : 'Save'} disabled={changed === 0 || invalid}
       onSubmit={() => void submit({ accountId: it.accountId, region: r.region, action: 'tags', resourceId: r.id,
-        kind: r.kind === 'instance' ? undefined : r.kind, spec: { set, remove }, reason }, 'Tags saved')}>
+        kind: r.kind === 'instance' ? undefined : r.kind, spec: { set, remove }, reason }, gcp ? 'Labels saved' : 'Tags saved')}>
       <Stack gap={6}>
+        {gcp && (
+          <Text size={FS.meta} c="dimmed">Google keeps labels lowercase: letters, digits, _ and -, up to 63 characters.</Text>
+        )}
         {rows.map(([k, v], i) => (
-          <Group key={i} gap="xs" wrap="nowrap">
-            <TextInput placeholder="Key" value={k} onChange={(e) => edit(i, 0, e.currentTarget.value)} style={{ flex: 2 }} aria-label="Tag key"
-              error={k.toLowerCase().startsWith('aws:') ? 'AWS keeps aws: tags' : undefined} />
-            <TextInput placeholder="Value" value={v} onChange={(e) => edit(i, 1, e.currentTarget.value)} style={{ flex: 3 }} aria-label="Tag value" />
-            <ActionIcon variant="subtle" color="gray" aria-label="Remove tag" onClick={() => setRows(rows.filter((_, n) => n !== i))}><IconX size={14} /></ActionIcon>
+          <Group key={i} gap="xs" wrap="nowrap" align="flex-start">
+            <TextInput placeholder="Key" value={k} onChange={(e) => edit(i, 0, e.currentTarget.value)} style={{ flex: 2 }} aria-label={gcp ? 'Label key' : 'Tag key'}
+              error={keyError(k)} />
+            <TextInput placeholder="Value" value={v} onChange={(e) => edit(i, 1, e.currentTarget.value)} style={{ flex: 3 }} aria-label={gcp ? 'Label value' : 'Tag value'}
+              error={valueError(k, v)} />
+            <ActionIcon variant="subtle" color="gray" mt={4} aria-label={`Remove ${noun}`} onClick={() => setRows(rows.filter((_, n) => n !== i))}><IconX size={14} /></ActionIcon>
           </Group>
         ))}
-        <Button variant="subtle" size="xs" w="fit-content" leftSection={<IconPlus size={13} />} onClick={() => setRows([...rows, ['', '']])}>Add a tag</Button>
+        <Button variant="subtle" size="xs" w="fit-content" leftSection={<IconPlus size={13} />} onClick={() => setRows([...rows, ['', '']])}>Add a {noun}</Button>
       </Stack>
       {touchesEnv && (
-        <Text size={FS.meta} c={INK.pending}>Changing the Environment tag changes which rules apply here, so it counts as a bigger change.</Text>
+        <Text size={FS.meta} c={INK.pending}>Changing the {gcp ? 'environment label' : 'Environment tag'} changes which rules apply here, so it counts as a bigger change.</Text>
       )}
     </ChangeModal>
   )

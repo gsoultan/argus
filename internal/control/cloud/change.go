@@ -294,6 +294,18 @@ func ValidTagKey(k string) bool {
 // ValidSize reports whether s looks like an instance type.
 func ValidSize(s string) bool { return reSize.MatchString(s) && len(s) <= 32 }
 
+// KindTagger is a Manager that must be told what kind a resource is to
+// change its tags, because its ids are only unique within a kind.
+type KindTagger interface {
+	SetTagsOf(ctx context.Context, a Account, actor Actor, region string, kind Kind, id string, set map[string]string, remove []string) (Result, error)
+}
+
+// SizeLister is a Manager that lists the sizes one instance can change to,
+// where they depend on where it runs.
+type SizeLister interface {
+	Sizes(ctx context.Context, a Account, actor Actor, region, id string) ([]string, error)
+}
+
 // ErrUnsupported is a change a provider does not make yet.
 var ErrUnsupported = errors.New("not supported")
 
