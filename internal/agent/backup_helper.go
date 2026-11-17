@@ -54,6 +54,9 @@ type PGBackupRequest struct {
 	// Low runs the tool at low CPU and I/O priority where nice and ionice
 	// are installed: a test restore should not slow the server's real work.
 	Low bool `json:"low,omitempty"`
+	// Clone is what basebackup and basebackup-undo act on; the
+	// replication password comes on stdin.
+	Clone *PGCloneRequest `json:"clone,omitempty"`
 }
 
 // EncodePGBackupRequest and DecodePGBackupRequest carry it on the command line.
@@ -107,6 +110,9 @@ func RunPGBackup(ctx context.Context, req PGBackupRequest, stdin io.Reader, stdo
 	}
 	if !safeAccountName.MatchString(user) {
 		return errors.New("bad account name")
+	}
+	if req.Op == "basebackup" || req.Op == "basebackup-undo" {
+		return runBaseBackup(ctx, req, stdin, stdout, stderr)
 	}
 	conn := []string{"--host=" + req.Socket, "--port=" + strconv.Itoa(req.Port), "--no-password", "--username=" + user}
 	switch req.Op {

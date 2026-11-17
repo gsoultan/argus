@@ -58,6 +58,9 @@ type BackupConfig struct {
 	// Tool runs one pg-backup request; nil runs the helper as AdminUser.
 	// stderr sees the tool's progress lines.
 	Tool func(ctx context.Context, req PGBackupRequest, stdin io.Reader, stdout, stderr io.Writer) error
+	// Units stops and starts the Postgres service for a replica clone; nil
+	// is systemctl and /proc.
+	Units *pgUnits
 }
 
 const (
@@ -82,6 +85,9 @@ func Backup(cfg BackupConfig) TunnelService {
 	}
 	if cfg.Tool == nil {
 		cfg.Tool = helperTool(cfg)
+	}
+	if cfg.Units == nil {
+		cfg.Units = systemUnits()
 	}
 	busy := &serverJobs{}
 	return func(ctx context.Context, call *Call) {
@@ -116,6 +122,12 @@ func Backup(cfg BackupConfig) TunnelService {
 				return
 			}
 			defer busy.give(b.DatabaseID)
+		case tunnel.BackupJobReplicaClone:
+			if !busy.takeAlone(b.DatabaseID) {
+				call.Refuse("a backup, restore or test restore is still running on this server")
+				return
+			}
+			defer busy.give(b.DatabaseID)
 		case tunnel.BackupJobTest:
 			if !busy.takeAlone(b.DatabaseID) {
 				call.Refuse("another backup, restore or test restore is still running on this server; a test restore runs alone")
@@ -126,7 +138,7 @@ func Backup(cfg BackupConfig) TunnelService {
 		if err := call.Accept(b.BackupID); err != nil {
 			return
 		}
-		j := &backupJob{cfg: cfg, log: log, g: g, b: b, stream: call.Stream, started: time.Now()}
+		j := &backupJob{cfg: cfg, log: log, g: g, b: b, stream: call.Stream, started: time.Now(), goOn: make(chan struct{}, 1)}
 		res := j.run(ctx)
 		if !res.OK {
 			log.Warn("tunnel: backup job failed", "job", b.Job, "database", b.Name, "backup", b.BackupID,
@@ -148,6 +160,8 @@ type backupJob struct {
 	stream  tunnel.Stream
 	started time.Time
 	wmu     sync.Mutex
+	// goOn is signalled when the control plane sends go.
+	goOn chan struct{}
 	// the latest progress, sent on a timer
 	pmu   sync.Mutex
 	stage string
@@ -222,6 +236,12 @@ func (j *backupJob) run(ctx context.Context) tunnel.BackupResult {
 					cancel()
 					return
 				}
+				if req.Op == "go" && j.goOn != nil {
+					select {
+					case j.goOn <- struct{}{}:
+					default:
+					}
+				}
 			case tunnel.FrameBackupData:
 				c := make([]byte, len(p))
 				copy(c, p)
@@ -270,6 +290,10 @@ func (j *backupJob) run(ctx context.Context) tunnel.BackupResult {
 		return j.runChecks(ctx)
 	case tunnel.BackupJobDropTest:
 		return j.dropTest(ctx, j.b.Kept)
+	case tunnel.BackupJobReplicaPrimary:
+		return j.replicaPrimary(ctx)
+	case tunnel.BackupJobReplicaClone:
+		return j.replicaClone(ctx)
 	}
 	return j.fail("start", errors.New("unknown job"))
 }

@@ -69,6 +69,11 @@ const (
 	BackupJobTest     = "test"
 	BackupJobChecks   = "checks"
 	BackupJobDropTest = "drop-test"
+	// BackupJobReplicaPrimary runs one replica operation on a primary
+	// (check, prepare, allow or drop; see pgreplica.go). BackupJobReplicaClone
+	// turns a fresh server's Postgres into a streaming replica of a primary.
+	BackupJobReplicaPrimary = "replica-primary"
+	BackupJobReplicaClone   = "replica-clone"
 )
 
 // TestDBPrefix begins the name of every throwaway database a test restore
@@ -211,6 +216,8 @@ type GrantBackup struct {
 	Checks []TestCheck `json:"checks,omitempty"`
 	// MinFreeBytes refuses a dump that would leave less than this free.
 	MinFreeBytes int64 `json:"minFreeBytes,omitempty"`
+	// Replica is what a replica job acts on.
+	Replica *GrantReplica `json:"replica,omitempty"`
 	// Reason is why, shown in the agent's log and the archive header.
 	Reason string `json:"reason,omitempty"`
 }
@@ -233,7 +240,8 @@ type GrantRestore struct {
 
 // BackupRequest is what the control plane may ask of a running job.
 type BackupRequest struct {
-	// Op is cancel.
+	// Op is cancel; or go, which lets a replica clone go on once the
+	// primary has its role (see ReplicaStageVerifier).
 	Op string `json:"op"`
 }
 
@@ -278,6 +286,9 @@ type BackupResult struct {
 	// For a test restore, or a checks job (Checks only).
 	Test   *BackupTestResult `json:"test,omitempty"`
 	Checks []CheckResult     `json:"checks,omitempty"`
+	// Replica is a replica job's answer: a PGReplicaCheck, or what was
+	// prepared, allowed, dropped or cloned.
+	Replica json.RawMessage `json:"replica,omitempty"`
 }
 
 // BackupCatalog is what a server can do.
@@ -310,7 +321,7 @@ func (b *GrantBackup) Validate() error {
 	}
 	switch b.Job {
 	case BackupJobDump, BackupJobRestore, BackupJobCatalog, BackupJobPrune, BackupJobDrop, BackupJobUndo,
-		BackupJobTest, BackupJobChecks, BackupJobDropTest:
+		BackupJobTest, BackupJobChecks, BackupJobDropTest, BackupJobReplicaPrimary, BackupJobReplicaClone:
 	default:
 		return fmt.Errorf("unknown backup job %q", b.Job)
 	}
@@ -327,6 +338,10 @@ func (b *GrantBackup) Validate() error {
 		return fmt.Errorf("not an account name: %q", b.AdminUser)
 	}
 	switch b.Job {
+	case BackupJobReplicaPrimary, BackupJobReplicaClone:
+		if err := b.Replica.Validate(b.Job); err != nil {
+			return err
+		}
 	case BackupJobDump:
 		if !ValidBackupID.MatchString(b.BackupID) {
 			return errors.New("the grant does not name the backup it writes")
