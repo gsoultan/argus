@@ -22,8 +22,8 @@ import { AskModal } from '~/components/DatabaseAskModal'
  */
 interface Search { tab?: BrokerTab | KafkaTab; queue?: string; exchange?: string; topic?: string }
 const TABS: (BrokerTab | KafkaTab)[] = ['overview', 'queues', 'routing', 'connections', 'topics', 'groups']
-const KAFKA_TABS: KafkaTab[] = ['overview', 'topics', 'groups']
-const RABBIT_TABS: BrokerTab[] = ['overview', 'queues', 'routing', 'connections']
+const KAFKA_TABS: KafkaTab[] = ['overview', 'topics', 'groups', 'network']
+const RABBIT_TABS: BrokerTab[] = ['overview', 'queues', 'routing', 'connections', 'network']
 
 export const Route = createFileRoute('/brokers/$brokerId')({
   component: BrokerPage,

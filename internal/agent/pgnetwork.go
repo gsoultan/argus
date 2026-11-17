@@ -70,25 +70,28 @@ func (c PostgresConfig) restart() pgRestarter {
 	if c.Restart != nil {
 		return c.Restart
 	}
-	return func(ctx context.Context, unit string) error {
-		if os.Geteuid() != 0 {
-			return errors.New("the agent does not run as root here, so restart Postgres on the server")
-		}
-		rctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-		defer cancel()
-		out, err := exec.CommandContext(rctx, "systemctl", "restart", unit).CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("systemctl restart %s: %s", unit, strings.TrimSpace(string(out)))
-		}
-		return nil
+	return systemctlRestart
+}
+
+// systemctlRestart restarts a database's systemd service, as root.
+func systemctlRestart(ctx context.Context, unit string) error {
+	if os.Geteuid() != 0 {
+		return errors.New("the agent does not run as root here, so restart it on the server")
 	}
+	rctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	out, err := exec.CommandContext(rctx, "systemctl", "restart", unit).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("systemctl restart %s: %s", unit, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 var unitInCgroup = regexp.MustCompile(`/([A-Za-z0-9@._:-]+\.service)(?:/|$)`)
 
-// serviceOf is the systemd unit a process runs in, from its cgroup; a
-// variable so a test can name one.
-var serviceOf = func(pid int) string {
+// serviceOf is the systemd unit a process runs in, from its cgroup, when
+// its name starts with one of prefixes; a variable so a test can name one.
+var serviceOf = func(pid int, prefixes ...string) string {
 	if pid <= 0 {
 		return ""
 	}
@@ -97,8 +100,14 @@ var serviceOf = func(pid int) string {
 		return ""
 	}
 	for _, line := range strings.Split(string(b), "\n") {
-		if m := unitInCgroup.FindStringSubmatch(line); m != nil && strings.HasPrefix(m[1], "postgresql") {
-			return m[1]
+		m := unitInCgroup.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		for _, p := range prefixes {
+			if strings.HasPrefix(m[1], p) {
+				return m[1]
+			}
 		}
 	}
 	return ""
@@ -188,7 +197,7 @@ func (s *pgSession) networkView(ctx context.Context, st PGHBAState) PGNetwork {
 		n.FirewallSources, n.FirewallAllowAll = fw.Sources, fw.AllowAll
 		n.FirewallOthers, n.FirewallOpenToAll = fw.Others, fw.OpenToAll
 	}
-	n.Service = serviceOf(n.PID)
+	n.Service = serviceOf(n.PID, "postgresql")
 	n.Reach = pgReach(n)
 	return n
 }
@@ -284,7 +293,7 @@ func (s *pgSession) network(ctx context.Context, req tunnel.PGRequest) error {
 		return failed(err.Error())
 	}
 	if after.PendingRestart && op.Restart {
-		unit := serviceOf(after.PID)
+		unit := serviceOf(after.PID, "postgresql")
 		switch {
 		case unit == "":
 			out.RestartError = "Argus found no systemd service for Postgres here; restart it on the server"

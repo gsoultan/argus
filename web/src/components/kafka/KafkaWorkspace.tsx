@@ -5,7 +5,7 @@ import {
 import { useMediaQuery } from '@mantine/hooks'
 import { Link } from '@tanstack/react-router'
 import { IconAlertTriangle, IconArrowLeft, IconLock, IconPlus, IconRefresh, IconSearch, IconSend, IconTrash, IconX } from '@tabler/icons-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ButtonLink } from '~/components/links'
 import { ConfirmByName, FatalBanner, LABEL_COLOR } from '~/components/StoreChrome'
 import { useStoreSession, type StoreAnswer } from '~/components/useStoreSession'
@@ -17,6 +17,8 @@ import { notifyError, notifyOk } from '~/lib/notify'
 import { FS, INK } from '~/theme'
 import { levelName } from '~/lib/engines'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
+
+const StoreNetworkPanel = lazy(() => import('~/components/network/StoreNetwork').then((m) => ({ default: m.StoreNetworkPanel })))
 
 /*
 One Kafka entry -- the topics one scope names -- as a broker: an overview of
@@ -30,7 +32,7 @@ seconds while the page is visible. Peeking at messages, publishing and
 creating or deleting a topic are recorded by the agent before they run.
 */
 
-export type KafkaTab = 'overview' | 'topics' | 'groups'
+export type KafkaTab = 'overview' | 'topics' | 'groups' | 'network'
 
 type Req = Record<string, unknown> & { op: string }
 
@@ -148,6 +150,7 @@ export function KafkaWorkspace(props: KafkaWorkspaceProps) {
             <Tabs.Tab value="groups" rightSection={<Badge size="xs" variant="light" color={needs.some((n) => n.group) ? 'amber' : 'slate'}>{groups.length}</Badge>}>
               {narrow ? 'Groups' : 'Consumer groups'}
             </Tabs.Tab>
+            {can('network') && <Tabs.Tab value="network">Network</Tabs.Tab>}
           </Tabs.List>
         </Tabs>
       </Box>
@@ -163,6 +166,13 @@ export function KafkaWorkspace(props: KafkaWorkspaceProps) {
                   onBack={() => openTopic()} onPublish={() => setPublishing(topic)} />
               : <Topics topics={topics} narrow={narrow} onOpen={openTopic} canCreate={can('create_topic')} onCreate={() => setCreating(true)} />)}
             {tab === 'groups' && <Groups groups={groups} onTopic={openTopic} />}
+            {tab === 'network' && can('network') && (
+          <Suspense fallback={null}>
+            <Box style={{ display: 'flex', flexDirection: 'column', height: 'calc(100dvh - 220px)', minHeight: 520, border: '1px solid var(--color-line)', borderRadius: 8, overflow: 'hidden' }}>
+              <StoreNetworkPanel s={s} database={database} engine="kafka" narrow={narrow} />
+            </Box>
+          </Suspense>
+            )}
           </>
         )}
       </Box>

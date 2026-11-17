@@ -65,6 +65,9 @@ type MySQLConfig struct {
 	StoreConfig
 	// Sockets replaces mysqlSockets; tests use it.
 	Sockets []string
+	// ConfRoot is where /etc is looked for, for MariaDB's option files and
+	// mysqld's pid file; empty is "/". Tests use it.
+	ConfRoot string
 }
 
 // MySQL is the mysql service.
@@ -718,6 +721,12 @@ func (s *mysqlSession) serve(ctx context.Context, st tunnel.Stream) {
 				err = s.run(ctx, req)
 			case "schema":
 				err = s.schema(ctx, req)
+			case "admin":
+				if req.Admin != nil && (req.Admin.Kind == tunnel.AdminNetwork || req.Admin.Kind == tunnel.AdminNetworkSet) {
+					err = s.network(ctx, req)
+					break
+				}
+				err = s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: "extensions and replication are Postgres's"})
 			default:
 				// check and admin are Postgres's: the console treats this
 				// answer as an agent without them and runs as before.

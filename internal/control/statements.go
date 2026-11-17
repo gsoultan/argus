@@ -382,7 +382,7 @@ func (a *API) statementGate(ctx context.Context, email string, db Database, leve
 }
 
 // pgNetworkGate decides whether a change of which machines can connect to a
-// Postgres may pass: after approval where the database's changes wait, and
+// Postgres or MySQL may pass: after approval where the database's changes wait, and
 // always after approval when it opens Postgres to anywhere. The approval is
 // for the change's own text, which the agent records.
 func (a *API) pgNetworkGate(ctx context.Context, email string, db Database, req *tunnel.PGRequest) *tunnel.PGAnswer {
@@ -393,7 +393,7 @@ func (a *API) pgNetworkGate(ctx context.Context, email string, db Database, req 
 	if err := tunnel.ValidatePGNetwork(op); err != nil {
 		return &tunnel.PGAnswer{ID: req.ID, Type: "error", Error: err.Error()}
 	}
-	text := tunnel.PGNetworkText(*op)
+	text := tunnel.NetworkText(db.Engine, *op)
 	always := tunnel.PGAlwaysApproval(op)
 	if !db.WritesNeedApproval() && !always {
 		req.Approval = ""

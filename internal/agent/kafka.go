@@ -60,6 +60,8 @@ type kafkaFactory struct {
 	cfg  StoreConfig
 	uses *userUse
 	mu   sync.Mutex
+	// netState stands in for reading the broker's listeners, in tests.
+	netState func(ctx context.Context) (KafkaNetwork, error)
 }
 
 type kafkaSession struct {
@@ -383,6 +385,9 @@ func (s *kafkaSession) connect(ctx context.Context) error {
 
 func (s *kafkaSession) ready() tunnel.StoreAnswer {
 	ops := tunnel.KafkaStoreOps(s.db.Level)
+	if s.db.Level == tunnel.LevelDBA {
+		ops = append(ops, tunnel.RabbitOpNetwork, tunnel.RabbitOpNetworkSet)
+	}
 	return tunnel.StoreAnswer{Engine: tunnel.EngineKafka, User: s.user, Ops: ops}
 }
 
@@ -406,6 +411,9 @@ func kafkaErrText(err error) string {
 }
 
 func (s *kafkaSession) do(ctx context.Context, req tunnel.StoreRequest, rec *stmtRecorder) (tunnel.StoreAnswer, error) {
+	if req.Op == tunnel.RabbitOpNetwork || req.Op == tunnel.RabbitOpNetworkSet {
+		return s.network(ctx, req, rec)
+	}
 	if !s.ops[req.Op] {
 		return tunnel.StoreAnswer{Type: "error", Error: "unknown operation " + req.Op + " for Kafka at " + s.db.Level}, nil
 	}

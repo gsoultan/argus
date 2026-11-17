@@ -256,7 +256,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   // Statements the administration panels run: collected whole, by request
   // id, without touching the editor's result.
   const collectors = useRef(new Map<number, Collected>())
-  const [panel, setPanel] = useState<Panel>(!mysql && (initialPanel === 'changes' || initialPanel === 'trash' || initialPanel === 'backups' || initialPanel === 'network') ? initialPanel : 'query')
+  const [panel, setPanel] = useState<Panel>(initialPanel === 'network' || (!mysql && (initialPanel === 'changes' || initialPanel === 'trash' || initialPanel === 'backups')) ? initialPanel : 'query')
   const [view, setView] = useState<'query' | 'diagram'>('query')
   // The three tabs under the header. Manage is any administration panel;
   // it reopens the one last looked at.
@@ -1401,7 +1401,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       ) : (
         <Box w={tabNow === 'manage' ? 220 : 280} style={{ flexShrink: 0, borderRight: '1px solid var(--color-line)', overflow: 'hidden', background: 'var(--color-surface)' }}>
           <ScrollArea h="100%" type="auto">
-            {tabNow === 'manage' ? <ManageNav panel={panel as ManagePanel} level={level} narrow={false} onPick={setPanel} mysql={mysql} /> : bar}
+            {tabNow === 'manage' ? <ManageNav panel={panel as ManagePanel} level={level} narrow={false} onPick={setPanel} /> : bar}
           </ScrollArea>
         </Box>
       )}
@@ -1410,7 +1410,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         <WorkspaceHeader database={database} narrow={Boolean(narrow)} level={level} status={status} version={ready?.version} viaPooler={ready?.via === 'pgbouncer'}
           canAsk={Boolean((access.approvable || onAskForAccess) && level === 'read')} onAskForAccess={onAskForAccess}
           settings={orgAdmin} tab={tabNow} onTab={goTab} onOpenTree={tree.open} />
-        {tabNow === 'manage' && narrow && <ManageNav panel={panel as ManagePanel} level={level} narrow onPick={setPanel} mysql={mysql} />}
+        {tabNow === 'manage' && narrow && <ManageNav panel={panel as ManagePanel} level={level} narrow onPick={setPanel} />}
 
         {writesNeedApproval(database) && <ChangesWaitingBanner database={database} me={me?.email} />}
         {fatal && (
@@ -1431,7 +1431,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         {view === 'query' && panel === 'roles' && <RolesPanel {...adminProps} />}
         {view === 'query' && panel === 'extensions' && <ExtensionsPanel {...adminProps} />}
         {view === 'query' && panel === 'replication' && <ReplicationPanel {...adminProps} />}
-        {view === 'query' && panel === 'network' && <NetworkPanel {...adminProps} assetId={database.assetId} />}
+        {view === 'query' && panel === 'network' && <NetworkPanel {...adminProps} assetId={database.assetId} engine={mysql ? 'mysql' : 'postgres'} />}
         {view === 'query' && panel === 'trash' && <TrashPanel collect={collect} level={level} narrow={narrow} />}
         {view === 'query' && panel === 'changes' && <ChangesPanel databaseId={database.id} narrow={Boolean(narrow)} />}
         {view === 'query' && panel === 'backups' && <BackupsPanel database={database} level={level} narrow={narrow} admin={Boolean(orgAdmin)} />}
@@ -1871,7 +1871,7 @@ function WorkspaceHeader({ database, narrow, level, status, version, viaPooler, 
   )
 }
 
-const MANAGE: { key: ManagePanel; label: string; icon: typeof IconTable; hint: string; dba?: boolean; group: 'care' | 'dba'; pgOnly?: boolean }[] = [
+const MANAGE: { key: ManagePanel; label: string; icon: typeof IconTable; hint: string; dba?: boolean; group: 'care' | 'dba' }[] = [
   { key: 'activity', label: 'Activity & locks', icon: IconActivity, hint: 'What is running on this database now, and what waits on what', group: 'care' },
   { key: 'backups', label: 'Backups', icon: IconArchive, hint: 'Backups of this database, and putting one back', group: 'care' },
   { key: 'changes', label: 'Data changes', icon: IconHistory, hint: 'Who inserted, updated or deleted what, from the console', group: 'care' },
@@ -1879,19 +1879,18 @@ const MANAGE: { key: ManagePanel; label: string; icon: typeof IconTable; hint: s
   { key: 'roles', label: 'Roles & access', icon: IconUsersGroup, hint: 'Who holds which level; give or take a level from an application role', dba: true, group: 'dba' },
   { key: 'extensions', label: 'Extensions', icon: IconPuzzle, hint: 'Installed and available extensions; install, update, remove', dba: true, group: 'dba' },
   { key: 'replication', label: 'Replication', icon: IconArrowsExchange, hint: 'Publications and subscriptions: logical replication in and out of this database', dba: true, group: 'dba' },
-  { key: 'network', label: 'Network', icon: IconNetwork, hint: 'Which machines can connect: listen_addresses, pg_hba.conf and the server’s firewall', dba: true, group: 'dba', pgOnly: true },
+  { key: 'network', label: 'Network', icon: IconNetwork, hint: 'Which machines can connect: where it listens, pg_hba.conf on Postgres, and the server’s firewall', dba: true, group: 'dba' },
 ]
 
 /** The list of administration panels: a column on a wide screen, a row of chips on a phone. */
-function ManageNav({ panel, level, narrow, onPick, mysql = false }: {
-  panel: ManagePanel; level: DBLevel | ''; narrow: boolean; onPick: (p: ManagePanel) => void; mysql?: boolean
+function ManageNav({ panel, level, narrow, onPick }: {
+  panel: ManagePanel; level: DBLevel | ''; narrow: boolean; onPick: (p: ManagePanel) => void
 }) {
-  const panels = MANAGE.filter((m) => !(mysql && m.pgOnly))
   if (narrow) {
     return (
       <Group gap={6} px="sm" py={8} wrap="nowrap" role="tablist" aria-label="Manage"
         style={{ overflowX: 'auto', scrollbarWidth: 'none', borderBottom: '1px solid var(--color-line)' }}>
-        {panels.map((m) => (
+        {MANAGE.map((m) => (
           <UnstyledButton key={m.key} role="tab" aria-selected={m.key === panel} onClick={() => onPick(m.key)}
             px={10} py={5}
             style={{ flexShrink: 0, borderRadius: 999, border: '1px solid', fontSize: 12.5,
@@ -1907,7 +1906,7 @@ function ManageNav({ panel, level, narrow, onPick, mysql = false }: {
   const section = (group: 'care' | 'dba', title: string) => (
     <Box mb="sm">
       <Text size={FS.micro} c="dimmed" tt="uppercase" fw={600} px={10} py={4} style={{ letterSpacing: '.06em' }}>{title}</Text>
-      {panels.filter((m) => m.group === group).map((m) => {
+      {MANAGE.filter((m) => m.group === group).map((m) => {
         const on = m.key === panel
         const Icon = m.icon
         return (

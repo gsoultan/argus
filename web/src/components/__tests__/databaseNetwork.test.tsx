@@ -4,6 +4,13 @@ import { renderWithProviders as ui } from '~/test/render'
 import { NetworkPanel } from '~/components/DatabaseNetwork'
 import type { Admin, AdminOp, Collect } from '~/components/DatabaseAdmin'
 import { pgHBALines, pgListenFor, pgReachPlan, type PGNetworkData } from '~/lib/pgNetwork'
+import { mysqlReachPlan, type MySQLNetworkData } from '~/lib/mysqlNetwork'
+import { mongoReachPlan, type MongoNetworkData } from '~/lib/mongoNetwork'
+import { MongoNetwork } from '~/components/mongo/MongoNetwork'
+import { StoreNetworkPanel } from '~/components/network/StoreNetwork'
+import { kafkaReachPlan, rabbitReachPlan, type KafkaNetworkData, type RabbitNetworkData } from '~/lib/brokerNetwork'
+import type { StoreAnswer, StoreRequest, StoreSession } from '~/components/useStoreSession'
+import type { Database } from '~/types/domain'
 
 /*
 Which machines can connect to a Postgres: the panel sends the agent fixed
@@ -93,5 +100,138 @@ describe('Postgres network plan', () => {
     expect(noRestart.steps.at(-1)).toMatchObject({ state: 'warn', title: 'Not restarted' })
     const noService = pgReachPlan({ ...net, service: undefined }, 'network', [], true)
     expect(noService.steps.at(-1)).toMatchObject({ state: 'warn', title: 'Restart Postgres on the server' })
+  })
+})
+
+describe('MySQL network panel', () => {
+  const my: MySQLNetworkData = {
+    bind: '127.0.0.1', next: '127.0.0.1', pendingRestart: false, port: 3306, version: '10.11.14-MariaDB', mariadb: true,
+    listOK: true, ssl: false, remoteUsers: ["'app'@'10.0.0.%'"], keptIn: '/etc/mysql/mariadb.conf.d/zz-argus-network.cnf',
+    clients: 3, remote: 0, reach: 'local', host: 'db-02', service: 'mariadb.service', firewall: 'ufw', firewallActive: true,
+    addresses: [{ ip: '10.0.0.184', iface: 'eth0', prefix: '10.0.0.0/24', private: true, state: 'closed' }],
+  }
+  it('keeps bind_address for the next start and restarts', async () => {
+    const ops: AdminOp[] = []
+    const admin = (async (op: AdminOp) => {
+      ops.push(op)
+      return op.kind === 'network' ? { data: my } : { data: { network: { ...my, reach: 'selected', firewallSources: op.sources }, restarted: true } }
+    }) as Admin
+    ui(<NetworkPanel {...base} admin={admin} level="dba" engine="mysql" />)
+    await screen.findByText(/Only programs on db-02 can connect. MariaDB listens on 127.0.0.1/)
+    fireEvent.click(screen.getByRole('radio', { name: /Selected machines/ }))
+    fireEvent.change(screen.getByLabelText('Add an address or range'), { target: { value: '10.0.0.61' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    expect(screen.getByText(/bind_address = 127\.0\.0\.1,10\.0\.0\.184/)).toBeInTheDocument()
+    expect(screen.getByText("'app'@'10.0.0.%'")).toBeInTheDocument()
+    expect(screen.getByText('Restart mariadb.service')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await screen.findByText('Now: selected machines. MariaDB was restarted and listens anew.')
+    expect(ops.at(-1)).toMatchObject({ kind: 'network.set', reach: 'selected', addresses: ['10.0.0.184'], sources: ['10.0.0.61'], restart: true })
+  })
+  it('says what stops it', () => {
+    expect(mysqlReachPlan({ ...my, listOK: false, version: '10.6.18-MariaDB' }, 'selected', ['10.0.0.61'], true).blocked).toMatch(/one address or on every one/)
+    expect(mysqlReachPlan({ ...my, noPassRemote: ["'legacy'@'%'"] }, 'any', [], true).blocked).toMatch(/legacy/)
+    expect(mysqlReachPlan({ ...my, skipNetworking: true }, 'network', [], true).blocked).toMatch(/skip-networking/)
+    expect(mysqlReachPlan({ ...my, remoteUsers: [] }, 'network', [], true).steps.some((s) => s.title === 'No user may sign in from another machine yet')).toBe(true)
+  })
+})
+
+describe('MongoDB network panel', () => {
+  const mg: MongoNetworkData = {
+    bind: '127.0.0.1', next: '127.0.0.1', pendingRestart: false, port: 27017, version: '7.0.14', configFile: '/etc/mongod.conf',
+    tls: false, clients: 5, remote: 0, reach: 'local', host: 'db-03', service: 'mongod.service', firewall: 'ufw', firewallActive: true,
+    addresses: [{ ip: '10.0.0.185', iface: 'eth0', prefix: '10.0.0.0/24', private: true, state: 'closed' }],
+  }
+  it('asks the MongoDB session, and changes bindIp for the next start with a restart', async () => {
+    const asked: StoreRequest[] = []
+    const s: StoreSession = {
+      status: 'ready', fatal: null, cancel: () => {}, lastId: () => 1,
+      ready: { id: 0, type: 'ready', level: 'dba', ops: ['run', 'scan', 'value', 'network', 'network_set'] },
+      ask: async (req) => {
+        asked.push(req)
+        const a: StoreAnswer = req.op === 'network'
+          ? { id: 1, type: 'result', data: mg }
+          : { id: 2, type: 'result', data: { network: { ...mg, bind: '127.0.0.1,10.0.0.185', next: '127.0.0.1,10.0.0.185', reach: 'selected', firewallSources: req.sources }, restarted: true } }
+        return a
+      },
+    }
+    const db = { id: 'd1', engine: 'mongodb', dbname: 'app', hostname: 'db-03', label: 'staging', assetId: 'a1' } as unknown as Database
+    ui(<MongoNetwork s={s} database={db} opened onClose={() => {}} narrow={false} />)
+    await screen.findByText(/Only programs on db-03 can connect. MongoDB listens on 127.0.0.1/)
+    expect(asked[0]).toEqual({ op: 'network' })
+    fireEvent.click(screen.getByRole('radio', { name: /Selected machines/ }))
+    fireEvent.change(screen.getByLabelText('Add an address or range'), { target: { value: '10.0.0.61' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    expect(screen.getByText(/bindIp: 127\.0\.0\.1,10\.0\.0\.185/)).toBeInTheDocument()
+    expect(screen.getByText('Restart mongod.service')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await screen.findByText('Now: selected machines. MongoDB was restarted and listens anew.')
+    expect(asked.at(-1)).toEqual({ op: 'network_set', reach: 'selected', addresses: ['10.0.0.185'], sources: ['10.0.0.61'], restart: true })
+  })
+  it('says what stops it', () => {
+    expect(mongoReachPlan({ ...mg, cmdLine: true }, 'network', [], true).blocked).toMatch(/--bind_ip/)
+    expect(mongoReachPlan({ ...mg, configFile: undefined }, 'network', [], true).blocked).toMatch(/no configuration file/)
+    expect(mongoReachPlan({ ...mg, firewallActive: false }, 'selected', ['10.0.0.61'], true).blocked).toMatch(/no firewall is on/)
+    const any = mongoReachPlan(mg, 'any', [], true)
+    expect(any.blocked).toBeNull()
+    expect(any.steps[0]).toMatchObject({ state: 'change', diff: { from: 'bindIp: 127.0.0.1', to: 'bindIpAll: true' } })
+    expect(any.steps.some((x) => x.title === 'TLS is off')).toBe(true)
+  })
+})
+
+describe('Broker network panels', () => {
+  const rb: RabbitNetworkData = {
+    bind: '127.0.0.1', next: '127.0.0.1', pendingRestart: false, port: 5672, version: '3.13.7', configFile: '/etc/rabbitmq/rabbitmq.conf',
+    tls: false, clients: 2, remote: 0, reach: 'local', host: 'mq-01', service: 'rabbitmq-server.service', firewall: 'ufw', firewallActive: true,
+    addresses: [{ ip: '10.0.0.186', iface: 'eth0', prefix: '10.0.0.0/24', private: true, state: 'closed' }],
+  }
+  const kf: KafkaNetworkData = {
+    listeners: 'SASL_PLAINTEXT://:9092,CONTROLLER://:9093', advertised: 'SASL_PLAINTEXT://kafka-01:9092', bind: '*', protocol: 'SASL_PLAINTEXT',
+    brokerId: 1, brokers: 1, tls: false, port: 9092, reach: 'any', host: 'kafka-01', firewall: 'ufw', firewallActive: true,
+    addresses: [{ ip: '10.0.0.187', iface: 'eth0', prefix: '10.0.0.0/24', private: true, state: 'signin' }],
+  }
+  const session = (data: unknown, asked: StoreRequest[]): StoreSession => ({
+    status: 'ready', fatal: null, cancel: () => {}, lastId: () => 1,
+    ready: { id: 0, type: 'ready', level: 'dba', ops: ['network', 'network_set'] },
+    ask: async (req) => {
+      asked.push(req)
+      return req.op === 'network' ? { id: 1, type: 'result', data } : { id: 2, type: 'result', data: { network: { ...(data as object), reach: req.reach, firewallSources: req.sources }, restarted: true } }
+    },
+  })
+  const db = { id: 'd2', engine: 'rabbitmq', dbname: '/', hostname: 'mq-01', label: 'staging', assetId: 'a2' } as unknown as Database
+
+  it('RabbitMQ: writes its listener and restarts the node', async () => {
+    const asked: StoreRequest[] = []
+    ui(<StoreNetworkPanel s={session(rb, asked)} database={db} engine="rabbitmq" narrow={false} />)
+    await screen.findByText(/Only programs on mq-01 can connect. RabbitMQ listens on 127.0.0.1/)
+    fireEvent.click(screen.getByRole('radio', { name: /Selected machines/ }))
+    fireEvent.change(screen.getByLabelText('Add an address or range'), { target: { value: '10.0.0.61' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    expect(screen.getByText(/listeners\.tcp\.2 = 10\.0\.0\.186/)).toBeInTheDocument()
+    expect(screen.getByText('Restart rabbitmq-server.service')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await screen.findByText('Now: selected machines. RabbitMQ was restarted and listens anew.')
+    expect(asked.at(-1)).toEqual({ op: 'network_set', reach: 'selected', addresses: ['10.0.0.186'], sources: ['10.0.0.61'], restart: true })
+  })
+  it('RabbitMQ: stops at guest and advanced.config', () => {
+    expect(rabbitReachPlan({ ...rb, guestRemote: true }, 'network', [], true).blocked).toMatch(/guest/)
+    expect(rabbitReachPlan({ ...rb, guestRemote: true }, 'local', [], true).blocked).toBeNull()
+    expect(rabbitReachPlan({ ...rb, advanced: true }, 'network', [], true).blocked).toMatch(/advanced\.config/)
+  })
+  it('Kafka: changes the firewall only, and says so', async () => {
+    const asked: StoreRequest[] = []
+    ui(<StoreNetworkPanel s={session(kf, asked)} database={{ ...db, engine: 'kafka' } as Database} engine="kafka" narrow={false} />)
+    await screen.findByText(/Kafka listens on every address of kafka-01/)
+    expect(screen.getByText('Listeners stay as they are')).toBeInTheDocument()
+    expect(screen.queryByText(/^Restart Kafka/)).toBeNull()
+    fireEvent.click(screen.getByRole('radio', { name: /Selected machines/ }))
+    fireEvent.change(screen.getByLabelText('Add an address or range'), { target: { value: '10.0.0.61' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await waitFor(() => expect(asked.at(-1)).toMatchObject({ op: 'network_set', reach: 'selected', sources: ['10.0.0.61'] }))
+  })
+  it('Kafka: cannot close or open past its listeners', () => {
+    expect(kafkaReachPlan(kf, 'local', []).blocked).toMatch(/does not change Kafka/)
+    expect(kafkaReachPlan({ ...kf, bind: '127.0.0.1', reach: 'local' }, 'network', []).blocked).toMatch(/server\.properties/)
   })
 })

@@ -9,12 +9,20 @@ import { AdminRefused, NeedsDBA, PanelFrame, type AdminFailure, type AdminPanelP
 import { ClientTest, Copy, PlanSteps, SourcePicker, knownServers, plural } from '~/components/network/ReachParts'
 import { ADDRESS_STATE, REACH, listenFor, privateNetworks, type Reach } from '~/lib/redisManage'
 import { pgNowText, pgReachPlan, type PGNetworkData, type PGNetworkResult } from '~/lib/pgNetwork'
+import { mysqlNowText, mysqlReachPlan, type MySQLNetworkData } from '~/lib/mysqlNetwork'
+import { mongoNowText, mongoReachPlan, type MongoNetworkData } from '~/lib/mongoNetwork'
+import { kafkaNowText, kafkaReachPlan, rabbitNowText, rabbitReachPlan, type KafkaNetworkData, type RabbitNetworkData } from '~/lib/brokerNetwork'
+
+type NetData = PGNetworkData | MySQLNetworkData | MongoNetworkData | RabbitNetworkData | KafkaNetworkData
+export type NetworkEngine = 'postgres' | 'mysql' | 'mongodb' | 'rabbitmq' | 'kafka'
+
+const NAMES: Record<NetworkEngine, string> = { postgres: 'Postgres', mysql: 'MySQL', mongodb: 'MongoDB', rabbitmq: 'RabbitMQ', kafka: 'Kafka' }
 import { assetsQuery } from '~/lib/queries'
 import { isConfigured } from '~/lib/live'
 
 /*
-Which machines can connect to this Postgres: this server only, selected
-machines, the private network, or anywhere. Postgres decides with
+Which machines can connect to this Postgres or MySQL: this server only,
+selected machines, the private network, or anywhere. Postgres decides with
 listen_addresses (which addresses it accepts connections on; a change takes
 a restart) and pg_hba.conf (who may sign in, and how); the server's firewall
 decides who reaches the port at all. The agent writes all three, and only
@@ -22,10 +30,23 @@ its own pg_hba.conf lines and firewall rules. The plan beside the choice is
 what the agent will run; the agent refuses on its own what the plan calls
 blocked. Opening to anywhere always waits for a second person, needs the
 server's name typed, and no pg_hba.conf line that asks for no password.
+
+MySQL and MariaDB decide with bind_address, read only when mysqld starts,
+and each user's host part, which Argus shows and leaves alone; opening to
+anywhere is refused while a user may sign in from elsewhere with no password.
+
+MongoDB decides with net.bindIp in mongod's configuration file, also read
+only at start; Argus adds only a MongoDB whose access control is on, so
+every machine still signs in as a user.
+
+RabbitMQ decides with its AMQP listener's listeners.tcp in rabbitmq.conf;
+Kafka with the firewall alone, since Argus leaves a broker's listeners as
+server.properties says.
 */
 
-export function NetworkPanel({ admin, level, narrow, onBack, onAskForAccess, assetId }: AdminPanelProps) {
-  const [n, setN] = useState<PGNetworkData | null>(null)
+export function NetworkPanel({ admin, level, narrow, onBack, onAskForAccess, assetId, engine = 'postgres' }:
+  Pick<AdminPanelProps, 'admin' | 'level' | 'narrow' | 'onBack' | 'onAskForAccess' | 'assetId'> & { engine?: NetworkEngine }) {
+  const [n, setN] = useState<NetData | null>(null)
   const [failure, setFailure] = useState<AdminFailure | null>(null)
   const [busy, setBusy] = useState(false)
   const [reach, setReach] = useState<Reach>('local')
@@ -39,16 +60,16 @@ export function NetworkPanel({ admin, level, narrow, onBack, onAskForAccess, ass
   const { data: assets } = useQuery({ ...assetsQuery(), enabled: isConfigured() })
   const servers = useMemo(() => knownServers(assets, assetId ?? ''), [assets, assetId])
 
-  const reset = useCallback((x: PGNetworkData) => {
+  const reset = useCallback((x: NetData) => {
     setReach(x.reach)
     setSources(x.reach === 'selected' ? x.firewallSources ?? [] : [])
     setConfirmName('')
     setUnderstood(false)
   }, [])
-  const got = useCallback((x: PGNetworkData) => { setN(x); reset(x) }, [reset])
+  const got = useCallback((x: NetData) => { setN(x); reset(x) }, [reset])
   const refresh = useCallback(async () => {
     setBusy(true)
-    const r = await admin<PGNetworkData>({ kind: 'network' })
+    const r = await admin<NetData>({ kind: 'network' })
     if (!alive.current) return
     if (r.error) setFailure(r.error)
     else if (r.data) { setFailure(null); got(r.data) }
@@ -56,7 +77,13 @@ export function NetworkPanel({ admin, level, narrow, onBack, onAskForAccess, ass
   }, [admin, got])
   useEffect(() => { if (level === 'dba') void refresh() }, [refresh, level])
 
-  const blurb = 'Which machines can connect: the addresses Postgres listens on, pg_hba.conf, and the server’s firewall.'
+  const blurb = engine === 'mysql'
+    ? 'Which machines can connect: the addresses MySQL listens on, and the server’s firewall.'
+    : engine === 'mongodb' || engine === 'rabbitmq'
+      ? `Which machines can connect: the addresses ${NAMES[engine]} listens on, and the server’s firewall.`
+      : engine === 'kafka'
+      ? 'Which machines can connect: the server’s firewall, for the broker’s listener port.'
+      : 'Which machines can connect: the addresses Postgres listens on, pg_hba.conf, and the server’s firewall.'
   if (level !== 'dba') {
     return (
       <PanelFrame title="Network" narrow={narrow} onBack={onBack} blurb={blurb}>
@@ -77,13 +104,29 @@ export function NetworkPanel({ admin, level, narrow, onBack, onAskForAccess, ass
   const nets = privateNetworks(n)
   const sent = reach === 'network' ? nets : reach === 'selected' ? sources : []
   const listen = listenFor(n, reach, sent)
-  const plan = pgReachPlan(n, reach, sources, restart)
-  const same = reach === n.reach && !n.pendingRestart &&
+  const my = engine === 'mysql'
+  const mongo = engine === 'mongodb'
+  const rabbit = engine === 'rabbitmq'
+  const kafka = engine === 'kafka'
+  const pg = engine === 'postgres'
+  const name = my ? ((n as MySQLNetworkData).mariadb ? 'MariaDB' : 'MySQL') : NAMES[engine]
+  const plan = my ? mysqlReachPlan(n as MySQLNetworkData, reach, sources, restart)
+    : mongo ? mongoReachPlan(n as MongoNetworkData, reach, sources, restart)
+    : rabbit ? rabbitReachPlan(n as RabbitNetworkData, reach, sources, restart)
+    : kafka ? kafkaReachPlan(n as KafkaNetworkData, reach, sources)
+    : pgReachPlan(n as PGNetworkData, reach, sources, restart)
+  const service = (n as { service?: string }).service
+  const pendingRestart = (n as { pendingRestart?: boolean }).pendingRestart ?? false
+  const clients = (n as { clients?: number }).clients ?? 0
+  const remote = (n as { remote?: number }).remote ?? 0
+  const same = reach === n.reach && !pendingRestart &&
     (reach !== 'selected' || [...sources].sort().join() === [...(n.firewallSources ?? [])].sort().join())
   const ready = !same && !plan.blocked &&
     (reach !== 'any' || confirmName.trim().toLowerCase() === host.toLowerCase()) &&
     (reach !== 'network' || understood)
-  const now = pgNowText(n)
+  const now = my ? mysqlNowText(n as MySQLNetworkData) : mongo ? mongoNowText(n as MongoNetworkData)
+    : rabbit ? rabbitNowText(n as RabbitNetworkData) : kafka ? kafkaNowText(n as KafkaNetworkData) : pgNowText(n as PGNetworkData)
+  const tls = mongo || rabbit || kafka ? (n as MongoNetworkData).tls : (n as PGNetworkData | MySQLNetworkData).ssl
   const publicIPs = n.addresses.filter((a) => !a.private).map((a) => a.ip)
 
   const apply = async () => {
@@ -96,9 +139,9 @@ export function NetworkPanel({ admin, level, narrow, onBack, onAskForAccess, ass
       return
     }
     got(r.data.network)
-    const after = r.data.restarted ? ' Postgres was restarted and listens anew.'
-      : r.data.restartError ? ` Postgres was not restarted: ${r.data.restartError}.`
-      : r.data.network.pendingRestart ? ' It takes effect when Postgres is restarted.' : ''
+    const after = r.data.restarted ? ` ${name} was restarted and listens anew.`
+      : r.data.restartError ? ` ${name} was not restarted: ${r.data.restartError}.`
+      : r.data.network.pendingRestart ? ` It takes effect when ${name} is restarted.` : ''
     setNote({ ok: !r.data.restartError, ran: r.data.firewallRan, text: `Now: ${REACH[reach].label.toLowerCase()}.${after}` })
   }
 
@@ -134,23 +177,26 @@ export function NetworkPanel({ admin, level, narrow, onBack, onAskForAccess, ass
         </Alert>
       )}
       <Text size={FS.micro} c="dimmed">
-        Port {n.port} · {n.hbaFile} · passwords {n.method} · TLS {n.ssl ? 'on' : 'off'} · firewall: {n.firewall ? `${n.firewall} (${n.firewallActive ? 'on' : 'off'})` : n.firewallError ? 'could not be read' : 'none'}
-        {n.remote > 0 && ` · ${n.remote} ${plural(n.remote, 'connection', 'connections')} from other machines now`}
+        {my ? `${name} ${(n as MySQLNetworkData).version} · port ${n.port}`
+          : mongo || rabbit ? `${name} ${(n as MongoNetworkData).version} · port ${n.port}${(n as MongoNetworkData).configFile ? ` · ${(n as MongoNetworkData).configFile}` : ''}`
+          : kafka ? `Broker ${(n as KafkaNetworkData).brokerId} of ${(n as KafkaNetworkData).brokers} · port ${n.port} · ${(n as KafkaNetworkData).protocol ?? 'listener'}`
+          : `Port ${n.port} · ${(n as PGNetworkData).hbaFile} · passwords ${(n as PGNetworkData).method}`} · TLS {tls ? 'on' : 'off'} · firewall: {n.firewall ? `${n.firewall} (${n.firewallActive ? 'on' : 'off'})` : n.firewallError ? 'could not be read' : 'none'}
+        {remote > 0 && ` · ${remote} ${plural(remote, 'connection', 'connections')} from other machines now`}
       </Text>
 
       <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
         <Radio.Group value={reach} onChange={(v) => { setReach(v as Reach); setConfirmName(''); setUnderstood(false) }}
-          label={<Text size="sm" fw={600} mb={6}>Which machines can connect to this Postgres</Text>}>
+          label={<Text size="sm" fw={600} mb={6}>Which machines can connect to this {name}</Text>}>
           <Stack gap={8}>
             {option('local', `Programs on ${host} only; every other machine is refused.`)}
-            {option('selected', `Only the machines you list, through pg_hba.conf and the firewall on ${host}.`,
+            {option('selected', `Only the machines you list, through ${pg ? 'pg_hba.conf and ' : ''}the firewall on ${host}.`,
               <SourcePicker n={n} sources={sources} setSources={setSources} servers={servers} />)}
-            {option('network', 'Any machine on the same private network. Each still needs a role and password.',
+            {option('network', `Any machine on the same private network. Each still needs ${my ? 'a user made for its host' : pg ? 'a role' : `a ${name} user`} and password.`,
               <Checkbox size="xs" checked={understood} onChange={(e) => setUnderstood(e.currentTarget.checked)}
-                label={`I understand every machine on ${nets.join(', ') || 'these networks'} can reach Postgres`} />)}
+                label={`I understand every machine on ${nets.join(', ') || 'these networks'} can reach ${name}`} />)}
             {option('any', 'Every network this server is on, the internet included. Needs a second person’s approval.',
               <Stack gap={4}>
-                {!n.ssl && <Text size={FS.micro} c="rose">TLS is off: passwords use {n.method}, but queries and data cross the network unencrypted. Prefer selected machines or a VPN.</Text>}
+                {!tls && <Text size={FS.micro} c="rose">TLS is off: queries and data cross the network unencrypted. Prefer selected machines or a VPN.</Text>}
                 {publicIPs.length > 0 && <Text size={FS.micro} c="rose">{publicIPs.join(', ')} {plural(publicIPs.length, 'is a public address', 'are public addresses')}: bots try port {n.port} within minutes.</Text>}
                 <TextInput size="xs" label={<>Type <Code>{host}</Code> to open it to anywhere</>} value={confirmName}
                   onChange={(e) => setConfirmName(e.currentTarget.value)} disabled={!!plan.blocked} aria-label="Type the server's name" />
@@ -161,9 +207,9 @@ export function NetworkPanel({ admin, level, narrow, onBack, onAskForAccess, ass
         <Box>
           <Text size="sm" fw={600} mb={6}>What Argus will change on {host}</Text>
           <PlanSteps steps={plan.steps} />
-          {n.service && (
+          {service && (
             <Checkbox mt={6} size="xs" checked={restart} onChange={(e) => setRestart(e.currentTarget.checked)}
-              label={`Restart Postgres when listen_addresses changes (${n.clients} open ${plural(n.clients, 'connection', 'connections')} end)`} />
+              label={`Restart ${name} when ${my ? 'bind_address' : mongo ? 'bindIp' : rabbit ? 'its listener' : 'listen_addresses'} changes (${clients} open ${plural(clients, 'connection', 'connections')} end)`} />
           )}
           {plan.blocked && !same && <Text size={FS.micro} c="rose" mt={4}>Not yet: {plan.blocked}.</Text>}
           {!same && (
@@ -193,7 +239,7 @@ export function NetworkPanel({ admin, level, narrow, onBack, onAskForAccess, ass
               </Table.Td>
               <Table.Td>
                 <Badge size="xs" variant="light" color={a.state === 'signin' ? 'teal' : 'slate'}>
-                  {a.state === 'signin' ? 'Postgres answers' : ADDRESS_STATE.closed.label}
+                  {a.state === 'signin' ? `${name} answers` : ADDRESS_STATE.closed.label}
                 </Badge>
               </Table.Td>
               <Table.Td>{a.state === 'signin' && <Copy value={`${a.ip}:${n.port}`} label="Copy host and port" />}</Table.Td>
@@ -202,17 +248,21 @@ export function NetworkPanel({ admin, level, narrow, onBack, onAskForAccess, ass
           {n.addresses.length === 0 && <Table.Tr><Table.Td colSpan={3}><Text size={FS.meta} c="dimmed">This server has no address besides the loopback.</Text></Table.Td></Table.Tr>}
         </Table.Tbody>
       </Table>
-      <Text size={FS.micro} c="dimmed">Checked from {host} itself, which its own firewall does not stop, and before pg_hba.conf is asked. Test from the client’s side below.</Text>
-      {(n.others?.length ?? 0) > 0 && (
+      <Text size={FS.micro} c="dimmed">Checked from {host} itself, which its own firewall does not stop{pg ? ', and before pg_hba.conf is asked' : ''}. Test from the client’s side below.</Text>
+      {pg && ((n as PGNetworkData).others?.length ?? 0) > 0 && (
         <Box>
           <Text size={FS.meta} fw={600}>The server’s own pg_hba.conf lines for other machines</Text>
           <Text size={FS.micro} c="dimmed">These come before Argus’s and still decide; Argus never changes them.</Text>
-          <Code block mt={4} style={{ fontSize: 11 }}>{n.others!.join('\n')}</Code>
+          <Code block mt={4} style={{ fontSize: 11 }}>{(n as PGNetworkData).others!.join('\n')}</Code>
         </Box>
       )}
       {n.reach !== 'local' && (
-        <ClientTest n={n} engine="postgres" sources={n.reach === 'selected' ? n.firewallSources ?? [] : []} servers={servers}
-          command={(ip) => `psql "host=${ip} port=${n.port} dbname=postgres user=<role>" -c 'select 1'`} />
+        <ClientTest n={n} engine={engine} sources={n.reach === 'selected' ? n.firewallSources ?? [] : []} servers={servers}
+          command={(ip) => my ? `mysql -h ${ip} -P ${n.port} -u <user> -p -e 'select 1'`
+            : mongo ? `mongosh "mongodb://<user>@${ip}:${n.port}/admin" --eval 'db.runCommand({ ping: 1 })'`
+            : rabbit ? `nc -vz ${ip} ${n.port}`
+            : kafka ? `kcat -b ${ip}:${n.port} -X security.protocol=${(n as KafkaNetworkData).protocol ?? 'SASL_PLAINTEXT'} -X sasl.mechanisms=SCRAM-SHA-512 -X sasl.username=<user> -X sasl.password=<password> -L`
+            : `psql "host=${ip} port=${n.port} dbname=postgres user=<role>" -c 'select 1'`} />
       )}
     </Stack>,
   )

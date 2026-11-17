@@ -534,8 +534,9 @@ type GrantDB struct {
 	// RedisRules are the ACL rules an admin set for this entry and level,
 	// key patterns included; nil is Argus's own (RedisLevelRules).
 	RedisRules []string `json:"redisRules,omitempty"`
-	// ChangesNeedApproval says a Redis bulk, configuration or ACL change
-	// runs only with an approval the control plane checked.
+	// ChangesNeedApproval says a Redis bulk, configuration or ACL change,
+	// or a MongoDB, RabbitMQ or Kafka network change, runs only with an approval the control
+	// plane checked.
 	ChangesNeedApproval bool `json:"changesNeedApproval,omitempty"`
 }
 

@@ -3,7 +3,7 @@ import {
   ActionIcon, Badge, Box, Button, Drawer, Group, Loader, ScrollArea, Stack, Text, TextInput, UnstyledButton,
 } from '@mantine/core'
 import { useDisclosure, useMediaQuery } from '@mantine/hooks'
-import { IconLeaf, IconMenu2, IconPlayerStop, IconPlus, IconRefresh, IconSearch } from '@tabler/icons-react'
+import { IconLeaf, IconMenu2, IconNetwork, IconPlayerStop, IconPlus, IconRefresh, IconSearch } from '@tabler/icons-react'
 import { FS, SP } from '~/theme'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
 import { JsonView } from '~/components/JsonView'
@@ -24,6 +24,7 @@ database, which the agent will run only with the server's name typed.
 
 const NewCollection = lazy(() => import('~/components/mongo/MongoNew').then((m) => ({ default: m.NewCollection })))
 const NewIndex = lazy(() => import('~/components/mongo/MongoNew').then((m) => ({ default: m.NewIndex })))
+const MongoNetwork = lazy(() => import('~/components/mongo/MongoNetwork').then((m) => ({ default: m.MongoNetwork })))
 
 export interface MongoWorkspaceProps {
   database: Database
@@ -31,6 +32,8 @@ export interface MongoWorkspaceProps {
   getTicket: (level?: DBLevel) => Promise<{ ticket: string; role: string; level: DBLevel } | null>
   endpoint: string
   onAskForAccess?: () => void
+  /** A panel to open first, as ?panel=network does from a server's applications. */
+  initialPanel?: string
 }
 
 const kindBadge = { variant: 'outline', color: 'slate', radius: 'sm' } as const
@@ -85,11 +88,13 @@ function countText(n: number | undefined): string {
   return `${(n / 1_000_000).toFixed(1)}M`
 }
 
-export function MongoWorkspace({ database, access, getTicket, endpoint, onAskForAccess }: MongoWorkspaceProps) {
+export function MongoWorkspace({ database, access, getTicket, endpoint, onAskForAccess, initialPanel }: MongoWorkspaceProps) {
   const narrow = useMediaQuery('(max-width: 48em)') ?? false
   const [listOpen, listDrawer] = useDisclosure(false)
   const s = useStoreSession(database, getTicket, endpoint)
   const level = s.ready?.level ?? access.level
+  const [network, setNetwork] = useState(initialPanel === 'network')
+  const canNetwork = s.ready?.ops?.includes('network') ?? false
 
   // Collections.
   const [filter, setFilter] = useState('')
@@ -187,10 +192,11 @@ export function MongoWorkspace({ database, access, getTicket, endpoint, onAskFor
           <IconRefresh size={14} />
         </ActionIcon>
       </Group>
-      {s.status === 'ready' && level !== 'read' && (
+      {s.status === 'ready' && (level !== 'read' || canNetwork) && (
         <Group gap={6}>
-          <Button size="compact-xs" variant="default" leftSection={<IconPlus size={12} />} onClick={() => setMaking('collection')}>Collection</Button>
-          <Button size="compact-xs" variant="default" leftSection={<IconPlus size={12} />} onClick={() => setMaking('index')} disabled={!colls.length}>Index</Button>
+          {level !== 'read' && <Button size="compact-xs" variant="default" leftSection={<IconPlus size={12} />} onClick={() => setMaking('collection')}>Collection</Button>}
+          {level !== 'read' && <Button size="compact-xs" variant="default" leftSection={<IconPlus size={12} />} onClick={() => setMaking('index')} disabled={!colls.length}>Index</Button>}
+          {canNetwork && <Button size="compact-xs" variant="default" leftSection={<IconNetwork size={12} />} onClick={() => setNetwork(true)}>Network</Button>}
         </Group>
       )}
       <Text size={FS.micro} c="dimmed">
@@ -273,6 +279,11 @@ export function MongoWorkspace({ database, access, getTicket, endpoint, onAskFor
           <NewCollection opened={making === 'collection'} onClose={() => setMaking(null)} onRun={make} />
           <NewIndex opened={making === 'index'} onClose={() => setMaking(null)} onRun={make}
             collections={colls.filter((c) => c.type === 'collection').map((c) => c.name)} initial={selected?.name} />
+        </Suspense>
+      )}
+      {network && canNetwork && (
+        <Suspense fallback={null}>
+          <MongoNetwork s={s} database={database} opened onClose={() => setNetwork(false)} narrow={narrow} />
         </Suspense>
       )}
       <ConfirmByName opened={confirming !== null} hostname={database.hostname}

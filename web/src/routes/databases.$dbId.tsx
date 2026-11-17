@@ -119,7 +119,7 @@ function DatabasePage() {
           onAskForAccess={access.approvable ? ask.open : undefined} initialPanel={panel} />
       ) : database.engine === 'mongodb' ? (
         <MongoWorkspace database={database} access={access} getTicket={getTicket} endpoint={postgresEndpoint}
-          onAskForAccess={access.approvable ? ask.open : undefined} />
+          onAskForAccess={access.approvable ? ask.open : undefined} initialPanel={panel} />
       ) : (
         <DatabaseWorkspace
           database={database}
