@@ -56,6 +56,9 @@ type CloudAccount struct {
 	// so Argus does not reach the account until it is moved. Worked out
 	// when listing, never stored.
 	IdentityMissing bool `json:"identityMissing"`
+	// Actions, when set, are the only changes Argus makes in this account
+	// so far: a provider still being built. Empty is every change.
+	Actions []cloud.Action `json:"actions,omitempty"`
 }
 
 // ErrCloudAccountExists is an account that is already connected.

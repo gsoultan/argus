@@ -41,7 +41,11 @@ export function GcpSetup({ prepared }: { prepared: CloudPrepared }) {
             </Button>
           </Group>
         </List.Item>
-        <List.Item>That is all. It takes under a minute, and Argus connects as soon as argus-read works.</List.Item>
+        <List.Item>
+          {prepared.manageRoleName
+            ? 'That is all. It takes under a minute, and Argus goes on as soon as argus-read and argus-manage work.'
+            : 'That is all. It takes under a minute, and Argus connects as soon as argus-read works.'}
+        </List.Item>
       </List>
       <Box style={{ minWidth: 0, maxWidth: '100%' }}>
         <Text size={FS.micro} c="dimmed" mb={4}>
@@ -62,10 +66,11 @@ export function GcpSetup({ prepared }: { prepared: CloudPrepared }) {
   )
 }
 
-/** The command's three steps, in the console. */
+/** The command's steps, in the console. */
 function ByHand({ prepared }: { prepared: CloudPrepared }) {
   const id = encodeURIComponent(prepared.accountId)
   const description = `Argus reads this project's Compute Engine inventory through this account. argus-external-id=${prepared.externalId}`
+  const manageDescription = `Argus makes the Compute Engine changes people ask for in Argus through this account. argus-external-id=${prepared.externalId}`
   return (
     <List type="ordered" spacing="sm" size="sm" mt="sm">
       <List.Item>
@@ -89,6 +94,23 @@ function ByHand({ prepared }: { prepared: CloudPrepared }) {
         Open <Code>argus-read</Code> › <b>Principals with access</b> › <b>Grant access</b>, add{' '}
         <Code style={{ overflowWrap: 'anywhere' }}>{prepared.principal}</Code> and give it <b>Service Account Token Creator</b>.
       </List.Item>
+      {prepared.manageRoleName && (
+        <List.Item>
+          Make a second service account the same way, named <Code>argus-manage</Code>, with this description exactly:
+          <Group gap="xs" mt={4} wrap="nowrap" align="flex-start">
+            <Code block fz={FS.micro} style={{ flex: 1, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{manageDescription}</Code>
+            <CopyButton value={manageDescription}>
+              {({ copied, copy }) => (
+                <Button size="xs" variant="default" onClick={copy} leftSection={copied ? <IconCheck size={13} /> : <IconCopy size={13} />}>
+                  {copied ? 'Copied' : 'Copy'}
+                </Button>
+              )}
+            </CopyButton>
+          </Group>
+          Give it <b>Compute Instance Admin (v1)</b>, <b>Compute Viewer</b> and <b>Service Account Viewer</b> on the project, and the
+          same <b>Service Account Token Creator</b> grant for <Code style={{ overflowWrap: 'anywhere' }}>{prepared.principal}</Code>.
+        </List.Item>
+      )}
     </List>
   )
 }

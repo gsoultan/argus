@@ -6,7 +6,7 @@ import {
 import { useState } from 'react'
 import { Field, absTime, relTime } from '~/components/primitives'
 import {
-  ACTION_LEVEL, cloudAccountsQuery, cloudChangesQuery, cloudConsoleQuery, cloudInstanceSettingsQuery, cloudLaunchOptionsQuery, cloudRemovePlanQuery, envOf,
+  ACTION_LEVEL, allows, cloudAccountsQuery, cloudChangesQuery, cloudConsoleQuery, cloudInstanceSettingsQuery, cloudLaunchOptionsQuery, cloudRemovePlanQuery, envOf,
   type CloudAction, type CloudEnvironment, type CloudInstanceConfig, type CloudItem,
 } from '~/lib/cloud'
 import { meQuery } from '~/lib/queries'
@@ -49,6 +49,9 @@ export function InstanceActions({ it }: { it: CloudItem }) {
   const running = r.state === 'running'
   const stopped = r.state === 'stopped'
   const close = () => setOpen(null)
+  const can = (a: CloudAction) => allows(account, a)
+  const gcp = account.provider === 'gcp'
+  const more = !gone && (['launch', 'settings', 'protect', 'image-create', 'instance-firewalls', 'remove'] as CloudAction[]).some(can)
 
   return (
     <Stack gap="xs">
@@ -58,15 +61,15 @@ export function InstanceActions({ it }: { it: CloudItem }) {
         </Alert>
       )}
       <Group gap="xs">
-        {running && <Button size="xs" variant="default" leftSection={<IconPlayerStop size={14} />} disabled={!!waiting} onClick={() => setOpen('stop')}>Stop</Button>}
-        {stopped && <Button size="xs" variant="default" leftSection={<IconPlayerPlay size={14} />} disabled={!!waiting} onClick={() => setOpen('start')}>Start</Button>}
-        {running && it.resource.details?.hibernation === 'yes' && (
+        {running && can('stop') && <Button size="xs" variant="default" leftSection={<IconPlayerStop size={14} />} disabled={!!waiting} onClick={() => setOpen('stop')}>Stop</Button>}
+        {stopped && can('start') && <Button size="xs" variant="default" leftSection={<IconPlayerPlay size={14} />} disabled={!!waiting} onClick={() => setOpen('start')}>Start</Button>}
+        {running && can('hibernate') && it.resource.details?.hibernation === 'yes' && (
           <Button size="xs" variant="default" leftSection={<IconMoon size={14} />} disabled={!!waiting} onClick={() => setOpen('hibernate')}>Hibernate</Button>
         )}
-        {running && <Button size="xs" variant="default" leftSection={<IconRefresh size={14} />} disabled={!!waiting} onClick={() => setOpen('reboot')}>Reboot</Button>}
-        {!gone && <Button size="xs" variant="default" leftSection={<IconResize size={14} />} disabled={!!waiting} onClick={() => setOpen('resize')}>Change size</Button>}
-        {!gone && <Button size="xs" variant="default" leftSection={<IconTag size={14} />} disabled={!!waiting} onClick={() => setOpen('tags')}>Tags</Button>}
-        {!gone && (
+        {running && can('reboot') && <Button size="xs" variant="default" leftSection={<IconRefresh size={14} />} disabled={!!waiting} onClick={() => setOpen('reboot')}>{gcp ? 'Reset' : 'Reboot'}</Button>}
+        {!gone && can('resize') && <Button size="xs" variant="default" leftSection={<IconResize size={14} />} disabled={!!waiting} onClick={() => setOpen('resize')}>Change size</Button>}
+        {!gone && can('tags') && <Button size="xs" variant="default" leftSection={<IconTag size={14} />} disabled={!!waiting} onClick={() => setOpen('tags')}>Tags</Button>}
+        {more && (
           <Menu position="bottom-end" withinPortal>
             <Menu.Target>
               <ActionIcon variant="default" size={30} aria-label="More actions" disabled={!!waiting}><IconDots size={15} /></ActionIcon>
@@ -92,7 +95,7 @@ export function InstanceActions({ it }: { it: CloudItem }) {
         )}
       </Group>
       {(open === 'start' || open === 'stop' || open === 'hibernate' || open === 'reboot' || open === 'protect' || open === 'unprotect') && (
-        <SimpleChange it={it} env={env} action={open} onClose={close} />
+        <SimpleChange it={it} env={env} action={open} gcp={gcp} onClose={close} />
       )}
       {open === 'resize' && <ResizeChange it={it} env={env} onClose={close} />}
       {open === 'settings' && <SettingsChange it={it} env={env} onClose={close} />}
@@ -121,7 +124,8 @@ export function InstanceHealth({ it }: { it: CloudItem }) {
   const [log, setLog] = useState(false)
   const d = it.resource.details ?? {}
   const account = accounts.data?.accounts.find((a) => a.id === it.accountId)
-  const canRead = canSee(me?.role, 'admin') && account?.access === 'manage' && it.resource.state !== 'terminated'
+  // Google's serial console is not read through Argus yet.
+  const canRead = canSee(me?.role, 'admin') && account?.access === 'manage' && account.provider !== 'gcp' && it.resource.state !== 'terminated'
   const sys = d.systemStatus ? CHECK_WORD[d.systemStatus] : undefined
   const own = d.instanceStatus ? CHECK_WORD[d.instanceStatus] : undefined
   if (!sys && !own && !d.eventCode && !canRead) return null
@@ -181,8 +185,15 @@ const SIMPLE: Record<string, { title: string; verb: string; done: string; text: 
   unprotect: { title: 'Turn off termination protection for', verb: 'Turn off', done: 'Protection off', color: 'amber', text: 'The instance can be removed again. Removing it from Argus still needs its name typed, and approval where its environment asks for it.' },
 }
 
-function SimpleChange({ it, env, action, onClose }: { it: CloudItem; env: CloudEnvironment; action: CloudAction; onClose: () => void }) {
-  const s = SIMPLE[action]!
+/** What Google Cloud does instead, where it differs from AWS. */
+const GCP_SIMPLE: Record<string, { title: string; verb: string; done: string; text: string; color?: string }> = {
+  start: { title: 'Start', verb: 'Start', done: 'Starting', text: 'Google starts the VM. It keeps its disks; an ephemeral external address changes, a reserved one does not.' },
+  stop: { title: 'Stop', verb: 'Stop', done: 'Stopping', color: 'amber', text: 'Google shuts the VM down. Its disks stay and are still billed; the VM is not. Anything only in memory is lost.' },
+  reboot: { title: 'Reset', verb: 'Reset', done: 'Resetting', color: 'amber', text: 'Google Cloud has no gentle reboot: a reset is like pressing the power button. The operating system is not asked to shut down first, so unsaved work in memory is lost and anyone signed in is disconnected.' },
+}
+
+function SimpleChange({ it, env, action, gcp, onClose }: { it: CloudItem; env: CloudEnvironment; action: CloudAction; gcp?: boolean; onClose: () => void }) {
+  const s = (gcp && GCP_SIMPLE[action]) || SIMPLE[action]!
   const [reason, setReason] = useState('')
   const { submit, busy } = useSubmit(onClose)
   return (

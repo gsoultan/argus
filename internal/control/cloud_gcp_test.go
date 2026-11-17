@@ -15,8 +15,17 @@ import (
 /*
 Connecting a Google Cloud project the way an AWS account is connected:
 prepare says where argus-read will be and gives one command, check waits
-for it, and connecting needs nothing copied back. Read only, for now.
+for it, and connecting needs nothing copied back. Changes go through a
+second account, argus-manage, made by the same command when asked for.
 */
+
+// gcpFake is the fake as Google Cloud: it makes only the changes Argus
+// has built for Google so far.
+type gcpFake struct{ *cloud.Fake }
+
+func (gcpFake) Supports(a cloud.Action) bool {
+	return a == cloud.ActionStart || a == cloud.ActionStop || a == cloud.ActionReboot || a == cloud.ActionVolumeGrow
+}
 
 func gcpEnv(t *testing.T) (cloudEnv, *cloud.Fake, string) {
 	t.Helper()
@@ -25,7 +34,7 @@ func gcpEnv(t *testing.T) (cloudEnv, *cloud.Fake, string) {
 		BaseIdentity: cloud.Base{Principal: "argus-control@ops-home.iam.gserviceaccount.com",
 			ARN: "argus-control@ops-home.iam.gserviceaccount.com", Source: "the service account of the VM argus-control runs on"},
 		Roles: map[string]string{}, Regions: []string{"europe-west1", "us-central1", "global"}, Resources: map[string][]cloud.Resource{}}
-	e.a.SetCloudProvider(fake)
+	e.a.SetCloudProvider(gcpFake{fake})
 	project := fmt.Sprintf("argus-test-%d", time.Now().UnixNano()%1_000_000_000)
 	t.Cleanup(func() {
 		ctx := context.Background()
@@ -58,9 +67,13 @@ func TestCloudConnectGoogleProject(t *testing.T) {
 		t.Fatal("two accounts must not share an external id")
 	}
 
-	if w := do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts/prepare", "admin-token",
-		`{"provider":"gcp","accountId":"`+project+`","manage":true}`); w.Code != http.StatusBadRequest {
-		t.Fatalf("changes in a project are not offered yet: %d %s", w.Code, w.Body)
+	w = do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts/prepare", "admin-token",
+		`{"provider":"gcp","accountId":"`+project+`","manage":true}`)
+	var pm CloudPrepared
+	_ = json.Unmarshal(w.Body.Bytes(), &pm)
+	if w.Code != http.StatusOK || pm.ManageRoleARN != "argus-manage@"+project+".iam.gserviceaccount.com" ||
+		!strings.Contains(pm.Command, "roles/compute.instanceAdmin.v1") || pm.ExternalID != p.ExternalID {
+		t.Fatalf("allowing changes must make argus-manage with the same external id: %d %+v", w.Code, pm)
 	}
 	if w := do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts/prepare", "admin-token",
 		`{"provider":"gcp","accountId":"412788931204"}`); w.Code != http.StatusBadRequest {
@@ -101,12 +114,29 @@ func TestCloudConnectGoogleProject(t *testing.T) {
 	if n := auditCount(t, e.s, "cloud.account.connected", cloudTarget("gcp", project, "payments-gcp")); n != 1 {
 		t.Fatalf("connecting must be audited once, got %d", n)
 	}
-	if w := do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts", "admin-token",
-		`{"provider":"gcp","name":"payments-gcp","accountId":"`+project+`","manage":true}`); w.Code != http.StatusBadRequest {
-		t.Fatalf("connecting with changes must be refused: %d %s", w.Code, w.Body)
+	// Allowing changes needs argus-manage, made for this Argus.
+	manageSA := "argus-manage@" + project + ".iam.gserviceaccount.com"
+	if w := do(t, e.h, http.MethodPut, "/api/v1/cloud/accounts/"+c.ID+"/manage", "admin-token", `{}`); w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("no argus-manage yet must be refused: %d %s", w.Code, w.Body)
 	}
-	if w := do(t, e.h, http.MethodPut, "/api/v1/cloud/accounts/"+c.ID+"/manage", "admin-token", `{}`); w.Code != http.StatusNotImplemented {
-		t.Fatalf("allowing changes in a project must be refused: %d %s", w.Code, w.Body)
+	if w := do(t, e.h, http.MethodPut, "/api/v1/cloud/accounts/"+c.ID+"/manage", "admin-token",
+		`{"roleArn":"argus-manage@another-project-1.iam.gserviceaccount.com"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("a manage account in another project must be refused: %d %s", w.Code, w.Body)
+	}
+	if w := do(t, e.h, http.MethodPut, "/api/v1/cloud/accounts/"+c.ID+"/manage", "admin-token", `{"roleArn":"`+sa+`"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("argus-read cannot be the manage account: %d %s", w.Code, w.Body)
+	}
+	fake.Roles[manageSA] = p.ExternalID
+	w = do(t, e.h, http.MethodPut, "/api/v1/cloud/accounts/"+c.ID+"/manage", "admin-token", `{}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("allow changes: %d %s", w.Code, w.Body)
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &c)
+	if c.ManageRoleARN != manageSA {
+		t.Fatalf("manage account = %q", c.ManageRoleARN)
+	}
+	if n := auditCount(t, e.s, "cloud.account.manage_allowed", cloudTarget("gcp", project, "payments-gcp")); n != 1 {
+		t.Fatalf("allowing changes must be audited once, got %d", n)
 	}
 
 	w = do(t, e.h, http.MethodGet, "/api/v1/cloud/accounts", "admin-token", "")
@@ -123,5 +153,68 @@ func TestCloudConnectGoogleProject(t *testing.T) {
 		if a.ID == c.ID && a.IdentityMissing {
 			t.Fatal("a project on Google's Main identity must not read as having lost it to AWS's")
 		}
+	}
+}
+
+// A project with changes allowed grows a disk, never shrinks it or changes
+// its type, and refuses what Argus has not built for Google yet.
+func TestCloudGoogleProjectGrowsADisk(t *testing.T) {
+	e, fake, project := gcpEnv(t)
+	w := do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts/prepare", "admin-token", `{"provider":"gcp","accountId":"`+project+`","manage":true}`)
+	var p CloudPrepared
+	_ = json.Unmarshal(w.Body.Bytes(), &p)
+	fake.Roles[p.ReadRoleARN] = p.ExternalID
+	fake.Roles[p.ManageRoleARN] = p.ExternalID
+	fake.Resources["us-central1"] = []cloud.Resource{
+		{Kind: cloud.KindInstance, ID: "101", Name: "web-1", Region: "us-central1", Zone: "us-central1-a", State: "running", Size: "e2-small"},
+		{Kind: cloud.KindVolume, ID: "201", Name: "web-1", Region: "us-central1", Zone: "us-central1-a", State: "in-use", Size: "10 GiB",
+			Details: map[string]string{"type": "pd-balanced"}, Links: []cloud.Ref{{Kind: cloud.KindInstance, ID: "101", Name: "boot"}}},
+	}
+	w = do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts", "admin-token",
+		`{"provider":"gcp","name":"web-gcp","accountId":"`+project+`","environment":"development","manage":true}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("connect with changes: %d %s", w.Code, w.Body)
+	}
+	var c CloudAccount
+	_ = json.Unmarshal(w.Body.Bytes(), &c)
+	if c.ManageRoleARN != p.ManageRoleARN {
+		t.Fatalf("manage account = %q", c.ManageRoleARN)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for !e.a.SyncCloudAccount(context.Background(), c) {
+		if time.Now().After(deadline) {
+			t.Fatal("the project was being read for too long")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	ask := func(action, id, spec string, want int) CloudChange {
+		t.Helper()
+		w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes", "admin-token",
+			`{"accountId":"`+c.ID+`","region":"us-central1","action":"`+action+`","resourceId":"`+id+`"`+spec+`}`)
+		if w.Code != want {
+			t.Fatalf("%s: %d %s, want %d", action, w.Code, w.Body, want)
+		}
+		var ch CloudChange
+		_ = json.Unmarshal(w.Body.Bytes(), &ch)
+		return ch
+	}
+	ask("volume-grow", "201", `,"spec":{"sizeGb":5}`, http.StatusBadRequest)
+	ask("volume-grow", "201", `,"spec":{"sizeGb":10}`, http.StatusBadRequest)
+	ask("volume-grow", "201", `,"spec":{"sizeGb":20,"type":"pd-ssd"}`, http.StatusBadRequest)
+	ask("volume-grow", "201", `,"spec":{"sizeGb":70000}`, http.StatusBadRequest)
+	ch := ask("volume-grow", "201", `,"spec":{"sizeGb":50}`, http.StatusOK)
+	if ch.State != "applied" || ch.Summary != "Grow web-1 from 10 to 50 GB" || !strings.Contains(string(ch.Result), "Google grows the disk") {
+		t.Fatalf("grow: %+v %s", ch, ch.Result)
+	}
+	if ch := ask("reboot", "101", "", http.StatusOK); !strings.Contains(ch.Summary, "Reset web-1") {
+		t.Fatalf("a Google reboot is a reset and must say so: %q", ch.Summary)
+	}
+	if w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes", "admin-token",
+		`{"accountId":"`+c.ID+`","region":"us-central1","action":"hibernate","resourceId":"101"}`); w.Code != http.StatusNotImplemented {
+		t.Fatalf("what is not built for Google must be refused as such: %d %s", w.Code, w.Body)
+	}
+	if w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes", "admin-token",
+		`{"accountId":"`+c.ID+`","region":"us-central1","action":"volume-delete","resourceId":"201","confirm":"web-1"}`); w.Code != http.StatusNotImplemented {
+		t.Fatalf("deleting a disk is not built for Google yet: %d %s", w.Code, w.Body)
 	}
 }

@@ -51,6 +51,8 @@ export interface CloudAccount {
   identity: string
   /** That identity is gone, or no longer available here: Argus does not reach the account until it is moved. */
   identityMissing?: boolean
+  /** When set, the only changes Argus makes in this account so far. */
+  actions?: string[]
 }
 
 /** One of argus-control's identities this organization may use, and what the cloud says about it. */
@@ -1073,4 +1075,9 @@ export function groupSizeOf(r: CloudResource): { min: number; max: number; desir
   const n = (s?: string) => Number(s ?? 0) || 0
   const d = r.details ?? {}
   return { min: n(d.min), max: n(d.max), desired: n(d.desired), running: n(d.running) }
+}
+
+/** Whether Argus makes this change in this account: a provider still being built lists the few it does. */
+export function allows(account: Pick<CloudAccount, 'actions'> | undefined, action: string): boolean {
+  return !account?.actions || account.actions.includes(action)
 }
