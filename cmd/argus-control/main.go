@@ -401,6 +401,14 @@ func runCommand(configPath string) error {
 		return runAuditVerify(configPath)
 	}
 
+	// The fleet recovery key: see recovery.go.
+	if flag.Arg(0) == "rekey" {
+		return runRekey(configPath, flag.Args()[1:])
+	}
+	if flag.Arg(0) == "recovery-key" {
+		return runRecoveryCommand(configPath, flag.Args()[1:])
+	}
+
 	// `argus-control backup run|verify`: see backup.go.
 	if flag.Arg(0) == "backup" {
 		return runBackup(configPath, flag.Args()[1:])
@@ -437,7 +445,7 @@ func runCommand(configPath string) error {
 				"reset-mfa, set-password, set-role, sign-out", flag.Arg(1))
 		}
 	}
-	return fmt.Errorf("unknown command %q: audit verify, backup run|verify, "+
+	return fmt.Errorf("unknown command %q: audit verify, backup run|verify, rekey, recovery-key replace, "+
 		"users add|list|disable|enable|reset-mfa|set-password|set-role|sign-out",
 		strings.Join(flag.Args(), " "))
 }

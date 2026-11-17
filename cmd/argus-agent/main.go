@@ -321,6 +321,10 @@ func runDaemon(args []string) int {
 		col.Hold(on)
 	}
 	ready := func() { agent.WriteReady(*stateDir, version, listening.Load(), tunnelUp.Load()) }
+	// The control plane's grant key, pinned on first connection, and the
+	// fleet recovery key that alone may move it (agent/recovery.go).
+	grantPin := agent.NewGrantPin(*stateDir)
+	recovery := &agent.Recovery{StateDir: *stateDir, Pin: grantPin}
 
 	if *useTunnel && strings.HasPrefix(*controlToken, "argus-agent-") {
 		updater.NeedTunnel = true
@@ -472,7 +476,7 @@ func runDaemon(args []string) int {
 			},
 			Services: services,
 			Log:      log,
-			GrantPin: agent.NewGrantPin(*stateDir),
+			GrantPin: grantPin,
 			Gate: func(string) string {
 				if holding.Load() {
 					return "this server's agent is restarting for an update; try again in a few seconds"
@@ -724,6 +728,9 @@ func runDaemon(args []string) int {
 			"exec_reason":     execCtx.Reason,
 			"console_only":    col.ConsoleOnly(),
 			"direct_ssh":      col.DirectSSH(),
+			// The fleet recovery key this server holds, by fingerprint; ""
+			// before it has one.
+			"recovery_key": recovery.Fingerprint(),
 			// nil until the first list has been applied, so the console
 			// can tell "none" from "not yet".
 			"personal_accounts": personalStates,
@@ -733,6 +740,22 @@ func runDaemon(args []string) int {
 			"logs":              logBeat,
 			"disks":             diskBeat,
 		})
+		// Orders signed with the fleet recovery key are checked against that
+		// key alone, before the gate: a rekey is what makes a reply signed
+		// with the new grant key one the gate accepts. A replacement first,
+		// since a rekey may be signed with the key it brings.
+		if ok {
+			for _, tok := range []string{reply.RecoveryReplace, reply.Rekey} {
+				if tok == "" {
+					continue
+				}
+				if what, rerr := recovery.Apply(tok); rerr != nil {
+					log.Error("recovery: an order was not acted on", "error", rerr)
+				} else if what != "" {
+					log.Warn("recovery: " + what)
+				}
+			}
+		}
 		// A reply the gate refuses is treated as one that never arrived:
 		// nothing in it starts, stops or changes anything here.
 		if ok {
@@ -740,6 +763,15 @@ func runDaemon(args []string) int {
 			if take, gerr := orderGate.Accept(reply.Signature, reply.Body); !take {
 				log.Error("heartbeat: the control plane's reply was not acted on", "error", gerr)
 				ok = false
+			}
+		}
+		// The recovery key is learned only from a reply the gate accepted,
+		// and only once.
+		if ok && reply.RecoveryKey != "" {
+			if learned, lerr := recovery.Learn(reply.RecoveryKey); lerr != nil {
+				log.Error("recovery", "error", lerr)
+			} else if learned {
+				log.Info("recovery: pinned the fleet recovery key", "fingerprint", recovery.Fingerprint())
 			}
 		}
 		// How long the control plane has gone unheard decides who may log in
