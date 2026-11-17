@@ -125,6 +125,7 @@ func (a *API) applyRulesTo(ctx context.Context, db Database, actor string) {
 	for _, l := range lines {
 		a.auditDB(ctx, "db.assigned", "notice", actor, l.Hostname, describeGive(l, "the rule for databases added later on "+l.Hostname))
 	}
+	a.copyReplicaAccess(ctx, db, actor)
 }
 
 func lineWho(l BulkAccessLine) string {

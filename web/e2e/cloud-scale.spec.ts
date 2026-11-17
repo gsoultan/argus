@@ -26,6 +26,16 @@ const INVENTORY: Record<string, object[]> = {
   instance: [WEB01, item('instance', 'i-0batch', 'batch-02', { state: 'running', size: 'c6i.xlarge' })],
   'target-group': [item('target-group', TG_WEB, 'web-tg', { network: 'vpc-1', state: 'healthy', links: [{ kind: 'load-balancer', id: 'lb-web', name: 'web-lb' }],
     details: { protocol: 'HTTP', port: '80', targetType: 'instance' } })],
+  subnet: [item('subnet', 'subnet-a', 'private-a', { zone: 'ap-southeast-3a', network: 'vpc-1' }),
+    item('subnet', 'subnet-b', 'private-b', { zone: 'ap-southeast-3b', network: 'vpc-1' })],
+  database: [
+    item('database', 'arn:aws:rds:ap-southeast-3:412788931204:db:orders-db', 'orders-db', { state: 'available', size: 'db.r6i.large', zone: 'ap-southeast-3a',
+      details: { engine: 'postgres', version: '16.4', backup_days: '7', storage_gb: '500', replicas: 'orders-db-r1' } }),
+    { ...item('database', 'arn:aws:rds:ap-southeast-3:412788931204:db:orders-db-r1', 'orders-db-r1', { state: 'available', size: 'db.r6i.large',
+      zone: 'ap-southeast-3b', tags: { 'argus:replica-of': 'orders-db' }, details: { engine: 'postgres', version: '16.4', replica_of: 'orders-db', backup_days: '0' } }), madeByArgus: true },
+    item('database', 'arn:aws:rds:ap-southeast-3:412788931204:db:ledger', 'ledger', { state: 'available', size: 'db.m6i.large', zone: 'ap-southeast-3a',
+      details: { engine: 'mysql', version: '8.0.39', backup_days: '0', storage_gb: '100' } }),
+  ],
 }
 
 const RULES = {
@@ -235,4 +245,43 @@ test('AWS decides: the wizard keeps the maximum under the cost cap, and the grou
   const dialog = page.getByRole('dialog', { name: 'Change pay-api' })
   await dialog.getByText('Ask each time', { exact: true }).click()
   await expect(dialog.getByText('Argus decides again; AWS ends the servers it added above the minimum.')).toBeVisible()
+})
+
+test('read replicas of an RDS database: add one, and remove one Argus made', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  const got = await asks(page)
+  await signIn(page)
+  await page.goto('/cloud?tab=scaling')
+  const card = page.getByText('Read replicas', { exact: true }).locator('xpath=ancestor::div[contains(@class, "mantine-Card-root")]')
+  await expect(card.getByRole('cell', { name: /orders-db Postgres 16.4 · 1 replica/ })).toBeVisible()
+  await expect(card.getByTestId('replica-row')).toContainText('Replica of orders-db · made by Argus')
+  // A database with backups off says why before anyone asks.
+  const ledger = card.getByRole('row', { name: /ledger/ })
+  await expect(ledger.getByRole('button', { name: 'Add a read replica' })).toBeDisabled()
+  await ledger.getByRole('button', { name: 'Add a read replica' }).hover({ force: true })
+  await expect(page.getByText(/ledger's backups, which are off; turn on automated backups first/)).toBeVisible()
+  if (SHOTS) await card.screenshot({ path: `${SHOTS}/24-read-replicas.png` })
+
+  await card.getByRole('row', { name: /orders-db Postgres/ }).getByRole('button', { name: 'Add a read replica' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Add a read replica of orders-db' })
+  await expect(dialog.getByRole('textbox', { name: 'Replica name' })).toHaveValue('orders-db-r2')
+  await expect(dialog.getByRole('textbox', { name: 'Class' })).toHaveValue('db.r6i.large')
+  await expect(dialog.getByText('Same as the primary')).toBeVisible()
+  await dialog.getByRole('textbox', { name: 'Replica name' }).fill('orders-db-r1')
+  await expect(dialog.getByText('ap-southeast-3 already has a database named orders-db-r1')).toBeVisible()
+  await dialog.getByRole('textbox', { name: 'Replica name' }).fill('orders-db-reads')
+  await dialog.getByRole('combobox', { name: 'Zone' }).click()
+  await page.getByRole('option', { name: 'ap-southeast-3b' }).click()
+  await dialog.getByRole('textbox', { name: 'Why' }).fill('reads are 91% of statements')
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/25-add-replica.png` })
+  await dialog.getByRole('button', { name: 'Ask for approval' }).click()
+  await expect.poll(() => got.body).toMatchObject({ accountId: 'ca1', region: 'ap-southeast-3', action: 'replica-create', reason: 'reads are 91% of statements',
+    spec: { source: 'orders-db', name: 'orders-db-reads', size: 'db.r6i.large', zone: 'ap-southeast-3b' } })
+
+  await card.getByTestId('replica-row').getByRole('button', { name: 'Remove' }).click()
+  const rm = page.getByRole('dialog', { name: 'Remove orders-db-r1' })
+  await expect(rm).toContainText('Turns off deletion protection on orders-db-r1 and deletes it. orders-db and its data are not touched.')
+  await rm.getByRole('textbox', { name: 'Why' }).fill('sale is over')
+  await rm.getByRole('button', { name: 'Ask for approval' }).click()
+  await expect.poll(() => got.body).toMatchObject({ action: 'replica-remove', resourceId: 'arn:aws:rds:ap-southeast-3:412788931204:db:orders-db-r1' })
 })

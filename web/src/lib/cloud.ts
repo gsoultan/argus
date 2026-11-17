@@ -25,7 +25,7 @@ export function accountIdText(provider: CloudProvider, id: string): string {
 /** A Google Cloud project id: 6 to 30 lower case letters, digits and dashes, starting with a letter. */
 export const GCP_PROJECT = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/
 export type CloudKind = 'instance' | 'volume' | 'firewall' | 'network' | 'subnet' | 'address' | 'snapshot' | 'image'
-  | 'load-balancer' | 'target-group' | 'scaling-group'
+  | 'load-balancer' | 'target-group' | 'scaling-group' | 'database'
 
 export interface CloudAccount {
   id: string
@@ -354,11 +354,12 @@ export type CloudNetworkAction =
 export type CloudCapacityAction = 'capacity-create' | 'capacity-cancel' | 'ri-buy' | 'sp-buy'
 export type CloudBalancingAction = 'target-group-create' | 'health-check' | 'balancer-create' | 'group-size'
 export type CloudScaleAction = 'scale-group-create' | 'scale-group-change' | 'scale-add' | 'scale-remove'
+export type CloudReplicaAction = 'replica-create' | 'replica-remove'
 
 /** Whether an action buys a one- or three-year commitment, which always needs someone else. */
 export const isBuy = (a: CloudAction) => a === 'ri-buy' || a === 'sp-buy'
 export type CloudAction = 'launch' | 'start' | 'stop' | 'hibernate' | 'reboot' | 'resize' | 'tags' | 'protect' | 'unprotect' | 'settings' | 'remove'
-  | CloudStorageAction | CloudNetworkAction | CloudCapacityAction | CloudBalancingAction | CloudScaleAction
+  | CloudStorageAction | CloudNetworkAction | CloudCapacityAction | CloudBalancingAction | CloudScaleAction | CloudReplicaAction
 export type CloudChangeState = 'awaiting_approval' | 'applying' | 'applied' | 'failed' | 'declined' | 'cancelled' | 'lapsed'
 
 export interface CloudChange {
@@ -860,6 +861,7 @@ export const ACTION_LEVEL: Record<CloudAction, CloudChange['level']> = {
   'capacity-create': 'change', 'capacity-cancel': 'change', 'ri-buy': 'remove', 'sp-buy': 'remove',
   'target-group-create': 'change', 'health-check': 'change', 'balancer-create': 'change', 'group-size': 'change',
   'scale-group-create': 'change', 'scale-group-change': 'change', 'scale-add': 'change', 'scale-remove': 'change',
+  'replica-create': 'change', 'replica-remove': 'remove',
 }
 
 /** The permissions each storage change takes, as the manage role must grant them. */
@@ -884,6 +886,8 @@ export const ACTION_NEEDS: Partial<Record<CloudAction, string[]>> = {
     'autoscaling:CreateAutoScalingGroup', 'autoscaling:PutScalingPolicy'],
   'scale-add': ['ec2:RunInstances', 'elasticloadbalancing:RegisterTargets'],
   'scale-remove': ['elasticloadbalancing:DeregisterTargets', 'ec2:TerminateInstances'],
+  'replica-create': ['rds:CreateDBInstanceReadReplica', 'rds:AddTagsToResource'],
+  'replica-remove': ['rds:ModifyDBInstance', 'rds:DeleteDBInstance'],
 }
 
 /** Whether an account's manage role lacks what an action takes. */
