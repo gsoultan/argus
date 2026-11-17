@@ -126,6 +126,13 @@ type ErrInvalidDatabase struct{ Reason string }
 
 func (e ErrInvalidDatabase) Error() string { return e.Reason }
 
+// ErrDatabaseInUse is a removal something Argus keeps still points at.
+type ErrDatabaseInUse struct{ Detail string }
+
+func (e ErrDatabaseInUse) Error() string {
+	return "Argus still has records that point at this database, so it was not removed (" + e.Detail + ")"
+}
+
 // ErrDatabaseNotFound is an id that names nothing.
 var ErrDatabaseNotFound = errors.New("no such database")
 
@@ -523,6 +530,12 @@ func (s *Store) UpdateDatabase(ctx context.Context, d Database) (Database, error
 // entries keep naming it by id.
 func (s *Store) DeleteDatabase(ctx context.Context, id string) error {
 	tag, err := s.db(ctx).Exec(ctx, `DELETE FROM databases WHERE id = $1::uuid`, id)
+	var pgErr interface{ SQLState() string }
+	if errors.As(err, &pgErr) && pgErr.SQLState() == "23503" {
+		// Something Argus keeps still points at it. Say so, rather than the
+		// bare "internal error" a removal used to end in.
+		return ErrDatabaseInUse{Detail: err.Error()}
+	}
 	if err != nil {
 		return err
 	}
