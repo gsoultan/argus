@@ -135,10 +135,40 @@ export function SignIn({ identity, onSignedIn, expired = false }: {
           </form>
         ) : (
           <>
+            {/* The database could not be read. Never the first-run note
+                below: that one invites starting over on top of accounts
+                that are still there. */}
+            {identity.passwordEnabled && identity.databaseUnreadable && (
+              <Alert color="amber" variant="light" icon={<IconAlertTriangle size={16} />} mb="md">
+                <Text size="xs" fw={600}>Argus cannot read its database right now.</Text>
+                <Text size="xs" mt={4}>
+                  Your accounts have not been removed; the control plane is running but its
+                  database is not answering, so nobody can sign in until it does. Do not create
+                  a new account. On the host running the control plane, see why with:
+                </Text>
+                <Text size={FS.digest} ff="monospace" mt={6} c="var(--color-ink-soft)">
+                  journalctl -u argus-control -n 50
+                </Text>
+              </Alert>
+            )}
+            {/* Accounts existed, and every one is disabled now. Also not a
+                fresh install, so not its note or its setup button. */}
+            {identity.passwordEnabled && identity.accountsDisabled && (
+              <Alert color="amber" variant="light" icon={<IconAlertTriangle size={16} />} mb="md">
+                <Text size="xs">
+                  Nobody can sign in: every account is disabled or has no password. Turn one
+                  back on, on the host running the control plane, with:
+                </Text>
+                <Text size={FS.digest} ff="monospace" mt={6} c="var(--color-ink-soft)">
+                  argus-control users enable you@example.com
+                </Text>
+              </Alert>
+            )}
             {/* A fresh install. The form below would take a password and
                 refuse it, which reads as a bug rather than as "nobody has
                 been created yet". */}
-            {identity.passwordEnabled && identity.accountsExist === false && (
+            {identity.passwordEnabled && identity.accountsExist === false
+              && !identity.accountsDisabled && !identity.databaseUnreadable && (
               <Alert color="sky" variant="light" icon={<IconKey size={16} />} mb="md">
                 <Text size="xs">
                   No accounts exist yet.{' '}
@@ -162,7 +192,8 @@ export function SignIn({ identity, onSignedIn, expired = false }: {
                 )}
               </Alert>
             )}
-            {identity.passwordEnabled && identity.accountsExist !== false && (
+            {identity.passwordEnabled && identity.accountsExist !== false
+              && !identity.databaseUnreadable && (
               <form onSubmit={submitPassword}>
                 {expired && !error && (
                   <Alert color="sky" variant="light" icon={<IconClock size={15} />} mb="md">

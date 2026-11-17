@@ -177,6 +177,17 @@ export interface Identity {
   passwordEnabled?: boolean
   /** False on a fresh install, where nobody can sign in yet. */
   accountsExist?: boolean
+  /**
+   * True when the control plane answered but could not read its database, so
+   * it cannot say whether anyone can sign in. accountsExist is absent then:
+   * an outage of the database is not a fresh install.
+   */
+  databaseUnreadable?: boolean
+  /**
+   * True when accounts have existed but every one is disabled or has no
+   * password. accountsExist is false, and this is still not a fresh install.
+   */
+  accountsDisabled?: boolean
   /** True when a fresh install is offering its /setup page. */
   setupAvailable?: boolean
   /** True when the control plane has no configuration yet and serves only /setup. */

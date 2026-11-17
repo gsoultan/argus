@@ -91,15 +91,36 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 		// accountsExist distinguishes "sign in" from "nobody can yet". On a
 		// fresh install the form cannot succeed, and saying so beats letting
 		// someone retype a password they never set.
-		accounts := false
+		//
+		// "No" has to be an answer the database gave. A query that failed --
+		// Postgres stopped, out of disk, out of connections, a role that lost
+		// its rights -- used to read as "no accounts", so a deployment full of
+		// people showed the first-run page and invited someone to start over
+		// on top of it. A failure now says it is one, and is logged.
+		accounts, unreadable, disabledOnly := false, false, false
 		if a.signer != nil {
-			accounts, _ = a.store.AnyAccountExists(r.Context())
+			var err error
+			if accounts, err = a.store.AnyAccountExists(r.Context()); err != nil {
+				unreadable = true
+				a.log.Error("sign-in page: could not read the accounts table; "+
+					"reporting the database as unreadable, not as a fresh install", "error", err)
+			}
 		}
 		// setupAvailable sends a fresh install to /setup instead of to a
-		// command, when this process is offering it.
+		// command, when this process is offering it. setupState also says
+		// whether anyone ever had a password: if so and nobody can sign in
+		// now, every account was disabled, which is not a fresh install
+		// either.
 		setup := false
-		if a.signer != nil && !accounts {
-			if st, err := a.setupState(r.Context()); err == nil {
+		if a.signer != nil && !accounts && !unreadable {
+			st, err := a.setupState(r.Context())
+			switch {
+			case err != nil:
+				unreadable = true
+				a.log.Error("sign-in page: could not tell whether setup is complete", "error", err)
+			case st.Complete:
+				disabledOnly = true
+			default:
 				setup = st.Available
 			}
 		}
@@ -109,14 +130,25 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 		if a.store != nil {
 			multi, _ = a.store.MultiTenant(r.Context())
 		}
-		writeJSON(w, http.StatusUnauthorized, map[string]any{
+		body := map[string]any{
 			"authenticated":   false,
 			"passwordEnabled": a.signer != nil,
-			"accountsExist":   accounts,
 			"setupAvailable":  setup,
 			"multiOrg":        multi,
 			"org":             tenantSummary(r.Context(), TenantOf(r.Context())),
-		})
+		}
+		switch {
+		case unreadable:
+			// accountsExist is left out: the honest answer is "unknown",
+			// and an older console reads a missing field as "sign in".
+			body["databaseUnreadable"] = true
+		case disabledOnly:
+			body["accountsExist"] = false
+			body["accountsDisabled"] = true
+		default:
+			body["accountsExist"] = accounts
+		}
+		writeJSON(w, http.StatusUnauthorized, body)
 		return
 	}
 	// mfaEnrolled drives the console's prompt to set one up. Looked up rather
