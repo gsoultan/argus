@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_LEVEL_RULES, attention, editText, hashRef, keyRuleWords, keyspace, levelRules, rulesProblem, sha256Hex,
-  treeLevel, userFinding, userNameProblem, networkSummary, firewallCommand, type RedisInfoData, type RedisUser,
+  treeLevel, userFinding, userNameProblem, networkSummary, firewallCommand, parseSource, inPrefix, listenFor, reachPlan, bindFor, type RedisInfoData, type RedisUser,
 } from '~/lib/redisManage'
 
 describe('rulesProblem', () => {
@@ -96,5 +96,52 @@ describe('network', () => {
     expect(firewallCommand('ufw', '192.168.1.0/24', 6379)).toBe('sudo ufw allow from 192.168.1.0/24 to any port 6379 proto tcp')
     expect(firewallCommand('firewalld', '10.0.0.0/8', 6380)).toMatch(/source address="10.0.0.0\/8" port port="6380"/)
     expect(firewallCommand('', '10.0.0.0/8', 6380)).toBeNull()
+  })
+})
+
+describe('who can connect', () => {
+  const n = {
+    port: 6379, bind: ['127.0.0.1', '-::1'], protectedMode: true, defaultOpen: false, defaultClients: 0,
+    configFile: '/etc/redis/redis.conf', agentConf: true, firewall: 'ufw' as const, firewallActive: true, host: 'cache-01',
+    addresses: [
+      { ip: '10.0.0.183', iface: 'eth0', prefix: '10.0.0.0/24', private: true, state: 'closed' as const },
+      { ip: '172.17.0.1', iface: 'docker0', prefix: '172.17.0.0/16', private: true, state: 'closed' as const },
+      { ip: '203.0.113.9', iface: 'eth1', prefix: '203.0.113.0/24', private: false, state: 'closed' as const },
+    ],
+  }
+  it('reads a source as the agent writes it', () => {
+    expect(parseSource(' 10.0.0.61 ')).toEqual({ source: '10.0.0.61' })
+    expect(parseSource('10.0.4.9/24')).toEqual({ source: '10.0.4.0/24' })
+    expect(parseSource('fd00::1')).toEqual({ source: 'fd00::1' })
+    expect(parseSource('0.0.0.0/0')).toHaveProperty('error')
+    expect(parseSource('127.0.0.1')).toHaveProperty('error')
+    expect(parseSource('10.0.0.5; reboot')).toHaveProperty('error')
+    expect(parseSource('10.0.0.256')).toHaveProperty('error')
+  })
+  it('listens only on the address next to the machines let in', () => {
+    expect(inPrefix('10.0.0.61', '10.0.0.0/24')).toBe(true)
+    expect(inPrefix('10.0.1.61', '10.0.0.0/24')).toBe(false)
+    expect(listenFor(n, 'selected', ['10.0.0.61'])).toEqual(['10.0.0.183'])
+    expect(listenFor(n, 'selected', ['192.168.5.5'])).toEqual(['10.0.0.183', '172.17.0.1'])
+    expect(listenFor(n, 'network', [])).toEqual(['10.0.0.183', '172.17.0.1'])
+    expect(bindFor('any', [])).toBe('* -::*')
+    expect(bindFor('selected', ['10.0.0.183'])).toBe('127.0.0.1 -::1 -10.0.0.183')
+  })
+  it('plans bind and the firewall, and says what stops it', () => {
+    const p = reachPlan(n, 'selected', ['10.0.0.61'], '7.2.4')
+    expect(p.blocked).toBeNull()
+    expect(p.steps[0]).toMatchObject({ state: 'change', diff: { from: 'bind 127.0.0.1 -::1', to: 'bind 127.0.0.1 -::1 -10.0.0.183' } })
+    expect(p.steps.flatMap((s) => s.lines ?? [])).toEqual([
+      "ufw allow from 10.0.0.61 to any port 6379 proto tcp comment 'argus 6379'",
+      "ufw deny proto tcp to any port 6379 comment 'argus 6379'",
+    ])
+    expect(reachPlan(n, 'selected', ['10.0.0.61'], '6.2.0').blocked).toMatch(/cannot change bind while it runs/)
+    expect(reachPlan({ ...n, firewallActive: false }, 'selected', ['10.0.0.61']).blocked).toMatch(/no firewall is on/)
+    expect(reachPlan({ ...n, firewallOpenToAll: true }, 'selected', ['10.0.0.61']).blocked).toMatch(/already lets everyone in/)
+    expect(reachPlan({ ...n, defaultOpen: true }, 'network', []).blocked).toMatch(/default user a password/)
+    expect(reachPlan({ ...n, noPassUsers: ['legacy'] }, 'any', []).blocked).toMatch(/legacy has no password/)
+    expect(reachPlan({ ...n, noPassUsers: ['legacy'] }, 'network', []).blocked).toBeNull()
+    expect(reachPlan(n, 'selected', []).blocked).toMatch(/add at least one machine/)
+    expect(reachPlan(n, 'local', []).steps[0]).toMatchObject({ state: 'ok' })
   })
 })

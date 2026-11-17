@@ -127,6 +127,11 @@ func main() {
 		// question about installed or installable software on stdin, the
 		// answer on stdout. Nothing is installed here.
 		os.Exit(agent.RunSoftwareQuery(os.Stdin, os.Stdout))
+	case "firewall":
+		// Run by the daemon outside its sandbox: what the server's firewall
+		// allows on one database port, or the change to who may connect.
+		// Only rules Argus added are ever removed.
+		os.Exit(agent.RunFirewall(os.Stdin, os.Stdout))
 	case "packages-repair":
 		// Run by the daemon after an update run was cut short.
 		os.Exit(agent.RunPackagesRepair(os.Stdout))
@@ -364,10 +369,18 @@ func runDaemon(args []string) int {
 		})
 		// Redis and RabbitMQ on this server, as the person's own user for the
 		// session, every command recorded before it runs.
+		// Can this server connect to a database on another: the client's side
+		// of "who can connect".
+		services[agent.ReachCheckService] = agent.ReachCheck(agent.ReachCheckConfig{
+			Verifier: &tunnel.GrantVerifier{Host: hostname},
+			Log:      log,
+		})
 		services[agent.RedisService] = agent.Redis(agent.StoreConfig{
-			Verifier:  &tunnel.GrantVerifier{Host: hostname},
-			RecordDir: *dir,
-			Log:       log,
+			Verifier:   &tunnel.GrantVerifier{Host: hostname},
+			RecordDir:  *dir,
+			Log:        log,
+			Executable: exe,
+			StateDir:   *stateDir,
 		})
 		// MongoDB the same way: a user in the entry's database for the
 		// session, every command recorded before it runs.

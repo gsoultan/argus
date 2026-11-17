@@ -39,6 +39,20 @@ type StoreConfig struct {
 	UndoDir string
 	// MaxRequestsPerMinute bounds one session. Zero is 120.
 	MaxRequestsPerMinute int
+	// Executable and StateDir let an engine ask the server's firewall
+	// through `argus-agent firewall` (firewall.go), for who may connect.
+	Executable string
+	StateDir   string
+	// Firewall stands in for that helper; nil runs it.
+	Firewall func(ctx context.Context, req tunnel.FirewallRequest) tunnel.FirewallResult
+}
+
+// firewall is how an engine asks the server's firewall.
+func (c StoreConfig) firewall() firewaller {
+	if c.Firewall != nil {
+		return c.Firewall
+	}
+	return hostFirewall(c.Executable, c.StateDir)
 }
 
 // storeEngine is one open session's engine side.

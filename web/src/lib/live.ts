@@ -1700,6 +1700,22 @@ export async function discoverDatabases(assetId: string, q: {
   return get<DiscoverAnswer>(`/api/v1/assets/${encodeURIComponent(assetId)}/databases/discover?${p}`)
 }
 
+/** Whether one server reaches a database port on another, as a client there would. */
+export interface ReachCheckAnswer {
+  state: 'ok' | 'offline' | 'unsupported' | 'failed'
+  error?: string
+  connected?: boolean
+  /** signin (asks for a password), open (none needed), protected (Redis refused it). */
+  answer?: 'signin' | 'open' | 'protected'
+  detail?: string
+  ms?: number
+  from?: string
+}
+
+export async function reachCheck(fromAssetId: string, q: { host: string; port: number; engine?: DBEngine }): Promise<ReachCheckAnswer> {
+  return post<ReachCheckAnswer>(`/api/v1/assets/${encodeURIComponent(fromAssetId)}/reach-check`, q)
+}
+
 /** A query someone kept on a database; text only. */
 export interface SavedQuery {
   id: string

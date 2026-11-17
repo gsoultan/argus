@@ -118,3 +118,32 @@ func TestRedisLevelRulesSaved(t *testing.T) {
 		t.Fatalf("approval switch on a Redis: %+v %v", got.Policy, err)
 	}
 }
+
+// Opening a Redis to anywhere waits for a second person even where its
+// changes do not; the addresses a change lets in are part of what is approved.
+func TestRedisOpeningToAnywhereAlwaysWaits(t *testing.T) {
+	a, _, _, db, _ := redisFixture(t)
+	ctx := context.Background()
+	db.Label = "staging"
+	if db.WritesNeedApproval() {
+		t.Fatal("a staging Redis waits by default")
+	}
+	req := tunnel.StoreRequest{Op: tunnel.RedisOpNetworkSet, Reach: tunnel.ReachAny}
+	no := a.redisGate(ctx, "ana@corp.example", db, tunnel.LevelDBA, &req)
+	if no == nil || no.NeedsApproval == nil || !strings.Contains(no.Error, "to anywhere") ||
+		!strings.Contains(no.NeedsApproval.Text, "FIREWALL ALLOW ANY") {
+		t.Fatalf("anywhere on staging: %+v", no)
+	}
+	sel := tunnel.StoreRequest{Op: tunnel.RedisOpNetworkSet, Reach: tunnel.ReachSelected,
+		Addresses: []string{"10.0.0.183"}, Sources: []string{" 10.0.0.50 ", "10.0.0.50", "10.0.4.9/24"}}
+	if no := a.redisGate(ctx, "ana@corp.example", db, tunnel.LevelDBA, &sel); no != nil {
+		t.Fatalf("selected on staging waited: %+v", no)
+	}
+	if strings.Join(sel.Sources, ",") != "10.0.0.50,10.0.4.0/24" {
+		t.Fatalf("sources not normalised: %v", sel.Sources)
+	}
+	bad := tunnel.StoreRequest{Op: tunnel.RedisOpNetworkSet, Reach: tunnel.ReachSelected, Sources: []string{"0.0.0.0/0"}}
+	if no := a.redisGate(ctx, "ana@corp.example", db, tunnel.LevelDBA, &bad); no == nil {
+		t.Fatal("every address passed as selected machines")
+	}
+}

@@ -14,7 +14,7 @@ import {
   type RedisDryRun, type RedisUser, type RedisUserResult, type RedisUsersData,
 } from '~/lib/redisManage'
 import { dataOf, type ChangeAnswer } from '~/components/redis/useRedisChange'
-import { LoginResult, RedisNetwork, TestSignIn } from '~/components/redis/RedisNetwork'
+import { LoginResult, TestSignIn } from '~/components/redis/RedisNetwork'
 import type { RedisLoginResult } from '~/lib/redisManage'
 
 /*
@@ -25,12 +25,11 @@ the agent ever has the password; Redis keeps hashes too. Argus's own users and
 the one the agent signs in as are shown, not changed here.
 */
 
-export function RedisUsers({ s, database, canManage, canCheck, canNetwork, change }: {
+export function RedisUsers({ s, database, canManage, canCheck, change }: {
   s: StoreSession
   database: Database
   canManage: boolean
   canCheck: boolean
-  canNetwork: boolean
   change: (req: StoreRequest) => Promise<ChangeAnswer>
 }) {
   const [data, setData] = useState<RedisUsersData | null>(null)
@@ -119,7 +118,6 @@ export function RedisUsers({ s, database, canManage, canCheck, canNetwork, chang
         </Table>
       </SectionCard>
 
-      {canNetwork && <RedisNetwork s={s} canChange={canManage} change={change} />}
 
       <SectionCard title="Argus session users" description="One per person and level while a session is open; made and removed by Argus" flush>
         <Table verticalSpacing={4} fz="xs">

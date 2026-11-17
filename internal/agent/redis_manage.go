@@ -52,7 +52,7 @@ func (s *redisSession) manage(ctx context.Context, req tunnel.StoreRequest, rec 
 		return tunnel.StoreAnswer{Type: "error",
 			Error: "this needs " + need + " or above; this session is at " + s.db.Level}, nil
 	}
-	if a, waits := tunnel.RedisApproval(req); waits && s.db.ChangesNeedApproval && req.Approval == "" {
+	if a, waits := tunnel.RedisApproval(req); waits && (s.db.ChangesNeedApproval || tunnel.RedisAlwaysApproval(req)) && req.Approval == "" {
 		why := "on " + s.g.Host + " this change runs once someone else approves it"
 		if err := rec.refused(req.ID, a.Text, why); err != nil {
 			return tunnel.StoreAnswer{}, err

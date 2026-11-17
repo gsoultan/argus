@@ -100,34 +100,64 @@ describe('Redis management', () => {
     expect(await screen.findByText('checkout-api signs in on this server only')).toBeInTheDocument()
   })
 
-  it('opens Redis to the LAN only on purpose, once the default user has a password', async () => {
+  const net = {
+    port: 6379, bind: ['127.0.0.1', '-::1'], protectedMode: true, defaultOpen: true, defaultClients: 0,
+    configFile: '/etc/redis/redis.conf', agentConf: true, firewall: 'ufw', firewallActive: true, reach: 'local', host: 'cache-01',
+    addresses: [{ ip: '192.168.1.20', iface: 'eth0', prefix: '192.168.1.0/24', private: true, state: 'closed' }],
+  }
+  async function networkTab(ws: FakeSocket, data: Record<string, unknown>) {
+    fireEvent.click(screen.getByRole('tab', { name: 'Network' }))
+    await ws.reply('network', { type: 'result', data })
+    await screen.findByText(/Only programs on cache-01 can connect/)
+  }
+
+  it('lets selected machines in through bind and the firewall, once the default user has a password', async () => {
     const ws = await open()
-    fireEvent.click(screen.getByRole('tab', { name: 'Users & ACL' }))
-    await ws.reply('acl_list', { type: 'result', data: { aclFile: true, users: [] } })
-    const net = {
-      port: 6379, bind: ['127.0.0.1', '-::1'], protectedMode: true, defaultOpen: true, defaultClients: 0,
-      configFile: '/etc/redis/redis.conf', agentConf: true, firewall: 'ufw',
-      addresses: [{ ip: '192.168.1.20', iface: 'eth0', prefix: '192.168.1.0/24', private: true, state: 'closed' }],
-    }
-    await ws.reply('network', { type: 'result', data: net })
-    expect(await screen.findByText('The default user has no password')).toBeInTheDocument()
-    fireEvent.click(screen.getByLabelText('Listen on 192.168.1.20'))
-    expect(screen.getByRole('button', { name: 'Open to the LAN…' })).toBeDisabled()
+    await networkTab(ws, net)
+    fireEvent.click(screen.getByRole('radio', { name: /Selected machines/ }))
+    fireEvent.change(screen.getByLabelText('Add an address or range'), { target: { value: '0.0.0.0/0' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    expect(await screen.findByText('0.0.0.0/0 is every address; choose Anywhere instead')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Add an address or range'), { target: { value: '192.168.1.61' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    expect(await screen.findByText(/Not yet: give the default user a password first/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled()
 
     fireEvent.click(screen.getByRole('button', { name: 'Give the default user a password' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Set a password' }))
     await ws.reply('default_secure', { type: 'result', data: { savedTo: '/etc/redis/redis.conf', network: { ...net, defaultOpen: false } } })
-    fireEvent.click(await screen.findByLabelText('Listen on 192.168.1.20'))
-    fireEvent.click(screen.getByRole('button', { name: 'Open to the LAN…' }))
-    const go = await screen.findByRole('button', { name: 'Open to the LAN' })
-    expect(go).toBeDisabled()
+    await waitFor(() => expect(screen.queryByText('The default user has no password')).toBeNull())
+    fireEvent.click(screen.getByRole('radio', { name: /Selected machines/ }))
+    fireEvent.change(screen.getByLabelText('Add an address or range'), { target: { value: '192.168.1.61' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    expect(screen.getByText(/ufw allow from 192\.168\.1\.61 to any port 6379/)).toBeInTheDocument()
     expect(ws.sent.some((r) => r.op === 'network_set')).toBe(false)
-    fireEvent.click(screen.getByLabelText('I understand every machine on these networks can reach Redis'))
-    fireEvent.click(go)
-    const set = await ws.reply('network_set', { type: 'result', data: { rewritten: true, network: {
-      ...net, defaultOpen: false, bind: ['127.0.0.1', '-::1', '-192.168.1.20'],
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    const set = await ws.reply('network_set', { type: 'result', data: { rewritten: true, firewallRan: ['ufw allow from 192.168.1.61 to any port 6379 proto tcp comment argus 6379'], network: {
+      ...net, defaultOpen: false, reach: 'selected', firewallSources: ['192.168.1.61'], bind: ['127.0.0.1', '-::1', '-192.168.1.20'],
       addresses: [{ ...net.addresses[0], state: 'signin' }] } } })
-    expect(set).toMatchObject({ addresses: ['192.168.1.20'] })
-    expect(await screen.findByText('sudo ufw allow from 192.168.1.0/24 to any port 6379 proto tcp')).toBeInTheDocument()
+    expect(set).toMatchObject({ reach: 'selected', addresses: ['192.168.1.20'], sources: ['192.168.1.61'] })
+    expect(await screen.findByText('Now: selected machines. Saved in the config file.')).toBeInTheDocument()
+    expect(screen.getByText(/1 selected machine can connect: 192\.168\.1\.61/)).toBeInTheDocument()
+  })
+
+  it('opens to anywhere only with every password set, the name typed, and approval', async () => {
+    const ws = await open()
+    await networkTab(ws, { ...net, defaultOpen: false, noPassUsers: ['legacy'] })
+    fireEvent.click(screen.getByRole('radio', { name: /Anywhere/ }))
+    expect(await screen.findByText(/Not yet: legacy has no password/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Ask for approval' })).toBeDisabled()
+  })
+
+  it('asks for approval to open to anywhere once the name is typed', async () => {
+    const ws = await open()
+    await networkTab(ws, { ...net, defaultOpen: false })
+    fireEvent.click(screen.getByRole('radio', { name: /Anywhere/ }))
+    const go = await screen.findByRole('button', { name: 'Ask for approval' })
+    expect(go).toBeDisabled()
+    fireEvent.change(screen.getByLabelText("Type the server's name"), { target: { value: 'cache-02' } })
+    expect(go).toBeDisabled()
+    fireEvent.change(screen.getByLabelText("Type the server's name"), { target: { value: 'CACHE-01' } })
+    expect(go).toBeEnabled()
   })
 })

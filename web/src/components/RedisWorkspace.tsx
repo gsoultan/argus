@@ -31,9 +31,10 @@ const NewKey = lazy(() => import('~/components/redis/RedisNewKey').then((m) => (
 const RedisOverview = lazy(() => import('~/components/redis/RedisOverview').then((m) => ({ default: m.RedisOverview })))
 const RedisConfig = lazy(() => import('~/components/redis/RedisConfig').then((m) => ({ default: m.RedisConfig })))
 const RedisUsers = lazy(() => import('~/components/redis/RedisUsers').then((m) => ({ default: m.RedisUsers })))
+const RedisNetwork = lazy(() => import('~/components/redis/RedisNetwork').then((m) => ({ default: m.RedisNetwork })))
 const RedisBulk = lazy(() => import('~/components/redis/RedisBulk').then((m) => ({ default: m.RedisBulk })))
 
-type Tab = 'overview' | 'keys' | 'config' | 'users'
+type Tab = 'overview' | 'keys' | 'config' | 'users' | 'network'
 
 export interface RedisWorkspaceProps {
   database: Database
@@ -41,6 +42,8 @@ export interface RedisWorkspaceProps {
   getTicket: (level?: DBLevel) => Promise<{ ticket: string; role: string; level: DBLevel } | null>
   endpoint: string
   onAskForAccess?: () => void
+  /** A tab to open first, as ?panel=network does from a server's applications. */
+  initialPanel?: string
 }
 
 // Key types are not findings, so they stay neutral: the semantic colours
@@ -49,7 +52,7 @@ const typeBadge = { variant: 'outline', color: 'slate', radius: 'sm' } as const
 
 interface Line { id: number; cmd: string; out: string; error?: boolean; ms?: number }
 
-export function RedisWorkspace({ database, access, getTicket, endpoint, onAskForAccess }: RedisWorkspaceProps) {
+export function RedisWorkspace({ database, access, getTicket, endpoint, onAskForAccess, initialPanel }: RedisWorkspaceProps) {
   const narrow = useMediaQuery('(max-width: 48em)') ?? false
   const [keysOpen, keysDrawer] = useDisclosure(false)
   const s = useStoreSession(database, getTicket, endpoint)
@@ -57,12 +60,13 @@ export function RedisWorkspace({ database, access, getTicket, endpoint, onAskFor
   const ops = s.ready?.ops ?? []
   const can = (op: string) => ops.includes(op)
   const { change, dialog: approvalDialog } = useRedisChange(s, database)
-  const [tab, setTab] = useState<Tab>('keys')
+  const [tab, setTab] = useState<Tab>(initialPanel === 'network' ? 'network' : 'keys')
   const tabs: { id: Tab; label: string }[] = [
     ...(can('info') ? [{ id: 'overview' as const, label: 'Overview' }] : []),
     { id: 'keys', label: 'Keys' },
     ...(can('config_get') ? [{ id: 'config' as const, label: 'Configuration' }] : []),
     ...(can('acl_list') ? [{ id: 'users' as const, label: 'Users & ACL' }] : []),
+    ...(can('network') ? [{ id: 'network' as const, label: 'Network' }] : []),
   ]
   const [view, setView] = useState<'list' | 'tree'>('list')
   const [prefix, setPrefix] = useState('')
@@ -367,7 +371,8 @@ export function RedisWorkspace({ database, access, getTicket, endpoint, onAskFor
           <Suspense fallback={<Loader size="sm" m="md" />}>
             {tab === 'overview' && <RedisOverview s={s} canSave={can('save')} change={change} go={setTab} />}
             {tab === 'config' && <RedisConfig s={s} canSet={can('config_set')} change={change} />}
-            {tab === 'users' && <RedisUsers s={s} database={database} canManage={can('acl_setuser')} canCheck={can('acl_dryrun')} canNetwork={can('network')} change={change} />}
+            {tab === 'users' && <RedisUsers s={s} database={database} canManage={can('acl_setuser')} canCheck={can('acl_dryrun')} change={change} />}
+            {tab === 'network' && <RedisNetwork s={s} canChange={can('network_set')} change={change} assetId={database.assetId} />}
           </Suspense>
         </Box>
       )}

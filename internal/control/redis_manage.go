@@ -35,8 +35,21 @@ func (a *API) redisGate(ctx context.Context, email string, db Database, level st
 		return &tunnel.StoreAnswer{ID: req.ID, Type: "error",
 			Error: "this needs " + need + " or above; this session is at " + level}
 	}
+	if req.Op == tunnel.RedisOpNetworkSet && req.Reach != "" {
+		// The approval is for these exact addresses, so the text the
+		// approver read and the text the agent asks for are one.
+		if !tunnel.ValidReach(req.Reach) {
+			return &tunnel.StoreAnswer{ID: req.ID, Type: "error", Error: "that is not who may connect"}
+		}
+		src, err := tunnel.NormalSources(req.Sources)
+		if err != nil {
+			return &tunnel.StoreAnswer{ID: req.ID, Type: "error", Error: err.Error()}
+		}
+		req.Sources = src
+	}
 	ask, waits := tunnel.RedisApproval(*req)
-	if !waits || !db.WritesNeedApproval() {
+	always := tunnel.RedisAlwaysApproval(*req)
+	if !waits || (!db.WritesNeedApproval() && !always) {
 		req.Approval = ""
 		if waits {
 			a.auditDB(ctx, "db.redis_change", "notice", email, db.Hostname,
@@ -45,8 +58,12 @@ func (a *API) redisGate(ctx context.Context, email string, db Database, level st
 		return nil
 	}
 	if req.Approval == "" {
+		why := "on " + db.Hostname + approvalWhy(db)
+		if always && !db.WritesNeedApproval() {
+			why = "opening " + db.Hostname + " to anywhere"
+		}
 		return &tunnel.StoreAnswer{ID: req.ID, Type: "error", NeedsApproval: &ask,
-			Error: "on " + db.Hostname + approvalWhy(db) + ": this change runs once someone else approves it"}
+			Error: why + ": this change runs once someone else approves it"}
 	}
 	rowCap, err := a.store.UseStatementApproval(ctx, req.Approval, email, db.ID, ask.Text, nil)
 	if err != nil {

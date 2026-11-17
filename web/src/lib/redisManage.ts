@@ -283,8 +283,26 @@ export interface RedisAddress { ip: string; iface: string; prefix: string; priva
 export interface RedisNetworkData {
   port: number; tlsPort?: number; bind: string[]; protectedMode: boolean; defaultOpen: boolean; defaultClients: number
   configFile: string; agentConf: boolean; addresses: RedisAddress[]; firewall: '' | 'ufw' | 'firewalld'
+  /** Who can connect now; absent from an older agent. */
+  reach?: Reach
+  firewallActive?: boolean
+  /** The machines Argus's firewall rules let in, and whether one lets everyone in. */
+  firewallSources?: string[]
+  firewallAllowAll?: boolean
+  /** Rules Argus did not add that mention the port; one may already let everyone in. */
+  firewallOthers?: string[]
+  firewallOpenToAll?: boolean
+  firewallError?: string
+  /** The server's name, which opening to anywhere is confirmed with. */
+  host?: string
+  /** Users that are on and need no password. */
+  noPassUsers?: string[]
+  clients?: number
 }
-export interface RedisNetworkResult { network: RedisNetworkData; rewritten: boolean; rewriteError?: string }
+export interface RedisNetworkResult {
+  network: RedisNetworkData; rewritten: boolean; rewriteError?: string
+  firewallRan?: string[]; firewallError?: string
+}
 export interface RedisSecureResult { network: RedisNetworkData; savedTo: string }
 export interface RedisLogin { address: string; ok: boolean; detail?: string }
 export interface RedisLoginResult { user: string; port: number; logins: RedisLogin[] }
@@ -319,4 +337,183 @@ export function firewallCommand(fw: RedisNetworkData['firewall'], prefix: string
 export function connectCommand(ip: string, port: number, user: string): string {
   const host = ip.includes(':') ? `[${ip}]` : ip
   return `redis-cli -h ${ip} -p ${port} --user ${user} --askpass PING   # or redis://${user}:<password>@${host}:${port}/0`
+}
+
+/*
+Who can connect: the four answers, and the plan of what Argus changes on the
+server for one of them. The agent decides and refuses on its own; this only
+says beforehand what it will refuse and what it will run, in the same words.
+*/
+
+export type Reach = 'local' | 'selected' | 'network' | 'any'
+
+export const REACH: Record<Reach, { label: string; tone: string }> = {
+  local: { label: 'This server only', tone: 'amber' },
+  selected: { label: 'Selected machines', tone: 'azure' },
+  network: { label: 'The private network', tone: 'azure' },
+  any: { label: 'Anywhere', tone: 'rose' },
+}
+
+function v4(s: string): number | null {
+  const p = s.split('.')
+  if (p.length !== 4) return null
+  let n = 0
+  for (const x of p) {
+    if (!/^\d{1,3}$/.test(x) || Number(x) > 255) return null
+    n = n * 256 + Number(x)
+  }
+  return n
+}
+
+/** One source as the agent writes it, or why it is not one. */
+export function parseSource(raw: string): { source: string } | { error: string } {
+  const s = raw.trim()
+  const [addr, bitsText, extra] = s.split('/')
+  if (!addr || extra !== undefined) return { error: `${s || 'That'} is not an address or a network like 10.0.4.0/24` }
+  const n4 = v4(addr)
+  const is6 = n4 === null && /^[0-9a-fA-F:]+$/.test(addr) && addr.includes(':')
+  if (n4 === null && !is6) return { error: `${s} is not an address or a network like 10.0.4.0/24` }
+  const max = n4 !== null ? 32 : 128
+  let bits = max
+  if (bitsText !== undefined) {
+    if (!/^\d{1,3}$/.test(bitsText) || Number(bitsText) > max) return { error: `${s} is not an address or a network like 10.0.4.0/24` }
+    bits = Number(bitsText)
+  }
+  if (bits === 0) return { error: `${s} is every address; choose Anywhere instead` }
+  if ((n4 !== null && addr.startsWith('127.')) || addr === '::1') return { error: `${s} is this server itself, which can always connect` }
+  if (n4 !== null && bits < 32) {
+    const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0
+    const net = (n4 & mask) >>> 0
+    return { source: `${[24, 16, 8, 0].map((sh) => (net >>> sh) & 255).join('.')}/${bits}` }
+  }
+  return { source: bits === max ? addr : `${addr}/${bits}` }
+}
+
+/** Whether an IPv4 address or network lies in a prefix; false for IPv6. */
+export function inPrefix(source: string, prefix: string): boolean {
+  const [a, b] = source.split('/')
+  const [pa, pb] = prefix.split('/')
+  const n = v4(a ?? ''), p = v4(pa ?? '')
+  if (n === null || p === null) return false
+  const bits = Number(pb ?? 32), sbits = Number(b ?? 32)
+  if (sbits < bits) return false
+  const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0
+  return ((n & mask) >>> 0) === ((p & mask) >>> 0)
+}
+
+/**
+ * The addresses of this server Redis listens on for a choice: for selected
+ * machines, the private addresses on the same network as one of them (all
+ * private ones when none is, as for a machine reached through a router); for
+ * the private network, every private address.
+ */
+export function listenFor(n: RedisNetworkData, reach: Reach, sources: string[]): string[] {
+  const priv = n.addresses.filter((a) => a.private && !a.ip.includes(':'))
+  if (reach === 'network') return priv.map((a) => a.ip)
+  if (reach !== 'selected') return []
+  const near = priv.filter((a) => sources.some((s) => inPrefix(s, a.prefix)))
+  return (near.length ? near : priv).map((a) => a.ip)
+}
+
+/** The networks "the private network" lets in. */
+export function privateNetworks(n: RedisNetworkData): string[] {
+  return [...new Set(n.addresses.filter((a) => a.private && !a.ip.includes(':')).map((a) => a.prefix))]
+}
+
+/** The bind a choice writes, as tunnel.RedisBindFor does. */
+export function bindFor(reach: Reach, listen: string[]): string {
+  if (reach === 'any') return '* -::*'
+  return ['127.0.0.1', '-::1', ...(reach === 'local' ? [] : listen.map((a) => `-${a}`))].join(' ')
+}
+
+/** The firewall commands a choice runs, for the firewall the agent found. */
+export function firewallLines(n: RedisNetworkData, reach: Reach, sources: string[]): string[] {
+  const p = n.port
+  const mine = (n.firewallSources?.length ?? 0) + (n.firewallAllowAll ? 1 : 0)
+  const out: string[] = []
+  if (n.firewall === 'ufw') {
+    if (mine) out.push(`remove Argus's earlier rules for ${p} (comment "argus ${p}")`)
+    if (reach === 'selected' || reach === 'network') {
+      for (const s of sources) out.push(`ufw allow from ${s} to any port ${p} proto tcp comment 'argus ${p}'`)
+      out.push(`ufw deny proto tcp to any port ${p} comment 'argus ${p}'`)
+    }
+    if (reach === 'any') out.push(`ufw allow proto tcp to any port ${p} comment 'argus ${p}'`)
+  } else if (n.firewall === 'firewalld') {
+    if (mine) out.push(`remove the rules Argus added for ${p}`)
+    if (reach === 'selected' || reach === 'network') {
+      for (const s of sources) {
+        out.push(`firewall-cmd --add-rich-rule='rule family="${s.includes(':') ? 'ipv6' : 'ipv4'}" source address="${s}" port port="${p}" protocol="tcp" accept'`)
+      }
+    }
+    if (reach === 'any' && !n.firewallOpenToAll) out.push(`firewall-cmd --add-port=${p}/tcp`)
+  }
+  return out
+}
+
+export interface PlanStep {
+  state: 'ok' | 'change' | 'skip' | 'blocked' | 'warn'
+  title: string
+  detail?: string
+  diff?: { from: string; to: string }
+  lines?: string[]
+}
+
+/**
+ * What Argus will change on the server for a choice, step by step, and the
+ * first thing that stops it, if anything does.
+ */
+export function reachPlan(n: RedisNetworkData, reach: Reach, sources: string[], version?: string): { steps: PlanStep[]; blocked: string | null } {
+  const steps: PlanStep[] = []
+  const host = n.host || 'this server'
+  const listen = listenFor(n, reach, sources)
+  const bind = bindFor(reach, listen)
+  const now = n.bind.join(' ')
+  let blocked: string | null = null
+  const block = (why: string) => { blocked ??= why }
+
+  if (reach !== 'local' && n.firewallError) block(`the firewall could not be read: ${n.firewallError}`)
+  const major = Number((version ?? '').split('.')[0])
+  if (major > 0 && major < 7) block(`Redis ${version} cannot change bind while it runs, and Argus does not restart Redis yet; set bind in its config file and restart it on the server`)
+  if (reach === 'selected' && sources.length === 0) block('add at least one machine')
+  if (reach === 'network' && privateNetworks(n).length === 0) block(`${host} has no private address to listen on`)
+
+  steps.push(now === bind
+    ? { state: 'ok', title: `Redis already listens on ${reach === 'any' ? 'every address' : bind}` }
+    : { state: 'change', title: reach === 'local' ? `Listen on ${host} only` : reach === 'any' ? 'Listen on every address' : `Listen on ${listen.join(', ')}`,
+      detail: 'Changed while Redis runs (CONFIG SET bind), then saved to its config file.', diff: { from: `bind ${now}`, to: `bind ${bind}` } })
+  steps.push({ state: 'ok', title: 'Protected mode stays on', detail: 'Argus never turns it off.' })
+
+  if (reach !== 'local') {
+    if (n.defaultOpen) {
+      block('give the default user a password first')
+      steps.push({ state: 'blocked', title: 'The default user has no password', detail: 'Anyone who reaches Redis would be admin. Give it a password first.' })
+    } else if (reach === 'any' && (n.noPassUsers?.length ?? 0) > 0) {
+      const u = n.noPassUsers!.join(', ')
+      block(`${u} ${n.noPassUsers!.length === 1 ? 'has' : 'have'} no password`)
+      steps.push({ state: 'blocked', title: 'Every user needs a password', detail: `${u} can sign in with none. Give ${n.noPassUsers!.length === 1 ? 'it' : 'each'} a password or turn ${n.noPassUsers!.length === 1 ? 'it' : 'them'} off first.` })
+    } else {
+      steps.push({ state: 'ok', title: 'A password is required', detail: reach === 'any' ? 'The default user and every other user that is on have one.' : 'The default user has one.' })
+    }
+  }
+
+  const fw = n.firewall
+  const lines = firewallLines(n, reach, reach === 'network' ? privateNetworks(n) : sources)
+  if (!fw || !n.firewallActive) {
+    if (reach === 'selected') {
+      block('no firewall is on, so Redis cannot be limited to selected machines')
+      steps.push({ state: 'blocked', title: 'No firewall is on', detail: `Argus changes ufw or firewalld and never turns one on, since that can cut off SSH. Choose the private network, or turn a firewall on on ${host} first.` })
+    } else {
+      steps.push({ state: 'skip', title: 'No firewall is on', detail: reach === 'local' ? undefined : 'Nothing on this server limits who reaches the port; only Redis\'s own sign-in does.' })
+    }
+  } else if (reach === 'selected' && n.firewallOpenToAll) {
+    block('a firewall rule Argus did not add already lets everyone in')
+    steps.push({ state: 'blocked', title: 'A rule already lets everyone in', detail: `Remove it on the server first: ${(n.firewallOthers ?? []).join('; ')}` })
+  } else if (lines.length) {
+    steps.push({ state: 'change', title: `Firewall on ${host} (${fw})`, lines,
+      detail: reach === 'local' ? 'Only the rules Argus added are removed.' : reach === 'any' ? 'Lets everyone reach the port.' : 'Lets these in and refuses the port to everyone else.' })
+  } else {
+    steps.push({ state: 'ok', title: `Firewall on ${host} (${fw}): nothing to change` })
+  }
+  steps.push({ state: 'ok', title: 'No restart', detail: `Redis changes bind while it runs; ${n.clients ?? 'the'} connected client${n.clients === 1 ? '' : 's'} stay connected.` })
+  return { steps, blocked }
 }

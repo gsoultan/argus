@@ -1,25 +1,35 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import {
-  ActionIcon, Alert, Badge, Box, Button, Checkbox, Code, CopyButton, Group, Modal, PasswordInput, Stack, Table, Text, Tooltip,
+  ActionIcon, Alert, Badge, Box, Button, Checkbox, Code, CopyButton, Group, Modal, PasswordInput, Radio, Select, SimpleGrid,
+  Stack, Table, Text, TextInput, Tooltip,
 } from '@mantine/core'
 import { IconAlertTriangle, IconCheck, IconCopy, IconNetwork, IconX } from '@tabler/icons-react'
 import { FS, SP } from '~/theme'
 import { SectionCard } from '~/components/page'
 import type { StoreRequest, StoreSession } from '~/components/useStoreSession'
 import {
-  ADDRESS_STATE, connectCommand, firewallCommand, networkSummary,
-  type RedisLoginResult, type RedisNetworkData, type RedisNetworkResult, type RedisSecureResult,
+  ADDRESS_STATE, REACH, connectCommand, inPrefix, listenFor, networkSummary, parseSource, privateNetworks, reachPlan,
+  type PlanStep, type Reach, type RedisLoginResult, type RedisNetworkData, type RedisNetworkResult, type RedisSecureResult,
 } from '~/lib/redisManage'
+import { assetsQuery } from '~/lib/queries'
+import { isConfigured, reachCheck, type ReachCheckAnswer } from '~/lib/live'
+import { assetName } from '~/lib/assetType'
+import type { Asset } from '~/types/domain'
 import { dataOf, type ChangeAnswer } from '~/components/redis/useRedisChange'
 
 /*
-Whether applications elsewhere on the LAN can reach this Redis, and the two
-things that stop them as Redis is installed: it listens on the loopback only,
-and protected mode refuses everyone off this machine while the default user
-has no password. Opening it is a choice made here on purpose: private
-addresses only, the default user must have a password first, and it waits for
-approval where this database's changes do. A firewall on the server is the
-one thing this cannot see past, so its command is shown to copy.
+Which machines can connect to this Redis: this server only, selected machines, the
+private network, or anywhere. Redis's bind only picks which of the server's
+addresses it listens on and cannot name clients, so "selected machines" is
+bind plus a firewall rule on the server, and the agent writes both, touching
+only the rules Argus added. The plan beside the choice is what the agent will
+run; the agent refuses on its own what the plan calls blocked.
+
+Opening to anywhere is never one click: every user needs a password, the
+server's name is typed, and a second person approves, on every database.
+Where a machine that may connect is itself an Argus server, its agent can
+connect for real: the one check that sees the firewall from the client's side.
 */
 
 function Copy({ value, label }: { value: string; label: string }) {
@@ -34,25 +44,77 @@ function Copy({ value, label }: { value: string; label: string }) {
   )
 }
 
-export function RedisNetwork({ s, canChange, change, onNetwork }: {
+const STEP_MARK: Record<PlanStep['state'], { icon: string; color: string }> = {
+  ok: { icon: '✓', color: 'teal' },
+  change: { icon: '+', color: 'azure' },
+  skip: { icon: '–', color: 'slate' },
+  blocked: { icon: '✕', color: 'rose' },
+  warn: { icon: '!', color: 'amber' },
+}
+
+/** An Argus server, with one of its private IPv4 addresses. */
+interface KnownServer { id: string; name: string; address: string }
+
+function knownServers(assets: Asset[] | undefined, self: string): KnownServer[] {
+  const out: KnownServer[] = []
+  for (const a of assets ?? []) {
+    if (a.id === self) continue
+    for (const ad of a.addresses ?? []) {
+      if (ad.family === 'ipv4' && !ad.public) out.push({ id: a.id, name: assetName(a), address: ad.address })
+    }
+  }
+  return out
+}
+
+function plural(n: number, one: string, many: string): string { return n === 1 ? one : many }
+
+/** Who can connect now, in one line. */
+function nowText(n: RedisNetworkData): { tone: string; text: string } {
+  const host = n.host || 'this server'
+  const src = n.firewallSources ?? []
+  switch (n.reach) {
+    case 'local': return { tone: 'amber', text: `Only programs on ${host} can connect. Redis listens on ${n.bind.join(' ')}, so other machines get “connection refused”.` }
+    case 'selected': return { tone: 'teal', text: `${src.length} selected ${plural(src.length, 'machine', 'machines')} can connect: ${src.join(', ')}.` }
+    case 'network': return { tone: 'azure', text: `Machines on the networks ${host} is on can connect with a user and password.` }
+    case 'any': return { tone: 'rose', text: `Redis listens on every address of ${host}${n.firewallActive ? '' : ', and no firewall here narrows it'}.` }
+  }
+  return networkSummary(n)
+}
+
+export function RedisNetwork({ s, canChange, change, assetId, onNetwork }: {
   s: StoreSession
   canChange: boolean
   change: (req: StoreRequest) => Promise<ChangeAnswer>
+  /** The server Redis runs on, so it is not offered as a client of itself. */
+  assetId?: string
   onNetwork?: (n: RedisNetworkData) => void
 }) {
   const [n, setN] = useState<RedisNetworkData | null>(null)
   const [err, setErr] = useState<string | null>(null)
-  const [want, setWant] = useState<string[]>([])
-  const [confirm, setConfirm] = useState<'open' | 'secure' | null>(null)
+  const [reach, setReach] = useState<Reach>('local')
+  const [sources, setSources] = useState<string[]>([])
+  const [names, setNames] = useState<Record<string, string>>({})
+  const [typed, setTyped] = useState('')
+  const [typedErr, setTypedErr] = useState<string | null>(null)
+  const [confirmName, setConfirmName] = useState('')
   const [understood, setUnderstood] = useState(false)
+  const [secure, setSecure] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null)
+  const [note, setNote] = useState<{ ok: boolean; text: string; ran?: string[] } | null>(null)
+  const { data: assets } = useQuery({ ...assetsQuery(), enabled: isConfigured() })
+  const servers = useMemo(() => knownServers(assets, assetId ?? ''), [assets, assetId])
 
+  const reset = useCallback((x: RedisNetworkData) => {
+    setReach(x.reach ?? 'local')
+    setSources(x.reach === 'selected' ? x.firewallSources ?? [] : [])
+    setConfirmName('')
+    setUnderstood(false)
+  }, [])
   const got = useCallback((x: RedisNetworkData) => {
     setN(x)
-    setWant(x.addresses.filter((a) => a.state !== 'closed' && a.private).map((a) => a.ip))
+    reset(x)
     onNetwork?.(x)
-  }, [onNetwork])
+  }, [onNetwork, reset])
   const load = useCallback(async () => {
     const a = await s.ask({ op: 'network' })
     const d = dataOf<RedisNetworkData>(a)
@@ -63,35 +125,56 @@ export function RedisNetwork({ s, canChange, change, onNetwork }: {
 
   if (!n) {
     return (
-      <SectionCard title="Reach from the network" icon={IconNetwork}>
-        <Box px="md" pb="md">{err ? <Text size={FS.meta} c="rose">{err}</Text> : <Text size={FS.meta} c="dimmed">Checking each address…</Text>}</Box>
+      <SectionCard title="Which machines can connect" icon={IconNetwork}>
+        <Box px="md" pb="md">{err ? <Text size={FS.meta} c="rose">{err}</Text> : <Text size={FS.meta} c="dimmed">Checking each address and the firewall…</Text>}</Box>
       </SectionCard>
     )
   }
 
-  const listening = n.addresses.filter((a) => a.state !== 'closed').map((a) => a.ip)
-  const dirty = [...want].sort().join() !== [...listening.filter((ip) => n.addresses.find((a) => a.ip === ip)?.private)].sort().join()
-  const sum = networkSummary(n)
+  const host = n.host || 'this server'
+  const nets = privateNetworks(n)
+  const sent = reach === 'network' ? nets : reach === 'selected' ? sources : []
+  const plan = reachPlan(n, reach, sent, s.ready?.version)
+  const listen = listenFor(n, reach, sent)
+  const current = n.reach ?? 'local'
+  const same = reach === current && (reach !== 'selected' || [...sources].sort().join() === [...(n.firewallSources ?? [])].sort().join())
+  const waits = reach === 'any' || !!s.ready?.changesNeedApproval
+  const ready = canChange && !same && !plan.blocked &&
+    (reach !== 'any' || confirmName.trim().toLowerCase() === host.toLowerCase()) &&
+    (reach !== 'network' || understood)
+  const now = nowText(n)
+  const suggest = servers.filter((k) => !sources.includes(k.address) && n.addresses.some((a) => a.private && inPrefix(k.address, a.prefix)))
+  const publicIPs = n.addresses.filter((a) => !a.private).map((a) => a.ip)
+
+  const add = (raw: string) => {
+    const p = parseSource(raw)
+    if ('error' in p) { setTypedErr(p.error); return }
+    setTypedErr(null)
+    setTyped('')
+    setSources((x) => x.includes(p.source) ? x : [...x, p.source].slice(0, 32))
+  }
 
   const apply = async () => {
     setBusy(true)
-    const a = await change({ op: 'network_set', addresses: want })
+    const req: StoreRequest = { op: 'network_set', reach, addresses: listen, sources: sent }
+    if (reach === 'any') req.confirm = confirmName.trim()
+    const a = await change(req)
     setBusy(false)
-    setConfirm(null)
-    setUnderstood(false)
     if (a.notApproved) { setNote({ ok: false, text: 'Nothing changed: it was not approved.' }); return }
     const r = dataOf<RedisNetworkResult>(a)
-    if (!r) { setNote({ ok: false, text: a.error ?? 'failed' }); return }
+    if (!r) { setNote({ ok: false, text: a.error ?? 'failed' }); void load(); return }
     got(r.network)
-    setNote({ ok: r.rewritten, text: want.length
-      ? `Redis now listens on ${want.join(', ')} as well as this server.${r.rewritten ? ' Saved in redis.conf.' : ` It is live, but writing redis.conf failed: ${r.rewriteError}`}`
-      : `Redis listens on this server only again.${r.rewritten ? ' Saved in redis.conf.' : ` Writing redis.conf failed: ${r.rewriteError}`}` })
+    setNote({
+      ok: r.rewritten,
+      ran: r.firewallRan,
+      text: `Now: ${REACH[reach].label.toLowerCase()}.${r.rewritten ? ' Saved in the config file.' : ` It is live, but writing the config file failed: ${r.rewriteError}`}`,
+    })
   }
-  const secure = async () => {
+  const secureDefault = async () => {
     setBusy(true)
     const a = await change({ op: 'default_secure' })
     setBusy(false)
-    setConfirm(null)
+    setSecure(false)
     if (a.notApproved) { setNote({ ok: false, text: 'Nothing changed: it was not approved.' }); return }
     const r = dataOf<RedisSecureResult>(a)
     if (!r) { setNote({ ok: false, text: a.error ?? 'failed' }); return }
@@ -99,48 +182,154 @@ export function RedisNetwork({ s, canChange, change, onNetwork }: {
     setNote({ ok: true, text: `The default user now needs a password. It was made on the server and is in ${r.savedTo} (requirepass); it is not shown here.` })
   }
 
-  const fwLines = n.firewall ? [...new Set(n.addresses.filter((a) => a.state === 'signin').map((a) => a.prefix))]
-    .map((p) => firewallCommand(n.firewall, p, n.port)).filter((x): x is string => !!x) : []
+  // The extra controls sit under the card, not inside it: the card is a button.
+  const option = (r: Reach, desc: string, extra?: ReactNode) => (
+    <Box key={r}>
+    <Radio.Card value={r} className="argus-pick" data-checked={reach === r || undefined} disabled={!canChange}
+      style={reach === r && r === 'any' ? { borderColor: 'var(--mantine-color-rose-4)' } : undefined}>
+      <Group gap="sm" wrap="nowrap" align="flex-start" p={SP.cozy}>
+        <Radio.Indicator mt={2} />
+        <Box style={{ flex: 1, minWidth: 0 }}>
+          <Group gap={SP.snug}>
+            <Text size="sm" fw={600}>{r === 'network' && nets.length ? `The private network ${nets.join(', ')}` : REACH[r].label}</Text>
+            {current === r && <Badge size="xs" variant="light" color="slate">now</Badge>}
+            {r === 'any' && <Badge size="xs" variant="light" color="rose">risky</Badge>}
+          </Group>
+          <Text size={FS.meta} c="dimmed" lh={1.4}>{desc}</Text>
+        </Box>
+      </Group>
+    </Radio.Card>
+    {reach === r && extra && <Box pl={34} pr={SP.cozy} pt={SP.snug}>{extra}</Box>}
+    </Box>
+  )
+
+  const picker = (
+    <Stack gap={6}>
+      {sources.map((src) => {
+        const k = servers.find((x) => x.address === src)
+        return (
+          <Group key={src} gap={SP.snug} wrap="nowrap" px={8} py={4} style={{ border: '1px solid var(--color-line)', borderRadius: 8 }}>
+            <Badge size="xs" variant="light" color={k ? 'azure' : 'slate'}>{k ? 'Argus server' : src.includes('/') ? 'Network' : 'Address'}</Badge>
+            <Text size="xs" ff="monospace">{src}</Text>
+            <TextInput size="xs" variant="unstyled" placeholder={k ? k.name : 'what is it? (optional)'} value={k ? k.name : names[src] ?? ''}
+              readOnly={!!k} aria-label={`Name for ${src}`} style={{ flex: 1 }}
+              onChange={(e) => { const v = e.currentTarget.value; setNames((m) => ({ ...m, [src]: v })) }} />
+            <ActionIcon variant="subtle" size="sm" aria-label={`Remove ${src}`} onClick={() => setSources((x) => x.filter((y) => y !== src))}><IconX size={12} /></ActionIcon>
+          </Group>
+        )
+      })}
+      <Group gap={6} wrap="nowrap" align="flex-start">
+        <TextInput size="xs" style={{ flex: 1 }} placeholder="Add an address or range, like 10.0.0.72 or 10.0.4.0/24"
+          aria-label="Add an address or range" value={typed} error={typedErr}
+          onChange={(e) => { setTyped(e.currentTarget.value); setTypedErr(null) }}
+          onKeyDown={(e) => { if (e.key === 'Enter' && typed.trim()) { e.preventDefault(); add(typed) } }} />
+        <Button size="xs" variant="default" disabled={!typed.trim()} onClick={() => add(typed)}>Add</Button>
+      </Group>
+      {suggest.length > 0 && (
+        <Group gap={4}>
+          <Text size={FS.micro} c="dimmed">Argus servers on the same network:</Text>
+          {suggest.slice(0, 6).map((k) => (
+            <Button key={k.id + k.address} size="compact-xs" variant="default" onClick={() => setSources((x) => [...x, k.address])}>
+              + {k.name} · {k.address}
+            </Button>
+          ))}
+        </Group>
+      )}
+    </Stack>
+  )
+
+  const firewallNote = n.firewall
+    ? `${n.firewall} (${n.firewallActive ? 'on' : 'off'})`
+    : n.firewallError ? 'could not be read' : 'none'
 
   return (
-    <SectionCard title="Reach from the network" icon={IconNetwork}
-      description={`Port ${n.port}${n.tlsPort ? ` (TLS ${n.tlsPort})` : ''} · bind ${n.bind.join(' ')} · protected mode ${n.protectedMode ? 'on' : 'off'}`}>
+    <SectionCard title="Which machines can connect" icon={IconNetwork}
+      description={`Port ${n.port}${n.tlsPort ? ` (TLS ${n.tlsPort})` : ''} · protected mode ${n.protectedMode ? 'on' : 'off'} · firewall: ${firewallNote}`}>
       <Stack gap={SP.cozy} px="md" pb="md">
-        <Text size={FS.meta} c={sum.tone === 'teal' ? undefined : sum.tone}>{sum.text}</Text>
-        {note && <Alert color={note.ok ? 'teal' : 'rose'} withCloseButton onClose={() => setNote(null)}>{note.text}</Alert>}
-
+        <Alert color={now.tone} icon={current === 'local' || current === 'any' ? <IconAlertTriangle size={16} /> : undefined}>
+          <Text size={FS.meta}>{now.text}</Text>
+        </Alert>
+        {note && (
+          <Alert color={note.ok ? 'teal' : 'rose'} withCloseButton onClose={() => setNote(null)}>
+            <Text size={FS.meta}>{note.text}</Text>
+            {note.ran && note.ran.length > 0 && <Code block mt={4} style={{ fontSize: 11 }}>{note.ran.join('\n')}</Code>}
+          </Alert>
+        )}
         {n.defaultOpen && (
           <Alert color="amber" icon={<IconAlertTriangle size={16} />} title="The default user has no password">
             <Text size={FS.meta}>
-              While it has none, protected mode refuses every client that is not on this server, whatever user it signs in as,
-              so your users cannot connect from the LAN. Give it a password first.
-              {n.defaultClients > 0 && ` ${n.defaultClients} connection${n.defaultClients === 1 ? ' is' : 's are'} signed in as default now; ${n.defaultClients === 1 ? 'it keeps' : 'they keep'} working until ${n.defaultClients === 1 ? 'it reconnects' : 'they reconnect'}, then need${n.defaultClients === 1 ? 's' : ''} the password.`}
+              While it has none, anyone who reaches Redis is admin, and protected mode refuses every client that is not on this server.
+              Give it a password before letting other machines connect.
+              {n.defaultClients > 0 && ` ${n.defaultClients} ${plural(n.defaultClients, 'connection is', 'connections are')} signed in as default now and keep working until they reconnect, then need the password.`}
             </Text>
             {canChange && (
               n.agentConf
-                ? <Button mt={6} size="compact-xs" variant="default" onClick={() => setConfirm('secure')}>Give the default user a password</Button>
+                ? <Button mt={6} size="compact-xs" variant="default" onClick={() => setSecure(true)}>Give the default user a password</Button>
                 : <Text size={FS.micro} mt={4}>Argus can’t do this here: Redis rewrites {n.configFile || 'no config file'}, but the agent signs in with a different file. Set requirepass on the server.</Text>
             )}
           </Alert>
         )}
 
-        <Table verticalSpacing={4} fz="xs" withTableBorder>
+        <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
+          <Radio.Group value={reach} onChange={(v) => { setReach(v as Reach); setConfirmName(''); setUnderstood(false) }}
+            label={<Text size="sm" fw={600} mb={6}>Which machines can connect to this Redis</Text>}>
+            <Stack gap={8}>
+              {option('local', `Programs on ${host} only; every other machine is refused.`)}
+              {option('selected', `Only the machines you list, through the firewall on ${host}.`, picker)}
+              {option('network', 'Any machine on the same private network. Each still needs a user and password.',
+                <Checkbox size="xs" checked={understood} onChange={(e) => setUnderstood(e.currentTarget.checked)}
+                  label={`I understand every machine on ${nets.join(', ') || 'these networks'} can reach Redis`} />)}
+              {option('any', 'Every network this server is on, the internet included. Needs a password on every user and a second person’s approval.',
+                <Stack gap={4}>
+                  <Text size={FS.micro} c="rose">With no TLS, passwords and data cross the network unencrypted. Prefer selected machines or a VPN.</Text>
+                  {publicIPs.length > 0 && <Text size={FS.micro} c="rose">{publicIPs.join(', ')} {plural(publicIPs.length, 'is a public address', 'are public addresses')}: bots scan port {n.port} within minutes.</Text>}
+                  <TextInput size="xs" label={<>Type <Code>{host}</Code> to open it to anywhere</>} value={confirmName}
+                    onChange={(e) => setConfirmName(e.currentTarget.value)} disabled={!!plan.blocked} aria-label="Type the server's name" />
+                </Stack>)}
+            </Stack>
+          </Radio.Group>
+
+          <Box>
+            <Text size="sm" fw={600} mb={6}>What Argus will change on {host}</Text>
+            <Stack gap={0}>
+              {plan.steps.map((st, i) => (
+                <Group key={i} gap="sm" wrap="nowrap" align="flex-start" py={8} style={{ borderTop: i ? '1px solid var(--color-line)' : undefined }}>
+                  <Badge size="sm" circle variant={st.state === 'skip' ? 'outline' : 'light'} color={STEP_MARK[st.state].color}>{STEP_MARK[st.state].icon}</Badge>
+                  <Box style={{ flex: 1, minWidth: 0 }}>
+                    <Text size={FS.meta} fw={600}>{st.title}</Text>
+                    {st.detail && <Text size={FS.micro} c="dimmed" lh={1.45}>{st.detail}</Text>}
+                    {st.diff && <Code block mt={4} style={{ fontSize: 11 }}>{`- ${st.diff.from}\n+ ${st.diff.to}`}</Code>}
+                    {st.lines && st.lines.length > 0 && <Code block mt={4} style={{ fontSize: 11, whiteSpace: 'pre-wrap' }}>{st.lines.join('\n')}</Code>}
+                  </Box>
+                </Group>
+              ))}
+            </Stack>
+            {plan.blocked && !same && <Text size={FS.micro} c="rose" mt={4}>Not yet: {plan.blocked}.</Text>}
+            {waits && !same && (
+              <Text size={FS.micro} c="dimmed" mt={4}>
+                {reach === 'any' ? 'Opening to anywhere always waits for someone else to approve exactly this, on every database.' : 'This database’s changes wait for someone else to approve exactly this.'} It is recorded with the session.
+              </Text>
+            )}
+            {canChange && (
+              <Group justify="flex-end" mt="sm" gap={6}>
+                {!same && <Button size="xs" variant="default" onClick={() => reset(n)}>Discard</Button>}
+                <Button size="xs" color={reach === 'any' ? 'rose' : undefined} disabled={!ready} loading={busy} onClick={() => void apply()}>
+                  {same ? 'Nothing to change' : waits ? 'Ask for approval' : 'Apply'}
+                </Button>
+              </Group>
+            )}
+          </Box>
+        </SimpleGrid>
+
+        <Table verticalSpacing={4} fz="xs" withTableBorder mt="xs">
           <Table.Thead>
-            <Table.Tr>{canChange && <Table.Th w={40}>Listen</Table.Th>}<Table.Th>Address</Table.Th><Table.Th>From a client there</Table.Th><Table.Th w={40} /></Table.Tr>
+            <Table.Tr><Table.Th>Address on {host}</Table.Th><Table.Th>From a client there</Table.Th><Table.Th w={40} /></Table.Tr>
           </Table.Thead>
           <Table.Tbody>
             {n.addresses.map((a) => {
               const st = ADDRESS_STATE[a.state]
               return (
                 <Table.Tr key={a.ip}>
-                  {canChange && (
-                    <Table.Td>
-                      <Tooltip label={a.private ? 'Listen on this address' : 'Not a private address: Argus opens Redis to the LAN only'} disabled={a.private}>
-                        <Checkbox size="xs" aria-label={`Listen on ${a.ip}`} disabled={!a.private} checked={want.includes(a.ip)}
-                          onChange={(e) => { const on = e.currentTarget.checked; setWant((w) => on ? [...w, a.ip] : w.filter((x) => x !== a.ip)) }} />
-                      </Tooltip>
-                    </Table.Td>
-                  )}
                   <Table.Td>
                     <Text size="xs" ff="monospace">{a.ip}:{n.port}</Text>
                     <Text size={FS.micro} c="dimmed">{a.iface} · {a.prefix}{a.private ? '' : ' · public'}</Text>
@@ -153,63 +342,87 @@ export function RedisNetwork({ s, canChange, change, onNetwork }: {
                 </Table.Tr>
               )
             })}
-            {n.addresses.length === 0 && <Table.Tr><Table.Td colSpan={4}><Text size={FS.meta} c="dimmed">This server has no address besides the loopback.</Text></Table.Td></Table.Tr>}
+            {n.addresses.length === 0 && <Table.Tr><Table.Td colSpan={3}><Text size={FS.meta} c="dimmed">This server has no address besides the loopback.</Text></Table.Td></Table.Tr>}
           </Table.Tbody>
         </Table>
+        <Text size={FS.micro} c="dimmed">Checked from {host} itself, which its own firewall does not stop. Test from the client’s side below.</Text>
 
-        {canChange && dirty && (
-          <Group justify="flex-end" gap={6}>
-            <Button size="xs" variant="default" onClick={() => got(n)}>Discard</Button>
-            <Button size="xs" disabled={want.length > 0 && n.defaultOpen} onClick={() => setConfirm('open')}>
-              {want.length ? 'Open to the LAN…' : 'Listen on this server only…'}
-            </Button>
-          </Group>
-        )}
-        {canChange && dirty && want.length > 0 && n.defaultOpen && <Text size={FS.micro} c="amber" ta="right">Give the default user a password first.</Text>}
-
-        {listening.length > 0 && (
-          <Stack gap={4}>
-            <Text size={FS.micro} c="dimmed">
-              Checked from this server. A firewall here can still block other machines{n.firewall ? `; ${n.firewall} is on, so allow the port:` : '; if one runs, allow TCP port ' + n.port + ' from your LAN.'}
-            </Text>
-            {fwLines.map((l) => (
-              <Group key={l} gap={4} wrap="nowrap"><Code style={{ flex: 1, fontSize: 11.5 }}>{l}</Code><Copy value={l} label="Copy command" /></Group>
-            ))}
-          </Stack>
-        )}
+        {current !== 'local' && <ClientTest n={n} sources={current === 'selected' ? n.firewallSources ?? [] : []} servers={servers} />}
       </Stack>
 
-      <Modal opened={confirm === 'open'} onClose={() => { setConfirm(null); setUnderstood(false) }} title={want.length ? 'Open Redis to the LAN' : 'Listen on this server only'} size="md">
-        <Stack gap="sm">
-          {want.length ? (
-            <>
-              <Text size={FS.meta}>Redis will also listen on {want.map((w) => `${w}:${n.port}`).join(', ')}. Anything on {[...new Set(n.addresses.filter((a) => want.includes(a.ip)).map((a) => a.prefix))].join(', ')} can then connect; it still needs a user and password to do anything.</Text>
-              <Checkbox checked={understood} onChange={(e) => setUnderstood(e.currentTarget.checked)}
-                label="I understand every machine on these networks can reach Redis" />
-            </>
-          ) : <Text size={FS.meta}>Clients on the LAN are cut off; programs on this server keep working.</Text>}
-          <Code block>{`CONFIG SET bind "127.0.0.1 -::1${want.map((w) => ` -${w}`).join('')}"\nCONFIG REWRITE`}</Code>
-          {s.ready?.changesNeedApproval && <Text size={FS.micro} c="dimmed">This database's changes wait for someone else to approve exactly this.</Text>}
-          <Group justify="flex-end">
-            <Button variant="default" size="xs" onClick={() => { setConfirm(null); setUnderstood(false) }}>Cancel</Button>
-            <Button size="xs" color={want.length ? 'amber' : undefined} disabled={want.length > 0 && !understood} loading={busy} onClick={() => void apply()}>
-              {want.length ? 'Open to the LAN' : 'Listen here only'}
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
-      <Modal opened={confirm === 'secure'} onClose={() => setConfirm(null)} title="Give the default user a password" size="md">
+      <Modal opened={secure} onClose={() => setSecure(false)} title="Give the default user a password" size="md">
         <Stack gap="sm">
           <Text size={FS.meta}>The agent makes a long random password on the server and writes it to {n.configFile} as requirepass, where the agent reads its own sign-in. It never leaves the server and is not shown here.</Text>
-          {n.defaultClients > 0 && <Alert color="amber">{n.defaultClients} connection{n.defaultClients === 1 ? ' is' : 's are'} signed in as default with no password. Any application that does that must move to its own user, or use the new password from {n.configFile}, before it reconnects.</Alert>}
+          {n.defaultClients > 0 && <Alert color="amber">{n.defaultClients} {plural(n.defaultClients, 'connection is', 'connections are')} signed in as default with no password. Any application that does that must move to its own user, or use the new password from {n.configFile}, before it reconnects.</Alert>}
           <Code block>{'CONFIG SET requirepass <made on the server>\nCONFIG REWRITE'}</Code>
           <Group justify="flex-end">
-            <Button variant="default" size="xs" onClick={() => setConfirm(null)}>Cancel</Button>
-            <Button size="xs" loading={busy} onClick={() => void secure()}>Set a password</Button>
+            <Button variant="default" size="xs" onClick={() => setSecure(false)}>Cancel</Button>
+            <Button size="xs" loading={busy} onClick={() => void secureDefault()}>Set a password</Button>
           </Group>
         </Stack>
       </Modal>
     </SectionCard>
+  )
+}
+
+/**
+ * Connect from the client's side: an Argus server among the machines that
+ * may connect tries through its own agent; any other machine gets the
+ * command to run there.
+ */
+function ClientTest({ n, sources, servers }: { n: RedisNetworkData; sources: string[]; servers: KnownServer[] }) {
+  const target = n.addresses.find((a) => a.state === 'signin' || a.state === 'open')?.ip
+  const [results, setResults] = useState<Record<string, ReachCheckAnswer | 'busy'>>({})
+  const [pick, setPick] = useState<string | null>(null)
+  if (!target) return null
+  const listed = sources.map((src) => ({ src, k: servers.find((x) => x.address === src) }))
+  const others = servers.filter((k) => n.addresses.some((a) => a.private && inPrefix(k.address, a.prefix)))
+  const picked = others.find((x) => x.id === pick)
+
+  const run = async (k: KnownServer) => {
+    setResults((r) => ({ ...r, [k.id]: 'busy' }))
+    try {
+      const ans = await reachCheck(k.id, { host: target, port: n.port, engine: 'redis' })
+      setResults((r) => ({ ...r, [k.id]: ans }))
+    } catch (e) {
+      setResults((r) => ({ ...r, [k.id]: { state: 'failed', error: e instanceof Error ? e.message : String(e) } }))
+    }
+  }
+  const row = (key: string, label: ReactNode, k: KnownServer | undefined) => {
+    const r = k ? results[k.id] : undefined
+    const res = r && r !== 'busy' ? r : null
+    const good = res?.state === 'ok' && res.connected && res.answer !== 'protected'
+    let detail: string | undefined
+    if (!k) detail = 'not an Argus server: run the command below there'
+    else if (!res) detail = `can try ${target}:${n.port} from there`
+    else if (res.state !== 'ok') detail = res.error
+    else if (!res.connected) detail = res.detail
+    else if (res.answer === 'signin') detail = `connected in ${res.ms} ms; Redis asked for a sign-in`
+    else if (res.answer === 'open') detail = `connected in ${res.ms} ms; Redis answered with no sign-in`
+    else detail = res.detail ?? 'connected'
+    return (
+      <Group key={key} gap={SP.snug} wrap="nowrap" px={8} py={6} style={{ border: '1px solid var(--color-line)', borderRadius: 8 }}>
+        <Text size="xs" fw={700} c={!res ? 'dimmed' : good ? 'teal' : 'rose'} w={14}>{!res ? '?' : good ? '✓' : '✕'}</Text>
+        <Box style={{ flex: 1, minWidth: 0 }}>
+          <Text size="xs">{label}</Text>
+          <Text size={FS.micro} c="dimmed">{detail}</Text>
+        </Box>
+        {k && <Button size="compact-xs" variant="subtle" loading={r === 'busy'} onClick={() => void run(k)}>{res ? 'Test again' : 'Test'}</Button>}
+      </Group>
+    )
+  }
+  const cmd = `redis-cli -h ${target} -p ${n.port} --user <user> --askpass PING`
+  return (
+    <Stack gap={6}>
+      <Text size="sm" fw={600}>Test from another machine</Text>
+      {listed.map(({ src, k }) => row(src, <><Text span ff="monospace" size="xs">{src}</Text>{k && ` · ${k.name}`}</>, k))}
+      {listed.length === 0 && others.length > 0 && (
+        <Select size="xs" placeholder="Test from an Argus server" data={others.map((k) => ({ value: k.id, label: `${k.name} · ${k.address}` }))}
+          value={pick} onChange={setPick} aria-label="Test from an Argus server" style={{ maxWidth: 360 }} />
+      )}
+      {listed.length === 0 && picked && row(picked.id, `${picked.name} · ${picked.address}`, picked)}
+      <Group gap={4} wrap="nowrap"><Code style={{ flex: 1, fontSize: 11.5 }}>{cmd}</Code><Copy value={cmd} label="Copy command" /></Group>
+    </Stack>
   )
 }
 

@@ -163,6 +163,13 @@ type StoreRequest struct {
 	Password string `json:"password,omitempty"`
 	// Addresses are the LAN addresses Redis should listen on (network_set).
 	Addresses []string `json:"addresses,omitempty"`
+	// Reach is who may connect after a network_set (tunnel/firewall.go);
+	// empty is the older change of Addresses alone, with no firewall rule.
+	// Sources are the machines "selected" lets in, or the networks
+	// "network" does. Opening to anywhere also needs Confirm, the server's
+	// name typed by the person.
+	Reach   string   `json:"reach,omitempty"`
+	Sources []string `json:"sources,omitempty"`
 }
 
 // StoreAnswer is the agent's reply to a request, or news about the session.
