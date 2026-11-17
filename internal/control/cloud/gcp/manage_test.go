@@ -104,6 +104,29 @@ func (g *fakeManage) handler() http.Handler {
 	mux.HandleFunc("GET /compute/v1/projects/{p}/global/snapshots/{id}", auth(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"selfLink":"` + link + `/global/snapshots/nightly-1"}`))
 	}))
+	mux.HandleFunc("GET /compute/v1/projects/{p}/global/images/family/{f}", auth(func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("p") == "windows-cloud" {
+			http.Error(w, `{"error":{"message":"not found"}}`, http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"name":"` + r.PathValue("f") + `-v20261101"}`))
+	}))
+	mux.HandleFunc("GET /compute/v1/projects/{p}/regions/{rg}", auth(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"zones":["` + link + `/zones/us-central1-c","` + link + `/zones/us-central1-a"]}`))
+	}))
+	mux.HandleFunc("GET /compute/v1/projects/{p}/regions/{rg}/subnetworks/{id}", auth(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"selfLink":"` + link + `/regions/us-central1/subnetworks/default","network":"` + link + `/global/networks/default"}`))
+	}))
+	mux.HandleFunc("GET /compute/v1/projects/{p}/global/firewalls/{id}", auth(func(w http.ResponseWriter, r *http.Request) {
+		switch r.PathValue("id") {
+		case "901":
+			_, _ = w.Write([]byte(`{"name":"allow-http","network":"` + link + `/global/networks/default","targetTags":["http-server"]}`))
+		case "902":
+			_, _ = w.Write([]byte(`{"name":"allow-ssh","network":"` + link + `/global/networks/default","targetTags":["ssh","http-server"]}`))
+		default:
+			_, _ = w.Write([]byte(`{"name":"other-net","network":"` + link + `/global/networks/other"}`))
+		}
+	}))
 	mux.HandleFunc("GET /compute/v1/projects/{p}/regions/{rg}/addresses", auth(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Query().Get("filter"), "35.2.2.2") {
 			_, _ = w.Write([]byte(`{"items":[{"address":"35.2.2.2"}]}`))
@@ -161,6 +184,10 @@ func (g *fakeManage) handler() http.Handler {
 		if strings.HasSuffix(r.URL.Path, "/zones/us-central1-a/disks") {
 			_, _ = w.Write([]byte(`{"name":"operation-c","status":"RUNNING","targetId":"301",
 				"selfLink":"` + link + `/zones/us-central1-a/operations/operation-c"}`))
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/zones/us-central1-a/instances") {
+			_, _ = w.Write([]byte(`{"name":"operation-l","status":"RUNNING","targetId":"7001"}`))
 			return
 		}
 		if strings.HasSuffix(r.URL.Path, "/regions/us-central1/addresses") {
@@ -260,18 +287,19 @@ func TestArgusManageMustCarryTheExternalID(t *testing.T) {
 func TestOnlyBuiltChangesAreSupported(t *testing.T) {
 	p := New(Options{})
 	for _, a := range []cloud.Action{cloud.ActionStart, cloud.ActionStop, cloud.ActionReboot, cloud.ActionVolumeGrow,
-		cloud.ActionResize, cloud.ActionTags, cloud.ActionProtect, cloud.ActionUnprotect, cloud.ActionAddressAllocate, cloud.ActionAddressRelease} {
+		cloud.ActionResize, cloud.ActionTags, cloud.ActionProtect, cloud.ActionUnprotect, cloud.ActionAddressAllocate, cloud.ActionAddressRelease,
+		cloud.ActionLaunch, cloud.ActionRemove} {
 		if !cloud.Supports(p, a) {
 			t.Errorf("%s should be supported", a)
 		}
 	}
-	for _, a := range []cloud.Action{cloud.ActionLaunch, cloud.ActionHibernate, cloud.ActionImageCreate, cloud.ActionFirewallCreate} {
+	for _, a := range []cloud.Action{cloud.ActionHibernate, cloud.ActionImageCreate, cloud.ActionFirewallCreate} {
 		if cloud.Supports(p, a) {
 			t.Errorf("%s is not built for Google Cloud yet", a)
 		}
 	}
-	if _, err := p.Launch(context.Background(), cloud.Account{}, "alice@example.com", cloud.LaunchSpec{}); !errors.Is(err, cloud.ErrUnsupported) {
-		t.Fatalf("launch: %v", err)
+	if _, err := p.CreateImage(context.Background(), cloud.Account{}, "alice@example.com", "us-central1", "101", "x", false); !errors.Is(err, cloud.ErrUnsupported) {
+		t.Fatalf("image: %v", err)
 	}
 }
 
@@ -574,5 +602,91 @@ func TestManagedVMsAndFinalSnapshotNames(t *testing.T) {
 	}
 	if n := finalName("web-1-boot", at); n != "web-1-boot-final-20261117-0405" {
 		t.Errorf("final name %q", n)
+	}
+}
+
+func TestAVMIsLaunchedFromAnImageFamilyWithNoServiceAccount(t *testing.T) {
+	p, g, acct := newManageFake(t, "argus-0123", ManageDescription("argus-0123"))
+	ctx := context.Background()
+	imgs, err := p.Images(ctx, acct, "alice@example.com", "us-central1")
+	if err != nil || len(imgs) != len(imageFamilies)-1 || imgs[0].ID != "projects/debian-cloud/global/images/family/debian-12" || imgs[0].Name != "debian-12-v20261101" || !imgs[0].Linux {
+		t.Fatalf("images = %+v %v", imgs, err)
+	}
+	zones, err := p.Zones(ctx, acct, "alice@example.com", "us-central1")
+	if err != nil || strings.Join(zones, ",") != "us-central1-a,us-central1-c" {
+		t.Fatalf("zones = %v %v", zones, err)
+	}
+	spec := cloud.LaunchSpec{Region: "us-central1", Zone: "us-central1-a", Name: "web-3", Image: imgs[0].ID, Size: "e2-medium", DiskGB: 30,
+		Subnet: "801", Firewalls: []string{"901", "902"}, Protect: true, PublicIP: true, ExtraDisks: []int32{100}, Spot: true,
+		Tags: map[string]string{"argus:launched-by": "Alice@Example.com", "argus:change": "ABC-1", "team": "web"}, UserData: "#!/bin/sh\necho enroll\n"}
+	res, err := p.Launch(ctx, acct, "alice@example.com", spec)
+	if err != nil || res.ResourceID != "7001" {
+		t.Fatalf("launch: %+v %v", res, err)
+	}
+	if len(g.posts) != 1 || g.posts[0] != "/compute/v1/projects/payments-prod-4182/zones/us-central1-a/instances" {
+		t.Fatalf("posts = %v", g.posts)
+	}
+	var body struct {
+		MachineType string `json:"machineType"`
+		Disks       []struct {
+			Boot             bool   `json:"boot"`
+			AutoDelete       bool   `json:"autoDelete"`
+			DeviceName       string `json:"deviceName"`
+			InitializeParams struct {
+				SourceImage string `json:"sourceImage"`
+				DiskSizeGb  string `json:"diskSizeGb"`
+			} `json:"initializeParams"`
+		} `json:"disks"`
+		NetworkInterfaces []struct {
+			Subnetwork    string           `json:"subnetwork"`
+			AccessConfigs []map[string]any `json:"accessConfigs"`
+		} `json:"networkInterfaces"`
+		Labels             map[string]string        `json:"labels"`
+		DeletionProtection bool                     `json:"deletionProtection"`
+		ServiceAccounts    []any                    `json:"serviceAccounts"`
+		Tags               struct{ Items []string } `json:"tags"`
+		Metadata           struct {
+			Items []struct{ Key, Value string }
+		} `json:"metadata"`
+		Scheduling struct {
+			ProvisioningModel string `json:"provisioningModel"`
+		} `json:"scheduling"`
+	}
+	if err := json.Unmarshal([]byte(g.bodies[0]), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.MachineType != "zones/us-central1-a/machineTypes/e2-medium" || len(body.Disks) != 2 || !body.Disks[0].Boot || !body.Disks[1].AutoDelete ||
+		body.Disks[0].InitializeParams.SourceImage != imgs[0].ID || body.Disks[0].InitializeParams.DiskSizeGb != "30" ||
+		body.Disks[1].DeviceName != "web-3-data-1" || body.Disks[1].InitializeParams.DiskSizeGb != "100" {
+		t.Errorf("disks: %s", g.bodies[0])
+	}
+	if body.NetworkInterfaces[0].Subnetwork != "/compute/v1/projects/payments-prod-4182/regions/us-central1/subnetworks/default" || len(body.NetworkInterfaces[0].AccessConfigs) != 1 {
+		t.Errorf("network: %s", g.bodies[0])
+	}
+	if strings.Join(body.Tags.Items, ",") != "http-server,ssh" {
+		t.Errorf("network tags = %v", body.Tags.Items)
+	}
+	if body.Labels["argus-launched-by"] != "alice_example_com" || body.Labels["argus-change"] != "abc-1" || body.Labels["team"] != "web" {
+		t.Errorf("labels = %v", body.Labels)
+	}
+	if !body.DeletionProtection || body.ServiceAccounts == nil || len(body.ServiceAccounts) != 0 || body.Scheduling.ProvisioningModel != "SPOT" {
+		t.Errorf("settings: %s", g.bodies[0])
+	}
+	if len(body.Metadata.Items) != 1 || body.Metadata.Items[0].Key != "startup-script" ||
+		!strings.Contains(body.Metadata.Items[0].Value, "[ -e /var/lib/argus-first-boot ] && exit 0") || !strings.HasSuffix(body.Metadata.Items[0].Value, "echo enroll\n") {
+		t.Errorf("startup script: %+v", body.Metadata.Items)
+	}
+	for _, bad := range []cloud.LaunchSpec{
+		func() cloud.LaunchSpec { b := spec; b.Zone = "europe-west1-b"; return b }(),
+		func() cloud.LaunchSpec { b := spec; b.Image = "projects/evil/global/images/x"; return b }(),
+		func() cloud.LaunchSpec { b := spec; b.Firewalls = []string{"903"}; return b }(),
+		func() cloud.LaunchSpec { b := spec; b.Name = "Web 3"; return b }(),
+	} {
+		if _, err := p.Launch(ctx, acct, "alice@example.com", bad); err == nil {
+			t.Errorf("%+v should be refused", bad)
+		}
+	}
+	if len(g.posts) != 1 {
+		t.Fatalf("nothing more should be made: %v", g.posts)
 	}
 }

@@ -379,3 +379,44 @@ test('a Google VM is removed with the disks Google deletes with it', async ({ pa
   await expect.poll(() => asked.length).toBe(1)
   expect(asked[0]).toMatchObject({ action: 'remove', resourceId: '3301', confirm: 'etl-1', spec: { finalSnapshots: true } })
 })
+
+test('a Google VM is launched in a zone, from an image family, with firewall rules by tag', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1100 })
+  await manageableProject(page)
+  const base = { accountId: 'ca2', provider: 'gcp', providerAccount: 'analytics-prod-4182', accountName: 'analytics-prod', environment: 'production',
+    firstSeen: '2026-11-14T08:00:00Z', seenAt: new Date().toISOString(), madeByArgus: false }
+  await page.route('**/api/v1/cloud/launch-options?*', (r) => r.fulfill({ json: {
+    images: [{ family: 'ubuntu-24', label: 'Ubuntu 24.04 LTS', id: 'projects/ubuntu-os-cloud/global/images/family/ubuntu-2404-lts-amd64', name: 'ubuntu-2404', linux: true }],
+    sizes: ['e2-small', 'e2-medium', 'e2-standard-2', 'n2-standard-2'],
+    subnets: [{ ...base, resource: { kind: 'subnet', id: '601', name: 'default', region: 'us-central1', details: { network: 'default', cidr: '10.128.0.0/20' } } }],
+    firewalls: [{ ...base, resource: { kind: 'firewall', id: '901', name: 'allow-http', region: 'global', details: { network: 'default' } } }],
+    zones: ['us-central1-a', 'us-central1-b'], environment: 'production', needsApproval: true } }))
+  const asked: Record<string, unknown>[] = []
+  await page.route('**/api/v1/cloud/changes', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const body = route.request().postDataJSON() as Record<string, unknown>
+    asked.push(body)
+    await route.fulfill({ status: 202, json: { id: 'c1', state: 'awaiting_approval', summary: 'Launch web-2', action: body.action } })
+  })
+  await signIn(page)
+  await page.goto('/cloud/launch')
+  await page.getByRole('combobox', { name: 'Account' }).click()
+  await page.getByRole('option', { name: 'analytics-prod' }).click()
+  await page.getByRole('combobox', { name: 'Region' }).click()
+  await page.getByRole('option', { name: 'us-central1' }).click()
+  await expect(page.getByText(/A new Compute Engine VM with no service account/)).toBeVisible()
+  await expect(page.getByText('Firewall rules', { exact: true }).first()).toBeVisible()
+  await page.getByRole('textbox', { name: 'Name' }).fill('web-2')
+  await page.getByRole('combobox', { name: 'Zone' }).click()
+  await page.getByRole('option', { name: 'us-central1-b' }).click()
+  await page.getByRole('combobox', { name: 'Machine type' }).click()
+  await page.getByRole('option', { name: 'e2-standard-2' }).click()
+  await page.getByRole('checkbox', { name: /allow-http/ }).click()
+  await page.getByLabel('Why').fill('A second web node')
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/18-launch-vm.png` })
+  await page.getByRole('button', { name: 'Ask for approval' }).click()
+  await expect.poll(() => asked.length).toBe(1)
+  expect(asked[0]).toMatchObject({ accountId: 'ca2', region: 'us-central1', action: 'launch',
+    spec: { name: 'web-2', size: 'e2-standard-2', zone: 'us-central1-b', subnet: '601', firewalls: ['901'],
+      image: 'projects/ubuntu-os-cloud/global/images/family/ubuntu-2404-lts-amd64' } })
+})

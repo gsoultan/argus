@@ -409,6 +409,8 @@ export interface CloudLaunchOptions {
   sizes: string[]
   subnets: CloudItem[]
   firewalls: CloudItem[]
+  /** A Google Cloud region's zones: its subnets span the region, so the zone is picked on its own. */
+  zones?: string[]
   environment: CloudEnvironment
   needsApproval: boolean
   agentProblem?: string

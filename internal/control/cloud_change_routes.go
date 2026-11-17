@@ -139,12 +139,15 @@ func hasRegion(c CloudAccount, region string) bool {
 
 // CloudLaunchOptions is what the launch form offers in one region.
 type CloudLaunchOptions struct {
-	Images        []cloud.Image `json:"images"`
-	Sizes         []string      `json:"sizes"`
-	Subnets       []CloudItem   `json:"subnets"`
-	Firewalls     []CloudItem   `json:"firewalls"`
-	Environment   string        `json:"environment"`
-	NeedsApproval bool          `json:"needsApproval"`
+	Images    []cloud.Image `json:"images"`
+	Sizes     []string      `json:"sizes"`
+	Subnets   []CloudItem   `json:"subnets"`
+	Firewalls []CloudItem   `json:"firewalls"`
+	// Zones are the zones to launch in, where a subnet does not say: a
+	// Google Cloud subnet spans its region.
+	Zones         []string `json:"zones,omitempty"`
+	Environment   string   `json:"environment"`
+	NeedsApproval bool     `json:"needsApproval"`
 	// AgentProblem says why the agent cannot enroll by itself, when it
 	// cannot.
 	AgentProblem string `json:"agentProblem,omitempty"`
@@ -175,6 +178,22 @@ func (a *API) getCloudLaunchOptions(w http.ResponseWriter, r *http.Request) {
 	}
 	out := CloudLaunchOptions{Images: images, Sizes: CloudSizes, Subnets: []CloudItem{}, Firewalls: []CloudItem{},
 		Environment: m.acct.Environment, NeedsApproval: cloudNeedsApproval(m.acct.Environment, cloud.LevelChange)}
+	gcpAcct := m.acct.Provider == "gcp"
+	if gcpAcct {
+		out.Sizes = gcp.LaunchSizes
+		if zl, ok := m.manager.(interface {
+			Zones(context.Context, cloud.Account, cloud.Actor, string) ([]string, error)
+		}); ok {
+			zctx, zcancel := context.WithTimeout(r.Context(), 30*time.Second)
+			zones, err := zl.Zones(zctx, m.target, cloud.Actor(actor), region)
+			zcancel()
+			if err != nil {
+				writeErr(w, http.StatusBadGateway, "Argus could not list the region's zones: "+err.Error())
+				return
+			}
+			out.Zones = zones
+		}
+	}
 	for _, kind := range []cloud.Kind{cloud.KindSubnet, cloud.KindFirewall} {
 		items, err := a.store.CloudResources(r.Context(), kind)
 		if err != nil {
@@ -182,7 +201,9 @@ func (a *API) getCloudLaunchOptions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, it := range items {
-			if it.AccountID != m.acct.ID || it.Resource.Region != region {
+			// Google firewall rules are global, for every region of their network.
+			in := it.Resource.Region == region || (gcpAcct && kind == cloud.KindFirewall && it.Resource.Region == gcp.GlobalRegion)
+			if it.AccountID != m.acct.ID || !in {
 				continue
 			}
 			if kind == cloud.KindSubnet {
@@ -258,6 +279,7 @@ type cloudLaunchSpec struct {
 	Size       string            `json:"size"`
 	DiskGB     int32             `json:"diskGb"`
 	Subnet     string            `json:"subnet"`
+	Zone       string            `json:"zone,omitempty"`
 	Firewalls  []string          `json:"firewalls"`
 	Protect    bool              `json:"protect"`
 	PublicIP   bool              `json:"publicIp"`
@@ -615,6 +637,9 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 }
 
 func (a *API) planLaunch(r *http.Request, m cloudManaged, actor string, in *cloudChangeIn, ch CloudChange) (CloudChange, int, error) {
+	if m.acct.Provider == "gcp" {
+		return a.planGCPLaunch(r, m, actor, in, ch)
+	}
 	var s cloudLaunchSpec
 	if err := json.Unmarshal(in.Spec, &s); err != nil {
 		return ch, http.StatusBadRequest, errors.New("a launch needs a name, image, size, disk, subnet and firewalls")
@@ -742,6 +767,141 @@ func (a *API) planLaunch(r *http.Request, m cloudManaged, actor string, in *clou
 	}
 	if into != "" {
 		ch.Summary += ", into capacity reservation " + into
+	}
+	if s.Agent {
+		ch.Summary += ", with the Argus agent"
+	}
+	return ch, http.StatusOK, nil
+}
+
+// planGCPLaunch plans VMs in a Google Cloud project: in a zone of the
+// region, on a subnet, reached by the firewall rules picked through their
+// network tags.
+func (a *API) planGCPLaunch(r *http.Request, m cloudManaged, actor string, in *cloudChangeIn, ch CloudChange) (CloudChange, int, error) {
+	var s cloudLaunchSpec
+	if err := json.Unmarshal(in.Spec, &s); err != nil {
+		return ch, http.StatusBadRequest, errors.New("a launch needs a name, image, machine type, disk, zone and subnet")
+	}
+	s.Name = strings.ToLower(strings.TrimSpace(s.Name))
+	if !gcp.ValidName(s.Name) || !cloud.ValidHostname(s.Name) {
+		return ch, http.StatusBadRequest, errors.New("the name becomes the VM's and the server's: lowercase letters, digits and dashes, up to 63, starting with a letter")
+	}
+	if !gcp.ValidMachineType(s.Size) {
+		return ch, http.StatusBadRequest, errors.New("pick a machine type, like e2-medium")
+	}
+	if s.DiskGB == 0 {
+		s.DiskGB = 20
+	}
+	if s.DiskGB < gcp.MinDiskGB || s.DiskGB > gcp.MaxDiskGB {
+		return ch, http.StatusBadRequest, fmt.Errorf("the boot disk is %d to %d GB", gcp.MinDiskGB, gcp.MaxDiskGB)
+	}
+	if !strings.HasPrefix(s.Zone, in.Region+"-") {
+		return ch, http.StatusBadRequest, errors.New("pick a zone of " + in.Region)
+	}
+	if len(s.Firewalls) > 5 {
+		return ch, http.StatusBadRequest, errors.New("pick up to five firewall rules")
+	}
+	if s.CapacityReservation != "" {
+		return ch, http.StatusBadRequest, errors.New("Argus does not launch into Google Cloud reservations yet")
+	}
+	if s.Count == 0 {
+		s.Count = 1
+	}
+	if s.Count < 1 || s.Count > maxLaunchCount {
+		return ch, http.StatusBadRequest, fmt.Errorf("launch 1 to %d at once", maxLaunchCount)
+	}
+	names, err := launchNames(s.Name, s.Count)
+	if err != nil {
+		return ch, http.StatusBadRequest, err
+	}
+	taken := map[string]bool{}
+	for _, it := range a.regionItems(r.Context(), m.acct.ID, in.Region, cloud.KindInstance) {
+		if it.Zone == s.Zone {
+			taken[it.Name] = true
+		}
+	}
+	for _, n := range names {
+		if !gcp.ValidName(n) {
+			return ch, http.StatusBadRequest, errors.New(n + " cannot name a VM")
+		}
+		if taken[n] {
+			return ch, http.StatusConflict, errors.New("there is already a VM " + n + " in " + s.Zone)
+		}
+		if _, dup := a.assetByHostname(r.Context(), n); dup {
+			return ch, http.StatusConflict, errors.New(n + " is already a server in Argus; pick another name")
+		}
+	}
+	s.Names = names
+	if len(s.ExtraDisks) > cloud.MaxExtraDisks {
+		return ch, http.StatusBadRequest, fmt.Errorf("at most %d extra disks", cloud.MaxExtraDisks)
+	}
+	for _, gb := range s.ExtraDisks {
+		if gb < gcp.MinDiskGB || gb > gcp.MaxDiskGB {
+			return ch, http.StatusBadRequest, fmt.Errorf("an extra disk is %d to %d GB", gcp.MinDiskGB, gcp.MaxDiskGB)
+		}
+	}
+	for k, v := range s.Tags {
+		if p := gcp.LabelProblem(k, v); p != "" {
+			return ch, http.StatusBadRequest, fmt.Errorf("%s=%s cannot be a label: %s", k, v, p)
+		}
+	}
+	if len(s.Tags) > 60 {
+		return ch, http.StatusBadRequest, errors.New("at most 60 labels")
+	}
+	subnet, err := a.cloudResource(r.Context(), m.acct.ID, in.Region, cloud.KindSubnet, s.Subnet)
+	if err != nil {
+		return ch, http.StatusBadRequest, errors.New("pick a subnet in " + in.Region)
+	}
+	for _, f := range s.Firewalls {
+		fw, err := a.cloudResource(r.Context(), m.acct.ID, gcp.GlobalRegion, cloud.KindFirewall, f)
+		if err != nil {
+			return ch, http.StatusBadRequest, errors.New("pick firewall rules of the project")
+		}
+		if fw.Network != subnet.Network {
+			return ch, http.StatusBadRequest, errors.New(fw.Name + " is in another network than the subnet")
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	images, err := m.manager.Images(ctx, m.target, cloud.Actor(actor), in.Region)
+	cancel()
+	if err != nil {
+		return ch, http.StatusBadGateway, errors.New("Argus could not list images: " + err.Error())
+	}
+	var img *cloud.Image
+	for i := range images {
+		if images[i].ID == s.Image {
+			img = &images[i]
+		}
+	}
+	if img == nil {
+		return ch, http.StatusBadRequest, errors.New("pick one of the images offered")
+	}
+	s.ImageLabel = img.Label
+	if s.Agent && !img.Linux {
+		return ch, http.StatusBadRequest, errors.New("the agent enrolls by itself on Linux images; add " + img.Label + " servers from Servers › Add a server")
+	}
+	if s.Agent {
+		if _, problem := a.agentUserData(r, s.Name, "check"); problem != "" {
+			return ch, http.StatusConflict, errors.New(problem)
+		}
+	}
+	env := m.acct.Environment
+	if e := cloudEnvOf(s.Tags, ""); e != "" {
+		env = e
+	}
+	ch.Environment = env
+	ch.ResourceName = s.Name
+	ch.Spec, _ = json.Marshal(s)
+	what := s.Name
+	if len(names) > 1 {
+		what = fmt.Sprintf("%d VMs, %s to %s", len(names), names[0], names[len(names)-1])
+	}
+	ch.Summary = fmt.Sprintf("Launch %s: %s, %s, %d GB in %s", what, img.Label, s.Size, s.DiskGB, s.Zone)
+	if n := len(s.ExtraDisks); n > 0 {
+		ch.Summary += fmt.Sprintf(", %d extra disk%s", n, plural(n))
+	}
+	if s.Spot {
+		ch.Summary += ", as Spot"
 	}
 	if s.Agent {
 		ch.Summary += ", with the Argus agent"
@@ -1047,7 +1207,7 @@ func (a *API) applyLaunch(ctx context.Context, r *http.Request, m cloudManaged, 
 // single-use enrollment token when the agent goes on it.
 func (a *API) launchOne(ctx context.Context, r *http.Request, m cloudManaged, ch CloudChange, s cloudLaunchSpec, name string) (cloud.Result, error) {
 	spec := cloud.LaunchSpec{Region: ch.Region, Name: name, Image: s.Image, Size: s.Size, DiskGB: s.DiskGB,
-		Subnet: s.Subnet, Firewalls: s.Firewalls, Protect: s.Protect && !s.Spot, PublicIP: s.PublicIP,
+		Subnet: s.Subnet, Zone: s.Zone, Firewalls: s.Firewalls, Protect: s.Protect && !s.Spot, PublicIP: s.PublicIP,
 		ExtraDisks: s.ExtraDisks, Spot: s.Spot, CapacityReservation: s.CapacityReservation,
 		Tags: map[string]string{"argus:launched-by": ch.RequestedBy, "argus:change": ch.ID}}
 	for k, v := range s.Tags {
