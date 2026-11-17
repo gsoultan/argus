@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+	"testing"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -24,12 +25,33 @@ import (
 // them later re-hashes on next sign-in instead of invalidating every password.
 
 const (
-	argonMemory  = 19 * 1024 // KiB
-	argonTime    = 2
 	argonThreads = 1
 	argonKeyLen  = 32
 	argonSaltLen = 16
 )
+
+// argonMemory (KiB) and argonTime are variables only so a test binary can
+// lower them with FastPasswordHashingForTests; nothing else assigns them.
+var (
+	argonMemory uint32 = 19 * 1024
+	argonTime   uint32 = 2
+)
+
+// FastPasswordHashingForTests makes HashPassword cheap, for test suites that
+// create hundreds of accounts and never measure the hash's strength. Each
+// hash costs tens of milliseconds at the real parameters and several times
+// that under the race detector, which is how one package's tests came to
+// outgrow their time limit. Hashes still record their parameters, so they
+// verify as before.
+//
+// Call it from TestMain, before m.Run. It panics outside a test binary, so a
+// production build cannot weaken its own passwords by accident.
+func FastPasswordHashingForTests() {
+	if !testing.Testing() {
+		panic("auth: FastPasswordHashingForTests called outside a test binary")
+	}
+	argonMemory, argonTime = 64, 1
+}
 
 // ErrPasswordMismatch is returned when a password does not verify. It is
 // deliberately the same error whatever the reason, so a caller cannot turn this

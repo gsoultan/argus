@@ -20,6 +20,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/gsoultan/argus/internal/agent"
+	"github.com/gsoultan/argus/internal/auth"
 	"github.com/gsoultan/argus/internal/tunnel"
 )
 
@@ -37,6 +38,9 @@ func TestMain(m *testing.M) {
 	if os.Getenv("ARGUS_TEST_FILE_OP") == "1" && len(os.Args) > 1 && os.Args[1] == "file-op" {
 		os.Exit(agent.RunFileOp(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
+	// Hundreds of accounts are made here; at full strength their hashes were
+	// a third of the package's CPU time. internal/auth tests the real cost.
+	auth.FastPasswordHashingForTests()
 	code := m.Run()
 	// Every test leaves no goroutine behind it; see leak_main_test.go in the
 	// other packages. Checked here because this package already has a main.

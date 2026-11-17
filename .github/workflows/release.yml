@@ -57,11 +57,12 @@ jobs:
 
       # A release that ships untested code is worse than no release. The full
       # suite runs again here rather than trusting that CI passed on the commit
-      # the tag happens to point at.
+      # the tag happens to point at. The time limit matches CI's, so a suite
+      # that passes there cannot run out of time only here.
       - name: Test
         env:
           ARGUS_TEST_DATABASE_URL: postgres://argus:argus@localhost:5433/argus?sslmode=disable
-        run: go test -race -timeout 5m ./...
+        run: go test -race -timeout 10m ./...
 
       # The console is built into argus-control's package.
       - uses: oven-sh/setup-bun@v2

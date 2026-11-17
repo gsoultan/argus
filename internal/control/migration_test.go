@@ -173,6 +173,10 @@ func TestMigrationsApplyToAPopulatedDatabase(t *testing.T) {
 
 	for k := 1; k < len(names); k++ {
 		t.Run(fmt.Sprintf("from_%02d_%s", k, strings.TrimSuffix(names[k-1], ".sql")), func(t *testing.T) {
+			// Each starting point has a scratch database of its own, so they
+			// run side by side. One after another they cost a minute of the
+			// package's time limit, and every migration added makes it longer.
+			t.Parallel()
 			dsn := scratchDB(t, fmt.Sprintf("argus_mig_%d_%d", k, time.Now().UnixNano()%100000))
 
 			s := openAt(t, dsn, k)
