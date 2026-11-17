@@ -17,9 +17,11 @@ import { notifyError, notifyOk } from '~/lib/notify'
 import {
   meQuery, teamsQuery, useAddAccount, useAddSharedAccount, useAddTeamMember, useCreateTeam, useDeleteTeam,
   useRemoveTeamMember, useRenameTeam, useResetMFA, useSetDisabled, useSetLoginName, useSetRole,
-  useSendTemporaryPassword, useSignOutAccount, usersQuery, fromOrganizationsQuery, personOrganizationsQuery,
-  useAllowPersonOrganization, useRemovePersonOrganization,
+  useSendTemporaryPassword, useSignOutAccount, usersQuery,
 } from '~/lib/queries'
+import {
+  fromOrganizationsQuery, personOrganizationsQuery, useAllowPersonOrganization, useRemovePersonOrganization,
+} from '~/lib/sharedPeople'
 import { canSee, roleLabel } from '~/lib/roles'
 import { FS, SP } from '~/theme'
 import type { Team, TemporaryPasswordOutcome, User, UserRole } from '~/types/domain'

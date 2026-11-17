@@ -2,7 +2,8 @@ import { Badge, Box, Button, Group, Loader, Modal, Stack, Text } from '@mantine/
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { Mono } from '~/components/primitives'
-import { meQuery, personAccessQuery } from '~/lib/queries'
+import { meQuery } from '~/lib/queries'
+import { personAccessQuery } from '~/lib/sharedPeople'
 import { FS, SP } from '~/theme'
 import type { AccessItem, AccessSection, User } from '~/types/domain'
 

@@ -4,6 +4,7 @@ import { renderRoute } from '~/test/renderRoute'
 import { renderWithProviders } from '~/test/render'
 import { MySshKeyModal } from '~/components/MySshKey'
 import { api } from '~/lib/api'
+import { sharedPeopleApi } from '~/lib/sharedPeople'
 import { currentUser, users } from '~/lib/seed'
 import type { User } from '~/types/domain'
 
@@ -148,7 +149,7 @@ describe('one person, on one server', () => {
       { assetId: 'a2', hostname: 'web-01', principals: [], personalAccount: true, sudo: true,
         directSsh: 'allow', source: 'teams', teams: ['Deploy'], ownSetting: false },
     ])
-    const live = vi.spyOn(api, 'personAccess')
+    const live = vi.spyOn(sharedPeopleApi, 'personAccess')
     await renderRoute('/teams?tab=people')
 
     const row = (await screen.findByText(citra.email)).closest('tr')!
@@ -170,7 +171,7 @@ describe('one person, on one server', () => {
   it('shows a database given to someone, under their own name or a team', async () => {
     signedInAs('admin')
     const citra = users.find((u) => u.email !== currentUser.email)!
-    vi.spyOn(api, 'personAccess').mockResolvedValue([
+    vi.spyOn(sharedPeopleApi, 'personAccess').mockResolvedValue([
       { kind: 'servers', label: 'Servers', give: '/assets', empty: 'No servers yet.', items: [] },
       { kind: 'databases', label: 'Databases', give: '/databases', empty: 'No databases yet.', items: [
         { id: 'd1', name: 'orders', where: 'sg-db-01 · Postgres', what: 'Read, or Write with an approved request',

@@ -2,6 +2,7 @@ import { fireEvent, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderRoute } from '~/test/renderRoute'
 import { api } from '~/lib/api'
+import { sharedPeopleApi } from '~/lib/sharedPeople'
 import { currentUser } from '~/lib/seed'
 
 /**
@@ -26,7 +27,7 @@ describe('add a person from another organization', () => {
 
   it('picks them from the organizations you run and adds them in one step', async () => {
     signedInToSecondOrg()
-    vi.spyOn(api, 'fromOrganizations').mockResolvedValue({ organizations: [{
+    vi.spyOn(sharedPeopleApi, 'fromOrganizations').mockResolvedValue({ organizations: [{
       slug: 'default', name: 'Mulford Indonesia', yourRole: 'owner',
       people: [{ email: 'citra@mulford.id', displayName: 'Citra Lestari', role: 'operator' }],
     }] })
@@ -52,7 +53,7 @@ describe('add a person from another organization', () => {
 
   it('without an organization you run, asks for an email and says what their organization must do', async () => {
     signedInToSecondOrg()
-    vi.spyOn(api, 'fromOrganizations').mockResolvedValue({ organizations: [] })
+    vi.spyOn(sharedPeopleApi, 'fromOrganizations').mockResolvedValue({ organizations: [] })
     await renderRoute('/teams?tab=people')
     fireEvent.click(await screen.findByRole('button', { name: /add person/i }))
     const dialog = await screen.findByRole('dialog')
