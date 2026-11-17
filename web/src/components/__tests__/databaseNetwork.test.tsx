@@ -7,6 +7,8 @@ import { pgHBALines, pgListenFor, pgReachPlan, type PGNetworkData } from '~/lib/
 import { mysqlReachPlan, type MySQLNetworkData } from '~/lib/mysqlNetwork'
 import { mongoReachPlan, type MongoNetworkData } from '~/lib/mongoNetwork'
 import { MongoNetwork } from '~/components/mongo/MongoNetwork'
+import { StoreNetworkPanel } from '~/components/network/StoreNetwork'
+import { kafkaReachPlan, rabbitReachPlan, type KafkaNetworkData, type RabbitNetworkData } from '~/lib/brokerNetwork'
 import type { StoreAnswer, StoreRequest, StoreSession } from '~/components/useStoreSession'
 import type { Database } from '~/types/domain'
 
@@ -174,5 +176,62 @@ describe('MongoDB network panel', () => {
     expect(any.blocked).toBeNull()
     expect(any.steps[0]).toMatchObject({ state: 'change', diff: { from: 'bindIp: 127.0.0.1', to: 'bindIpAll: true' } })
     expect(any.steps.some((x) => x.title === 'TLS is off')).toBe(true)
+  })
+})
+
+describe('Broker network panels', () => {
+  const rb: RabbitNetworkData = {
+    bind: '127.0.0.1', next: '127.0.0.1', pendingRestart: false, port: 5672, version: '3.13.7', configFile: '/etc/rabbitmq/rabbitmq.conf',
+    tls: false, clients: 2, remote: 0, reach: 'local', host: 'mq-01', service: 'rabbitmq-server.service', firewall: 'ufw', firewallActive: true,
+    addresses: [{ ip: '10.0.0.186', iface: 'eth0', prefix: '10.0.0.0/24', private: true, state: 'closed' }],
+  }
+  const kf: KafkaNetworkData = {
+    listeners: 'SASL_PLAINTEXT://:9092,CONTROLLER://:9093', advertised: 'SASL_PLAINTEXT://kafka-01:9092', bind: '*', protocol: 'SASL_PLAINTEXT',
+    brokerId: 1, brokers: 1, tls: false, port: 9092, reach: 'any', host: 'kafka-01', firewall: 'ufw', firewallActive: true,
+    addresses: [{ ip: '10.0.0.187', iface: 'eth0', prefix: '10.0.0.0/24', private: true, state: 'signin' }],
+  }
+  const session = (data: unknown, asked: StoreRequest[]): StoreSession => ({
+    status: 'ready', fatal: null, cancel: () => {}, lastId: () => 1,
+    ready: { id: 0, type: 'ready', level: 'dba', ops: ['network', 'network_set'] },
+    ask: async (req) => {
+      asked.push(req)
+      return req.op === 'network' ? { id: 1, type: 'result', data } : { id: 2, type: 'result', data: { network: { ...(data as object), reach: req.reach, firewallSources: req.sources }, restarted: true } }
+    },
+  })
+  const db = { id: 'd2', engine: 'rabbitmq', dbname: '/', hostname: 'mq-01', label: 'staging', assetId: 'a2' } as unknown as Database
+
+  it('RabbitMQ: writes its listener and restarts the node', async () => {
+    const asked: StoreRequest[] = []
+    ui(<StoreNetworkPanel s={session(rb, asked)} database={db} engine="rabbitmq" narrow={false} />)
+    await screen.findByText(/Only programs on mq-01 can connect. RabbitMQ listens on 127.0.0.1/)
+    fireEvent.click(screen.getByRole('radio', { name: /Selected machines/ }))
+    fireEvent.change(screen.getByLabelText('Add an address or range'), { target: { value: '10.0.0.61' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    expect(screen.getByText(/listeners\.tcp\.2 = 10\.0\.0\.186/)).toBeInTheDocument()
+    expect(screen.getByText('Restart rabbitmq-server.service')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await screen.findByText('Now: selected machines. RabbitMQ was restarted and listens anew.')
+    expect(asked.at(-1)).toEqual({ op: 'network_set', reach: 'selected', addresses: ['10.0.0.186'], sources: ['10.0.0.61'], restart: true })
+  })
+  it('RabbitMQ: stops at guest and advanced.config', () => {
+    expect(rabbitReachPlan({ ...rb, guestRemote: true }, 'network', [], true).blocked).toMatch(/guest/)
+    expect(rabbitReachPlan({ ...rb, guestRemote: true }, 'local', [], true).blocked).toBeNull()
+    expect(rabbitReachPlan({ ...rb, advanced: true }, 'network', [], true).blocked).toMatch(/advanced\.config/)
+  })
+  it('Kafka: changes the firewall only, and says so', async () => {
+    const asked: StoreRequest[] = []
+    ui(<StoreNetworkPanel s={session(kf, asked)} database={{ ...db, engine: 'kafka' } as Database} engine="kafka" narrow={false} />)
+    await screen.findByText(/Kafka listens on every address of kafka-01/)
+    expect(screen.getByText('Listeners stay as they are')).toBeInTheDocument()
+    expect(screen.queryByText(/^Restart Kafka/)).toBeNull()
+    fireEvent.click(screen.getByRole('radio', { name: /Selected machines/ }))
+    fireEvent.change(screen.getByLabelText('Add an address or range'), { target: { value: '10.0.0.61' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await waitFor(() => expect(asked.at(-1)).toMatchObject({ op: 'network_set', reach: 'selected', sources: ['10.0.0.61'] }))
+  })
+  it('Kafka: cannot close or open past its listeners', () => {
+    expect(kafkaReachPlan(kf, 'local', []).blocked).toMatch(/does not change Kafka/)
+    expect(kafkaReachPlan({ ...kf, bind: '127.0.0.1', reach: 'local' }, 'network', []).blocked).toMatch(/server\.properties/)
   })
 })

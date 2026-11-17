@@ -8,19 +8,25 @@ import (
 )
 
 /*
-The relay's half of a MongoDB's change of which machines can connect
-(tunnel/mongonetwork.go): it is DBA work, it is audited, and it waits for
-approval where the database's changes do, and always when it opens the
-database to anywhere. The approval is for the change's exact text,
-tunnel.MongoNetworkText, which the agent asks for too.
+The relay's half of a MongoDB's, RabbitMQ's or Kafka's change of which machines can
+connect (tunnel/mongonetwork.go, tunnel/rabbitnetwork.go): it is DBA work,
+it is audited, and it waits for approval where the database's changes do,
+and always when it opens the database to anywhere. The approval is for the
+change's exact text, tunnel.StoreNetworkText, which the agent asks for too.
 */
 
-// mongoGate decides whether a MongoDB request may pass to the agent. It
-// returns the refusal to answer with, or nil.
-func (a *API) mongoGate(ctx context.Context, email string, db Database, level string, req *tunnel.StoreRequest) *tunnel.StoreAnswer {
+// storeNetworkEngines are the store engines whose network changes pass
+// through storeNetworkGate.
+var storeNetworkEngines = map[string]bool{tunnel.EngineMongoDB: true, tunnel.EngineRabbitMQ: true, tunnel.EngineKafka: true}
+
+// storeNetworkGate decides whether a MongoDB, RabbitMQ or Kafka request may pass
+// to the agent. It returns the refusal to answer with, or nil.
+func (a *API) storeNetworkGate(ctx context.Context, email string, db Database, level string, req *tunnel.StoreRequest) *tunnel.StoreAnswer {
 	switch req.Op {
 	case tunnel.MongoOpNetwork, tunnel.MongoOpNetworkSet:
 	default:
+		// Not a network change: no approval rides along, and RabbitMQ's
+		// own operations are its agent's to judge, as before.
 		req.Approval = ""
 		return nil
 	}
@@ -37,7 +43,7 @@ func (a *API) mongoGate(ctx context.Context, email string, db Database, level st
 		return &tunnel.StoreAnswer{ID: req.ID, Type: "error", Error: err.Error()}
 	}
 	req.Sources = op.Sources
-	text := tunnel.MongoNetworkText(*req)
+	text := tunnel.StoreNetworkText(db.Engine, *req)
 	always := req.Reach == tunnel.ReachAny
 	if !db.WritesNeedApproval() && !always {
 		req.Approval = ""
@@ -58,7 +64,7 @@ func (a *API) mongoGate(ctx context.Context, email string, db Database, level st
 		if errors.As(err, &no) {
 			return &tunnel.StoreAnswer{ID: req.ID, Type: "error", Error: no.why}
 		}
-		a.log.Error("mongodb: checking an approval failed", "error", err)
+		a.log.Error("network change: checking an approval failed", "engine", db.Engine, "error", err)
 		return &tunnel.StoreAnswer{ID: req.ID, Type: "error", Error: "the approval could not be checked; try again"}
 	}
 	a.auditDB(ctx, "db.network_change", "notice", email, db.Hostname,
