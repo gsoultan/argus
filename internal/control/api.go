@@ -222,6 +222,16 @@ type API struct {
 	uploads uploadLog
 	status  statusCache
 	cpu     cpuSampler
+
+	// OutsideCheck is where this control server checks in while it is up,
+	// so a service outside Argus notices when it stops; see
+	// control_liveness.go. Empty is off.
+	OutsideCheck OutsideCheck
+	// InstanceName names this control server among its replicas; empty
+	// is the hostname.
+	InstanceName  string
+	outside       outsideState
+	outsideClient *http.Client
 }
 
 // SetThrottles enables per-client rate limiting.
@@ -513,6 +523,10 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/platform/backups", a.getControlBackups)
 	mux.HandleFunc("PUT /api/v1/platform/backups/settings", a.putControlBackupSettings)
 	mux.HandleFunc("POST /api/v1/platform/backups/run", a.postControlBackupRun)
+	// If Argus goes down; see control_readiness.go and control_liveness.go.
+	mux.HandleFunc("GET /api/v1/platform/readiness", a.getReadiness)
+	mux.HandleFunc("POST /api/v1/platform/readiness/{item}/confirm", a.postReadinessConfirm)
+	mux.HandleFunc("POST /api/v1/platform/outside-check/test", a.postOutsideCheckTest)
 	mux.HandleFunc("GET /api/v1/platform/organizations", a.getTenants)
 	mux.HandleFunc("POST /api/v1/platform/organizations", a.postTenant)
 	mux.HandleFunc("POST /api/v1/platform/organizations/{id}/name", a.postTenantName)

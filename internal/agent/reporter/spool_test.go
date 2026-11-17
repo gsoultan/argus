@@ -153,3 +153,55 @@ func TestDeliveryClearsTheRun(t *testing.T) {
 		t.Errorf("a successful delivery left %d failures on the counter", f)
 	}
 }
+
+// During a long outage heartbeats are most of the spool. When it fills,
+// they go first and the session reports behind them stay.
+func TestAFullSpoolDropsHeartbeatsBeforeSessions(t *testing.T) {
+	c, path, logs := spoolClient(t, 16<<10) // 16 KiB
+	big := strings.Repeat("x", 300)
+
+	for i := 0; i < 5; i++ {
+		c.spool(spoolEntry{Path: "/api/v1/report/session",
+			Body: []byte(`{"session":"s` + string(rune('0'+i)) + `"}`), At: time.Now().UTC()})
+		for j := 0; j < 30; j++ {
+			c.spool(spoolEntry{Path: heartbeatPath,
+				Body: []byte(`{"pad":"` + big + `"}`), At: time.Now().UTC()})
+		}
+	}
+	c.spool(spoolEntry{Path: heartbeatPath, Body: []byte(`{"newest":true}`), At: time.Now().UTC()})
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		if !bytes.Contains(data, []byte(`"session":"s`+string(rune('0'+i))+`"`)) {
+			t.Errorf("session report s%d was dropped to keep heartbeats", i)
+		}
+	}
+	if !bytes.Contains(data, []byte(`"newest":true`)) {
+		t.Error("the newest heartbeat should be kept")
+	}
+	if int64(len(data)) > 16<<10 {
+		t.Errorf("spool is %d bytes, over its limit", len(data))
+	}
+	if !strings.Contains(logs.String(), "older status reports were dropped") {
+		t.Errorf("the trim should say what it dropped: %s", logs.String())
+	}
+}
+
+func TestDropOldHeartbeatsKeepsTheNewestAndAnythingUnreadable(t *testing.T) {
+	in := []byte(`{"path":"/api/v1/report/heartbeat","body":1}
+not json
+{"path":"/api/v1/report/session","body":2}
+{"path":"/api/v1/report/heartbeat","body":3}
+`)
+	out, n := dropOldHeartbeats(in)
+	if n != 1 {
+		t.Fatalf("dropped %d, want 1", n)
+	}
+	want := "not json\n{\"path\":\"/api/v1/report/session\",\"body\":2}\n{\"path\":\"/api/v1/report/heartbeat\",\"body\":3}\n"
+	if string(out) != want {
+		t.Errorf("got\n%s\nwant\n%s", out, want)
+	}
+}

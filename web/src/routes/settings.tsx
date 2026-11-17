@@ -8,7 +8,7 @@ import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
   IconActivityHeartbeat, IconAlertTriangle, IconBuilding, IconDeviceDesktop, IconDevices, IconDeviceFloppy, IconInfoCircle, IconLock,
-  IconDatabase, IconDatabaseExport, IconFileText, IconNetwork, IconPackage, IconRefresh, IconShieldLock, IconTerminal2, type IconProps,
+  IconDatabase, IconDatabaseExport, IconFileText, IconLifebuoy, IconNetwork, IconPackage, IconRefresh, IconShieldLock, IconTerminal2, type IconProps,
 } from '@tabler/icons-react'
 import { PageBody, PageHeader, SectionCard } from '~/components/page'
 import { Mono } from '~/components/primitives'
@@ -29,6 +29,7 @@ import { AssetTypeSettings } from '~/components/AssetTypeSettings'
 import { ControlStatusSection, useStatusProblems } from '~/components/ControlStatus'
 import { ControlUpdateSection } from '~/components/ControlUpdate'
 import { ControlBackupsSection } from '~/components/ControlBackups'
+import { ControlReadinessSection, useReadinessNeeds } from '~/components/ControlReadiness'
 import {
   CONTROL_SECTIONS, ControlSection, useControlSettings, type ControlSectionId,
   type ControlSettingsState,
@@ -73,7 +74,7 @@ const ALL_FIELDS = RECORDING_POLICY
 const CAN_EDIT_POLICY = new Set(['owner', 'admin'])
 
 type PolicySectionId = 'access' | 'recording' | 'hosts'
-type PlatformSectionId = 'organizations' | 'status' | 'control-updates' | 'control-backups'
+type PlatformSectionId = 'organizations' | 'status' | 'control-updates' | 'control-backups' | 'control-readiness'
 type ServerSectionId = 'asset-types' | 'updates' | 'software' | 'logs' | 'disks'
 type SectionId = PolicySectionId | ControlSectionId | PlatformSectionId | ServerSectionId
 
@@ -155,6 +156,7 @@ function Settings() {
   // because the host and the database it describes are every organization's.
   const showStatus = Boolean(me?.platformOwner) && isConfigured()
   const problems = useStatusProblems(showStatus)
+  const readinessNeeds = useReadinessNeeds(showStatus)
   const statusItems: NavItem[] = showStatus
     ? [{
         id: 'status', label: 'Status', icon: IconActivityHeartbeat, changed: false,
@@ -163,7 +165,11 @@ function Settings() {
           : {}),
       },
       { id: 'control-updates', label: 'Updates', icon: IconRefresh, changed: false },
-      { id: 'control-backups', label: 'Backups', icon: IconDatabaseExport, changed: false }]
+      { id: 'control-backups', label: 'Backups', icon: IconDatabaseExport, changed: false },
+      {
+        id: 'control-readiness', label: 'If Argus goes down', icon: IconLifebuoy, changed: false,
+        ...(readinessNeeds ? { count: { n: readinessNeeds, color: 'amber' } } : {}),
+      }]
     : []
   // Operating system updates: read by whoever reads the fleet, changed by
   // an admin or owner, and only against a real control plane.
@@ -379,6 +385,7 @@ function Settings() {
             {active === 'status' && statusItems.length > 0 && <ControlStatusSection onOpen={open} />}
             {active === 'control-updates' && statusItems.length > 0 && <ControlUpdateSection />}
             {active === 'control-backups' && statusItems.length > 0 && <ControlBackupsSection />}
+            {active === 'control-readiness' && statusItems.length > 0 && <ControlReadinessSection onOpen={open} />}
 
             {showControl && controlItems.some((c) => c.id === active) && (
               <>

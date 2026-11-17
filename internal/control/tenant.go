@@ -260,6 +260,30 @@ CREATE TABLE IF NOT EXISTS argus_platform.memberships (
 	PRIMARY KEY (email, tenant_id)
 );
 CREATE INDEX IF NOT EXISTS memberships_identity ON argus_platform.memberships (email, home_tenant);
+-- Each control server, saying it is alive every minute, and the windows in
+-- which none did (control_liveness.go). Platform-wide: one deployment, many
+-- organizations, the same control servers.
+CREATE TABLE IF NOT EXISTS argus_platform.control_instances (
+	host         TEXT PRIMARY KEY,
+	version      TEXT NOT NULL DEFAULT '',
+	started_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+	seen_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+	check_at     TIMESTAMPTZ,
+	check_ok     BOOLEAN,
+	check_detail TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS argus_platform.control_outages (
+	started_at TIMESTAMPTZ PRIMARY KEY,
+	ended_at   TIMESTAMPTZ NOT NULL,
+	found_by   TEXT NOT NULL
+);
+-- What an owner confirmed on the "If Argus goes down" page, and when
+-- (control_readiness.go).
+CREATE TABLE IF NOT EXISTS argus_platform.control_readiness (
+	item         TEXT PRIMARY KEY,
+	confirmed_by TEXT NOT NULL,
+	confirmed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 `
 
 func (s *Store) migratePlatform(ctx context.Context) error {

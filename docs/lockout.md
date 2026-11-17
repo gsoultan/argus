@@ -1,6 +1,7 @@
 # Locked out of a server: the admin runbook
 
-Read this when nobody can SSH into a server that runs the Argus agent. Most of
+Read this when nobody can SSH into a server that runs the Argus agent. If the
+whole of Argus is down instead, see [argus-down.md](argus-down.md). Most of
 the time the fix is one command run as root: `systemctl start argus-agent`.
 The rest of this page is about how to get a root shell to run it.
 

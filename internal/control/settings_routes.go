@@ -71,6 +71,9 @@ type Settings struct {
 	// ServerAlerts and Security are nil from a console older than them, and
 	// are then kept as configured, for the same reason.
 	ServerAlerts *ServerAlertSettings `json:"serverAlerts,omitempty"`
+	// OutsideCheck is nil from a console older than it, which keeps what
+	// is configured.
+	OutsideCheck *OutsideCheckSettings `json:"outsideCheck,omitempty"`
 	Security     *SecuritySettings    `json:"security,omitempty"`
 	// Cloud is the identity argus-control has for each cloud. Nil from a
 	// console older than it, which keeps what is configured.
@@ -236,6 +239,16 @@ type PanmailSettings struct {
 }
 
 // TelegramSettings is the Telegram alert channel.
+// OutsideCheckSettings is the check-in service argus-control calls while
+// it is up. The address is write-only, like a password: URL nil keeps the
+// one configured, an empty string removes it.
+type OutsideCheckSettings struct {
+	Set   bool    `json:"set"`
+	Host  string  `json:"host,omitempty"`
+	Every string  `json:"every"`
+	URL   *string `json:"url,omitempty"`
+}
+
 type TelegramSettings struct {
 	Enabled     bool     `json:"enabled"`
 	BotTokenSet bool     `json:"botTokenSet"`

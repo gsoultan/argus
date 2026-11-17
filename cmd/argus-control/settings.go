@@ -122,6 +122,18 @@ func (b *settingsBackend) Settings() (control.Settings, error) {
 	if c.Alerts != nil && c.Alerts.ServerConnected != "" {
 		s.ServerAlerts.Connected = c.Alerts.ServerConnected
 	}
+	s.OutsideCheck = &control.OutsideCheckSettings{Every: "1m"}
+	if c.Alerts != nil && c.Alerts.OutsideCheck != nil && strings.TrimSpace(c.Alerts.OutsideCheck.URL) != "" {
+		s.OutsideCheck.Set = true
+		if c.Alerts.OutsideCheck.Every != "" {
+			s.OutsideCheck.Every = c.Alerts.OutsideCheck.Every
+		}
+		// The host only, and only when the file holds the address itself;
+		// a ${file:...} reference shows as set.
+		if !strings.HasPrefix(c.Alerts.OutsideCheck.URL, "${") {
+			s.OutsideCheck.Host = urlHost(c.Alerts.OutsideCheck.URL)
+		}
+	}
 	s.Security = &control.SecuritySettings{RequireMFA: c.RequireMFA,
 		TemporaryPasswordTTL: durationText(c.TemporaryPasswordTTL), AllowBrowserChange: c.AllowBrowserChange}
 	if s.Security.RequireMFA == "" {
@@ -432,8 +444,34 @@ func applyAlerts(c *config, in control.Settings, st *secretStage) error {
 			next.ServerConnected = ""
 		}
 	}
+	next.OutsideCheck = prev.OutsideCheck
+	if o := in.OutsideCheck; o != nil {
+		if !control.ValidOutsideCheckEvery(o.Every) {
+			return control.BadInput(fmt.Errorf("check in every %q; use 1m or 5m", o.Every))
+		}
+		every := o.Every
+		if every == "1m" {
+			every = ""
+		}
+		switch {
+		case o.URL != nil && strings.TrimSpace(*o.URL) == "":
+			next.OutsideCheck = nil
+		case o.URL != nil:
+			u := strings.TrimSpace(*o.URL)
+			if err := control.ValidOutsideCheckURL(u); err != nil {
+				return control.BadInput(fmt.Errorf("check-in address: %w", err))
+			}
+			ref, err := st.write("outside-check-url", u)
+			if err != nil {
+				return err
+			}
+			next.OutsideCheck = &outsideCheckConfig{URL: ref, Every: every}
+		case prev.OutsideCheck != nil:
+			next.OutsideCheck = &outsideCheckConfig{URL: prev.OutsideCheck.URL, Every: every}
+		}
+	}
 	if next.Email == nil && next.Telegram == nil && next.FCM == nil && next.SignIn == nil &&
-		next.ServerConnected == "" {
+		next.ServerConnected == "" && next.OutsideCheck == nil {
 		c.Alerts = nil
 	} else {
 		c.Alerts = next
@@ -902,4 +940,13 @@ func signInFromSettings(in control.SignInAlertSettings) *signInAlertsConfig {
 		return nil
 	}
 	return out
+}
+
+// urlHost is the host of an address, or nothing.
+func urlHost(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
 }

@@ -245,6 +245,11 @@ chain head is present, and checks every recording is present and verifies.
 Copy `/var/backups/argus` off the host: a backup on the server it protects
 covers mistakes, not the loss of the server.
 
+So that something notices when argus-control stops, set a check-in address
+under **Settings › Alerts › When Argus itself stops**, and see
+**Settings › Control plane › If Argus goes down** for what else to have ready.
+[argus-down.md](argus-down.md) is the runbook.
+
 ## 5. Agents
 
 In the console, go to **Servers > Add a server**. Add the server, then make an
@@ -513,7 +518,8 @@ account out of the server. Pick the groups with
 off with `--break-glass=none` and rely on the machine's own console
 (hypervisor or physical) instead.
 
-If a server ever locks everyone out, follow [lockout.md](lockout.md). If the
+If argus-control itself is down, unreachable or may have been taken over,
+follow [argus-down.md](argus-down.md). If a server ever locks everyone out, follow [lockout.md](lockout.md). If the
 last administrator loses their password or authenticator, follow
 [admin-recovery.md](admin-recovery.md): recovery runs on this host with
 `argus-control users reset-mfa|set-password|set-role|sign-out`, never in the
