@@ -60,6 +60,8 @@ var supported = map[cloud.Action]bool{
 	cloud.ActionAddressAssociate:    true,
 	cloud.ActionAddressDisassociate: true,
 	cloud.ActionAddressRelease:      true,
+
+	cloud.ActionRemove: true,
 }
 
 // TaggableKinds are the kinds Argus labels in Google Cloud so far.
@@ -76,7 +78,8 @@ func SupportedActions() []cloud.Action {
 		cloud.ActionResize, cloud.ActionTags, cloud.ActionProtect, cloud.ActionUnprotect, cloud.ActionVolumeGrow,
 		cloud.ActionVolumeCreate, cloud.ActionVolumeAttach, cloud.ActionVolumeDetach, cloud.ActionVolumeDelete,
 		cloud.ActionSnapshotCreate, cloud.ActionSnapshotDelete,
-		cloud.ActionAddressAllocate, cloud.ActionAddressAssociate, cloud.ActionAddressDisassociate, cloud.ActionAddressRelease} {
+		cloud.ActionAddressAllocate, cloud.ActionAddressAssociate, cloud.ActionAddressDisassociate, cloud.ActionAddressRelease,
+		cloud.ActionRemove} {
 		if supported[a] {
 			out = append(out, a)
 		}
@@ -685,6 +688,179 @@ func (p *Provider) DeleteSnapshot(ctx context.Context, a cloud.Account, actor cl
 	return cloud.Result{ResourceID: snapshot, RequestID: op.Name}, nil
 }
 
+// managedBy names what owns a VM Google made for something else: a managed
+// instance group puts a deleted VM back, and GKE breaks without its node.
+func managedBy(labels map[string]string, metadata map[string]string) string {
+	if c := metadata["created-by"]; strings.Contains(c, "/instanceGroupManagers/") {
+		return "managed instance group " + last(c)
+	}
+	if v := labels["goog-gke-node"]; v != "" || labels["goog-k8s-cluster-name"] != "" {
+		if n := labels["goog-k8s-cluster-name"]; n != "" {
+			return "GKE cluster " + n
+		}
+		return "a GKE cluster"
+	}
+	if v := labels["goog-dataproc-cluster-name"]; v != "" {
+		return "Dataproc cluster " + v
+	}
+	return ""
+}
+
+// vmForRemove is what removing a VM reads.
+type vmForRemove struct {
+	where
+	Name               string            `json:"name"`
+	Status             string            `json:"status"`
+	MachineType        string            `json:"machineType"`
+	DeletionProtection bool              `json:"deletionProtection"`
+	Labels             map[string]string `json:"labels"`
+	Metadata           struct {
+		Items []struct {
+			Key   string `json:"key"`
+			Value string `json:"value"`
+		} `json:"items"`
+	} `json:"metadata"`
+	Disks []struct {
+		Source     string `json:"source"`
+		DeviceName string `json:"deviceName"`
+		Boot       bool   `json:"boot"`
+		AutoDelete bool   `json:"autoDelete"`
+		DiskSizeGb string `json:"diskSizeGb"`
+	} `json:"disks"`
+	NetworkInterfaces []struct {
+		AccessConfigs []accessConfig `json:"accessConfigs"`
+	} `json:"networkInterfaces"`
+}
+
+func (p *Provider) planRemove(ctx context.Context, t token, actor cloud.Actor, project, region, id string) (cloud.RemovePlan, vmForRemove, error) {
+	w, err := p.locate(ctx, t, actor, project, region, "instances", id)
+	if err != nil {
+		return cloud.RemovePlan{}, vmForRemove{}, err
+	}
+	var vm vmForRemove
+	if err := p.get(ctx, t, actor, p.ep.compute+w.path(project, "instances")+id, &vm); err != nil {
+		return cloud.RemovePlan{}, vmForRemove{}, err
+	}
+	vm.where = w
+	meta := map[string]string{}
+	for _, it := range vm.Metadata.Items {
+		meta[it.Key] = it.Value
+	}
+	plan := cloud.RemovePlan{ID: id, Name: vm.Name, State: instanceState(vm.Status), Size: last(vm.MachineType),
+		Protected: vm.DeletionProtection, ManagedBy: managedBy(vm.Labels, meta), Volumes: []cloud.Volume{}}
+	for _, d := range vm.Disks {
+		v := cloud.Volume{ID: last(d.Source), Device: d.DeviceName, Deleted: d.AutoDelete}
+		var disk struct {
+			ID     string `json:"id"`
+			SizeGb string `json:"sizeGb"`
+		}
+		// The disk's id is what the console knows it by; its name when it cannot be read.
+		if p.get(ctx, t, actor, p.ep.compute+trimHost(d.Source)+"?fields=id,sizeGb", &disk) == nil && disk.ID != "" {
+			v.ID = disk.ID
+			d.DiskSizeGb = disk.SizeGb
+		}
+		var gb int64
+		fmt.Sscan(d.DiskSizeGb, &gb)
+		v.SizeGB = int32(gb)
+		v.Description = last(d.Source)
+		if d.Boot {
+			v.Description += " (boot)"
+		}
+		plan.Volumes = append(plan.Volumes, v)
+	}
+	for _, nic := range vm.NetworkInterfaces {
+		for _, ac := range nic.AccessConfigs {
+			if ac.NatIP == "" || plan.PublicIP != "" || plan.ElasticIP != "" {
+				continue
+			}
+			// A static address stays reserved, and billed, after the VM goes.
+			var found struct {
+				Items []struct {
+					Address string `json:"address"`
+				} `json:"items"`
+			}
+			q := url.Values{"filter": {`address = "` + ac.NatIP + `"`}, "fields": {"items(address)"}}
+			if p.get(ctx, t, actor, p.ep.compute+"/compute/v1/projects/"+project+"/regions/"+region+"/addresses?"+q.Encode(), &found) == nil && len(found.Items) > 0 {
+				plan.ElasticIP = ac.NatIP
+			} else {
+				plan.PublicIP = ac.NatIP
+			}
+		}
+	}
+	return plan, vm, nil
+}
+
+// PlanRemove reads what deleting a VM takes with it: the disks Google
+// deletes with it (auto-delete) and its ephemeral public address.
+func (p *Provider) PlanRemove(ctx context.Context, a cloud.Account, actor cloud.Actor, region, id string) (cloud.RemovePlan, error) {
+	t, err := p.session(ctx, a, actor)
+	if err != nil {
+		return cloud.RemovePlan{}, err
+	}
+	plan, _, err := p.planRemove(ctx, t, actor, a.AccountID, region, id)
+	return plan, err
+}
+
+// finalName is a final snapshot's name: the disk's, -final and the time,
+// in Compute Engine's 63 characters.
+func finalName(disk string, now time.Time) string {
+	tail := "-final-" + now.UTC().Format("20060102-1504")
+	if len(disk) > 63-len(tail) {
+		disk = strings.TrimRight(disk[:63-len(tail)], "-")
+	}
+	return disk + tail
+}
+
+// Remove deletes a VM and the disks Google deletes with it. A final
+// snapshot of each of those disks is taken first, when asked, and Argus
+// waits for each to finish before anything is deleted.
+func (p *Provider) Remove(ctx context.Context, a cloud.Account, actor cloud.Actor, region, id string, finalSnapshots bool) (cloud.Result, error) {
+	t, err := p.session(ctx, a, actor)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	plan, vm, err := p.planRemove(ctx, t, actor, a.AccountID, region, id)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	if plan.Protected {
+		return cloud.Result{}, cloud.ErrProtected
+	}
+	out := cloud.Result{ResourceID: id}
+	if finalSnapshots {
+		out.Snapshots = map[string]string{}
+		for i, d := range vm.Disks {
+			if !d.AutoDelete {
+				continue
+			}
+			name := finalName(last(d.Source), time.Now())
+			op, err := p.send(ctx, t, actor, http.MethodPost, p.ep.compute+trimHost(d.Source)+"/createSnapshot",
+				map[string]any{"name": name, "description": "Final snapshot of " + plan.Name + " (" + id + ") before Argus removed it"})
+			if err == nil {
+				err = p.wait(ctx, t, actor, op)
+			}
+			if err != nil {
+				return out, fmt.Errorf("nothing was removed: the final snapshot of %s failed: %w", last(d.Source), err)
+			}
+			out.Snapshots[plan.Volumes[i].ID] = name
+		}
+	}
+	op, err := p.send(ctx, t, actor, http.MethodDelete, p.ep.compute+vm.path(a.AccountID, "instances")+id, nil)
+	if err != nil {
+		if len(out.Snapshots) > 0 {
+			names := make([]string, 0, len(out.Snapshots))
+			for _, n := range out.Snapshots {
+				names = append(names, n)
+			}
+			slices.Sort(names)
+			return out, fmt.Errorf("the final snapshots were taken (%s), but the VM was not removed: %w", strings.Join(names, ", "), err)
+		}
+		return out, err
+	}
+	out.RequestID = op.Name
+	return out, nil
+}
+
 // The rest of cloud.Manager and cloud.Storage: refused until each is built.
 
 func (p *Provider) Images(context.Context, cloud.Account, cloud.Actor, string) ([]cloud.Image, error) {
@@ -692,12 +868,6 @@ func (p *Provider) Images(context.Context, cloud.Account, cloud.Actor, string) (
 }
 func (p *Provider) Launch(context.Context, cloud.Account, cloud.Actor, cloud.LaunchSpec) (cloud.Result, error) {
 	return cloud.Result{}, errNotYet("launch an instance")
-}
-func (p *Provider) PlanRemove(context.Context, cloud.Account, cloud.Actor, string, string) (cloud.RemovePlan, error) {
-	return cloud.RemovePlan{}, errNotYet("remove an instance")
-}
-func (p *Provider) Remove(context.Context, cloud.Account, cloud.Actor, string, string, bool) (cloud.Result, error) {
-	return cloud.Result{}, errNotYet("remove an instance")
 }
 func (p *Provider) CreateImage(context.Context, cloud.Account, cloud.Actor, string, string, string, bool) (cloud.Result, error) {
 	return cloud.Result{}, errNotYet("make an image")

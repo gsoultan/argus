@@ -89,7 +89,7 @@ async function manageableProject(page: Page) {
     body.accounts = body.accounts.map((a: { provider: string }) => a.provider === 'gcp'
       ? { ...a, access: 'manage', manageRoleArn: 'argus-manage@analytics-prod-4182.iam.gserviceaccount.com', actions: ['start', 'stop', 'reboot', 'resize', 'tags', 'protect', 'unprotect', 'volume-grow',
         'volume-create', 'volume-attach', 'volume-detach', 'volume-delete', 'snapshot-create', 'snapshot-delete',
-        'address-allocate', 'address-associate', 'address-disassociate', 'address-release'], tagKinds: ['instance', 'volume'] }
+        'address-allocate', 'address-associate', 'address-disassociate', 'address-release', 'remove'], tagKinds: ['instance', 'volume'] }
       : a)
     await route.fulfill({ response: res, json: body })
   })
@@ -185,6 +185,7 @@ test('a Google VM changes machine type, labels and deletion protection', async (
   vm = page.getByRole('dialog')
   await vm.getByRole('button', { name: 'More actions' }).click()
   await expect(page.getByRole('menuitem', { name: 'Turn off deletion protection' })).toBeVisible()
+  await expect(page.getByRole('menuitem', { name: 'Remove VM…' })).toBeVisible()
   for (const absent of ['Turn on deletion protection', 'Remove instance…', 'Make an image…', 'Instance settings…', 'Launch another like this…']) {
     await expect(page.getByRole('menuitem', { name: absent })).toHaveCount(0)
   }
@@ -346,4 +347,35 @@ test('a Google static address is reserved, assigned, taken off and released', as
   await rel.getByRole('button', { name: 'Ask for approval' }).click()
   await expect.poll(() => asked.length).toBe(3)
   expect(asked[2]).toMatchObject({ action: 'address-release', resourceId: '7701', confirm: '35.1.1.1' })
+})
+
+test('a Google VM is removed with the disks Google deletes with it', async ({ page }) => {
+  await manageableProject(page)
+  const asked: Record<string, unknown>[] = []
+  await page.route('**/api/v1/cloud/remove-plan?*', (route) => route.fulfill({ json: {
+    plan: { id: '3301', name: 'etl-1', state: 'running', size: 'e2-standard-4', protected: false, publicIp: '34.1.2.3', volumes: [
+      { id: '4409', device: 'persistent-disk-0', sizeGb: 20, deleted: true, description: 'etl-1 (boot)' },
+      { id: '4410', device: 'data', sizeGb: 200, deleted: false, description: 'etl-data' }] },
+    hash: 'h1', environment: 'production', needsApproval: true } }))
+  await page.route('**/api/v1/cloud/changes', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const body = route.request().postDataJSON() as Record<string, unknown>
+    asked.push(body)
+    await route.fulfill({ status: 202, json: { id: 'c1', state: 'awaiting_approval', summary: 'Remove etl-1', action: body.action } })
+  })
+  await signIn(page)
+  await page.goto('/cloud?tab=instances')
+  await page.getByText('etl-1').first().click()
+  await page.getByRole('dialog').getByRole('button', { name: 'More actions' }).click()
+  await page.getByRole('menuitem', { name: 'Remove VM…' }).click()
+  const rm = page.getByRole('dialog', { name: /Remove etl-1/ })
+  await expect(rm.getByText(/Google deletes the VM/)).toBeVisible()
+  await expect(rm.getByText('etl-data')).toBeVisible()
+  await expect(rm.getByText(/Argus waits for each snapshot to finish/)).toBeVisible()
+  await rm.getByLabel(/to confirm/).fill('etl-1')
+  await rm.getByLabel('Why').fill('Replaced by etl-3')
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/17-remove-vm.png` })
+  await rm.getByRole('button', { name: 'Ask for approval' }).click()
+  await expect.poll(() => asked.length).toBe(1)
+  expect(asked[0]).toMatchObject({ action: 'remove', resourceId: '3301', confirm: 'etl-1', spec: { finalSnapshots: true } })
 })
