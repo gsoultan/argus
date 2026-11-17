@@ -137,6 +137,23 @@ func (a *API) planStorage(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 			}
 		}
 		s.Name = strings.TrimSpace(s.Name)
+		if m.acct.Provider == "gcp" {
+			if in.Region == "" || in.Region == gcp.GlobalRegion {
+				return ch, http.StatusBadRequest, errors.New("pick the region of the VMs the address is for")
+			}
+			if !gcp.ValidName(s.Name) {
+				return ch, http.StatusBadRequest, errors.New("name the address: lowercase letters, digits and -, up to 63, starting with a letter")
+			}
+			for _, e := range a.regionItems(ctx, m.acct.ID, in.Region, cloud.KindAddress) {
+				if e.Name == s.Name {
+					return ch, http.StatusConflict, errors.New("there is already an address " + s.Name + " in " + in.Region)
+				}
+			}
+			ch.Spec, _ = json.Marshal(s)
+			ch.ResourceName = s.Name
+			ch.Summary = "Reserve the static address " + s.Name + " in " + in.Region
+			return ch, http.StatusOK, nil
+		}
 		if len(s.Name) > 128 {
 			return ch, http.StatusBadRequest, errors.New("keep the name under 128 characters")
 		}
@@ -157,6 +174,7 @@ func (a *API) planStorage(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 	ch.ResourceID, ch.ResourceName = res.ID, res.Name
 	ch.Environment = cloudEnvOf(res.Tags, m.acct.Environment)
 	stack := res.Tags["aws:cloudformation:stack-name"]
+	gcpAcct := m.acct.Provider == "gcp"
 
 	switch in.Action {
 	case cloud.ActionVolumeGrow:
@@ -388,6 +406,9 @@ func (a *API) planStorage(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 		if res.State == "attached" {
 			return ch, http.StatusConflict, errors.New(res.PublicIP + " is attached to something; take it off first")
 		}
+		if gcpAcct && (res.Region == gcp.GlobalRegion || res.PublicIP == "") {
+			return ch, http.StatusBadRequest, errors.New(res.Name + " is not an external regional address; a VM takes only those")
+		}
 		inst, err := a.store.CloudInstance(ctx, m.acct.ID, in.Region, s.Instance)
 		if err != nil {
 			return ch, http.StatusBadRequest, err
@@ -396,12 +417,16 @@ func (a *API) planStorage(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 			return ch, http.StatusConflict, errors.New(inst.Name + " is being removed")
 		}
 		if ip, ok := a.addressOf(ctx, m.acct.ID, in.Region, inst.ID); ok {
-			return ch, http.StatusConflict, errors.New(inst.Name + " already has the Elastic IP " + ip + "; take that one off first")
+			return ch, http.StatusConflict, errors.New(inst.Name + " already has the " + addressWord(gcpAcct) + " " + ip + "; take that one off first")
 		}
 		s.InstanceName = inst.Name
 		ch.Environment = stricterEnv(ch.Environment, cloudEnvOf(inst.Tags, m.acct.Environment))
 		ch.Spec, _ = json.Marshal(s)
-		ch.Summary = "Attach the Elastic IP " + res.PublicIP + " to " + inst.Name
+		if gcpAcct {
+			ch.Summary = "Assign the static address " + res.PublicIP + " to " + inst.Name
+		} else {
+			ch.Summary = "Attach the Elastic IP " + res.PublicIP + " to " + inst.Name
+		}
 		if inst.PublicIP != "" {
 			ch.Summary += ", replacing its public address " + inst.PublicIP
 		}
@@ -419,9 +444,12 @@ func (a *API) planStorage(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 			}
 		}
 		ch.Spec, _ = json.Marshal(s)
-		ch.Summary = "Take the Elastic IP " + res.PublicIP + " off"
+		ch.Summary = "Take the " + addressWord(gcpAcct) + " " + res.PublicIP + " off"
 		if s.InstanceName != "" {
 			ch.Summary += " " + s.InstanceName
+		}
+		if gcpAcct {
+			ch.Summary += "; it has no public address until it is given one"
 		}
 
 	case cloud.ActionAddressRelease:
@@ -432,7 +460,15 @@ func (a *API) planStorage(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 			return ch, http.StatusConflict, errors.New(res.PublicIP + " is attached; take it off first, which is its own change")
 		}
 		ch.Spec = json.RawMessage("{}")
-		ch.Summary = "Release the Elastic IP " + res.PublicIP + " back to Amazon; the address is gone for good"
+		if gcpAcct {
+			ip := res.PublicIP
+			if ip == "" && len(res.Addresses) > 0 {
+				ip = res.Addresses[0]
+			}
+			ch.Summary = "Release the static address " + res.Name + " (" + ip + ") back to Google; the address is gone for good"
+		} else {
+			ch.Summary = "Release the Elastic IP " + res.PublicIP + " back to Amazon; the address is gone for good"
+		}
 	}
 	if stack != "" && ch.Level != cloud.LevelOperate && in.Action != cloud.ActionVolumeDelete {
 		ch.Summary += " (it belongs to CloudFormation stack " + stack + ", which may change it back)"
@@ -629,6 +665,14 @@ func (a *API) launchedFrom(ctx context.Context, accountID, region, image string)
 		}
 	}
 	return n
+}
+
+// addressWord is what a provider calls an address a VM keeps.
+func addressWord(gcpAcct bool) string {
+	if gcpAcct {
+		return "static address"
+	}
+	return "Elastic IP"
 }
 
 func (a *API) addressOf(ctx context.Context, accountID, region, instance string) (string, bool) {

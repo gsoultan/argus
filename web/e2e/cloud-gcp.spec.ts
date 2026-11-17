@@ -88,7 +88,8 @@ async function manageableProject(page: Page) {
     const body = await res.json()
     body.accounts = body.accounts.map((a: { provider: string }) => a.provider === 'gcp'
       ? { ...a, access: 'manage', manageRoleArn: 'argus-manage@analytics-prod-4182.iam.gserviceaccount.com', actions: ['start', 'stop', 'reboot', 'resize', 'tags', 'protect', 'unprotect', 'volume-grow',
-        'volume-create', 'volume-attach', 'volume-detach', 'volume-delete', 'snapshot-create', 'snapshot-delete'], tagKinds: ['instance', 'volume'] }
+        'volume-create', 'volume-attach', 'volume-detach', 'volume-delete', 'snapshot-create', 'snapshot-delete',
+        'address-allocate', 'address-associate', 'address-disassociate', 'address-release'], tagKinds: ['instance', 'volume'] }
       : a)
     await route.fulfill({ response: res, json: body })
   })
@@ -106,7 +107,11 @@ async function manageableProject(page: Page) {
             size: 'e2-standard-4', addresses: ['10.128.0.8'], details: { deletionProtection: 'on' } } }]
         : kind === 'snapshot'
           ? [{ ...base, resource: { kind: 'snapshot', id: '5501', name: 'etl-data-nightly', region: 'global', state: 'ready', size: '200 GiB' } }]
-          : []
+          : kind === 'address'
+            ? [{ ...base, resource: { kind: 'address', id: '7701', name: 'etl-ip', region: 'us-central1', state: 'unattached', publicIp: '35.1.1.1', addresses: ['35.1.1.1'] } },
+              { ...base, resource: { kind: 'address', id: '7702', name: 'etl-2-ip', region: 'us-central1', state: 'attached', publicIp: '35.2.2.2', addresses: ['35.2.2.2'],
+                links: [{ kind: 'instance', id: '3302', name: 'etl-2' }] } }]
+            : []
     await route.fulfill({ json: { items } })
   })
 }
@@ -275,4 +280,70 @@ test('a Google disk is made from a snapshot, snapshotted, detached and deleted a
   await del.getByRole('button', { name: /Ask for approval/ }).click()
   await expect.poll(() => asked.length).toBe(3)
   expect(asked[2]).toMatchObject({ action: 'snapshot-delete', region: 'global', resourceId: '5501', confirm: 'etl-data-nightly' })
+})
+
+test('a Google static address is reserved, assigned, taken off and released', async ({ page }) => {
+  await manageableProject(page)
+  const asked: Record<string, unknown>[] = []
+  await page.route('**/api/v1/cloud/changes', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const body = route.request().postDataJSON() as Record<string, unknown>
+    asked.push(body)
+    await route.fulfill({ json: { id: 'c' + asked.length, state: 'applied', summary: 'done', action: body.action } })
+  })
+  await signIn(page)
+  await page.goto('/cloud?tab=network')
+
+  // Reserving: a Compute Engine name, in a region, and no AWS price.
+  await page.getByRole('button', { name: 'Reserve a static address' }).click()
+  const make = page.getByRole('dialog', { name: /Reserve a static address/ })
+  await make.getByLabel('Region').click()
+  await page.getByRole('option', { name: 'us-central1', exact: true }).click()
+  await make.getByLabel('Name').fill('ETL IP')
+  await expect(make.getByText(/Lowercase letters, digits and -/)).toBeVisible()
+  await make.getByLabel('Name').fill('etl-ip')
+  await expect(make.getByText(/already an address etl-ip in us-central1/)).toBeVisible()
+  await make.getByLabel('Name').fill('etl-3-ip')
+  await expect(make.getByText(/Google bills a static address/)).toBeVisible()
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/15-reserve-address.png` })
+  await make.getByLabel('Why').fill('A fixed address for the partner allow list')
+  await make.getByRole('button', { name: 'Ask for approval' }).click()
+  await expect.poll(() => asked.length).toBe(1)
+  expect(asked[0]).toMatchObject({ action: 'address-allocate', region: 'us-central1', spec: { name: 'etl-3-ip' } })
+
+  // Assigning one to a VM.
+  await page.goto('/cloud?tab=network')
+  await page.getByText(/^Elastic IPs/).click()
+  await page.getByText('35.1.1.1').first().click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Attach to an instance' }).click()
+  const attach = page.getByRole('dialog', { name: /Attach 35.1.1.1/ })
+  await attach.getByLabel('Instance').click()
+  await page.getByRole('option', { name: /etl-1/ }).click()
+  await attach.getByLabel('Why').fill('Partner allow list')
+  await attach.getByRole('button', { name: 'Ask for approval' }).click()
+  await expect.poll(() => asked.length).toBe(2)
+  expect(asked[1]).toMatchObject({ action: 'address-associate', resourceId: '7701', spec: { instance: '3301' } })
+
+  // Taking one off says the VM is left without a public address.
+  await page.goto('/cloud?tab=network')
+  await page.getByText(/^Elastic IPs/).click()
+  await page.getByText('35.2.2.2').first().click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Take it off' }).click()
+  await expect(page.getByText(/has no public address until it is given one/)).toBeVisible()
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/16-unassign-address.png` })
+  await page.getByRole('button', { name: 'Cancel' }).click()
+
+  // Releasing goes back to Google.
+  await page.goto('/cloud?tab=network')
+  await page.getByText(/^Elastic IPs/).click()
+  await page.getByText('35.1.1.1').first().click()
+  await page.getByRole('dialog').getByRole('button', { name: 'More actions' }).click()
+  await page.getByRole('menuitem', { name: 'Release address…' }).click()
+  const rel = page.getByRole('dialog', { name: /Release 35.1.1.1/ })
+  await expect(rel.getByText(/goes back to Google/)).toBeVisible()
+  await rel.getByLabel(/to confirm/).fill('35.1.1.1')
+  await rel.getByLabel('Why').fill('Not needed any more')
+  await rel.getByRole('button', { name: 'Ask for approval' }).click()
+  await expect.poll(() => asked.length).toBe(3)
+  expect(asked[2]).toMatchObject({ action: 'address-release', resourceId: '7701', confirm: '35.1.1.1' })
 })

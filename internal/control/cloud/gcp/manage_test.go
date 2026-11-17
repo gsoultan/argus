@@ -67,11 +67,24 @@ func (g *fakeManage) handler() http.Handler {
 			_, _ = w.Write([]byte(`{"items":{"zones/us-central1-a":{"disks":[{"id":"201","name":"web-1","zone":"` + link + `/zones/us-central1-a"}]}}}`))
 		case r.PathValue("kind") == "disks" && f == "id = 202":
 			_, _ = w.Write([]byte(`{"items":{"regions/us-central1":{"disks":[{"id":"202","name":"shared","region":"` + link + `/regions/us-central1"}]}}}`))
+		case r.PathValue("kind") == "addresses" && (f == "id = 501" || f == "id = 502"):
+			id := strings.TrimPrefix(f, "id = ")
+			_, _ = w.Write([]byte(`{"items":{"regions/us-central1":{"addresses":[{"id":"` + id + `","name":"static-` + id + `","region":"` + link + `/regions/us-central1"}]}}}`))
+		case r.PathValue("kind") == "addresses" && f == "id = 503":
+			_, _ = w.Write([]byte(`{"items":{"global":{"addresses":[{"id":"503","name":"lb-ip"}]}}}`))
 		default:
 			_, _ = w.Write([]byte(`{"items":{}}`))
 		}
 	}))
 	mux.HandleFunc("GET /compute/v1/projects/{p}/zones/{z}/instances/{id}", auth(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Query().Get("fields"), "networkInterfaces") {
+			ip := "34.1.2.3"
+			if r.PathValue("id") == "web-1" {
+				ip = "35.2.2.2"
+			}
+			_, _ = w.Write([]byte(`{"networkInterfaces":[{"name":"nic0","accessConfigs":[{"name":"External NAT","natIP":"` + ip + `"}]}]}`))
+			return
+		}
 		_, _ = w.Write([]byte(`{"labels":{"team":"payments","environment":"production"},"labelFingerprint":"fp-101",
 			"disks":[{"source":"` + link + `/zones/us-central1-a/disks/web-1-boot","deviceName":"persistent-disk-0"},
 			{"source":"` + link + `/zones/us-central1-a/disks/web-1","deviceName":"data"}]}`))
@@ -81,6 +94,19 @@ func (g *fakeManage) handler() http.Handler {
 	}))
 	mux.HandleFunc("GET /compute/v1/projects/{p}/global/snapshots/{id}", auth(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"selfLink":"` + link + `/global/snapshots/nightly-1"}`))
+	}))
+	mux.HandleFunc("GET /compute/v1/projects/{p}/regions/{rg}/addresses/{id}", auth(func(w http.ResponseWriter, r *http.Request) {
+		switch r.PathValue("id") {
+		case "501", "static-new":
+			_, _ = w.Write([]byte(`{"address":"35.1.1.1"}`))
+		case "502":
+			_, _ = w.Write([]byte(`{"address":"35.2.2.2","users":["` + link + `/zones/us-central1-a/instances/web-1"]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	mux.HandleFunc("GET /compute/v1/projects/{p}/regions/{rg}/operations/{op}", auth(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"name":"` + r.PathValue("op") + `","status":"DONE"}`))
 	}))
 	mux.HandleFunc("GET /compute/v1/projects/{p}/zones/{z}/operations/{op}", auth(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"name":"` + r.PathValue("op") + `","status":"DONE"}`))
@@ -119,6 +145,15 @@ func (g *fakeManage) handler() http.Handler {
 		if strings.HasSuffix(r.URL.Path, "/zones/us-central1-a/disks") {
 			_, _ = w.Write([]byte(`{"name":"operation-c","status":"RUNNING","targetId":"301",
 				"selfLink":"` + link + `/zones/us-central1-a/operations/operation-c"}`))
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/regions/us-central1/addresses") {
+			_, _ = w.Write([]byte(`{"name":"operation-a","status":"RUNNING","targetId":"601",
+				"selfLink":"` + link + `/regions/us-central1/operations/operation-a"}`))
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/deleteAccessConfig") {
+			_, _ = w.Write([]byte(`{"name":"operation-x","status":"DONE"}`))
 			return
 		}
 		_, _ = w.Write([]byte(`{"name":"operation-1","status":"RUNNING"}`))
@@ -209,12 +244,12 @@ func TestArgusManageMustCarryTheExternalID(t *testing.T) {
 func TestOnlyBuiltChangesAreSupported(t *testing.T) {
 	p := New(Options{})
 	for _, a := range []cloud.Action{cloud.ActionStart, cloud.ActionStop, cloud.ActionReboot, cloud.ActionVolumeGrow,
-		cloud.ActionResize, cloud.ActionTags, cloud.ActionProtect, cloud.ActionUnprotect} {
+		cloud.ActionResize, cloud.ActionTags, cloud.ActionProtect, cloud.ActionUnprotect, cloud.ActionAddressAllocate, cloud.ActionAddressRelease} {
 		if !cloud.Supports(p, a) {
 			t.Errorf("%s should be supported", a)
 		}
 	}
-	for _, a := range []cloud.Action{cloud.ActionLaunch, cloud.ActionRemove, cloud.ActionHibernate, cloud.ActionImageCreate, cloud.ActionAddressAllocate} {
+	for _, a := range []cloud.Action{cloud.ActionLaunch, cloud.ActionRemove, cloud.ActionHibernate, cloud.ActionImageCreate, cloud.ActionFirewallCreate} {
 		if cloud.Supports(p, a) {
 			t.Errorf("%s is not built for Google Cloud yet", a)
 		}
@@ -423,5 +458,56 @@ func TestDisksAndSnapshotsAreDeletedAndSnapshotsTaken(t *testing.T) {
 	}
 	if g.bodies[2] != `{"name":"web-1-20261117-0400"}` {
 		t.Errorf("snapshot body = %s", g.bodies[2])
+	}
+}
+
+func TestAddressesAreReservedAssignedUnassignedAndReleased(t *testing.T) {
+	p, g, acct := newManageFake(t, "argus-0123", ManageDescription("argus-0123"))
+	ctx := context.Background()
+	res, err := p.AllocateAddress(ctx, acct, "alice@example.com", "us-central1", "static-new")
+	if err != nil || res.ResourceID != "601" || res.Detail != "Address 35.1.1.1" {
+		t.Fatalf("reserve: %+v %v", res, err)
+	}
+	if _, err := p.AllocateAddress(ctx, acct, "alice@example.com", "us-central1", "Static IP"); err == nil {
+		t.Fatal("an address name is a Compute Engine name")
+	}
+	// Assigning replaces the ephemeral address the VM had.
+	res, err = p.AssociateAddress(ctx, acct, "alice@example.com", "us-central1", "501", "101")
+	if err != nil || res.Detail != "Replaced 34.1.2.3" {
+		t.Fatalf("assign: %+v %v", res, err)
+	}
+	if _, err := p.AssociateAddress(ctx, acct, "alice@example.com", "us-central1", "502", "101"); err == nil || !strings.Contains(err.Error(), "in use by web-1") {
+		t.Fatalf("an address in use is not taken from its VM: %v", err)
+	}
+	if _, err := p.AssociateAddress(ctx, acct, "alice@example.com", "us-central1", "503", "101"); err == nil {
+		t.Fatal("a global address is for load balancers")
+	}
+	if _, err := p.DisassociateAddress(ctx, acct, "alice@example.com", "us-central1", "502"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.ReleaseAddress(ctx, acct, "alice@example.com", "us-central1", "502"); err == nil {
+		t.Fatal("an address in use is not released")
+	}
+	if _, err := p.ReleaseAddress(ctx, acct, "alice@example.com", "us-central1", "501"); err != nil {
+		t.Fatal(err)
+	}
+	base := "/compute/v1/projects/payments-prod-4182/"
+	want := []string{base + "regions/us-central1/addresses",
+		base + "zones/us-central1-a/instances/101/deleteAccessConfig",
+		base + "zones/us-central1-a/instances/101/addAccessConfig",
+		base + "zones/us-central1-a/instances/web-1/deleteAccessConfig",
+		"DELETE " + base + "regions/us-central1/addresses/501"}
+	if strings.Join(g.posts, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("calls = %v", g.posts)
+	}
+	if g.bodies[0] != `{"addressType":"EXTERNAL","name":"static-new"}` {
+		t.Errorf("reserve body = %s", g.bodies[0])
+	}
+	if g.queries[1] != "accessConfig=External+NAT&networkInterface=nic0" || g.queries[2] != "networkInterface=nic0" ||
+		g.bodies[2] != `{"name":"external-nat","natIP":"35.1.1.1","type":"ONE_TO_ONE_NAT"}` {
+		t.Errorf("assign: %v %v", g.queries, g.bodies)
+	}
+	if g.queries[3] != "accessConfig=External+NAT&networkInterface=nic0" {
+		t.Errorf("unassign: %v", g.queries[3])
 	}
 }

@@ -430,3 +430,70 @@ func TestGCPSnapshotNames(t *testing.T) {
 		}
 	}
 }
+
+func TestCloudGoogleProjectReservesAssignsAndReleasesAddresses(t *testing.T) {
+	e, fake, project := gcpEnv(t)
+	w := do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts/prepare", "admin-token", `{"provider":"gcp","accountId":"`+project+`","manage":true}`)
+	var p CloudPrepared
+	_ = json.Unmarshal(w.Body.Bytes(), &p)
+	fake.Roles[p.ReadRoleARN] = p.ExternalID
+	fake.Roles[p.ManageRoleARN] = p.ExternalID
+	fake.Resources["us-central1"] = []cloud.Resource{
+		{Kind: cloud.KindInstance, ID: "101", Name: "web-1", Region: "us-central1", Zone: "us-central1-a", State: "running", PublicIP: "34.1.2.3"},
+		{Kind: cloud.KindInstance, ID: "102", Name: "web-2", Region: "us-central1", Zone: "us-central1-a", State: "running"},
+		{Kind: cloud.KindAddress, ID: "501", Name: "static-1", Region: "us-central1", State: "unattached", PublicIP: "35.1.1.1"},
+		{Kind: cloud.KindAddress, ID: "502", Name: "static-2", Region: "us-central1", State: "attached", PublicIP: "35.2.2.2",
+			Links: []cloud.Ref{{Kind: cloud.KindInstance, ID: "102", Name: "web-2"}}},
+		{Kind: cloud.KindAddress, ID: "504", Name: "db-internal", Region: "us-central1", State: "reserved", Addresses: []string{"10.128.0.9"}},
+	}
+	w = do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts", "admin-token",
+		`{"provider":"gcp","name":"web-gcp","accountId":"`+project+`","environment":"development","manage":true}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("connect with changes: %d %s", w.Code, w.Body)
+	}
+	var c CloudAccount
+	_ = json.Unmarshal(w.Body.Bytes(), &c)
+	deadline := time.Now().Add(5 * time.Second)
+	for !e.a.SyncCloudAccount(context.Background(), c) {
+		if time.Now().After(deadline) {
+			t.Fatal("the project was being read for too long")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	ask := func(region, body string, want int) CloudChange {
+		t.Helper()
+		w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes", "admin-token",
+			`{"accountId":"`+c.ID+`","region":"`+region+`",`+body+`}`)
+		if w.Code != want {
+			t.Fatalf("%s: %d %s, want %d", body, w.Code, w.Body, want)
+		}
+		var ch CloudChange
+		_ = json.Unmarshal(w.Body.Bytes(), &ch)
+		return ch
+	}
+
+	// A static address is named as Compute Engine names things, in a region.
+	ask("us-central1", `"action":"address-allocate"`, http.StatusBadRequest)
+	ask("us-central1", `"action":"address-allocate","spec":{"name":"Web IP"}`, http.StatusBadRequest)
+	ask("us-central1", `"action":"address-allocate","spec":{"name":"static-1"}`, http.StatusConflict)
+	ask(gcp.GlobalRegion, `"action":"address-allocate","spec":{"name":"web-ip"}`, http.StatusBadRequest)
+	if ch := ask("us-central1", `"action":"address-allocate","spec":{"name":"web-ip"}`, http.StatusOK); ch.Summary != "Reserve the static address web-ip in us-central1" {
+		t.Fatalf("reserve: %+v", ch)
+	}
+
+	// Assigning replaces the VM's ephemeral address; a VM keeps one static address.
+	ask("us-central1", `"action":"address-associate","resourceId":"504","spec":{"instance":"101"}`, http.StatusBadRequest)
+	ask("us-central1", `"action":"address-associate","resourceId":"501","spec":{"instance":"102"}`, http.StatusConflict)
+	if ch := ask("us-central1", `"action":"address-associate","resourceId":"501","spec":{"instance":"101"}`, http.StatusOK); ch.Summary != "Assign the static address 35.1.1.1 to web-1, replacing its public address 34.1.2.3" {
+		t.Fatalf("assign: %+v", ch)
+	}
+
+	// Taking it off leaves the VM without a public address, and says so.
+	ch := ask("us-central1", `"action":"address-disassociate","resourceId":"502"`, http.StatusOK)
+	if ch.Summary != "Take the static address 35.2.2.2 off web-2; it has no public address until it is given one" {
+		t.Fatalf("unassign: %+v", ch)
+	}
+	if ch := ask("us-central1", `"action":"address-release","resourceId":"504","confirm":"db-internal"`, http.StatusOK); ch.Summary != "Release the static address db-internal (10.128.0.9) back to Google; the address is gone for good" {
+		t.Fatalf("release: %+v", ch)
+	}
+}
