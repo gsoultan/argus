@@ -20,7 +20,7 @@ import (
 
 func TestUnitFromCgroup(t *testing.T) {
 	for cg, want := range map[string]string{
-		"0::/system.slice/system-postgresql.slice/postgresql@16-main.service\n": "postgresql@16-main.service",
+		"0::/system.slice/system-postgresql.slice/postgresql@16-main.service\n":               "postgresql@16-main.service",
 		"12:pids:/system.slice/postgresql-16.service\n0::/system.slice/postgresql-16.service": "postgresql-16.service",
 	} {
 		if got, err := unitFromCgroup(cg); err != nil || got != want {
