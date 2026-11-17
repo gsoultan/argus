@@ -321,6 +321,10 @@ func runDaemon(args []string) int {
 		col.Hold(on)
 	}
 	ready := func() { agent.WriteReady(*stateDir, version, listening.Load(), tunnelUp.Load()) }
+	// The control plane's grant key, pinned on first connection, and the
+	// fleet recovery key that alone may move it (agent/recovery.go).
+	grantPin := agent.NewGrantPin(*stateDir)
+	recovery := &agent.Recovery{StateDir: *stateDir, Pin: grantPin}
 
 	if *useTunnel && strings.HasPrefix(*controlToken, "argus-agent-") {
 		updater.NeedTunnel = true
@@ -472,7 +476,7 @@ func runDaemon(args []string) int {
 			},
 			Services: services,
 			Log:      log,
-			GrantPin: agent.NewGrantPin(*stateDir),
+			GrantPin: grantPin,
 			Gate: func(string) string {
 				if holding.Load() {
 					return "this server's agent is restarting for an update; try again in a few seconds"
@@ -511,6 +515,21 @@ func runDaemon(args []string) int {
 	} else if b, err := os.ReadFile(consoleOnlyFile); err == nil && strings.TrimSpace(string(b)) == "1" {
 		col.SetConsoleOnly(true)
 		log.Info("console-only: direct logins to this host are refused until the console says otherwise")
+	}
+	// Who may log in while the control plane cannot be reached survives a
+	// restart too, with when it last answered, so an agent restarted during
+	// an outage counts the outage from when it began.
+	outageFile := *stateDir + "/outage-logins.json"
+	var outage outageState
+	if b, err := os.ReadFile(outageFile); err == nil && json.Unmarshal(b, &outage) == nil {
+		col.SetOutageLogins(outage.AfterMinutes, outage.Groups)
+		if !outage.Heard.IsZero() {
+			col.RestoreHeard(outage.Heard)
+		}
+		if outage.AfterMinutes > 0 {
+			log.Info("logins while Argus cannot be reached: applying the last setting heard",
+				"after_minutes", outage.AfterMinutes, "groups", strings.Join(outage.Groups, ","))
+		}
 	}
 	// Personal accounts survive a restart the same way: the last list heard
 	// decides which direct logins are a person's own until the next heartbeat.
@@ -709,6 +728,9 @@ func runDaemon(args []string) int {
 			"exec_reason":     execCtx.Reason,
 			"console_only":    col.ConsoleOnly(),
 			"direct_ssh":      col.DirectSSH(),
+			// The fleet recovery key this server holds, by fingerprint; ""
+			// before it has one.
+			"recovery_key": recovery.Fingerprint(),
 			// nil until the first list has been applied, so the console
 			// can tell "none" from "not yet".
 			"personal_accounts": personalStates,
@@ -718,6 +740,22 @@ func runDaemon(args []string) int {
 			"logs":              logBeat,
 			"disks":             diskBeat,
 		})
+		// Orders signed with the fleet recovery key are checked against that
+		// key alone, before the gate: a rekey is what makes a reply signed
+		// with the new grant key one the gate accepts. A replacement first,
+		// since a rekey may be signed with the key it brings.
+		if ok {
+			for _, tok := range []string{reply.RecoveryReplace, reply.Rekey} {
+				if tok == "" {
+					continue
+				}
+				if what, rerr := recovery.Apply(tok); rerr != nil {
+					log.Error("recovery: an order was not acted on", "error", rerr)
+				} else if what != "" {
+					log.Warn("recovery: " + what)
+				}
+			}
+		}
 		// A reply the gate refuses is treated as one that never arrived:
 		// nothing in it starts, stops or changes anything here.
 		if ok {
@@ -726,6 +764,40 @@ func runDaemon(args []string) int {
 				log.Error("heartbeat: the control plane's reply was not acted on", "error", gerr)
 				ok = false
 			}
+		}
+		// The recovery key is learned only from a reply the gate accepted,
+		// and only once.
+		if ok && reply.RecoveryKey != "" {
+			if learned, lerr := recovery.Learn(reply.RecoveryKey); lerr != nil {
+				log.Error("recovery", "error", lerr)
+			} else if learned {
+				log.Info("recovery: pinned the fleet recovery key", "fingerprint", recovery.Fingerprint())
+			}
+		}
+		// How long the control plane has gone unheard decides who may log in
+		// meanwhile (agent/outage_logins.go). Only a reply acted on counts.
+		if ok {
+			now := time.Now()
+			col.SetHeard(now)
+			changed := false
+			if o := reply.OutageLogins; o != nil &&
+				(o.AfterMinutes != outage.AfterMinutes || !slices.Equal(o.Groups, outage.Groups)) {
+				log.Warn("logins while Argus cannot be reached changed by the console",
+					"after_minutes", o.AfterMinutes, "groups", strings.Join(o.Groups, ","))
+				col.SetOutageLogins(o.AfterMinutes, o.Groups)
+				outage.AfterMinutes, outage.Groups, changed = o.AfterMinutes, slices.Clone(o.Groups), true
+			}
+			// Written when the setting changes and about once a minute
+			// otherwise: enough for a restart to know roughly when the
+			// outage began.
+			if changed || now.Sub(outage.Heard) >= time.Minute {
+				outage.Heard = now
+				if err := saveOutageState(outageFile, outage); err != nil {
+					log.Error("outage logins: cannot persist the setting", "error", err)
+				}
+			}
+		} else if rep.Enabled() {
+			col.SetUnreachable()
 		}
 		// Like an update: only a delivered reply starts or stops anything.
 		if ok {
@@ -1403,6 +1475,27 @@ type directSSHState struct {
 // saveDirectSSHState writes the setting by rename, so a crash mid-write
 // leaves the previous one rather than half of this one.
 func saveDirectSSHState(path string, st directSSHState) error {
+	b, err := json.Marshal(st)
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// outageState is what the agent keeps across a restart of who may log in
+// while the control plane cannot be reached, and when it last answered.
+type outageState struct {
+	AfterMinutes int       `json:"after_minutes"`
+	Groups       []string  `json:"groups,omitempty"`
+	Heard        time.Time `json:"heard"`
+}
+
+// saveOutageState writes it by rename, like saveDirectSSHState.
+func saveOutageState(path string, st outageState) error {
 	b, err := json.Marshal(st)
 	if err != nil {
 		return err

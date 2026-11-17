@@ -196,6 +196,37 @@ type alertsConfig struct {
 	// Telegram, that a server connected: "first" (the default), "every" or
 	// "off".
 	ServerConnected string `yaml:"server_connected,omitempty"`
+	// OutsideCheck is a check-in service argus-control calls while it is
+	// up, so that something outside Argus notices when it stops. Omit for
+	// none; see control_liveness.go.
+	OutsideCheck *outsideCheckConfig `yaml:"outside_check,omitempty"`
+}
+
+// outsideCheckConfig is alerts.outside_check. URL is usually a ${file:...}
+// reference, because the address is the service's secret.
+type outsideCheckConfig struct {
+	URL string `yaml:"url"`
+	// Every is "1m" (the default) or "5m".
+	Every string `yaml:"every,omitempty"`
+}
+
+// outsideCheck is the setting as the API takes it.
+func (c *alertsConfig) outsideCheck() (control.OutsideCheck, error) {
+	if c == nil || c.OutsideCheck == nil || strings.TrimSpace(c.OutsideCheck.URL) == "" {
+		return control.OutsideCheck{}, nil
+	}
+	o := c.OutsideCheck
+	if err := control.ValidOutsideCheckURL(strings.TrimSpace(o.URL)); err != nil {
+		return control.OutsideCheck{}, fmt.Errorf("alerts.outside_check.url: %w", err)
+	}
+	if !control.ValidOutsideCheckEvery(o.Every) {
+		return control.OutsideCheck{}, fmt.Errorf("alerts.outside_check.every is %q; use 1m or 5m", o.Every)
+	}
+	every := time.Minute
+	if o.Every == "5m" {
+		every = 5 * time.Minute
+	}
+	return control.OutsideCheck{URL: strings.TrimSpace(o.URL), Every: every}, nil
 }
 
 // alertSenders builds a sender per configured channel.
@@ -370,6 +401,14 @@ func runCommand(configPath string) error {
 		return runAuditVerify(configPath)
 	}
 
+	// The fleet recovery key: see recovery.go.
+	if flag.Arg(0) == "rekey" {
+		return runRekey(configPath, flag.Args()[1:])
+	}
+	if flag.Arg(0) == "recovery-key" {
+		return runRecoveryCommand(configPath, flag.Args()[1:])
+	}
+
 	// `argus-control backup run|verify`: see backup.go.
 	if flag.Arg(0) == "backup" {
 		return runBackup(configPath, flag.Args()[1:])
@@ -406,7 +445,7 @@ func runCommand(configPath string) error {
 				"reset-mfa, set-password, set-role, sign-out", flag.Arg(1))
 		}
 	}
-	return fmt.Errorf("unknown command %q: audit verify, backup run|verify, "+
+	return fmt.Errorf("unknown command %q: audit verify, backup run|verify, rekey, recovery-key replace, "+
 		"users add|list|disable|enable|reset-mfa|set-password|set-role|sign-out",
 		strings.Join(flag.Args(), " "))
 }
@@ -568,6 +607,11 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 		return fmt.Errorf("alerts.server_connected is %q; use first, every or off", serverAlerts)
 	}
 	api.ServerAlerts = control.ServerAlertPolicy(serverAlerts)
+	outside, err := cfg.Alerts.outsideCheck()
+	if err != nil {
+		return err
+	}
+	api.OutsideCheck = outside
 	api.Tunnels.OnConnect = api.ServerConnected
 	if signIns != nil {
 		log.Info("sign-in alerts on", "email", signIns.EmailOn(), "telegram", signIns.TelegramOn(),
@@ -634,6 +678,9 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	// The bell's daily digest of what is waiting to be updated.
 	go api.RunUpdateDigest(ctx, control.UpdateDigestInterval)
 	go api.RunResourceWatch(ctx, control.ResourceWatchInterval)
+	// This control server saying it is alive, the outage record, and the
+	// outside check-in; see control_liveness.go.
+	go api.RunLiveness(ctx)
 	// Cookies must be Secure whenever the browser reaches Argus over HTTPS,
 	// which includes the case where a proxy terminates TLS and this process
 	// only ever sees plain HTTP.

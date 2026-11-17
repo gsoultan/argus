@@ -259,6 +259,12 @@ type Asset struct {
 	// Alias is the name the console shows in place of the hostname, empty
 	// for none (migration 077). A label only.
 	Alias string
+	// OutageLoginsOff keeps this server from letting anyone in while Argus
+	// cannot be reached, whatever the organization's setting (migration 091).
+	OutageLoginsOff bool
+	// AgentRecoveryKey is the fingerprint of the fleet recovery key the
+	// agent said it holds at its last check-in (migration 092).
+	AgentRecoveryKey *string
 }
 
 func (m *Asset) Schema(t *storm.Table) {
@@ -299,6 +305,7 @@ func (m *Asset) Schema(t *storm.Table) {
 	t.Col(&m.ControlNeedsApproval).Default("false")
 	t.Col(&m.ControlHost).Default("false")
 	t.Col(&m.Alias).Default("''::text")
+	t.Col(&m.OutageLoginsOff).Default("false")
 	t.CheckNamed("assets_connect_ask_check",
 		"(connect_ask IS NULL) OR (connect_ask = ANY (ARRAY['never'::text, 'ask'::text, 'tell'::text]))")
 }
@@ -561,6 +568,11 @@ type GatewayPolicy struct {
 	// ConnectRules is who is asked before a session opens, per type of
 	// asset (migration 066).
 	ConnectRules storm.JSON
+	// OutageLoginsAfter is how many minutes a server waits without hearing
+	// from Argus before it lets OutageLoginsGroups in, 0 for never
+	// (migration 091).
+	OutageLoginsAfter  int32
+	OutageLoginsGroups []string
 }
 
 func (m *GatewayPolicy) Schema(t *storm.Table) {
@@ -585,6 +597,10 @@ func (m *GatewayPolicy) Schema(t *storm.Table) {
 	t.Col(&m.LogProtectPaths).Default("'{}'::text[]")
 	t.Col(&m.ConnectRules).Default("'{}'::jsonb")
 	t.CheckNamed("gateway_policy_connect_rules_check", "jsonb_typeof(connect_rules) = 'object'::text")
+	t.Col(&m.OutageLoginsAfter).Default("0")
+	t.CheckNamed("gateway_policy_outage_logins_after_check",
+		"outage_logins_after = ANY (ARRAY[0, 5, 15, 60])")
+	t.Col(&m.OutageLoginsGroups).Default("ARRAY['sudo'::text, 'wheel'::text, 'admin'::text]")
 }
 
 // HostKeyPin is table host_key_pins.

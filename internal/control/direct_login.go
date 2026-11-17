@@ -676,6 +676,8 @@ func (a *API) directSessionAdmitted(
 		return true, fmt.Sprintf("Direct login by %s on %s was let in because the account is set to "+
 			"allow and record direct SSH logins there, and was recorded as session %s. Nobody approved it.",
 			s.Principal, s.AssetHostname, s.ID)
+	case "outage":
+		return a.outageSessionAdmitted(ctx, s)
 	}
 	return false, ""
 }

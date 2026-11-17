@@ -171,6 +171,8 @@ func _assertAssetShape(m m0.Asset) {
 		m.ConnectAsk,
 		m.ControlHost,
 		m.Alias,
+		m.OutageLoginsOff,
+		m.AgentRecoveryKey,
 	}
 }
 
@@ -790,6 +792,8 @@ func _assertGatewayPolicyShape(m m0.GatewayPolicy) {
 		m.LogCleanPaths,
 		m.LogProtectPaths,
 		m.ConnectRules,
+		m.OutageLoginsAfter,
+		m.OutageLoginsGroups,
 	}
 }
 

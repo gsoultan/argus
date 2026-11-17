@@ -222,6 +222,16 @@ type API struct {
 	uploads uploadLog
 	status  statusCache
 	cpu     cpuSampler
+
+	// OutsideCheck is where this control server checks in while it is up,
+	// so a service outside Argus notices when it stops; see
+	// control_liveness.go. Empty is off.
+	OutsideCheck OutsideCheck
+	// InstanceName names this control server among its replicas; empty
+	// is the hostname.
+	InstanceName  string
+	outside       outsideState
+	outsideClient *http.Client
 }
 
 // SetThrottles enables per-client rate limiting.
@@ -402,6 +412,12 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/v1/assets/{id}", a.patchAsset)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}", a.deleteAsset)
 	mux.HandleFunc("PUT /api/v1/assets/{id}/direct-ssh", a.putAssetDirectSSH)
+	mux.HandleFunc("GET /api/v1/assets/{id}/outage-logins", a.getAssetOutageLogins)
+	mux.HandleFunc("PUT /api/v1/assets/{id}/outage-logins", a.putAssetOutageLogins)
+	mux.HandleFunc("GET /api/v1/platform/recovery-key", a.getRecoveryKey)
+	mux.HandleFunc("POST /api/v1/platform/recovery-key", a.postRecoveryKey)
+	mux.HandleFunc("GET /api/v1/policy/outage-logins", a.getOutageLogins)
+	mux.HandleFunc("PUT /api/v1/policy/outage-logins", a.putOutageLogins)
 	a.registerPackageRoutes(mux)
 	a.registerSoftwareRoutes(mux)
 	a.registerLogonsRoutes(mux)
@@ -513,6 +529,10 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/platform/backups", a.getControlBackups)
 	mux.HandleFunc("PUT /api/v1/platform/backups/settings", a.putControlBackupSettings)
 	mux.HandleFunc("POST /api/v1/platform/backups/run", a.postControlBackupRun)
+	// If Argus goes down; see control_readiness.go and control_liveness.go.
+	mux.HandleFunc("GET /api/v1/platform/readiness", a.getReadiness)
+	mux.HandleFunc("POST /api/v1/platform/readiness/{item}/confirm", a.postReadinessConfirm)
+	mux.HandleFunc("POST /api/v1/platform/outside-check/test", a.postOutsideCheckTest)
 	mux.HandleFunc("GET /api/v1/platform/organizations", a.getTenants)
 	mux.HandleFunc("POST /api/v1/platform/organizations", a.postTenant)
 	mux.HandleFunc("POST /api/v1/platform/organizations/{id}/name", a.postTenantName)
@@ -805,8 +825,9 @@ func (a *API) postSession(w http.ResponseWriter, r *http.Request) {
 	var report struct {
 		Session
 		// DirectLoginID is the approval a direct login was let in on, and
-		// DirectApproval is "approved" for one, or "allowed" for a login let
-		// in because the server is set to allow and record. Checked against
+		// DirectApproval is "approved" for one, "allowed" for a login let
+		// in because the server is set to allow and record, or "outage" for
+		// one let in while the server could not reach Argus. Checked against
 		// what the control plane holds before either is believed.
 		DirectLoginID  string `json:"directLoginId"`
 		DirectApproval string `json:"directApproval"`
@@ -927,6 +948,10 @@ func (a *API) postSession(w http.ResponseWriter, r *http.Request) {
 		if ok, detail := a.directSessionAdmitted(r.Context(), in, report.DirectLoginID,
 			report.DirectApproval); ok {
 			e.Action, e.Severity, e.Detail = "session.direct_recorded", "notice", detail
+			if report.DirectApproval == "outage" {
+				e.Action, e.Severity = "session.outage_login", "warning"
+				a.alertOutageSession(r.Context(), in)
+			}
 		}
 		e.Detail += report.Auth.bounded().describe()
 		if _, err := a.store.AppendAudit(r.Context(), e); err != nil {
@@ -970,6 +995,9 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// Disks is each filesystem's stack and how a grow it was sent is
 		// going. Absent from an agent older than disk growing.
 		Disks *DiskBeat `json:"disks"`
+		// RecoveryKey is the fingerprint of the fleet recovery key the
+		// agent holds, "" for none. Absent from an agent older than it.
+		RecoveryKey *string `json:"recovery_key"`
 	}
 	if err := decodeReport(r, &in, a.log, "report/heartbeat"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -1026,6 +1054,20 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		reply["direct_ssh_accounts"] = accounts
 	} else {
 		a.log.Error("heartbeat: cannot read the direct ssh setting", "error", merr)
+	}
+	// The fleet recovery key, and anything signed with it.
+	a.recoveryReply(r.Context(), reply)
+	if in.RecoveryKey != nil && len(*in.RecoveryKey) <= 64 && !errors.Is(err, ErrAgentUnmatched) {
+		if rerr := a.store.NoteAgentRecoveryKey(r.Context(), in.Hostname, *in.RecoveryKey); rerr != nil {
+			a.log.Error("heartbeat: cannot record the recovery key held", "error", rerr)
+		}
+	}
+	// Who may log in while this server cannot reach Argus. Left out on a
+	// failed read, so the agent keeps what it last heard.
+	if o, off, oerr := a.store.OutageLoginsFor(r.Context(), in.Hostname); oerr == nil {
+		reply["outage_logins"] = o.agentOrder(off)
+	} else {
+		a.log.Error("heartbeat: cannot read logins while Argus is unreachable", "error", oerr)
 	}
 	// The personal accounts this server should hold, for a heartbeat from a
 	// server the inventory knows. Left out on an unknown host or a failed

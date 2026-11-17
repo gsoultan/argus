@@ -1275,6 +1275,12 @@ export interface ControlSettings {
   }
   /** When administrators are emailed that a server connected. */
   serverAlerts?: { connected: 'first' | 'every' | 'off' }
+  /**
+   * A check-in service argus-control calls while it is up, so that something
+   * outside Argus notices when it stops. The address is write-only: `url`
+   * undefined keeps it, '' removes it. Absent from an older control plane.
+   */
+  outsideCheck?: { set: boolean; host?: string; every: '1m' | '5m'; url?: string }
   security?: {
     requireMfa: 'all' | 'privileged' | 'off'
     temporaryPasswordTtl: string

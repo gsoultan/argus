@@ -137,6 +137,10 @@ type Decision struct {
 	// Error set, so a shim older than Restarting treats it as the recorder
 	// being down -- which is what it is about to be.
 	Restarting bool `json:"restarting,omitempty"`
+	// Notice is said to the person when a recorded login goes ahead for a
+	// reason they should know, such as being let in while the server cannot
+	// reach Argus. A shim older than it says nothing.
+	Notice string `json:"notice,omitempty"`
 }
 
 // Reply is anything the daemon sends a shim: a Decision, or an Ack, which has
@@ -152,6 +156,8 @@ type Reply struct {
 	Error     string `json:"error"`
 	// Restarting: the agent is restarting for an update; try again.
 	Restarting bool `json:"restarting"`
+	// Notice is said to the person when a recorded login goes ahead.
+	Notice string `json:"notice"`
 }
 
 // envelope is used to peek at a message's type before full decoding.

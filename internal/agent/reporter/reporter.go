@@ -138,6 +138,17 @@ type HeartbeatReply struct {
 	// account gets, for an agent that reads neither.
 	DirectSSHDefault  *string           `json:"direct_ssh_default"`
 	DirectSSHAccounts map[string]string `json:"direct_ssh_accounts"`
+	// OutageLogins is who may log in while this host cannot reach the
+	// control plane. Nil from a control plane older than the setting, or one
+	// that could not read it: the agent keeps what it last heard.
+	OutageLogins *OutageLogins `json:"outage_logins"`
+	// RecoveryKey is the fleet recovery key's public half, pinned the first
+	// time. RecoveryReplace and Rekey are orders signed with it, acted on
+	// whatever the control plane's own signature says. All absent from a
+	// control plane older than the recovery key, or that has none.
+	RecoveryKey     string `json:"recovery_key"`
+	RecoveryReplace string `json:"recovery_replace"`
+	Rekey           string `json:"rekey"`
 	// PersonalAccounts is the personal accounts this host should hold, as
 	// the agent decodes them. Absent from a control plane older than them,
 	// or one that could not read them: the agent keeps what it has.
@@ -175,6 +186,13 @@ type HeartbeatReply struct {
 	// plane older than signed orders. See agent.OrderGate.
 	Body      []byte `json:"-"`
 	Signature string `json:"-"`
+}
+
+// OutageLogins lets members of Groups in once the host has gone
+// AfterMinutes without hearing from the control plane; 0 is off.
+type OutageLogins struct {
+	AfterMinutes int      `json:"after_minutes"`
+	Groups       []string `json:"groups"`
 }
 
 // maxReply bounds what is read of a reply: a reply is a few fields, and a
@@ -509,6 +527,23 @@ func (c *Client) trimSpoolLocked() {
 	if err != nil {
 		return
 	}
+	// Heartbeats go first. Each one only says the host was alive and how it
+	// looked at that moment, and the newest says the same about now; during
+	// a long outage they are most of the spool, and trimming oldest-first
+	// would push out the session and login reports behind them -- evidence
+	// -- to keep minute-by-minute status nobody will read. The newest
+	// heartbeat stays, so the control plane still hears the host's state
+	// once it is back.
+	if slim, n := dropOldHeartbeats(data); n > 0 {
+		data = slim
+		if int64(len(data)) <= max/2 {
+			if c.rewriteSpoolLocked(data) {
+				c.log.Warn("the report spool is full; older status reports were dropped to keep every session report",
+					"dropped_status_reports", n, "limit_bytes", max, "path", c.spoolPath)
+			}
+			return
+		}
+	}
 	// Keep the newest half, so trimming is occasional rather than once per
 	// report at the boundary.
 	keepFrom := int64(len(data)) - max/2
@@ -534,6 +569,52 @@ func (c *Client) trimSpoolLocked() {
 		"detail", "the control plane has been unreachable long enough to fill "+
 			"the spool; those sessions and audit events are lost, and the disk "+
 			"this recorder writes to was the alternative")
+}
+
+// heartbeatPath is the report that only says a host is alive.
+const heartbeatPath = "/api/v1/report/heartbeat"
+
+// dropOldHeartbeats removes every heartbeat from a spool but the newest,
+// returning what is left and how many went. Lines it cannot read are kept.
+func dropOldHeartbeats(data []byte) ([]byte, int) {
+	lines := bytes.SplitAfter(data, []byte{'\n'})
+	last := -1
+	isBeat := make([]bool, len(lines))
+	for i, l := range lines {
+		var e struct {
+			Path string `json:"path"`
+		}
+		if len(bytes.TrimSpace(l)) == 0 || json.Unmarshal(l, &e) != nil {
+			continue
+		}
+		if e.Path == heartbeatPath {
+			isBeat[i], last = true, i
+		}
+	}
+	var out bytes.Buffer
+	out.Grow(len(data))
+	dropped := 0
+	for i, l := range lines {
+		if isBeat[i] && i != last {
+			dropped++
+			continue
+		}
+		out.Write(l)
+	}
+	return out.Bytes(), dropped
+}
+
+// rewriteSpoolLocked replaces the spool with data. Caller holds c.mu.
+func (c *Client) rewriteSpoolLocked(data []byte) bool {
+	tmp := c.spoolPath + ".trim"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return false
+	}
+	if err := os.Rename(tmp, c.spoolPath); err != nil {
+		_ = os.Remove(tmp)
+		return false
+	}
+	return true
 }
 
 // Drain retries spooled reports, returning how many were delivered.

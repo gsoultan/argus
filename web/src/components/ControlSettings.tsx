@@ -1,16 +1,17 @@
 import { useRef, useState, type ComponentType, type ReactNode } from 'react'
 import {
-  Alert, Badge, Button, Checkbox, Drawer, Grid, Group, Modal, MultiSelect, NumberInput, PasswordInput, Radio,
+  Alert, Badge, Box, Button, Checkbox, Drawer, Grid, Group, Modal, MultiSelect, NumberInput, PasswordInput, Radio,
   SegmentedControl, Select, Stack, Switch, Table, TagsInput, Text, Textarea, TextInput,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   IconAlertTriangle, IconArchive, IconBell, IconBrandAws, IconCertificate, IconCloud, IconCloudUpload, IconDatabase,
-  IconDownload, IconKey, IconLogin, IconNetwork, IconServer2, IconShieldLock, type IconProps,
+  IconDownload, IconHeartbeat, IconKey, IconLogin, IconNetwork, IconServer2, IconShieldLock, type IconProps,
 } from '@tabler/icons-react'
 import { SectionCard } from '~/components/page'
-import { Mono } from '~/components/primitives'
+import { Mono, relTime } from '~/components/primitives'
+import { readiness, readinessKey, useTestOutsideCheck } from '~/lib/controlReadiness'
 import { PemField } from '~/components/Install'
 import {
   cloudIdentityStatus, controlSettings, organizations, saveControlSettings,
@@ -45,7 +46,7 @@ export const CONTROL_SECTIONS: ControlSectionSpec[] = [
   { id: 'database', label: 'Database', icon: IconDatabase, keys: ['database'] },
   { id: 'certificate', label: 'Certificate', icon: IconCertificate, keys: ['tls'] },
   { id: 'storage', label: 'Recordings', icon: IconCloudUpload, keys: ['storage', 'agentKeepRecordingsDays', 'archive'] },
-  { id: 'alerts', label: 'Alerts', icon: IconBell, keys: ['email', 'telegram', 'fcm', 'signInAlerts', 'serverAlerts'] },
+  { id: 'alerts', label: 'Alerts', icon: IconBell, keys: ['email', 'telegram', 'fcm', 'signInAlerts', 'serverAlerts', 'outsideCheck'] },
   { id: 'cloud', label: 'Cloud identities', icon: IconCloud, keys: ['cloud'] },
 ]
 
@@ -555,6 +556,7 @@ function Alerts({ s, edit }: CardProps) {
     <Stack gap="sm">
       <SignInAlerts s={s} edit={edit} onSetUp={setUp} />
       <ServerAlerts s={s} edit={edit} />
+      <OutsideCheck s={s} edit={edit} />
       <div ref={channels} style={{ scrollMarginTop: 72 }}>
         <SectionCard title="Alert channels" icon={IconBell} iconColor="amber"
           description="Where alerts go. Every session opened is announced here, including logins that went around Argus; sign-ins too, as set above. Push notifications carry session alerts only.">
@@ -805,6 +807,83 @@ function ServerAlerts({ s, edit }: CardProps) {
       </Radio.Group>
     </SectionCard>
   )
+}
+
+/**
+ * When Argus itself stops: a check-in service it calls every minute while it
+ * is up. An alert sent by Argus about Argus being down never arrives; this
+ * turns the silence into the alarm, from outside.
+ */
+function OutsideCheck({ s, edit }: CardProps) {
+  const o = s.outsideCheck
+  const test = useTestOutsideCheck()
+  const { data: ready } = useQuery({ queryKey: readinessKey, queryFn: readiness, retry: false })
+  if (!o) return null
+  const removing = o.url === ''
+  const willBeSet = removing ? false : o.set || Boolean(o.url)
+  const urlError = o.url ? outsideUrlError(o.url) : undefined
+  const last = ready?.outsideCheck
+  return (
+    <SectionCard title="When Argus itself stops" icon={IconHeartbeat} iconColor="rose"
+      description="Argus cannot tell you it has stopped, because it has stopped. Give it the address of a check-in service (Healthchecks.io, Uptime Kuma push, Better Stack heartbeat, Cronitor). Argus calls it while it is up and its database answers; when the calls stop, that service alerts you.">
+      <Stack gap="xs" data-testid="outside-check">
+        <PasswordInput size="xs" label="Check-in address" autoComplete="off" data-testid="outside-check-url"
+          description="Kept secret like a password: shown only as set. Called with a plain GET; nothing about your servers is sent."
+          placeholder={o.set && !removing ? `Set${o.host ? ` (${o.host})` : ''}. Type to replace it.` : 'https://hc-ping.com/…'}
+          error={urlError}
+          value={o.url ?? ''} onChange={(e) => edit({ outsideCheck: { ...o, url: e.currentTarget.value || undefined } })} />
+        <Group gap="sm" align="flex-end" wrap="wrap">
+          <Box>
+            <Text size={FS.meta} fw={500} mb={4}>Every</Text>
+            <SegmentedControl size="xs" value={o.every} disabled={!willBeSet}
+              data={[{ value: '1m', label: '1 minute' }, { value: '5m', label: '5 minutes' }]}
+              onChange={(v) => edit({ outsideCheck: { ...o, every: v === '5m' ? '5m' : '1m' } })} />
+          </Box>
+          {o.set && !removing && (
+            <Button size="xs" variant="subtle" color="rose" data-testid="outside-check-remove"
+              onClick={() => edit({ outsideCheck: { ...o, url: '' } })}>Remove</Button>
+          )}
+          {removing && (
+            <Button size="xs" variant="subtle" onClick={() => edit({ outsideCheck: { ...o, url: undefined } })}>Keep it</Button>
+          )}
+        </Group>
+        {o.set && !o.url && (
+          <Group gap="sm" justify="space-between" wrap="nowrap" align="flex-start"
+            style={{ border: '1px solid var(--mantine-color-default-border)', borderRadius: 8, padding: 10 }}>
+            <Text size={FS.meta} c={last?.ok === false ? 'rose' : 'dimmed'} lh={1.5} data-testid="outside-check-last">
+              {last?.lastAt
+                ? <>{last.ok ? 'Last check-in' : 'Last check-in failed'} {relTime(last.lastAt)}{last.detail ? `: ${last.detail}` : ''}.
+                  {' '}Each control server checks in, so one stopping does not set it off while another serves.</>
+                : 'No check-in yet. The first one runs within a minute of saving.'}
+            </Text>
+            <Button size="xs" variant="default" loading={test.isPending} data-testid="outside-check-test"
+              onClick={() => void test.mutateAsync().then((r) => r.ok
+                ? notifyOk('Check-in sent', r.detail)
+                : notifyWarn('The check-in failed', r.detail)).catch((e: unknown) => notifyError('Could not test', e))}>
+              Send a test
+            </Button>
+          </Group>
+        )}
+        {o.url && !urlError && (
+          <Text size={FS.micro} c="dimmed">Save, then send a test from here.</Text>
+        )}
+      </Stack>
+    </SectionCard>
+  )
+}
+
+/** The same rule as control.ValidOutsideCheckURL, so the field says it first. */
+export function outsideUrlError(raw: string): string | undefined {
+  let u: URL
+  try {
+    u = new URL(raw.trim())
+  } catch {
+    return 'Not an address'
+  }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return 'Use an https:// address'
+  if (!u.hostname) return 'The address has no host'
+  if (u.username || u.password) return 'Put no user name or password in the address'
+  return undefined
 }
 
 const SECURITY_DEFAULTS = {

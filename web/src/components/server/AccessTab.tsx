@@ -6,6 +6,8 @@ import { Mono, relTime } from '~/components/primitives'
 import { LoginAccounts, SettingsSection, SettingsSections } from '~/components/server/layout'
 import { WhoCanConnect } from '~/components/WhoCanConnect'
 import { ServerLogins } from '~/components/server/ServerLogins'
+import { ServerOutageLogins } from '~/components/OutageLogins'
+import { isConfigured } from '~/lib/live'
 import { seesWholeFleet } from '~/lib/roles'
 import { DIRECT_SSH_CHOICES, directSshLabel, directSshLoosens } from '~/lib/directSsh'
 import { run } from '~/lib/notify'
@@ -116,6 +118,7 @@ export function DirectSshCard({ asset, canEdit }: { asset: Asset; canEdit: boole
               : `This server's agent is still applying ${directSshLabel(applied)}; it picks up ${effective ? directSshLabel(effective) : 'the change'} at its next check-in.`}
         </Text>
         <AccountDirectSsh asset={asset} canEdit={canEdit} server={effective} />
+        {isConfigured() && <ServerOutageLogins assetId={asset.id} hostname={asset.hostname} canEdit={canEdit} />}
       </Stack>
     </Card>
   )
