@@ -421,6 +421,8 @@ export interface CloudVolume {
   deleted: boolean
   lastSnapshotAt?: string
   lastSnapshotId?: string
+  /** What the disk is, in words: in Google Cloud, its name. */
+  description?: string
 }
 
 export interface CloudRemovePlanView {

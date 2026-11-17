@@ -497,3 +497,52 @@ func TestCloudGoogleProjectReservesAssignsAndReleasesAddresses(t *testing.T) {
 		t.Fatalf("release: %+v", ch)
 	}
 }
+
+func TestCloudGoogleProjectRemovesAVMByItsTypedName(t *testing.T) {
+	e, fake, project := gcpEnv(t)
+	w := do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts/prepare", "admin-token", `{"provider":"gcp","accountId":"`+project+`","manage":true}`)
+	var p CloudPrepared
+	_ = json.Unmarshal(w.Body.Bytes(), &p)
+	fake.Roles[p.ReadRoleARN] = p.ExternalID
+	fake.Roles[p.ManageRoleARN] = p.ExternalID
+	fake.Resources["us-central1"] = []cloud.Resource{
+		{Kind: cloud.KindInstance, ID: "101", Name: "web-1", Region: "us-central1", Zone: "us-central1-a", State: "running", Size: "e2-small",
+			Links: []cloud.Ref{{Kind: cloud.KindVolume, ID: "200", Name: "persistent-disk-0"}}},
+		{Kind: cloud.KindInstance, ID: "102", Name: "web-2", Region: "us-central1", Zone: "us-central1-a", State: "running", Size: "e2-small"},
+	}
+	if fake.Protected == nil {
+		fake.Protected = map[string]bool{}
+	}
+	fake.Protected["102"] = true
+	w = do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts", "admin-token",
+		`{"provider":"gcp","name":"web-gcp","accountId":"`+project+`","environment":"development","manage":true}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("connect with changes: %d %s", w.Code, w.Body)
+	}
+	var c CloudAccount
+	_ = json.Unmarshal(w.Body.Bytes(), &c)
+	deadline := time.Now().Add(5 * time.Second)
+	for !e.a.SyncCloudAccount(context.Background(), c) {
+		if time.Now().After(deadline) {
+			t.Fatal("the project was being read for too long")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	ask := func(body string, want int) CloudChange {
+		t.Helper()
+		w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes", "admin-token",
+			`{"accountId":"`+c.ID+`","region":"us-central1",`+body+`}`)
+		if w.Code != want {
+			t.Fatalf("%s: %d %s, want %d", body, w.Code, w.Body, want)
+		}
+		var ch CloudChange
+		_ = json.Unmarshal(w.Body.Bytes(), &ch)
+		return ch
+	}
+	ask(`"action":"remove","resourceId":"101","confirm":"web"`, http.StatusBadRequest)
+	ask(`"action":"remove","resourceId":"102","confirm":"web-2"`, http.StatusConflict)
+	ch := ask(`"action":"remove","resourceId":"101","confirm":"web-1","spec":{"finalSnapshots":true}`, http.StatusOK)
+	if ch.State != "applied" || ch.Summary != "Remove web-1 (101) and 1 disk, 8 GB, after a final snapshot of each" {
+		t.Fatalf("remove: %+v", ch)
+	}
+}

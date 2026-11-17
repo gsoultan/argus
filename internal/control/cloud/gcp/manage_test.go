@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gsoultan/argus/internal/control/cloud"
 )
@@ -85,15 +86,30 @@ func (g *fakeManage) handler() http.Handler {
 			_, _ = w.Write([]byte(`{"networkInterfaces":[{"name":"nic0","accessConfigs":[{"name":"External NAT","natIP":"` + ip + `"}]}]}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"labels":{"team":"payments","environment":"production"},"labelFingerprint":"fp-101",
-			"disks":[{"source":"` + link + `/zones/us-central1-a/disks/web-1-boot","deviceName":"persistent-disk-0"},
-			{"source":"` + link + `/zones/us-central1-a/disks/web-1","deviceName":"data"}]}`))
+		_, _ = w.Write([]byte(`{"name":"web-1","status":"RUNNING","machineType":"` + link + `/zones/us-central1-a/machineTypes/e2-small",
+			"labels":{"team":"payments","environment":"production"},"labelFingerprint":"fp-101",
+			"metadata":{"items":[{"key":"startup-script","value":"echo hi"}]},
+			"disks":[{"source":"` + link + `/zones/us-central1-a/disks/web-1-boot","deviceName":"persistent-disk-0","boot":true,"autoDelete":true,"diskSizeGb":"10"},
+			{"source":"` + link + `/zones/us-central1-a/disks/web-1","deviceName":"data","autoDelete":false,"diskSizeGb":"200"}],
+			"networkInterfaces":[{"name":"nic0","accessConfigs":[{"name":"External NAT","natIP":"34.1.2.3"}]}]}`))
 	}))
 	mux.HandleFunc("GET /compute/v1/projects/{p}/zones/{z}/disks/{id}", auth(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("fields") == "id,sizeGb" {
+			ids := map[string]string{"web-1-boot": "200", "web-1": "201"}
+			_, _ = w.Write([]byte(`{"id":"` + ids[r.PathValue("id")] + `","sizeGb":"` + map[string]string{"web-1-boot": "10", "web-1": "200"}[r.PathValue("id")] + `"}`))
+			return
+		}
 		_, _ = w.Write([]byte(`{"users":["` + link + `/zones/us-central1-a/instances/web-1"]}`))
 	}))
 	mux.HandleFunc("GET /compute/v1/projects/{p}/global/snapshots/{id}", auth(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"selfLink":"` + link + `/global/snapshots/nightly-1"}`))
+	}))
+	mux.HandleFunc("GET /compute/v1/projects/{p}/regions/{rg}/addresses", auth(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Query().Get("filter"), "35.2.2.2") {
+			_, _ = w.Write([]byte(`{"items":[{"address":"35.2.2.2"}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{}`))
 	}))
 	mux.HandleFunc("GET /compute/v1/projects/{p}/regions/{rg}/addresses/{id}", auth(func(w http.ResponseWriter, r *http.Request) {
 		switch r.PathValue("id") {
@@ -152,7 +168,7 @@ func (g *fakeManage) handler() http.Handler {
 				"selfLink":"` + link + `/regions/us-central1/operations/operation-a"}`))
 			return
 		}
-		if strings.HasSuffix(r.URL.Path, "/deleteAccessConfig") {
+		if strings.HasSuffix(r.URL.Path, "/deleteAccessConfig") || strings.HasSuffix(r.URL.Path, "/disks/web-1-boot/createSnapshot") {
 			_, _ = w.Write([]byte(`{"name":"operation-x","status":"DONE"}`))
 			return
 		}
@@ -249,7 +265,7 @@ func TestOnlyBuiltChangesAreSupported(t *testing.T) {
 			t.Errorf("%s should be supported", a)
 		}
 	}
-	for _, a := range []cloud.Action{cloud.ActionLaunch, cloud.ActionRemove, cloud.ActionHibernate, cloud.ActionImageCreate, cloud.ActionFirewallCreate} {
+	for _, a := range []cloud.Action{cloud.ActionLaunch, cloud.ActionHibernate, cloud.ActionImageCreate, cloud.ActionFirewallCreate} {
 		if cloud.Supports(p, a) {
 			t.Errorf("%s is not built for Google Cloud yet", a)
 		}
@@ -509,5 +525,54 @@ func TestAddressesAreReservedAssignedUnassignedAndReleased(t *testing.T) {
 	}
 	if g.queries[3] != "accessConfig=External+NAT&networkInterface=nic0" {
 		t.Errorf("unassign: %v", g.queries[3])
+	}
+}
+
+func TestAVMIsRemovedWithTheDisksGoogleDeletesWithIt(t *testing.T) {
+	p, g, acct := newManageFake(t, "argus-0123", ManageDescription("argus-0123"))
+	ctx := context.Background()
+	plan, err := p.PlanRemove(ctx, acct, "alice@example.com", "us-central1", "101")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := cloud.RemovePlan{ID: "101", Name: "web-1", State: "running", Size: "e2-small", PublicIP: "34.1.2.3", Volumes: []cloud.Volume{
+		{ID: "200", Device: "persistent-disk-0", SizeGB: 10, Deleted: true, Description: "web-1-boot (boot)"},
+		{ID: "201", Device: "data", SizeGB: 200, Description: "web-1"}}}
+	if plan.Hash() != want.Hash() {
+		t.Fatalf("plan = %+v", plan)
+	}
+	res, err := p.Remove(ctx, acct, "alice@example.com", "us-central1", "101", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Snapshots) != 1 || !strings.HasPrefix(res.Snapshots["200"], "web-1-boot-final-") {
+		t.Fatalf("snapshots = %v", res.Snapshots)
+	}
+	base := "/compute/v1/projects/payments-prod-4182/zones/us-central1-a/"
+	if strings.Join(g.posts, "\n") != base+"disks/web-1-boot/createSnapshot\nDELETE "+base+"instances/101" {
+		t.Fatalf("calls = %v", g.posts)
+	}
+}
+
+func TestManagedVMsAndFinalSnapshotNames(t *testing.T) {
+	for _, c := range []struct {
+		labels, meta map[string]string
+		want         string
+	}{
+		{nil, map[string]string{"created-by": "projects/1/zones/us-central1-a/instanceGroupManagers/web"}, "managed instance group web"},
+		{map[string]string{"goog-gke-node": "", "goog-k8s-cluster-name": "prod"}, nil, "GKE cluster prod"},
+		{map[string]string{"goog-dataproc-cluster-name": "etl"}, nil, "Dataproc cluster etl"},
+		{map[string]string{"team": "web"}, map[string]string{"startup-script": "x"}, ""},
+	} {
+		if got := managedBy(c.labels, c.meta); got != c.want {
+			t.Errorf("%v %v: %q, want %q", c.labels, c.meta, got, c.want)
+		}
+	}
+	at := time.Date(2026, 11, 17, 4, 5, 0, 0, time.UTC)
+	if n := finalName(strings.Repeat("a", 70), at); len(n) != 63 || !ValidName(n) {
+		t.Errorf("final name %q", n)
+	}
+	if n := finalName("web-1-boot", at); n != "web-1-boot-final-20261117-0405" {
+		t.Errorf("final name %q", n)
 	}
 }
