@@ -1000,24 +1000,57 @@ export function sameRule(a: CloudRule, b: CloudRule): boolean {
 /** A rule's source as people write it: an address becomes a /32 or /128. */
 export function normalSource(s: string): string {
   const t = s.trim()
-  if (/^(sg|pl)-[0-9a-f]+$/.test(t) || t.includes('/')) return t
+  if (/^(sg|pl)-[0-9a-f]+$/.test(t) || t.includes('/') || t.startsWith('tag:')) return t
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(t)) return `${t}/32`
   if (t.includes(':')) return `${t}/128`
   return t
 }
 
-/** Whether a source is a range, an address, a security group or a prefix list. */
-export function validSource(s: string): boolean {
+/** Whether a source is a range, an address, a security group or a prefix list; in Google Cloud, a range, an address or tag:NAME. */
+export function validSource(s: string, gcp = false): boolean {
   const t = s.trim()
-  return /^sg-[0-9a-f]{8,17}$/.test(t) || /^pl-[0-9a-f]{8,17}$/.test(t) ||
+  if (gcp && /^tag:[a-z]([-a-z0-9]{0,61}[a-z0-9])?$/.test(t)) return true
+  return (!gcp && (/^sg-[0-9a-f]{8,17}$/.test(t) || /^pl-[0-9a-f]{8,17}$/.test(t))) ||
     /^\d{1,3}(\.\d{1,3}){3}(\/\d{1,2})?$/.test(t) || /^[0-9a-f:]+:[0-9a-f:]*(\/\d{1,3})?$/i.test(t)
 }
 
 /** Every live instance and load balancer that uses a security group. */
 export function firewallUsers(g: CloudItem, instances: CloudItem[] = [], balancers: CloudItem[] = []): CloudItem[] {
-  return [...instances, ...balancers].filter((x) => x.accountId === g.accountId && x.resource.region === g.resource.region &&
+  // A Google firewall rule is global and reaches VMs in every region.
+  return [...instances, ...balancers].filter((x) => x.accountId === g.accountId && (x.resource.region === g.resource.region || g.resource.region === 'global') &&
     x.resource.state !== 'terminated' && x.resource.state !== 'shutting-down' &&
     (x.resource.links ?? []).some((l) => l.kind === 'firewall' && l.id === g.resource.id))
+}
+
+/**
+ * Why rules cannot be one Google firewall rule, or undefined: Google lets
+ * every port a rule lists in from every source it lists.
+ */
+export function gcpRulesProblem(rules: CloudRule[]): string | undefined {
+  if (rules.length === 0) return 'A Google firewall rule allows something; to allow nothing, delete it.'
+  const key = (r: CloudRule) => `${r.protocol}/${r.fromPort}/${r.toPort}`
+  const sources = new Map<string, Set<string>>()
+  for (const r of rules) {
+    if (!sources.has(key(r))) sources.set(key(r), new Set())
+    sources.get(key(r))!.add(r.source)
+  }
+  const sets = [...sources.values()].map((s) => [...s].sort().join(','))
+  if (sets.some((s) => s !== sets[0])) return 'One Google firewall rule lets every port it lists in from every source it lists. Give each port the same sources, or make another firewall rule.'
+  return undefined
+}
+
+/** Why Argus leaves a Google firewall rule to the Google Cloud console, or undefined. */
+export function gcpUneditable(r: CloudResource): string | undefined {
+  if (r.details?.action === 'deny') return 'It denies traffic; Argus changes rules that allow it.'
+  if (r.details?.direction === 'egress') return 'It is an outbound rule; Argus changes inbound rules.'
+  if (r.details?.targetServiceAccounts) return 'It reaches VMs by service account; Argus changes rules that reach them by network tag.'
+  if (r.state === 'disabled') return 'It is turned off; turn it on in the Google Cloud console first.'
+  return undefined
+}
+
+/** The network tags a Google firewall rule reaches VMs by. */
+export function gcpTargetTags(r: CloudResource): string[] {
+  return (r.details?.targetTags ?? '').split(',').map((t) => t.trim()).filter(Boolean)
 }
 
 /** A group's environment is the strictest of its own and of what uses it. */

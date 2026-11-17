@@ -119,7 +119,7 @@ function Connect() {
                           : 'See instances, disks and firewalls. Nothing in the account can be changed from Argus.'} />
                       <Choice value="manage" icon={IconPencil} title="Read and change"
                         text={gcp
-                          ? 'Also start, stop and reset VMs, change their machine type, labels and deletion protection, make, grow, attach, detach, snapshot and delete disks, reserve and assign static addresses, launch and remove VMs, and make and delete images, with approvals and the audit log. More changes come later.'
+                          ? 'Also start, stop and reset VMs, change their machine type, labels and deletion protection, make, grow, attach, detach, snapshot and delete disks, reserve and assign static addresses, launch and remove VMs, make and delete images, and make and change firewall rules, with approvals and the audit log. More changes come later.'
                           : 'Also launch, stop, resize and remove instances, with approvals and the audit log.'} />
                     </SimpleGrid>
                   </Radio.Group>
