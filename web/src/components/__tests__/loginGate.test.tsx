@@ -78,6 +78,35 @@ describe('LoginGate', () => {
     expect(screen.queryByLabelText(/^password$/i)).not.toBeInTheDocument()
   })
 
+  // The control plane answered but could not read its database. That is an
+  // outage, not a fresh install: it must not offer to start over, nor take a
+  // password it cannot check.
+  it('says the database is unreadable instead of claiming no accounts exist', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      json(401, { authenticated: false, passwordEnabled: true, databaseUnreadable: true }),
+    ))
+    await renderGate()
+
+    expect(await screen.findByText(/cannot read its database/i)).toBeInTheDocument()
+    expect(screen.getByText(/have not been removed/i)).toBeInTheDocument()
+    expect(screen.queryByText(/no accounts exist yet/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/argus-control users add/)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/^password$/i)).not.toBeInTheDocument()
+  })
+
+  // Every account disabled: not a fresh install either, and the way back is
+  // enabling one, not adding a first one.
+  it('says every account is disabled rather than that none exist', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      json(401, { authenticated: false, passwordEnabled: true, accountsExist: false, accountsDisabled: true }),
+    ))
+    await renderGate()
+
+    expect(await screen.findByText(/every account is disabled/i)).toBeInTheDocument()
+    expect(screen.getByText(/argus-control users enable/)).toBeInTheDocument()
+    expect(screen.queryByText(/no accounts exist yet/i)).not.toBeInTheDocument()
+  })
+
   // Neither door. Better to say so, and say how to fix it, than to render an
   // empty card someone stares at.
   it('says so when there is no way to sign in at all, and how to fix it', async () => {
