@@ -678,6 +678,8 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	// The bell's daily digest of what is waiting to be updated.
 	go api.RunUpdateDigest(ctx, control.UpdateDigestInterval)
 	go api.RunResourceWatch(ctx, control.ResourceWatchInterval)
+	// Streaming replicas Argus made: lag, and the bell when one falls behind.
+	go api.RunReplicaWatch(ctx, control.ReplicaWatchInterval)
 	// This control server saying it is alive, the outage record, and the
 	// outside check-in; see control_liveness.go.
 	go api.RunLiveness(ctx)

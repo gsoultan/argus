@@ -28,6 +28,8 @@ tunnel/pgreplica.go):
   - replica-allow adds the replica's pg_hba.conf line and reloads; see below.
   - replica-drop removes all three, refusing while the replica is still
     streaming.
+  - replica-status reads how far behind the replica is and how much WAL its
+    slot keeps, for the lag watch. It edits nothing.
 
 A role or slot of the same name that Argus did not make is never touched.
 */
@@ -58,6 +60,8 @@ func pgReplicaOp(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) P
 		data, err = replicaAllow(ctx, conn, r)
 	case "replica-drop":
 		data, err = replicaDrop(ctx, conn, r)
+	case "replica-status":
+		data, err = replicaStatus(ctx, conn, r)
 	default:
 		return PGAdminResult{Error: "unknown operation " + req.Op, Version: version}
 	}
@@ -466,4 +470,33 @@ func hbaEdit(ctx context.Context, conn *pgconn.PgConn, file string, change func(
 	}
 	done()
 	return nil
+}
+
+// replicaStatus reads the replica's WAL sender and slot on the primary.
+func replicaStatus(ctx context.Context, conn *pgconn.PgConn, r tunnel.PGReplica) (tunnel.PGReplicaStatus, error) {
+	st := tunnel.PGReplicaStatus{LagBytes: -1}
+	v, err := row(ctx, conn, `SELECT
+		EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = $2),
+		coalesce((SELECT active FROM pg_replication_slots WHERE slot_name = $2), false),
+		coalesce((SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)::bigint
+			FROM pg_replication_slots WHERE slot_name = $2 AND restart_lsn IS NOT NULL), 0),
+		coalesce(s.state, ''), coalesce(host(s.client_addr), ''),
+		extract(epoch FROM s.replay_lag)::float8,
+		coalesce(pg_wal_lsn_diff(pg_current_wal_lsn(), s.replay_lsn)::bigint, -1)
+		FROM (SELECT 1) one LEFT JOIN LATERAL (
+			SELECT state, client_addr, replay_lag, replay_lsn FROM pg_stat_replication
+			WHERE usename = $1 ORDER BY backend_start DESC LIMIT 1) s ON true`, r.Role(), r.Slot())
+	if err != nil {
+		return st, err
+	}
+	n := func(b []byte) int64 { x, _ := strconv.ParseInt(string(b), 10, 64); return x }
+	st.SlotExists, st.SlotActive, st.RetainedBytes = string(v[0]) == "t", string(v[1]) == "t", n(v[2])
+	st.State, st.Client = string(v[3]), string(v[4])
+	if v[5] != nil {
+		f, _ := strconv.ParseFloat(string(v[5]), 64)
+		st.ReplayLagS = &f
+	}
+	st.LagBytes = n(v[6])
+	st.Streaming = st.State == "streaming"
+	return st, nil
 }

@@ -66,6 +66,15 @@ type DatabaseReplica struct {
 	CreatedAt         time.Time  `json:"createdAt"`
 	StartedAt         *time.Time `json:"startedAt,omitempty"`
 	FinishedAt        *time.Time `json:"finishedAt,omitempty"`
+	// The lag watch's last reading from the primary (db_replica_watch.go).
+	Streaming     bool       `json:"streaming"`
+	LagS          *float64   `json:"lagS,omitempty"`
+	LagBytes      *int64     `json:"lagBytes,omitempty"`
+	RetainedBytes *int64     `json:"retainedBytes,omitempty"`
+	WatchedAt     *time.Time `json:"watchedAt,omitempty"`
+	WatchError    string     `json:"watchError,omitempty"`
+	BehindSince   *time.Time `json:"behindSince,omitempty"`
+	BehindAlerted bool       `json:"-"`
 }
 
 // ErrReplicaNotFound is a replica that does not exist.
@@ -73,7 +82,8 @@ var ErrReplicaNotFound = errors.New("no such replica")
 
 const replicaCols = `r.id::text, r.database_id::text, d.dbname, pa.hostname, r.asset_id::text, ra.hostname, r.name,
 	r.replica_address, r.primary_address, r.requested_by, r.reason, r.request_id::text, r.state, r.stage, r.detail,
-	r.error, r.replica_database_id::text, r.created_at, r.started_at, r.finished_at`
+	r.error, r.replica_database_id::text, r.created_at, r.started_at, r.finished_at,
+	r.streaming, r.lag_s, r.lag_bytes, r.retained_bytes, r.watched_at, r.watch_error, r.behind_since, r.behind_alerted`
 
 const replicaFrom = ` FROM database_replicas r JOIN databases d ON d.id = r.database_id
 	JOIN assets pa ON pa.id = d.asset_id JOIN assets ra ON ra.id = r.asset_id `
@@ -82,7 +92,8 @@ func scanReplica(row pgx.Row) (DatabaseReplica, error) {
 	var r DatabaseReplica
 	err := row.Scan(&r.ID, &r.DatabaseID, &r.DBName, &r.PrimaryHostname, &r.AssetID, &r.Hostname, &r.Name,
 		&r.ReplicaAddress, &r.PrimaryAddress, &r.RequestedBy, &r.Reason, &r.RequestID, &r.State, &r.Stage, &r.Detail,
-		&r.Error, &r.ReplicaDatabaseID, &r.CreatedAt, &r.StartedAt, &r.FinishedAt)
+		&r.Error, &r.ReplicaDatabaseID, &r.CreatedAt, &r.StartedAt, &r.FinishedAt,
+		&r.Streaming, &r.LagS, &r.LagBytes, &r.RetainedBytes, &r.WatchedAt, &r.WatchError, &r.BehindSince, &r.BehindAlerted)
 	return r, err
 }
 

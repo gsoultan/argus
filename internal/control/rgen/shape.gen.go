@@ -662,6 +662,14 @@ func _assertDatabaseReplicaShape(m m0.DatabaseReplica) {
 		m.CreatedAt,
 		m.StartedAt,
 		m.FinishedAt,
+		m.Streaming,
+		m.LagS,
+		m.LagBytes,
+		m.RetainedBytes,
+		m.WatchedAt,
+		m.WatchError,
+		m.BehindSince,
+		m.BehindAlerted,
 	}
 }
 
