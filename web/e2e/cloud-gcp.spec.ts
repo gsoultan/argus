@@ -87,7 +87,8 @@ async function manageableProject(page: Page) {
     const res = await route.fetch()
     const body = await res.json()
     body.accounts = body.accounts.map((a: { provider: string }) => a.provider === 'gcp'
-      ? { ...a, access: 'manage', manageRoleArn: 'argus-manage@analytics-prod-4182.iam.gserviceaccount.com', actions: ['start', 'stop', 'reboot', 'resize', 'tags', 'protect', 'unprotect', 'volume-grow'], tagKinds: ['instance', 'volume'] }
+      ? { ...a, access: 'manage', manageRoleArn: 'argus-manage@analytics-prod-4182.iam.gserviceaccount.com', actions: ['start', 'stop', 'reboot', 'resize', 'tags', 'protect', 'unprotect', 'volume-grow',
+        'volume-create', 'volume-attach', 'volume-detach', 'volume-delete', 'snapshot-create', 'snapshot-delete'], tagKinds: ['instance', 'volume'] }
       : a)
     await route.fulfill({ response: res, json: body })
   })
@@ -103,21 +104,22 @@ async function manageableProject(page: Page) {
             size: 'e2-standard-4', addresses: ['10.128.0.7'], tags: { team: 'data' } } },
           { ...base, resource: { kind: 'instance', id: '3302', name: 'etl-2', region: 'us-central1', zone: 'us-central1-a', state: 'stopped',
             size: 'e2-standard-4', addresses: ['10.128.0.8'], details: { deletionProtection: 'on' } } }]
-        : []
+        : kind === 'snapshot'
+          ? [{ ...base, resource: { kind: 'snapshot', id: '5501', name: 'etl-data-nightly', region: 'global', state: 'ready', size: '200 GiB' } }]
+          : []
     await route.fulfill({ json: { items } })
   })
 }
 
-test('a Google disk grows by size alone, and only built changes are offered', async ({ page }) => {
+test('a Google disk grows by size alone, and is offered what Google does to disks', async ({ page }) => {
   await manageableProject(page)
   await signIn(page)
   await page.goto('/cloud?tab=disks')
   await page.getByText('etl-data').first().click()
   const drawer = page.getByRole('dialog')
   await expect(drawer.getByRole('button', { name: 'Grow' })).toBeVisible()
-  for (const absent of ['Snapshot', 'Detach', 'Tags']) await expect(drawer.getByRole('button', { name: absent })).toHaveCount(0)
-  await expect(drawer.getByRole('button', { name: 'Labels' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'New disk' })).toHaveCount(0)
+  for (const shown of ['Snapshot', 'Detach', 'Labels']) await expect(drawer.getByRole('button', { name: shown })).toBeVisible()
+  await expect(drawer.getByRole('button', { name: 'Tags' })).toHaveCount(0)
   await drawer.getByRole('button', { name: 'Grow' }).click()
   const grow = page.getByRole('dialog', { name: /Grow etl-data/ })
   await expect(grow.getByLabel('Size, GB')).toHaveValue('200')
@@ -192,4 +194,85 @@ test('a Google VM changes machine type, labels and deletion protection', async (
   await resize.getByRole('button', { name: 'Ask for approval' }).click()
   await expect.poll(() => asked.length).toBe(2)
   expect(asked[1]).toMatchObject({ action: 'resize', resourceId: '3302', spec: { size: 'n2-standard-4', from: 'e2-standard-4' } })
+})
+
+test('a Google disk is made from a snapshot, snapshotted, detached and deleted as Google does it', async ({ page }) => {
+  await manageableProject(page)
+  const asked: Record<string, unknown>[] = []
+  await page.route('**/api/v1/cloud/changes', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const body = route.request().postDataJSON() as Record<string, unknown>
+    asked.push(body)
+    await route.fulfill({ json: { id: 'c' + asked.length, state: 'applied', summary: 'done', action: body.action } })
+  })
+  await signIn(page)
+  await page.goto('/cloud?tab=disks')
+
+  // A snapshot belongs to the whole project: its disk needs a region, a zone and a Compute Engine name.
+  await page.getByText(/^Snapshots/).click()
+  await page.getByText('etl-data-nightly').first().click()
+  await page.getByRole('dialog').getByRole('button', { name: 'New disk from it' }).click()
+  const make = page.getByRole('dialog', { name: /New disk from etl-data-nightly/ })
+  await expect(make.getByLabel('Size, GB')).toHaveValue('200')
+  await make.getByLabel('Region').click()
+  await page.getByRole('option', { name: 'us-central1', exact: true }).click()
+  await make.getByLabel('Zone').click()
+  await page.getByRole('option', { name: 'us-central1-a' }).click()
+  await make.getByLabel('Name').fill('ETL data')
+  await expect(make.getByText(/Lowercase letters, digits and -/)).toBeVisible()
+  await make.getByLabel('Name').fill('etl-data')
+  await expect(make.getByText(/already a disk etl-data in us-central1-a/)).toBeVisible()
+  await make.getByLabel('Name').fill('etl-restore')
+  await make.getByLabel('Size, GB').fill('100')
+  await expect(make.getByText(/At least 200 GB, the snapshot's size/)).toBeVisible()
+  await make.getByLabel('Size, GB').fill('250')
+  await make.getByLabel('Attach to').click()
+  await page.getByRole('option', { name: /etl-2 · as \/dev\/disk\/by-id\/google-etl-restore/ }).click()
+  await expect(make.getByText(/Google bills it by size and type/)).toBeVisible()
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/13-new-disk.png` })
+  await make.getByLabel('Why').fill('Restore last night for the audit')
+  await make.getByRole('button', { name: 'Ask for approval' }).click()
+  await expect.poll(() => asked.length).toBe(1)
+  expect(asked[0]).toMatchObject({ action: 'volume-create', region: 'us-central1',
+    spec: { name: 'etl-restore', zone: 'us-central1-a', sizeGb: 250, type: 'pd-balanced', snapshot: '5501', attachTo: '3302' } })
+
+  // A snapshot of a disk: a Compute Engine name, or one Argus picks.
+  await page.goto('/cloud?tab=disks')
+  await page.getByText('etl-data', { exact: true }).first().click()
+  let drawer = page.getByRole('dialog')
+  await drawer.getByRole('button', { name: 'Snapshot' }).click()
+  const snap = page.getByRole('dialog', { name: /Snapshot etl-data/ })
+  await expect(snap.getByText(/Google copies the disk as it is now/)).toBeVisible()
+  await snap.getByLabel('Name').fill('Nightly 1')
+  const take = snap.getByRole('button', { name: /Take snapshot|Ask for approval/ })
+  await snap.getByLabel('Why').fill('Before the upgrade')
+  await expect(take).toBeDisabled()
+  await snap.getByLabel('Name').fill('')
+  await take.click()
+  await expect.poll(() => asked.length).toBe(2)
+  expect(asked[1]).toMatchObject({ action: 'snapshot-create', resourceId: '4410', spec: { name: '' } })
+
+  // Google detaches at once, so the dialog says so.
+  await page.goto('/cloud?tab=disks')
+  await page.getByText('etl-data', { exact: true }).first().click()
+  drawer = page.getByRole('dialog')
+  await drawer.getByRole('button', { name: 'Detach' }).click()
+  await expect(page.getByText(/Google detaches the disk at once/)).toBeVisible()
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/14-detach.png` })
+  await page.getByRole('button', { name: 'Cancel' }).click()
+
+  // Deleting a snapshot: no final-snapshot box, which Google does as its own change.
+  await page.goto('/cloud?tab=disks')
+  await page.getByText(/^Snapshots/).click()
+  await page.getByText('etl-data-nightly').first().click()
+  drawer = page.getByRole('dialog')
+  await drawer.getByRole('button', { name: 'More actions' }).click()
+  await page.getByRole('menuitem', { name: 'Delete snapshot…' }).click()
+  const del = page.getByRole('dialog', { name: /Delete etl-data-nightly/ })
+  await expect(del.getByText(/Google deletes the snapshot/)).toBeVisible()
+  await del.getByLabel(/to confirm/).fill('etl-data-nightly')
+  await del.getByLabel('Why').fill('Kept a newer one')
+  await del.getByRole('button', { name: /Ask for approval/ }).click()
+  await expect.poll(() => asked.length).toBe(3)
+  expect(asked[2]).toMatchObject({ action: 'snapshot-delete', region: 'global', resourceId: '5501', confirm: 'etl-data-nightly' })
 })

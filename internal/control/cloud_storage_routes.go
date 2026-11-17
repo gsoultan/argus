@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/gsoultan/argus/internal/control/cloud"
+	"github.com/gsoultan/argus/internal/control/cloud/gcp"
 )
 
 /*
@@ -123,6 +125,9 @@ func (a *API) planStorage(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 	// A create has nothing to read yet.
 	switch in.Action {
 	case cloud.ActionVolumeCreate:
+		if m.acct.Provider == "gcp" {
+			return a.planGCPVolumeCreate(ctx, m, in, ch)
+		}
 		return a.planVolumeCreate(ctx, m, in, ch)
 	case cloud.ActionAddressAllocate:
 		var s cloudNameSpec
@@ -236,7 +241,14 @@ func (a *API) planStorage(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 				used = append(used, l.Name)
 			}
 		}
-		if s.Device == "" {
+		if m.acct.Provider == "gcp" {
+			// Google names the device after the disk, as its console does:
+			// the server sees /dev/disk/by-id/google-<name>.
+			s.Device = res.Name
+			if slices.Contains(used, s.Device) {
+				return ch, http.StatusConflict, errors.New(inst.Name + " already has a disk attached as " + s.Device)
+			}
+		} else if s.Device == "" {
 			s.Device = cloud.FreeDevice(used)
 			if s.Device == "" {
 				return ch, http.StatusConflict, errors.New(inst.Name + " has no free device name left")
@@ -281,6 +293,9 @@ func (a *API) planStorage(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 		if res.State != "available" {
 			return ch, http.StatusConflict, errors.New(res.Name + " is attached; detach it first, which is its own change")
 		}
+		if s.FinalSnapshot && m.acct.Provider == "gcp" {
+			return ch, http.StatusBadRequest, errors.New("in Google Cloud a final snapshot is its own change: take a snapshot of " + res.Name + " first, then delete it")
+		}
 		if stack != "" {
 			return ch, http.StatusConflict, errors.New("Argus will not delete " + res.Name + ": it belongs to CloudFormation stack " + stack)
 		}
@@ -298,6 +313,14 @@ func (a *API) planStorage(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 			}
 		}
 		s.Name = strings.TrimSpace(s.Name)
+		if m.acct.Provider == "gcp" {
+			if s.Name == "" {
+				s.Name = gcpSnapshotName(res.Name, time.Now().UTC())
+			}
+			if !gcp.ValidName(s.Name) {
+				return ch, http.StatusBadRequest, errors.New("a snapshot's name is lowercase letters, digits and -, up to 63, starting with a letter")
+			}
+		}
 		if s.Name == "" {
 			s.Name = res.Name + " " + time.Now().UTC().Format("2006-01-02 15:04")
 		}
@@ -731,5 +754,112 @@ func planGCPDiskGrow(res cloud.Resource, s cloudVolumeGrowSpec, ch CloudChange) 
 	}
 	ch.Spec, _ = json.Marshal(s)
 	ch.Summary = fmt.Sprintf("Grow %s from %d to %d GB", res.Name, s.FromGB, s.SizeGB)
+	return ch, http.StatusOK, nil
+}
+
+// gcpSnapshotName is a snapshot's name when none is given: the disk's
+// name and the time, as a Compute Engine name.
+func gcpSnapshotName(disk string, at time.Time) string {
+	stamp := at.Format("20060102-1504")
+	base := strings.Trim(reNotGCPName.ReplaceAllString(strings.ToLower(disk), "-"), "-")
+	if base == "" || base[0] < 'a' || base[0] > 'z' {
+		base = "disk-" + base
+	}
+	if len(base) > 63-len(stamp)-1 {
+		base = strings.TrimRight(base[:63-len(stamp)-1], "-")
+	}
+	return base + "-" + stamp
+}
+
+var reNotGCPName = regexp.MustCompile(`[^a-z0-9-]+`)
+
+// planGCPVolumeCreate plans a new Google Cloud disk: named, as Google
+// requires, in one of the region's zones, empty or from a snapshot, and
+// attached when asked to.
+func (a *API) planGCPVolumeCreate(ctx context.Context, m cloudManaged, in *cloudChangeIn, ch CloudChange) (CloudChange, int, error) {
+	var s cloudVolumeCreateSpec
+	if err := json.Unmarshal(in.Spec, &s); err != nil {
+		return ch, http.StatusBadRequest, errors.New("a disk takes {name, zone, sizeGb, type}")
+	}
+	s.Name = strings.TrimSpace(s.Name)
+	if !gcp.ValidName(s.Name) {
+		return ch, http.StatusBadRequest, errors.New("name the disk: lowercase letters, digits and -, up to 63, starting with a letter")
+	}
+	if s.Type == "" {
+		s.Type = "pd-balanced"
+	}
+	if !slices.Contains(gcp.DiskTypes, s.Type) {
+		return ch, http.StatusBadRequest, errors.New("pick a disk type: " + strings.Join(gcp.DiskTypes, ", "))
+	}
+	if s.IOPS != 0 || s.Throughput != 0 {
+		return ch, http.StatusBadRequest, errors.New("Argus makes Google Cloud disks with their type's own performance")
+	}
+	if !a.zoneIn(ctx, m.acct.ID, in.Region, s.Zone) {
+		return ch, http.StatusBadRequest, errors.New("pick one of " + in.Region + "'s zones")
+	}
+	for _, it := range a.regionItems(ctx, m.acct.ID, in.Region, cloud.KindVolume) {
+		if it.Name == s.Name && it.Zone == s.Zone {
+			return ch, http.StatusConflict, errors.New(s.Zone + " already has a disk named " + s.Name)
+		}
+	}
+	if s.Snapshot != "" {
+		snap, err := a.store.CloudResourceOf(ctx, m.acct.ID, gcp.GlobalRegion, cloud.KindSnapshot, s.Snapshot)
+		if err != nil {
+			return ch, http.StatusBadRequest, errors.New("pick one of the project's snapshots")
+		}
+		if snap.State != "ready" {
+			return ch, http.StatusConflict, errors.New(snap.Name + " is not ready yet")
+		}
+		gb, _ := volumeGB(snap)
+		if s.SizeGB == 0 {
+			s.SizeGB = gb
+		}
+		if s.SizeGB < gb {
+			return ch, http.StatusBadRequest, fmt.Errorf("a disk from %s is at least %d GB", snap.Name, gb)
+		}
+		s.SnapshotName = snap.Name
+	}
+	if s.SizeGB < gcp.MinDiskGB || s.SizeGB > gcp.MaxDiskGB {
+		return ch, http.StatusBadRequest, fmt.Errorf("a Google Cloud disk is %d to %d GB", gcp.MinDiskGB, gcp.MaxDiskGB)
+	}
+	for k, v := range s.Tags {
+		if why := gcp.LabelProblem(k, v); why != "" {
+			return ch, http.StatusBadRequest, fmt.Errorf("%q cannot be a label: %s", k, why)
+		}
+	}
+	if e := cloudEnvOf(s.Tags, ""); e != "" {
+		ch.Environment = e
+	}
+	where := ""
+	if s.AttachTo != "" {
+		inst, err := a.store.CloudInstance(ctx, m.acct.ID, in.Region, s.AttachTo)
+		if err != nil {
+			return ch, http.StatusBadRequest, err
+		}
+		if !liveInstance(inst) {
+			return ch, http.StatusConflict, errors.New(inst.Name + " is being removed")
+		}
+		if inst.Zone != s.Zone {
+			return ch, http.StatusBadRequest, fmt.Errorf("%s is in %s; make the disk there to attach it", inst.Name, inst.Zone)
+		}
+		s.Device = s.Name
+		for _, l := range inst.Links {
+			if l.Kind == cloud.KindVolume && l.Name == s.Device {
+				return ch, http.StatusConflict, errors.New(inst.Name + " already has a disk attached as " + s.Device)
+			}
+		}
+		s.AttachName = inst.Name
+		ch.Environment = stricterEnv(ch.Environment, cloudEnvOf(inst.Tags, m.acct.Environment))
+		where = ", attached to " + inst.Name
+	} else {
+		s.Device = ""
+	}
+	ch.ResourceName = s.Name
+	ch.Spec, _ = json.Marshal(s)
+	ch.Summary = fmt.Sprintf("Make the disk %s: %d GB %s in %s", s.Name, s.SizeGB, s.Type, s.Zone)
+	if s.SnapshotName != "" {
+		ch.Summary += ", from " + s.SnapshotName
+	}
+	ch.Summary += where
 	return ch, http.StatusOK, nil
 }

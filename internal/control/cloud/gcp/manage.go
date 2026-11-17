@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/gsoultan/argus/internal/control/cloud"
 )
@@ -46,6 +48,13 @@ var supported = map[cloud.Action]bool{
 	cloud.ActionTags:       true,
 	cloud.ActionProtect:    true,
 	cloud.ActionUnprotect:  true,
+
+	cloud.ActionVolumeCreate:   true,
+	cloud.ActionVolumeAttach:   true,
+	cloud.ActionVolumeDetach:   true,
+	cloud.ActionVolumeDelete:   true,
+	cloud.ActionSnapshotCreate: true,
+	cloud.ActionSnapshotDelete: true,
 }
 
 // TaggableKinds are the kinds Argus labels in Google Cloud so far.
@@ -59,7 +68,9 @@ func (p *Provider) Supports(a cloud.Action) bool { return supported[a] }
 func SupportedActions() []cloud.Action {
 	var out []cloud.Action
 	for _, a := range []cloud.Action{cloud.ActionStart, cloud.ActionStop, cloud.ActionReboot,
-		cloud.ActionResize, cloud.ActionTags, cloud.ActionProtect, cloud.ActionUnprotect, cloud.ActionVolumeGrow} {
+		cloud.ActionResize, cloud.ActionTags, cloud.ActionProtect, cloud.ActionUnprotect, cloud.ActionVolumeGrow,
+		cloud.ActionVolumeCreate, cloud.ActionVolumeAttach, cloud.ActionVolumeDetach, cloud.ActionVolumeDelete,
+		cloud.ActionSnapshotCreate, cloud.ActionSnapshotDelete} {
 		if supported[a] {
 			out = append(out, a)
 		}
@@ -132,9 +143,11 @@ func (p *Provider) locate(ctx context.Context, t token, actor cloud.Actor, proje
 
 // operation is the part of a Compute Engine operation Argus reads.
 type operation struct {
-	Name   string `json:"name"`
-	Status string `json:"status"`
-	Error  *struct {
+	Name     string `json:"name"`
+	Status   string `json:"status"`
+	SelfLink string `json:"selfLink"`
+	TargetID string `json:"targetId"`
+	Error    *struct {
 		Errors []struct {
 			Message string `json:"message"`
 		} `json:"errors"`
@@ -389,6 +402,283 @@ func (p *Provider) Protect(ctx context.Context, a cloud.Account, actor cloud.Act
 	return cloud.Result{ResourceID: id, RequestID: op.Name}, nil
 }
 
+// reName is a Compute Engine resource name: what a disk or snapshot
+// Argus makes is called.
+var reName = regexp.MustCompile(`^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$`)
+
+// ValidName reports whether n can name a disk or snapshot.
+func ValidName(n string) bool { return reName.MatchString(n) }
+
+// DiskTypes are the disk types Argus makes.
+var DiskTypes = []string{"pd-balanced", "pd-ssd", "pd-standard"}
+
+// Disk sizes Argus makes, in GB: Google's persistent disk limits.
+const (
+	MinDiskGB = 10
+	MaxDiskGB = 65536
+)
+
+// send makes one call that answers with an operation.
+func (p *Provider) send(ctx context.Context, t token, actor cloud.Actor, method, u string, body any) (operation, error) {
+	var rd io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		rd = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u, rd)
+	if err != nil {
+		return operation{}, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("Authorization", "Bearer "+t.value)
+	req.Header.Set("User-Agent", userAgent(actor))
+	var op operation
+	if err := p.do(req, &op); err != nil {
+		return operation{}, err
+	}
+	return op, op.err()
+}
+
+// wait waits for an operation to finish, for a step that needs what it
+// made: a disk is attached only once it exists.
+func (p *Provider) wait(ctx context.Context, t token, actor cloud.Actor, op operation) error {
+	for delay := 500 * time.Millisecond; op.Status != "DONE"; delay = min(delay*2, 5*time.Second) {
+		if op.SelfLink == "" {
+			return errors.New("Google gave no operation to wait for")
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("Google had not finished %s: %w", op.Name, ctx.Err())
+		case <-time.After(delay):
+		}
+		var next operation
+		if err := p.get(ctx, t, actor, p.ep.compute+trimHost(op.SelfLink), &next); err != nil {
+			return err
+		}
+		op = next
+	}
+	return op.err()
+}
+
+// trimHost is a Compute Engine link's path, so a call goes where the
+// provider's endpoint says.
+func trimHost(link string) string {
+	if i := strings.Index(link, "/compute/v1/"); i >= 0 {
+		return link[i:]
+	}
+	return link
+}
+
+// labelsOf are tags as Google labels: the change id Argus marks what it
+// makes with, as argus-change, and the rest as they are (planning has
+// already checked them).
+func labelsOf(tags map[string]string) map[string]string {
+	out := map[string]string{}
+	for k, v := range tags {
+		if k == "argus:change" {
+			k, v = "argus-change", strings.ToLower(v)
+		}
+		if LabelProblem(k, v) == "" {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// CreateVolume makes a disk in a zone, empty or from a snapshot, and
+// attaches it when asked to, once Google has made it.
+func (p *Provider) CreateVolume(ctx context.Context, a cloud.Account, actor cloud.Actor, region string, s cloud.VolumeSpec) (cloud.Result, error) {
+	if !ValidName(s.Name) {
+		return cloud.Result{}, fmt.Errorf("%q cannot name a disk: lowercase letters, digits and -, up to 63, starting with a letter", s.Name)
+	}
+	if !slices.Contains(DiskTypes, s.Type) {
+		return cloud.Result{}, errors.New("pick a disk type: " + strings.Join(DiskTypes, ", "))
+	}
+	if regionOfZone(s.Zone) != region {
+		return cloud.Result{}, fmt.Errorf("%s is not a zone of %s", s.Zone, region)
+	}
+	t, err := p.session(ctx, a, actor)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	body := map[string]any{"name": s.Name, "type": "zones/" + s.Zone + "/diskTypes/" + s.Type, "labels": labelsOf(s.Tags)}
+	if s.SizeGB > 0 {
+		body["sizeGb"] = fmt.Sprint(s.SizeGB)
+	}
+	if s.Snapshot != "" {
+		if !reID.MatchString(s.Snapshot) {
+			return cloud.Result{}, fmt.Errorf("%q is not a Compute Engine id", s.Snapshot)
+		}
+		var snap struct {
+			SelfLink string `json:"selfLink"`
+		}
+		if err := p.get(ctx, t, actor, p.ep.compute+"/compute/v1/projects/"+a.AccountID+"/global/snapshots/"+s.Snapshot+"?fields=selfLink", &snap); err != nil {
+			return cloud.Result{}, err
+		}
+		body["sourceSnapshot"] = trimHost(snap.SelfLink)
+	}
+	op, err := p.send(ctx, t, actor, http.MethodPost, p.ep.compute+"/compute/v1/projects/"+a.AccountID+"/zones/"+s.Zone+"/disks", body)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	res := cloud.Result{ResourceID: op.TargetID, RequestID: op.Name}
+	if s.AttachTo == "" {
+		return res, nil
+	}
+	if err := p.wait(ctx, t, actor, op); err != nil {
+		return res, fmt.Errorf("the disk was asked for, but Argus could not attach it: %w", err)
+	}
+	_, at, err := p.attach(ctx, t, actor, a.AccountID, region, where{Name: s.Name, Zone: s.Zone}, s.AttachTo, s.Device)
+	if err != nil {
+		return res, fmt.Errorf("%s was made, but not attached: %w", s.Name, err)
+	}
+	res.Detail = "Made " + s.Name + " and attached it to " + at.Name + " as " + s.Device
+	return res, nil
+}
+
+// AttachVolume attaches a disk to an instance in its zone, under device:
+// the server sees it as /dev/disk/by-id/google-<device>.
+func (p *Provider) AttachVolume(ctx context.Context, a cloud.Account, actor cloud.Actor, region, volume, instance, device string) (cloud.Result, error) {
+	t, err := p.session(ctx, a, actor)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	d, err := p.locate(ctx, t, actor, a.AccountID, region, "disks", volume)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	op, _, err := p.attach(ctx, t, actor, a.AccountID, region, d, instance, device)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	return cloud.Result{ResourceID: volume, RequestID: op.Name}, nil
+}
+
+// attach attaches the disk at d to the instance with id instance.
+func (p *Provider) attach(ctx context.Context, t token, actor cloud.Actor, project, region string, d where, instance, device string) (operation, where, error) {
+	if !ValidName(device) {
+		return operation{}, where{}, fmt.Errorf("%q cannot be a device name", device)
+	}
+	in, err := p.locate(ctx, t, actor, project, region, "instances", instance)
+	if err != nil {
+		return operation{}, where{}, err
+	}
+	if in.Zone == "" || (d.Zone != "" && d.Zone != in.Zone) {
+		return operation{}, where{}, fmt.Errorf("%s is in %s and %s in %s; a disk attaches only in its own zone", d.Name, d.Zone, in.Name, in.Zone)
+	}
+	source := strings.TrimPrefix(d.path(project, "disks"), "/compute/v1/") + d.Name
+	op, err := p.send(ctx, t, actor, http.MethodPost, p.ep.compute+in.path(project, "instances")+instance+"/attachDisk",
+		map[string]any{"source": source, "deviceName": device, "mode": "READ_WRITE"})
+	return op, in, err
+}
+
+// DetachVolume detaches a disk from the instance using it. Google detaches
+// at once, used or not, so the console asks for it to be unmounted first.
+func (p *Provider) DetachVolume(ctx context.Context, a cloud.Account, actor cloud.Actor, region, volume string) (cloud.Result, error) {
+	t, err := p.session(ctx, a, actor)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	d, err := p.locate(ctx, t, actor, a.AccountID, region, "disks", volume)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	var disk struct {
+		Users []string `json:"users"`
+	}
+	if err := p.get(ctx, t, actor, p.ep.compute+d.path(a.AccountID, "disks")+volume+"?fields=users", &disk); err != nil {
+		return cloud.Result{}, err
+	}
+	if len(disk.Users) != 1 {
+		return cloud.Result{}, fmt.Errorf("%s is used by %d instances; Argus detaches a disk from one", d.Name, len(disk.Users))
+	}
+	user := trimHost(disk.Users[0])
+	var inst struct {
+		Disks []struct {
+			Source     string `json:"source"`
+			DeviceName string `json:"deviceName"`
+		} `json:"disks"`
+	}
+	if err := p.get(ctx, t, actor, p.ep.compute+user+"?fields=disks(source,deviceName)", &inst); err != nil {
+		return cloud.Result{}, err
+	}
+	device := ""
+	for _, x := range inst.Disks {
+		if strings.HasSuffix(x.Source, "/disks/"+d.Name) {
+			device = x.DeviceName
+		}
+	}
+	if device == "" {
+		return cloud.Result{}, fmt.Errorf("%s is not attached to %s any more", d.Name, last(user))
+	}
+	q := url.Values{"deviceName": {device}}
+	op, err := p.send(ctx, t, actor, http.MethodPost, p.ep.compute+user+"/detachDisk?"+q.Encode(), nil)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	return cloud.Result{ResourceID: volume, RequestID: op.Name}, nil
+}
+
+// DeleteVolume deletes a disk no instance uses.
+func (p *Provider) DeleteVolume(ctx context.Context, a cloud.Account, actor cloud.Actor, region, volume string, finalSnapshot bool) (cloud.Result, error) {
+	if finalSnapshot {
+		return cloud.Result{}, errNotYet("take a final snapshot while deleting a disk (take a snapshot first, then delete it)")
+	}
+	t, err := p.session(ctx, a, actor)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	d, err := p.locate(ctx, t, actor, a.AccountID, region, "disks", volume)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	op, err := p.send(ctx, t, actor, http.MethodDelete, p.ep.compute+d.path(a.AccountID, "disks")+volume, nil)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	return cloud.Result{ResourceID: volume, RequestID: op.Name}, nil
+}
+
+// CreateSnapshot snapshots a disk, zonal or regional, under name. Google
+// copies it while it stays in use; the snapshot is ready in the background.
+func (p *Provider) CreateSnapshot(ctx context.Context, a cloud.Account, actor cloud.Actor, region, volume, name string) (cloud.Result, error) {
+	if !ValidName(name) {
+		return cloud.Result{}, fmt.Errorf("%q cannot name a snapshot: lowercase letters, digits and -, up to 63, starting with a letter", name)
+	}
+	t, err := p.session(ctx, a, actor)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	d, err := p.locate(ctx, t, actor, a.AccountID, region, "disks", volume)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	op, err := p.send(ctx, t, actor, http.MethodPost, p.ep.compute+d.path(a.AccountID, "disks")+volume+"/createSnapshot",
+		map[string]any{"name": name})
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	return cloud.Result{ResourceID: name, RequestID: op.Name}, nil
+}
+
+// DeleteSnapshot deletes a snapshot. Snapshots are global in Google Cloud.
+func (p *Provider) DeleteSnapshot(ctx context.Context, a cloud.Account, actor cloud.Actor, _ string, snapshot string) (cloud.Result, error) {
+	if !reID.MatchString(snapshot) {
+		return cloud.Result{}, fmt.Errorf("%q is not a Compute Engine id", snapshot)
+	}
+	t, err := p.session(ctx, a, actor)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	op, err := p.send(ctx, t, actor, http.MethodDelete, p.ep.compute+"/compute/v1/projects/"+a.AccountID+"/global/snapshots/"+snapshot, nil)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	return cloud.Result{ResourceID: snapshot, RequestID: op.Name}, nil
+}
+
 // The rest of cloud.Manager and cloud.Storage: refused until each is built.
 
 func (p *Provider) Images(context.Context, cloud.Account, cloud.Actor, string) ([]cloud.Image, error) {
@@ -402,24 +692,6 @@ func (p *Provider) PlanRemove(context.Context, cloud.Account, cloud.Actor, strin
 }
 func (p *Provider) Remove(context.Context, cloud.Account, cloud.Actor, string, string, bool) (cloud.Result, error) {
 	return cloud.Result{}, errNotYet("remove an instance")
-}
-func (p *Provider) CreateVolume(context.Context, cloud.Account, cloud.Actor, string, cloud.VolumeSpec) (cloud.Result, error) {
-	return cloud.Result{}, errNotYet("make a disk")
-}
-func (p *Provider) AttachVolume(context.Context, cloud.Account, cloud.Actor, string, string, string, string) (cloud.Result, error) {
-	return cloud.Result{}, errNotYet("attach a disk")
-}
-func (p *Provider) DetachVolume(context.Context, cloud.Account, cloud.Actor, string, string) (cloud.Result, error) {
-	return cloud.Result{}, errNotYet("detach a disk")
-}
-func (p *Provider) DeleteVolume(context.Context, cloud.Account, cloud.Actor, string, string, bool) (cloud.Result, error) {
-	return cloud.Result{}, errNotYet("delete a disk")
-}
-func (p *Provider) CreateSnapshot(context.Context, cloud.Account, cloud.Actor, string, string, string) (cloud.Result, error) {
-	return cloud.Result{}, errNotYet("take a snapshot")
-}
-func (p *Provider) DeleteSnapshot(context.Context, cloud.Account, cloud.Actor, string, string) (cloud.Result, error) {
-	return cloud.Result{}, errNotYet("delete a snapshot")
 }
 func (p *Provider) CreateImage(context.Context, cloud.Account, cloud.Actor, string, string, string, bool) (cloud.Result, error) {
 	return cloud.Result{}, errNotYet("make an image")

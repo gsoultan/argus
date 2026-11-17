@@ -6,7 +6,7 @@ import {
 import { useState } from 'react'
 import { Field, relTime } from '~/components/primitives'
 import {
-  ACTION_LEVEL, PRICE, VOLUME_TYPES, allows, allowsTags, attachment, cloudAccountsQuery, cloudChangesQuery, cloudItemsQuery, envOf, freeDevice, money,
+  ACTION_LEVEL, GCP_DISK_TYPES, GCP_NAME, PRICE, VOLUME_TYPES, allows, allowsTags, attachment, cloudAccountsQuery, cloudChangesQuery, cloudItemsQuery, envOf, freeDevice, gcpDevicePath, money,
   roleLacks, volumeMonthly, volumeOf, type CloudAccount, type CloudAction, type CloudEnvironment, type CloudItem,
 } from '~/lib/cloud'
 import { meQuery } from '~/lib/queries'
@@ -90,7 +90,7 @@ export function StorageActions({ it }: { it: CloudItem }) {
           </>
         )
       case 'snapshot':
-        return can('volume-create') && <Button size="xs" variant="default" leftSection={<IconPlus size={14} />} disabled={r.state !== 'completed'} onClick={() => setOpen('new-disk')}>New disk from it</Button>
+        return can('volume-create') && <Button size="xs" variant="default" leftSection={<IconPlus size={14} />} disabled={r.state !== (gcp ? 'ready' : 'completed')} onClick={() => setOpen('new-disk')}>New disk from it</Button>
       case 'address':
         return r.state === 'attached'
           ? can('address-disassociate') && <Button size="xs" variant="default" leftSection={<IconLinkOff size={14} />} disabled={busy} onClick={() => setOpen('address-disassociate')}>Take it off</Button>
@@ -227,7 +227,8 @@ function AttachTo({ it, env, account, action, onClose }: {
   const [reason, setReason] = useState('')
   const { submit, busy } = useSubmit(onClose)
   const target = targets.find((x) => x.resource.id === instance)
-  const device = target ? freeDevice(target.resource) : ''
+  const gcp = account?.provider === 'gcp'
+  const device = !target ? '' : gcp ? gcpDevicePath(r.name) : freeDevice(target.resource)
   const stricter = target ? envOf(target.resource.tags, target.environment) : env
   const shown = stricter === 'production' || (stricter === 'staging' && env !== 'production') ? stricter : env
   return (
@@ -257,6 +258,7 @@ function Detach({ it, env, account, action, onClose }: {
   const [reason, setReason] = useState('')
   const { submit, busy } = useSubmit(onClose)
   const disk = action === 'volume-detach'
+  const gcp = account?.provider === 'gcp'
   return (
     <ChangeModal title={disk ? `Detach ${r.name} from ${name}?` : `Take ${r.publicIp} off ${name}?`} env={env} level="change"
       reason={reason} setReason={setReason} onClose={onClose} busy={busy} submit={disk ? 'Detach' : 'Take it off'} color="amber"
@@ -265,7 +267,9 @@ function Detach({ it, env, account, action, onClose }: {
       <RoleNeedsUpdate account={account} action={action} />
       <Text size={FS.body} lh={1.55}>
         {disk
-          ? 'Unmount it on the server first. Argus never forces a detach, so AWS waits for the server to let go of it; a disk still in use stays attached.'
+          ? gcp
+            ? 'Unmount it on the server first. Google detaches the disk at once, whether or not the server is still using it, and files being written can be lost.'
+            : 'Unmount it on the server first. Argus never forces a detach, so AWS waits for the server to let go of it; a disk still in use stays attached.'
           : `${name} loses this address. A running instance gets a new public address from Amazon only when it next starts; the Elastic IP stays yours and is billed while it is not attached.`}
       </Text>
     </ChangeModal>
@@ -278,20 +282,30 @@ function SnapshotCreate({ it, env, account, onClose }: { it: CloudItem; env: Clo
   const [reason, setReason] = useState('')
   const { submit, busy } = useSubmit(onClose)
   const gb = volumeOf(r).gb
+  const gcp = account?.provider === 'gcp'
+  const badName = gcp && name.trim() !== '' && !GCP_NAME.test(name.trim())
   return (
     <ChangeModal title={`Snapshot ${r.name}`} env={env} level={ACTION_LEVEL['snapshot-create']} reason={reason} setReason={setReason}
-      onClose={onClose} busy={busy} submit="Take snapshot" disabled={roleLacks(account, 'snapshot-create')}
+      onClose={onClose} busy={busy} submit="Take snapshot" disabled={badName || roleLacks(account, 'snapshot-create')}
       onSubmit={() => void submit({ accountId: it.accountId, region: r.region, action: 'snapshot-create', resourceId: r.id,
         spec: { name: name.trim() }, reason }, 'Snapshot started')}>
       <RoleNeedsUpdate account={account} action="snapshot-create" />
       <Text size={FS.body} lh={1.55}>
-        AWS copies the disk as it is now, while it stays in use, and finishes in the background. For a consistent copy of
+        {gcp ? 'Google' : 'AWS'} copies the disk as it is now, while it stays in use, and finishes in the background. For a consistent copy of
         a busy database, pause its writes first.
       </Text>
-      <TextInput label="Name" placeholder={`${r.name} ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`} value={name}
-        onChange={(e) => setName(e.currentTarget.value)} maxLength={128} />
+      {gcp ? (
+        <TextInput label="Name" placeholder={`${r.name}-${new Date().toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-')}`}
+          value={name} onChange={(e) => setName(e.currentTarget.value)} maxLength={63}
+          error={badName ? 'Lowercase letters, digits and -, starting with a letter, up to 63' : undefined} />
+      ) : (
+        <TextInput label="Name" placeholder={`${r.name} ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`} value={name}
+          onChange={(e) => setName(e.currentTarget.value)} maxLength={128} />
+      )}
       <Text size={FS.meta} c="dimmed">
-        Up to about {money(gb * PRICE.snapshotPerGb)} a month while it is kept; later snapshots of the same disk store only what changed.
+        {gcp
+          ? 'Google keeps it for the whole project and bills it while it is kept; later snapshots of the same disk store only what changed.'
+          : `Up to about ${money(gb * PRICE.snapshotPerGb)} a month while it is kept; later snapshots of the same disk store only what changed.`}
       </Text>
     </ChangeModal>
   )
@@ -303,7 +317,8 @@ function Delete({ it, env, account, action, onClose }: { it: CloudItem; env: Clo
   const images = useQuery(cloudItemsQuery('image'))
   const [typed, setTyped] = useState('')
   const [reason, setReason] = useState('')
-  const [extra, setExtra] = useState<boolean>(action === 'volume-delete' ? env === 'production' : action === 'image-delete')
+  const gcp = account?.provider === 'gcp'
+  const [extra, setExtra] = useState<boolean>(action === 'volume-delete' ? env === 'production' && !gcp : action === 'image-delete')
   const { submit, busy } = useSubmit(onClose)
   const word = r.kind === 'address' ? r.publicIp ?? r.name : r.name
   const usedBy = r.kind === 'snapshot'
@@ -325,12 +340,13 @@ function Delete({ it, env, account, action, onClose }: { it: CloudItem; env: Clo
       ) : (
         <>
           <Text size={FS.body} lh={1.55}>
-            {action === 'volume-delete' && `AWS deletes the disk and everything on it (${r.size}). This cannot be undone.`}
-            {action === 'snapshot-delete' && `AWS deletes the snapshot (${r.size}). Disks already made from it are not touched. This cannot be undone.`}
+            {action === 'volume-delete' && `${gcp ? 'Google' : 'AWS'} deletes the disk and everything on it (${r.size}). This cannot be undone.`}
+            {action === 'volume-delete' && gcp && ' To keep a copy, take a snapshot of it first and delete it once that is ready.'}
+            {action === 'snapshot-delete' && `${gcp ? 'Google' : 'AWS'} deletes the snapshot (${r.size}). Disks already made from it are not touched. This cannot be undone.`}
             {action === 'image-delete' && 'Nobody can launch from this image afterwards. Instances already launched from it keep running.'}
             {action === 'address-release' && `${r.publicIp} goes back to Amazon and is gone for good; anything that points at it (DNS, allow lists) stops reaching you.`}
           </Text>
-          {action === 'volume-delete' && (
+          {action === 'volume-delete' && !gcp && (
             <Checkbox checked={extra} onChange={(e) => setExtra(e.currentTarget.checked)} label="Take a final snapshot first"
               description="It is kept and billed until someone deletes it. On by default in production." />
           )}
@@ -381,58 +397,81 @@ export function NewDisk({ accountId, region, snapshot, onClose }: { accountId?: 
   const accounts = useQuery(cloudAccountsQuery())
   const subnets = useQuery(cloudItemsQuery('subnet'))
   const instances = useQuery(cloudItemsQuery('instance'))
+  const volumes = useQuery(cloudItemsQuery('volume'))
   const manageable = (accounts.data?.accounts ?? []).filter((a) => a.access === 'manage' && allows(a, 'volume-create'))
   const [acct, setAcct] = useState<string | null>(accountId ?? (manageable.length === 1 ? manageable[0]!.id : null))
   const account = manageable.find((a) => a.id === acct)
-  const [reg, setReg] = useState<string | null>(region ?? (account?.regions.length === 1 ? account.regions[0]! : null))
+  const gcp = account?.provider === 'gcp'
+  // A Google Cloud snapshot belongs to the whole project, so its disk can be made in any region.
+  const regions = (account?.regions ?? []).filter((x) => x !== 'global')
+  const [reg, setReg] = useState<string | null>(region && region !== 'global' ? region : regions.length === 1 ? regions[0]! : null)
   const [zone, setZone] = useState<string | null>(null)
   const snapGb = snapshot ? volumeOf(snapshot.resource).gb : 0
   const [gb, setGb] = useState<number>(snapGb || 20)
-  const [type, setType] = useState('gp3')
+  const [type, setType] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [attachTo, setAttachTo] = useState<string | null>(null)
   const [reason, setReason] = useState('')
   const { submit, busy } = useSubmit(onClose)
-  const zones = [...new Set((subnets.data ?? []).filter((s) => s.accountId === acct && s.resource.region === reg && s.resource.zone)
+  const kind = type ?? (gcp ? 'pd-balanced' : 'gp3')
+  // Google subnets span a region; its zones are read off the VMs and disks already there.
+  const zoned = gcp ? [...(instances.data ?? []), ...(volumes.data ?? [])] : subnets.data ?? []
+  const zones = [...new Set(zoned.filter((s) => s.accountId === acct && s.resource.region === reg && s.resource.zone)
     .map((s) => s.resource.zone!))].sort()
   const targets = (instances.data ?? []).filter((x) => x.accountId === acct && x.resource.zone === zone &&
     x.resource.state !== 'terminated' && x.resource.state !== 'shutting-down')
   const target = targets.find((x) => x.resource.id === attachTo)
   const env: CloudEnvironment = target ? envOf(target.resource.tags, target.environment) : account?.environment ?? 'production'
-  const hdd = type === 'st1' || type === 'sc1'
-  const tooSmall = gb < (hdd ? 125 : Math.max(1, snapGb))
+  const hdd = kind === 'st1' || kind === 'sc1'
+  const least = gcp ? Math.max(10, snapGb) : hdd ? 125 : Math.max(1, snapGb)
+  const tooSmall = gb < least
+  const taken = gcp && zone !== null && (volumes.data ?? []).some((v) => v.accountId === acct && v.resource.zone === zone && v.resource.name === name.trim())
+  const nameProblem = !gcp || name.trim() === '' ? undefined
+    : !GCP_NAME.test(name.trim()) ? 'Lowercase letters, digits and -, starting with a letter, up to 63'
+      : taken ? `There is already a disk ${name.trim()} in ${zone}` : undefined
+  const unit = gcp ? 'GB' : 'GiB'
   return (
     <ChangeModal title={snapshot ? `New disk from ${snapshot.resource.name}` : 'New disk'} env={env} level="change" reason={reason}
       setReason={setReason} onClose={onClose} busy={busy} submit="Make disk"
-      disabled={!acct || !reg || !zone || tooSmall || roleLacks(account, 'volume-create')}
+      disabled={!acct || !reg || !zone || tooSmall || (gcp && (name.trim() === '' || Boolean(nameProblem))) || roleLacks(account, 'volume-create')}
       onSubmit={() => void submit({ accountId: acct!, region: reg!, action: 'volume-create', spec: {
-        name: name.trim(), zone, sizeGb: gb, type, snapshot: snapshot?.resource.id, attachTo: attachTo ?? undefined }, reason }, 'Making the disk')}>
+        name: name.trim(), zone, sizeGb: gb, type: kind, snapshot: snapshot?.resource.id, attachTo: attachTo ?? undefined }, reason }, 'Making the disk')}>
       <RoleNeedsUpdate account={account} action="volume-create" />
       {!snapshot && manageable.length > 1 && (
-        <Select label="Account" placeholder="Pick an account" value={acct} onChange={(v) => { setAcct(v); setReg(null); setZone(null) }}
+        <Select label="Account" placeholder="Pick an account" value={acct} onChange={(v) => { setAcct(v); setReg(null); setZone(null); setType(null) }}
           data={manageable.map((a) => ({ value: a.id, label: a.name }))} allowDeselect={false} />
       )}
-      {!snapshot && account && account.regions.length > 1 && (
-        <Select label="Region" value={reg} onChange={(v) => { setReg(v); setZone(null) }} data={account.regions} allowDeselect={false} />
+      {(!snapshot || (gcp && region === 'global')) && account && regions.length > 1 && (
+        <Select label="Region" placeholder="Pick a region" value={reg} onChange={(v) => { setReg(v); setZone(null); setAttachTo(null) }}
+          data={regions} allowDeselect={false} />
       )}
       <Group grow align="flex-start">
         <Select label="Zone" placeholder={zones.length ? 'Pick a zone' : 'No zones read yet'} value={zone}
           onChange={(v) => { setZone(v); setAttachTo(null) }} data={zones} allowDeselect={false} />
-        <TextInput label="Name" placeholder="Optional" value={name} onChange={(e) => setName(e.currentTarget.value)} maxLength={128} />
+        {gcp ? (
+          <TextInput label="Name" placeholder="Required, like logs-1" value={name} onChange={(e) => setName(e.currentTarget.value)} maxLength={63}
+            error={nameProblem} />
+        ) : (
+          <TextInput label="Name" placeholder="Optional" value={name} onChange={(e) => setName(e.currentTarget.value)} maxLength={128} />
+        )}
       </Group>
       <Group grow align="flex-start">
-        <NumberInput label="Size, GiB" value={gb} onChange={(v) => setGb(Number(v) || 0)} min={1} max={16384}
-          error={tooSmall ? (hdd ? 'HDD disks are 125 GiB and up' : `At least ${snapGb} GiB, the snapshot's size`) : undefined} />
-        <Select label="Type" value={type} onChange={(v) => v && setType(v)} data={VOLUME_TYPES.map((t) => ({ value: t.value, label: t.label }))}
-          allowDeselect={false} />
+        <NumberInput label={`Size, ${unit}`} value={gb} onChange={(v) => setGb(Number(v) || 0)} min={least} max={gcp ? 65536 : 16384}
+          error={tooSmall ? (snapGb > 0 && least === snapGb ? `At least ${snapGb} ${unit}, the snapshot's size` : `${hdd ? 'HDD disks are' : 'Disks are'} ${least} ${unit} and up`) : undefined} />
+        <Select label="Type" value={kind} onChange={(v) => v && setType(v)}
+          data={(gcp ? GCP_DISK_TYPES : VOLUME_TYPES).map((t) => ({ value: t.value, label: t.label }))} allowDeselect={false} />
       </Group>
       <Select label="Attach to" placeholder={zone ? (targets.length ? 'Leave unattached' : `No instances in ${zone}`) : 'Pick a zone first'}
         clearable value={attachTo} onChange={setAttachTo} disabled={!zone || targets.length === 0}
-        data={targets.map((x) => ({ value: x.resource.id, label: `${x.resource.name} · as ${freeDevice(x.resource) || 'no free device'}` }))} />
+        data={targets.map((x) => ({ value: x.resource.id, label: gcp
+          ? `${x.resource.name} · as ${name.trim() ? gcpDevicePath(name.trim()) : 'its name'}`
+          : `${x.resource.name} · as ${freeDevice(x.resource) || 'no free device'}` }))} />
       <Field label="Cost">
         <Text size={FS.meta} c="dimmed">
-          About {money(volumeMonthly(type, gb))} a month at us-east-1 list prices, from when it is made until it is deleted,
-          attached or not. Encrypted with the account's default key.
+          {gcp
+            ? 'Google bills it by size and type from when it is made until it is deleted, attached or not. Encrypted with a key Google manages.'
+            : <>About {money(volumeMonthly(kind, gb))} a month at us-east-1 list prices, from when it is made until it is deleted,
+              attached or not. Encrypted with the account's default key.</>}
         </Text>
       </Field>
     </ChangeModal>
