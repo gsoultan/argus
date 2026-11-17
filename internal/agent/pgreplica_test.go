@@ -61,7 +61,8 @@ func TestPGReplicaOnThePrimary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close(ctx)
+	// Closed after the cleanups below, which use it.
+	t.Cleanup(func() { conn.Close(context.Background()) })
 	r := tunnel.PGReplica{Name: "t_r1", Address: "10.99.2.15", By: "ana@corp.example"}
 	run := func(op string, r tunnel.PGReplica, into any) PGAdminResult {
 		res := RunPGAdmin(ctx, conn, PGAdminRequest{Op: op, Database: "postgres", Replica: &r})

@@ -158,6 +158,8 @@ func RunPGAdmin(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PG
 		return pgTestOp(ctx, conn, req)
 	case "replica-check", "replica-prepare", "replica-allow", "replica-drop":
 		return pgReplicaOp(ctx, conn, req)
+	case "replica-local":
+		return pgReplicaLocal(ctx, conn)
 	}
 	if !tunnel.ValidPersonalRole(req.Role) {
 		return PGAdminResult{Error: "not a role name Argus will manage: " + req.Role}

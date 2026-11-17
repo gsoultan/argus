@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"errors"
+	"fmt"
 	"net/netip"
 	"regexp"
 )
@@ -85,3 +86,79 @@ type PGReplicaCheck struct {
 
 // Ready is whether nothing is missing.
 func (c PGReplicaCheck) Ready() bool { return len(c.Missing) == 0 }
+
+// Replica operations on a primary, for a replica-primary job.
+const (
+	ReplicaCheck   = "check"
+	ReplicaPrepare = "prepare"
+	ReplicaAllow   = "allow"
+	ReplicaDrop    = "drop"
+)
+
+// ReplicaStageVerifier is the progress stage in which a clone job hands the
+// control plane the verifier of the replication password it made, as the
+// progress detail. The password itself stays on the replica: the control
+// plane has the primary make the role with the verifier, then sends go.
+const ReplicaStageVerifier = "verifier"
+
+// GrantReplica is what a replica job acts on.
+type GrantReplica struct {
+	PGReplica
+	// Op is the operation, for replica-primary.
+	Op string `json:"op,omitempty"`
+	// The primary, for replica-clone: where to copy from, and its major
+	// version, which this server's Postgres must match.
+	PrimaryHost    string `json:"primaryHost,omitempty"`
+	PrimaryPort    int    `json:"primaryPort,omitempty"`
+	PrimaryVersion int    `json:"primaryVersion,omitempty"`
+}
+
+var hostName = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]{0,252}[A-Za-z0-9])?$`)
+
+// Validate says what is wrong with r for job, or nil.
+func (r *GrantReplica) Validate(job string) error {
+	if r == nil {
+		return errors.New("the grant does not name the replica")
+	}
+	if err := r.PGReplica.Check(); err != nil {
+		return err
+	}
+	if job == "replica-clone" {
+		if _, err := netip.ParseAddr(r.PrimaryHost); err != nil && !hostName.MatchString(r.PrimaryHost) {
+			return fmt.Errorf("not a host to copy from: %q", r.PrimaryHost)
+		}
+		if r.PrimaryPort <= 0 || r.PrimaryPort > 65535 {
+			return errors.New("the grant does not say the primary's port")
+		}
+		if r.PrimaryVersion < 10 || r.PrimaryVersion > 99 {
+			return errors.New("the grant does not say the primary's major version")
+		}
+		return nil
+	}
+	switch r.Op {
+	case ReplicaCheck, ReplicaDrop:
+	case ReplicaPrepare:
+		if r.Verifier == "" {
+			return errors.New("the grant carries no verifier for the replication role")
+		}
+	case ReplicaAllow:
+		if r.Address == "" {
+			return errors.New("the grant does not say the replica's address")
+		}
+	default:
+		return fmt.Errorf("unknown replica operation %q", r.Op)
+	}
+	return nil
+}
+
+// PGReplicaCloned answers a clone.
+type PGReplicaCloned struct {
+	DataDir string `json:"dataDir"`
+	// Kept is where the server's own, empty data directory went; Argus
+	// leaves it for a person to remove.
+	Kept       string `json:"kept"`
+	Unit       string `json:"unit,omitempty"`
+	Version    int    `json:"version"`
+	InRecovery bool   `json:"inRecovery"`
+	CopyMS     int64  `json:"copyMs"`
+}
