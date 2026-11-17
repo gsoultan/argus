@@ -74,9 +74,12 @@ const DIST = new URL('../dist/', import.meta.url).pathname
  * 734.6 kB with scale groups: the two new cloud routes in the route tree
  * the shell carries. The wizard, the group page and their queries are in
  * chunks that are not stored.
+ * 735.7 kB with the sign-in screen telling an unreadable database, or every
+ * account disabled, apart from a fresh install. It has to be in the shell:
+ * it is what shows when nothing else can load.
  */
 const MAX_ENTRIES = 10
-const MAX_KB = 735
+const MAX_KB = 736
 
 async function precached(): Promise<string[]> {
   const sw = await readFile(join(DIST, 'sw.js'), 'utf8')
