@@ -391,9 +391,11 @@ func runDaemon(args []string) int {
 		// MongoDB the same way: a user in the entry's database for the
 		// session, every command recorded before it runs.
 		services[agent.MongoDBService] = agent.MongoDB(agent.StoreConfig{
-			Verifier:  &tunnel.GrantVerifier{Host: hostname},
-			RecordDir: *dir,
-			Log:       log,
+			Verifier:   &tunnel.GrantVerifier{Host: hostname},
+			RecordDir:  *dir,
+			Log:        log,
+			Executable: exe,
+			StateDir:   *stateDir,
 		})
 		// Kafka the same way: a SCRAM user with ACLs on the entry's topics for
 		// the session, every read of messages and change recorded before it runs.
