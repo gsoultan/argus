@@ -28,11 +28,11 @@ func TestMongoNetworkChangeWaits(t *testing.T) {
 		t.Fatalf("assign: %d %s", w.Code, w.Body)
 	}
 	gate := func(level string, req tunnel.StoreRequest) *tunnel.StoreAnswer {
-		return a.mongoGate(ctx, ana, db, level, &req)
+		return a.storeNetworkGate(ctx, ana, db, level, &req)
 	}
 	// Commands pass, with no approval smuggled along.
 	run := tunnel.StoreRequest{Op: "run", Command: "db.orders.find({})", Approval: "x"}
-	if no := a.mongoGate(ctx, ana, db, tunnel.LevelWrite, &run); no != nil || run.Approval != "" {
+	if no := a.storeNetworkGate(ctx, ana, db, tunnel.LevelWrite, &run); no != nil || run.Approval != "" {
 		t.Fatalf("a command: %+v %+v", no, run)
 	}
 	if no := gate(tunnel.LevelWrite, tunnel.StoreRequest{Op: tunnel.MongoOpNetwork}); no == nil || !strings.Contains(no.Error, "DBA") {
@@ -75,5 +75,37 @@ func TestMongoNetworkChangeWaits(t *testing.T) {
 	}
 	if no := gate(tunnel.LevelDBA, tunnel.StoreRequest{Op: tunnel.MongoOpNetworkSet, Reach: tunnel.ReachAny}); no == nil || !strings.Contains(no.Error, "to anywhere") {
 		t.Fatalf("anywhere on staging: %+v", no)
+	}
+}
+
+// RabbitMQ and Kafka wait on their own text, which an approval can be asked
+// for.
+func TestBrokerNetworkChangesWait(t *testing.T) {
+	a, s, h, pg, admin := dbFixture(t)
+	ctx := context.Background()
+	ana, _ := newAccount(t, s, "operator")
+	a.UserTokens["ana"] = ana
+	for _, c := range []struct{ engine, name, want string }{
+		{tunnel.EngineRabbitMQ, "/", "SET listeners.tcp = 127.0.0.1,10.0.0.183 (from the next start)"},
+		{tunnel.EngineKafka, "*", "FIREWALL ALLOW 10.0.0.61"},
+	} {
+		db, err := s.CreateDatabase(ctx, Database{AssetID: pg.AssetID, Engine: c.engine, Name: c.name, Host: "127.0.0.1", Port: 5672}, admin)
+		if err != nil {
+			t.Fatalf("CreateDatabase %s: %v", c.engine, err)
+		}
+		req := tunnel.StoreRequest{ID: 1, Op: tunnel.RabbitOpNetworkSet, Reach: tunnel.ReachSelected,
+			Addresses: []string{"10.0.0.183"}, Sources: []string{"10.0.0.61"}}
+		no := a.storeNetworkGate(ctx, ana, db, tunnel.LevelDBA, &req)
+		if no == nil || no.NeedsApproval == nil || !strings.HasPrefix(no.NeedsApproval.Text, c.want) {
+			t.Fatalf("%s did not wait on its text: %+v", c.engine, no)
+		}
+		if w := do(t, h, http.MethodPut, "/api/v1/databases/"+db.ID+"/assignments", "admin-token",
+			fmt.Sprintf(`{"userEmail":%q,"level":"dba"}`, ana)); w.Code >= 300 {
+			t.Fatalf("assign: %d %s", w.Code, w.Body)
+		}
+		body, _ := json.Marshal(map[string]any{"items": []map[string]any{{"sql": no.NeedsApproval.Text}}, "justification": "the app servers move to the new network"})
+		if w := do(t, h, http.MethodPost, "/api/v1/databases/"+db.ID+"/statements", "ana", string(body)); w.Code != http.StatusCreated {
+			t.Fatalf("ask on %s: %d %s", c.engine, w.Code, w.Body)
+		}
 	}
 }

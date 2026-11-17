@@ -2,7 +2,7 @@ import { Badge, Box, Button, Group, Tabs, Text } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { Link } from '@tanstack/react-router'
 import { IconLock, IconSend, IconStack2 } from '@tabler/icons-react'
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { ButtonLink } from '~/components/links'
 import { ConfirmByName, FatalBanner, LABEL_COLOR } from '~/components/StoreChrome'
 import { useStoreSession, type StoreAnswer } from '~/components/useStoreSession'
@@ -21,6 +21,8 @@ import { QueueDetail } from './QueueDetail'
 import { Queues } from './Queues'
 import { Routing } from './Routing'
 
+const StoreNetworkPanel = lazy(() => import('~/components/network/StoreNetwork').then((m) => ({ default: m.StoreNetworkPanel })))
+
 /*
 One RabbitMQ vhost as a broker, not as a database: an overview of whether it
 keeps up, its queues with their rates, where each exchange sends messages,
@@ -32,7 +34,7 @@ five seconds while the page is visible. Peeking, publishing, moving and
 anything that changes the broker is recorded by the agent before it is sent.
 */
 
-export type BrokerTab = 'overview' | 'queues' | 'routing' | 'connections'
+export type BrokerTab = 'overview' | 'queues' | 'routing' | 'connections' | 'network'
 
 export type Ask = (req: Record<string, unknown> & { op: string }) => Promise<StoreAnswer>
 
@@ -243,6 +245,7 @@ export function BrokerWorkspace(props: BrokerWorkspaceProps) {
                 {narrow ? 'Routing' : 'Exchanges & routing'}
               </Tabs.Tab>
               {can('connections') && <Tabs.Tab value="connections">Connections</Tabs.Tab>}
+              {can('network') && <Tabs.Tab value="network">Network</Tabs.Tab>}
             </Tabs.List>
           </Tabs>
         </Box>
@@ -253,6 +256,13 @@ export function BrokerWorkspace(props: BrokerWorkspaceProps) {
           {tab === 'queues' && (queue ? <QueueDetail key={queue} name={queue} /> : <Queues />)}
           {tab === 'routing' && <Routing selected={exchange} onSelect={(x) => onNavigate({ tab: 'routing', exchange: x })} />}
           {tab === 'connections' && can('connections') && <Connections />}
+          {tab === 'network' && can('network') && (
+          <Suspense fallback={null}>
+            <Box style={{ display: 'flex', flexDirection: 'column', height: 'calc(100dvh - 220px)', minHeight: 520, border: '1px solid var(--color-line)', borderRadius: 8, overflow: 'hidden' }}>
+              <StoreNetworkPanel s={s} database={database} engine="rabbitmq" narrow={narrow} />
+            </Box>
+          </Suspense>
+          )}
         </Box>
         <ConfirmByName opened={confirming !== null} hostname={database.hostname} what={confirming?.what ?? ''}
           onCancel={() => setConfirming(null)} onConfirm={(t) => void doConfirmed(t)} />
