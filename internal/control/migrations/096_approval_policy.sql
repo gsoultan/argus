@@ -37,4 +37,4 @@ CREATE TABLE IF NOT EXISTS approval_policy_changes (
     note         TEXT NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX IF NOT EXISTS approval_policy_changes_one_pending
-    ON approval_policy_changes ((true)) WHERE state = 'pending';
+    ON approval_policy_changes (state) WHERE state = 'pending';

@@ -127,6 +127,50 @@ func _assertAgentEnrollmentTokenShape(m m0.AgentEnrollmentToken) {
 	}
 }
 
+// _assertApprovalPolicyChangeShape fails to compile if m0.ApprovalPolicyChange gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertApprovalPolicyChangeShape(m m0.ApprovalPolicyChange) {
+	type shape m0.ApprovalPolicyChange
+	_ = shape{
+		m.ID,
+		m.RequestedBy,
+		m.RequestedAt,
+		m.Reason,
+		m.Proposal,
+		m.Base,
+		m.State,
+		m.DecidedBy,
+		m.DecidedAt,
+		m.Note,
+	}
+}
+
+// _assertApprovalPolicyRuleShape fails to compile if m0.ApprovalPolicyRule gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertApprovalPolicyRuleShape(m m0.ApprovalPolicyRule) {
+	type shape m0.ApprovalPolicyRule
+	_ = shape{
+		m.Kind,
+		m.Environment,
+		m.Choice,
+		m.SetBy,
+		m.SetAt,
+	}
+}
+
+// _assertApprovalPolicySettingShape fails to compile if m0.ApprovalPolicySetting gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertApprovalPolicySettingShape(m m0.ApprovalPolicySetting) {
+	type shape m0.ApprovalPolicySetting
+	_ = shape{
+		m.ID,
+		m.RequireReason,
+		m.NotifyProduction,
+		m.UpdatedBy,
+		m.UpdatedAt,
+	}
+}
+
 // _assertAssetShape fails to compile if m0.Asset gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertAssetShape(m m0.Asset) {

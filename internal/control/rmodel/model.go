@@ -1437,6 +1437,9 @@ func All() []any {
 		&DatabaseChange{},
 		&DatabaseReplica{},
 		&DatabaseReadEndpoint{},
+		&ApprovalPolicyRule{},
+		&ApprovalPolicySetting{},
+		&ApprovalPolicyChange{},
 		&DatabaseRestore{},
 		&DatabaseStatement{},
 		&DatabaseStatementItem{},
@@ -2430,4 +2433,70 @@ func (m *DatabaseReadEndpoint) Schema(t *storm.Table) {
 	t.Col(&m.Note).Default("''::text")
 	t.Col(&m.SetAt).Default("now()")
 	t.Index(&m.Account).Named("database_read_endpoints_account_idx")
+}
+
+// ApprovalPolicyRule is table approval_policy_rules: one cell of an
+// organization's approval policy, who may act directly on a kind of action
+// in an environment (migration 096). A missing cell is "a second person".
+type ApprovalPolicyRule struct {
+	Kind        string
+	Environment string
+	Choice      string
+	SetBy       string
+	SetAt       time.Time
+}
+
+func (m *ApprovalPolicyRule) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Kind, &m.Environment)
+	t.Col(&m.SetAt).Default("now()")
+	t.CheckNamed("approval_policy_rules_environment_check",
+		"environment = ANY (ARRAY['production'::text, 'staging'::text, 'other'::text, 'all'::text])")
+	t.CheckNamed("approval_policy_rules_choice_check",
+		"choice = ANY (ARRAY['second'::text, 'owners'::text, 'admins'::text, 'anyone'::text])")
+}
+
+// ApprovalPolicySetting is table approval_policy_settings: the approval
+// policy's switches, one row (migration 096).
+type ApprovalPolicySetting struct {
+	ID               bool
+	RequireReason    bool
+	NotifyProduction bool
+	UpdatedBy        string
+	UpdatedAt        time.Time
+}
+
+func (m *ApprovalPolicySetting) Schema(t *storm.Table) {
+	t.Col(&m.ID).Default("true")
+	t.Col(&m.RequireReason).Default("true")
+	t.Col(&m.NotifyProduction).Default("true")
+	t.Col(&m.UpdatedBy).Default("''::text")
+	t.Col(&m.UpdatedAt).Default("now()")
+	t.CheckNamed("approval_policy_settings_id_check", "id")
+}
+
+// ApprovalPolicyChange is table approval_policy_changes: a loosening of
+// the approval policy waiting for another owner (migration 096).
+type ApprovalPolicyChange struct {
+	ID          [16]byte
+	RequestedBy string
+	RequestedAt time.Time
+	Reason      string
+	Proposal    storm.JSON
+	Base        string
+	State       string
+	DecidedBy   *string
+	DecidedAt   *time.Time
+	Note        string
+}
+
+func (m *ApprovalPolicyChange) Schema(t *storm.Table) {
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.RequestedAt).Default("now()")
+	t.Col(&m.Reason).Default("''::text")
+	t.Col(&m.Base).Default("''::text")
+	t.Col(&m.State).Default("'pending'::text")
+	t.Col(&m.Note).Default("''::text")
+	t.CheckNamed("approval_policy_changes_state_check",
+		"state = ANY (ARRAY['pending'::text, 'approved'::text, 'denied'::text, 'cancelled'::text])")
+	t.Index(&m.State).Unique().Where("(state = 'pending'::text)").Named("approval_policy_changes_one_pending")
 }
