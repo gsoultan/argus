@@ -493,7 +493,7 @@ function PrivilegesView({ privs, canChange, narrow, onRevoke, onGrant }: {
                     {tables > 0 && !usage && <Text size={FS.micro} c={INK.pending}>no USAGE on the schema, so none of them can be reached</Text>}
                   </Table.Td>
                   <Table.Td ta="right">
-                    <Group gap={4} justify="flex-end" wrap="nowrap">
+                    <Group gap={4} justify="flex-end" wrap={narrow ? 'wrap' : 'nowrap'}>
                       {canChange && <Button size="compact-xs" variant="default" onClick={() => onGrant({ on: 'all-tables', schema: s.name })}>Grant…</Button>}
                       {directOnly(s) && revokeBtn({ on: 'schema', schema: s.name, privileges: s.direct }, `Revoke ${s.direct!.join(', ')} on schema ${s.name} from ${privs.role}`)}
                     </Group>
@@ -656,7 +656,7 @@ function FormFoot({ sql, previewError, failure, busy, canRun, verb, danger, onRu
   return (
     <>
       <Text size={FS.micro} c="dimmed" mt="md">This runs as the server’s postgres account, in one transaction, and is recorded in this session. On a database whose changes wait for approval, it is asked for first.</Text>
-      <Code block mt={4} fz={12}>{sql || (previewError ? `— ${previewError.error}` : '…')}</Code>
+      <Code block mt={4} fz={12} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{sql || (previewError ? `— ${previewError.error}` : '…')}</Code>
       {failure && <Box mt="sm"><AdminRefused error={failure} /></Box>}
       <Group mt="md" gap="xs">
         <Button size="xs" color={danger ? 'rose' : undefined} onClick={onRun} disabled={!canRun || !sql} loading={busy}>{verb}</Button>
