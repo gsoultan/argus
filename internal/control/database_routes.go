@@ -32,9 +32,13 @@ func (a *API) dbAdmin(next func(http.ResponseWriter, *http.Request, string)) htt
 
 func (a *API) dbErr(w http.ResponseWriter, what string, err error) {
 	var invalid ErrInvalidDatabase
+	var inUse ErrDatabaseInUse
 	switch {
 	case errors.As(err, &invalid):
 		writeErr(w, http.StatusBadRequest, invalid.Reason)
+	case errors.As(err, &inUse):
+		a.log.Warn("database removal refused", "error", inUse.Detail)
+		writeErr(w, http.StatusConflict, inUse.Error())
 	case errors.Is(err, ErrDatabaseNotFound):
 		writeErr(w, http.StatusNotFound, "no such database")
 	default:

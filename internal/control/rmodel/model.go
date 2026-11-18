@@ -42,6 +42,7 @@ type AccessRequest struct {
 
 func (m *AccessRequest) Schema(t *storm.Table) {
 	t.Col(&m.Database).ConstraintName("access_requests_database_id_fkey")
+	t.Col(&m.Database).OnDelete(storm.SetNull)
 	t.Col(&m.Database).NoIndex()
 	t.CheckNamed("access_requests_database_level_check",
 		"(database_level IS NULL) OR (database_level = ANY (ARRAY['read'::text, 'write'::text, 'owner'::text, 'dba'::text]))")
@@ -927,6 +928,7 @@ func (m *Session) Schema(t *storm.Table) {
 	t.Index(&m.TerminatedBy).Where("terminated_by IS NOT NULL").Named("sessions_terminated_idx")
 	t.Col(&m.Kind).Default("'terminal'::text")
 	t.Col(&m.Database).ConstraintName("sessions_database_id_fkey")
+	t.Col(&m.Database).OnDelete(storm.SetNull)
 	t.Col(&m.Database).NoIndex()
 }
 
