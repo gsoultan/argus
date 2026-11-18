@@ -325,6 +325,13 @@ func (a *API) postDatabaseRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	a.auditDB(r.Context(), "db.requested", "notice", sess.Email, req.AssetHostnames[0],
 		"Asked for "+in.Level+" on a "+map[bool]string{true: "broker", false: "database"}[req.Broker]+" for "+itoa(in.DurationMinutes)+" minutes: "+in.Justification)
+	if d, err := a.store.Database(r.Context(), r.PathValue("id")); err == nil {
+		if out, ok := a.approveByPolicy(r.Context(), req, d.Label,
+			"Opened "+in.Level+" on "+d.Name+" for "+itoa(in.DurationMinutes)+" minutes"); ok {
+			writeJSON(w, http.StatusCreated, out)
+			return
+		}
+	}
 	a.alertRequestWaiting(r.Context(), req)
 	writeJSON(w, http.StatusCreated, req)
 }

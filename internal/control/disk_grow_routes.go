@@ -392,7 +392,8 @@ func (a *API) postAssetDiskGrow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := RunQueued
-	if t.view.Rule.NeedsApproval {
+	dr := directRuns{}
+	if a.runWaits(r.Context(), t.view.Rule.NeedsApproval, KindServerUpkeep, asset.Tags, sess.Email, asset.Hostname, dr) {
 		state = RunAwaitingApproval
 	}
 	run, err := a.store.CreateDiskRun(r.Context(), newDiskRun{Hostname: t.agent, AssetHostname: asset.Hostname,
@@ -405,6 +406,7 @@ func (a *API) postAssetDiskGrow(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "disk grow", err)
 		return
 	}
+	dr.record(r.Context(), a, sess.Email, asset.Hostname, "Ran a disk grow on "+asset.Hostname+": "+plan.Summary)
 	waits := ""
 	if state == RunAwaitingApproval {
 		waits = "; it waits for another admin to approve it"

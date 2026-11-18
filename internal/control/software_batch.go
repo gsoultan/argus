@@ -218,6 +218,7 @@ func (a *API) postSoftwareBatch(w http.ResponseWriter, r *http.Request) {
 
 	runs := make([]newRun, 0, len(targets))
 	approval := false
+	dr := directRuns{}
 	for _, x := range targets {
 		n := newRun{
 			Hostname: x.t.agent, AssetHostname: x.t.asset.Hostname, Packages: []string{}, Holds: []string{},
@@ -236,7 +237,7 @@ func (a *API) postSoftwareBatch(w http.ResponseWriter, r *http.Request) {
 			n.Mode, n.SoftwareFileID, n.Expect = AppInstall, &file.ID, file.SHA256
 			n.Items = []tunnel.SoftwareItem{{Name: file.App.Package, Version: file.App.VersionName}}
 		}
-		if x.t.view.Rule.NeedsApproval {
+		if a.runWaits(ctx, x.t.view.Rule.NeedsApproval, KindServerRuns, x.t.asset.Tags, sess.Email, x.t.asset.Hostname, dr) {
 			n.State, approval = RunAwaitingApproval, true
 		}
 		runs = append(runs, n)
@@ -254,6 +255,8 @@ func (a *API) postSoftwareBatch(w http.ResponseWriter, r *http.Request) {
 	for i := range made {
 		made[i].AssetID = targets[i].t.asset.ID
 		hosts = append(hosts, made[i].AssetHostname)
+		dr.record(ctx, a, sess.Email, made[i].AssetHostname,
+			"Ran "+what+" on "+made[i].AssetHostname+" (run "+made[i].ID+")")
 	}
 	detail := fmt.Sprintf("Asked for %s on %d server%s, one at a time, stopping at a failure: %s.",
 		what, len(made), plural(len(made)), strings.Join(hosts, ", "))

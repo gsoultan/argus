@@ -174,6 +174,13 @@ func (a *API) postCloudAccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	waits := cloudAccessNeedsApproval(m.acct.Environment, in.Level)
+	var direct *DirectAllowance
+	if waits {
+		if direct = a.actsDirectlyWithReason(r.Context(), KindCloudAccess, envOfLabel(m.acct.Environment),
+			sess.Email, in.Reason); direct != nil {
+			waits = false
+		}
+	}
 	g := CloudAccess{AccountID: m.acct.ID, Level: in.Level, Environment: m.acct.Environment, Minutes: in.Minutes,
 		Reason: in.Reason, State: "active", RequestedBy: sess.Email}
 	if waits {
@@ -191,10 +198,13 @@ func (a *API) postCloudAccess(w http.ResponseWriter, r *http.Request) {
 	detail := "Asked for " + accessWords(g) + ". Reason: " + g.Reason
 	if waits {
 		detail += ". Waits for approval (" + g.Environment + ")"
+	} else if direct != nil {
+		detail += ". In force at once: the approval policy lets them act directly"
 	} else {
 		detail += ". In force at once (" + g.Environment + " needs no approval for it)"
 	}
 	a.auditCloudAccess(r, g, "requested", sess.Email, detail)
+	a.recordDirect(r.Context(), direct, sess.Email, "cloud "+m.acct.Name, "Gave themselves "+accessWords(g), g.Reason)
 	code = http.StatusOK
 	if waits {
 		code = http.StatusAccepted

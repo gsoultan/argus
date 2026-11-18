@@ -251,7 +251,8 @@ func (a *API) postSoftwareFileRun(w http.ResponseWriter, r *http.Request) {
 		Holds: []string{}, Reboot: "never", Trigger: "manual", State: RunQueued, RequestedBy: sess.Email,
 		Items: []tunnel.SoftwareItem{fileItem(f)}, Expect: f.SHA256, SoftwareFileID: &f.ID,
 	}
-	if t.view.Rule.NeedsApproval {
+	dr := directRuns{}
+	if a.runWaits(r.Context(), t.view.Rule.NeedsApproval, KindServerRuns, t.asset.Tags, sess.Email, t.asset.Hostname, dr) {
 		n.State = RunAwaitingApproval
 	}
 	runs, err := a.store.CreatePackageRuns(r.Context(), []newRun{n})
@@ -265,6 +266,7 @@ func (a *API) postSoftwareFileRun(w http.ResponseWriter, r *http.Request) {
 	}
 	run := runs[0]
 	run.AssetID = t.asset.ID
+	dr.record(r.Context(), a, sess.Email, run.AssetHostname, "Ran "+describeMode(run)+" on "+run.AssetHostname+" (run "+run.ID+")")
 	extra := ""
 	if run.State == RunAwaitingApproval {
 		extra = "; it waits for another admin to approve it"

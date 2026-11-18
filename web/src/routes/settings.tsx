@@ -7,7 +7,7 @@ import { useDisclosure } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
-  IconActivityHeartbeat, IconAlertTriangle, IconBuilding, IconDeviceDesktop, IconDevices, IconDeviceFloppy, IconInfoCircle, IconLock,
+  IconActivityHeartbeat, IconAlertTriangle, IconBuilding, IconChecklist, IconDeviceDesktop, IconDevices, IconDeviceFloppy, IconInfoCircle, IconLock,
   IconDatabase, IconDatabaseExport, IconFileText, IconLifebuoy, IconNetwork, IconPackage, IconRefresh, IconShieldLock, IconTerminal2, type IconProps,
 } from '@tabler/icons-react'
 import { PageBody, PageHeader, SectionCard } from '~/components/page'
@@ -21,6 +21,8 @@ import { DIRECT_SSH_CHOICES, directSshLabel, directSshLoosens } from '~/lib/dire
 import { guard } from '~/lib/guard'
 import { EnrolledAgents } from '~/components/EnrolledAgents'
 import { Organizations } from '~/components/Organizations'
+import { ApprovalPolicySettings } from '~/components/ApprovalPolicySettings'
+import { ApprovalLocksCard } from '~/components/ApprovalLocks'
 import { PackageUpdateSettings } from '~/components/PackageUpdateSettings'
 import { SoftwareLibrary } from '~/components/SoftwareLibrary'
 import { LogCleanupSettings } from '~/components/LogCleanupSettings'
@@ -78,7 +80,8 @@ const CAN_EDIT_POLICY = new Set(['owner', 'admin'])
 type PolicySectionId = 'access' | 'recording' | 'hosts'
 type PlatformSectionId = 'organizations' | 'status' | 'control-updates' | 'control-backups' | 'control-readiness'
 type ServerSectionId = 'asset-types' | 'updates' | 'software' | 'logs' | 'disks'
-type SectionId = PolicySectionId | ControlSectionId | PlatformSectionId | ServerSectionId
+type OrgSectionId = 'approval-policy'
+type SectionId = PolicySectionId | ControlSectionId | PlatformSectionId | ServerSectionId | OrgSectionId
 
 interface NavItem {
   id: SectionId
@@ -184,7 +187,12 @@ function Settings() {
       { id: 'disks', label: 'Disk growing', icon: IconDatabase, changed: false },
     ]
     : []
-  const items = [...statusItems, ...policyItems, ...serverItems, ...controlItems, ...platformItems]
+  // The organization's approval policy: everyone signed in reads it, owners
+  // change it (approval_policy.go decides who).
+  const orgItems: NavItem[] = isConfigured() && me
+    ? [{ id: 'approval-policy', label: 'Approval policy', icon: IconChecklist, changed: false }]
+    : []
+  const items = [...orgItems, ...statusItems, ...policyItems, ...serverItems, ...controlItems, ...platformItems]
   const active: SectionId = items.find((i) => i.id === section)?.id ?? 'access'
   const open = (id: string | null) => {
     if (id) void navigate({ to: '/settings', search: { section: id }, replace: true })
@@ -280,6 +288,9 @@ function Settings() {
             further down a long page than the screen. */}
         <Group align="flex-start" gap="lg" wrap="nowrap">
           <Box component="nav" aria-label="Settings sections" w={210} visibleFrom="md" style={{ flexShrink: 0 }}>
+            {orgItems.length > 0 && (
+              <SectionNav title="Organization" items={orgItems} active={active} onOpen={open} />
+            )}
             {statusItems.length > 0 && (
               <SectionNav title="Control plane" items={statusItems} active={active} onOpen={open} />
             )}
@@ -303,6 +314,9 @@ function Settings() {
               value={active}
               onChange={open}
               data={[
+                ...(orgItems.length > 0
+                  ? [{ group: 'Organization', items: orgItems.map(navOption) }]
+                  : []),
                 ...(statusItems.length > 0
                   ? [{ group: 'Control plane', items: statusItems.map(navOption) }]
                   : []),
@@ -383,7 +397,14 @@ function Settings() {
             {active === 'logs' && serverItems.length > 0 && <LogCleanupSettings canEdit={canEdit} />}
             {active === 'disks' && serverItems.length > 0 && <DiskGrowSettings canEdit={canEdit} />}
 
-            {active === 'organizations' && platformItems.length > 0 && <Organizations />}
+            {active === 'approval-policy' && orgItems.length > 0 && me && <ApprovalPolicySettings me={me.email} />}
+
+            {active === 'organizations' && platformItems.length > 0 && (
+              <>
+                <Organizations />
+                <ApprovalLocksCard />
+              </>
+            )}
 
             {active === 'status' && statusItems.length > 0 && <ControlStatusSection onOpen={open} />}
             {active === 'control-updates' && statusItems.length > 0 && <ControlUpdateSection />}

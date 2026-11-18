@@ -520,7 +520,11 @@ func (a *API) postScriptReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	self := strings.EqualFold(v.Author, sess.Email)
+	var direct *DirectAllowance
 	if self {
+		direct = a.actsDirectly(r.Context(), KindScriptReview, EnvAll, sess.Email)
+	}
+	if self && direct == nil {
 		n, err := a.store.CountAdmins(r.Context())
 		if err != nil {
 			a.fail(w, "script review", err)
@@ -581,7 +585,10 @@ func (a *API) postScriptReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	how := "Reviewed"
-	if self {
+	switch {
+	case direct != nil:
+		how = "Reviewed their own"
+	case self:
 		how = "Self-reviewed (this Argus has one admin)"
 	}
 	detail := fmt.Sprintf("%s %s v%d, written by %s", how, v.scriptName, v.Version, v.Author)
@@ -590,6 +597,8 @@ func (a *API) postScriptReview(w http.ResponseWriter, r *http.Request) {
 	}
 	a.auditAsset(r, AuditEvent{Action: "software.script_reviewed", Severity: "notice", ActorEmail: sess.Email,
 		Target: v.scriptName, Detail: detail + "."})
+	a.recordDirect(r.Context(), direct, sess.Email, v.scriptName,
+		fmt.Sprintf("Reviewed their own script %s v%d", v.scriptName, v.Version), "")
 	s, err := a.store.script(r.Context(), v.ScriptID)
 	if err != nil {
 		a.failScript(w, err)

@@ -985,6 +985,17 @@ func (a *API) postCloudChange(w http.ResponseWriter, r *http.Request) {
 	}
 	// A commitment always waits for someone else, in every environment.
 	waits := cloudNeedsApproval(ch.Environment, ch.Level) || cloud.IsBuy(ch.Action)
+	var direct *DirectAllowance
+	if waits {
+		// Unless the approval policy lets them act directly.
+		kind, env := KindCloudChange, envOfLabel(ch.Environment)
+		if cloud.IsBuy(ch.Action) {
+			kind, env = KindCloudPurchase, EnvAll
+		}
+		if direct = a.actsDirectlyWithReason(r.Context(), kind, env, actor, ch.Reason); direct != nil {
+			waits = false
+		}
+	}
 	ch.State = "applying"
 	if waits {
 		ch.State = "awaiting_approval"
@@ -1010,6 +1021,7 @@ func (a *API) postCloudChange(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusAccepted, ch)
 		return
 	}
+	a.recordDirect(r.Context(), direct, actor, m2target(ch), ch.Summary+" (change "+ch.ID+")", ch.Reason)
 	ch = a.applyCloudChange(r, m, ch)
 	writeJSON(w, http.StatusOK, ch)
 }

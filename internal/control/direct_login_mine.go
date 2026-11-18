@@ -125,3 +125,39 @@ func (a *API) postDirectLoginRemind(w http.ResponseWriter, r *http.Request, emai
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"reminded": true, "nextAt": now.Add(DirectLoginRemindEvery)})
 }
+
+// postDirectLoginAdmit lets in the person's own waiting login, when the
+// approval policy lets them act directly on direct SSH logins on that server
+// (approval_policy.go). Signed in to the console, they are who the personal
+// account belongs to; the record says nobody else agreed.
+func (a *API) postDirectLoginAdmit(w http.ResponseWriter, r *http.Request, email string) {
+	d, ok := a.myWaitingDirectLogin(w, r, email)
+	if !ok {
+		return
+	}
+	who := normaliseEmail(email)
+	direct := a.actsDirectly(r.Context(), KindDirectSSH, a.hostsEnv(r.Context(), []string{d.Hostname}), who)
+	if direct == nil {
+		writeErr(w, http.StatusForbidden, "your organization's approval policy does not let you in without someone else approving")
+		return
+	}
+	d, err := a.store.DecideDirectLogin(r.Context(), d.ID, true, who, directNote)
+	switch {
+	case errors.Is(err, ErrDirectLoginExpired), errors.Is(err, ErrAlreadyDecided):
+		writeErr(w, http.StatusConflict, "this login is no longer waiting")
+		return
+	case err != nil:
+		a.fail(w, "admit direct login", err)
+		return
+	}
+	if _, err := a.store.AppendAudit(r.Context(), AuditEvent{
+		Action: "session.direct_approved", Severity: "warning", ActorEmail: who, Target: d.Hostname,
+		Detail: who + " let in their own direct login, " + describeDirectLogin(d) + ". It is recorded.",
+	}); err != nil {
+		a.log.Error("audit append failed", "error", err)
+	}
+	a.recordDirect(r.Context(), direct, who, d.Hostname, "Let in their own direct login, "+describeDirectLogin(d), "")
+	a.closeAlerts(r.Context(), "direct-login:"+d.ID, "Let in by "+who+" under the approval policy")
+	directLoginReminded.Delete(d.ID)
+	writeJSON(w, http.StatusOK, d)
+}

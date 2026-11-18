@@ -410,6 +410,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/direct-logins", a.user(a.getDirectLogins))
 	mux.HandleFunc("POST /api/v1/direct-logins/{id}/decision", a.postDirectLoginDecision)
 	mux.HandleFunc("POST /api/v1/direct-logins/{id}/withdraw", a.user(a.postDirectLoginWithdraw))
+	mux.HandleFunc("POST /api/v1/direct-logins/{id}/admit", a.user(a.postDirectLoginAdmit))
 	mux.HandleFunc("POST /api/v1/direct-logins/{id}/remind", a.user(a.postDirectLoginRemind))
 	mux.HandleFunc("GET /api/v1/grant", a.user(a.getGrant))
 
@@ -445,6 +446,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	a.registerScaleGroupRoutes(mux)
 	a.registerCloudScheduleRoutes(mux)
 	a.registerCloudAccessRoutes(mux)
+	a.registerApprovalPolicyRoutes(mux)
 	a.registerCloudCostRoutes(mux)
 	a.registerCloudReservationRoutes(mux)
 	a.registerCloudBuyRoutes(mux)
