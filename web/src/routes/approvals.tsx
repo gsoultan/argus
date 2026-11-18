@@ -27,7 +27,6 @@ import { cloudChangesQuery } from '~/lib/cloud'
 import { ChangeReview, ChangesTable } from '~/components/ChangeReview'
 import { ImpactText } from '~/components/ChangeImpact'
 import { ApproveOwn } from '~/components/ApproveOwn'
-import { useDecidesAlone } from '~/lib/selfApproval'
 import { impactOf } from '~/lib/changeApproval'
 import { levelName } from '~/lib/engines'
 import type { AccessRequest, DBLevel, DirectLogin, StatementAsk } from '~/types/domain'
@@ -116,10 +115,10 @@ function Approvals() {
     }
   }, [reviewId, one.isError])
   const mayDecide = (r: AccessRequest) => (decides || !!r.asEditor) && r.requesterEmail.toLowerCase() !== mine
-  // Their own, when nobody else holds a role that decides it. The control
-  // plane counts again, and refuses when another editor of the database could.
-  const alone = useDecidesAlone('requests')
-  const mayApproveOwn = (r: AccessRequest) => decides && alone && r.requesterEmail.toLowerCase() === mine
+  // Their own, when nobody else could decide it: the control plane marks
+  // each request with the rule it decides by, so the button is never offered
+  // on one it would refuse (another editor of the database, say).
+  const mayApproveOwn = (r: AccessRequest) => !!r.approveOwn && r.requesterEmail.toLowerCase() === mine
 
   return (
     <Box>

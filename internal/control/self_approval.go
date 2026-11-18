@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -110,6 +111,49 @@ func (a *API) approveOwn(w http.ResponseWriter, r *http.Request, email string, a
 		a.log.Error("audit append failed", "error", err)
 	}
 	return true
+}
+
+// markApproveOwn sets ApproveOwn on the requests in reqs that email asked for,
+// still pending, and may approve themselves: they alone hold a role that
+// decides requests, and no other editor of the database a change is for
+// could decide it. It is the rule postDecision applies, so the console
+// offers the button exactly where the decision would be taken.
+func (a *API) markApproveOwn(ctx context.Context, email string, reqs []AccessRequest) error {
+	sole, known := false, false
+	for i := range reqs {
+		if reqs[i].State != "pending" || !strings.EqualFold(reqs[i].RequesterEmail, email) {
+			continue
+		}
+		if !known {
+			var err error
+			if sole, err = a.store.SoleDecider(ctx, email, requestDeciders); err != nil {
+				return err
+			}
+			known = true
+		}
+		if !sole {
+			return nil
+		}
+		others, err := a.otherEditorsDecide(ctx, email, reqs[i].ID)
+		if err != nil {
+			return err
+		}
+		reqs[i].ApproveOwn = len(others) == 0
+	}
+	return nil
+}
+
+// ownRefusal is what someone deciding their own request is told when they
+// may not: who else could decide it, when that is an editor of its database.
+func ownRefusal(err error, others []string) string {
+	if len(others) == 0 {
+		return err.Error() + ": someone else in this organization holds a role that decides it"
+	}
+	who := others[0]
+	if len(others) > 1 {
+		who += " and " + strconv.Itoa(len(others)-1) + " more"
+	}
+	return err.Error() + ": " + who + " can approve it as an editor of its database"
 }
 
 // readConfirmSelf is the phrase from a decision's body, for the decisions

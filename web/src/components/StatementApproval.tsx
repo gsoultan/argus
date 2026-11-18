@@ -7,7 +7,7 @@ import { askStatements, cancelRequest, changeApproval, statementAsk } from '~/li
 import { notifyOk, notifyWarn, run as notifyRun } from '~/lib/notify'
 import { useDecideRequest } from '~/lib/queries'
 import { useDecidesAlone } from '~/lib/selfApproval'
-import { ApproveOwn, decidesAloneWords } from '~/components/ApproveOwn'
+import { ApproveOwn, decidesAloneWords, useMayApproveOwn } from '~/components/ApproveOwn'
 import { combineChecks, deciderWords, impactWords, shortName, type ChangeImpact, type CheckLike } from '~/lib/changeApproval'
 import { EnvBadge, ImpactTiles, People } from '~/components/ChangeImpact'
 import type { ChangeApproval, DBLabel, StatementItem } from '~/types/domain'
@@ -192,13 +192,22 @@ export function useStatementApproval(databaseId: string, databaseName: string, o
   const n = open?.items.length ?? 0
   const impact = counted ? counted.impact : null
   const rowsWord = impact ? impactWords(impact) : ''
-  const others = (approval?.approvers === 'editors' ? approval.editors : [])
+  // The editors who could decide it now; an editor with no account, or a
+  // disabled one, decides nothing and is not counted by the control plane.
+  const others = (approval?.approvers === 'editors' ? approval.deciders ?? approval.editors : [])
     .filter((e) => e.toLowerCase() !== opts.me?.toLowerCase())
   const deciders = deciderWords(databaseName, approval, opts.me)
   // Another editor could decide it, so the asker does not decide alone.
-  const alone = decidesAlone && others.length === 0
+  const predicted = decidesAlone && others.length === 0
+  // Once asked, the control plane says, for this request, with the rule it
+  // decides by: the button is never offered on an ask it would refuse.
+  const marked = useMayApproveOwn(phase.kind === 'waiting' ? phase.id : undefined)
+  const alone = phase.kind === 'waiting' ? marked : predicted
   const dialog = (
     <Modal opened={open !== null} onClose={dismiss} centered size="lg"
+      // Waiting, closing takes the ask back: only on purpose, never by a
+      // click beside the dialog (on Approvals in the menu, say) or Escape.
+      closeOnClickOutside={phase.kind !== 'waiting'} closeOnEscape={phase.kind !== 'waiting'}
       title={<Group gap="xs"><IconShieldCheck size={18} /><Text fw={650}>Ask for approval</Text>{opts.label && <EnvBadge label={opts.label} />}</Group>}>
       {open && (
         <Stack gap="sm">
@@ -280,7 +289,7 @@ export function useStatementApproval(databaseId: string, databaseName: string, o
                 </Group>
               </Stack>
               {phase.error && <Alert color="rose" variant="light">{phase.error}</Alert>}
-              <Text size={FS.micro} c="dimmed">Waiting for someone to approve it in Approvals. Closing this cancels the ask, so nobody is left deciding it.</Text>
+              <Text size={FS.micro} c="dimmed">{alone ? 'Approve it here; there is no need to go to Approvals.' : 'Waiting for someone to approve it in Approvals. Keep this open: it runs from here.'} Closing this cancels the ask, so nobody is left deciding it.</Text>
               <Group justify="flex-end">
                 <Button variant="default" color="rose" loading={phase.cancelling} onClick={() => void cancelAsk(phase.id)}>Cancel the ask</Button>
               </Group>

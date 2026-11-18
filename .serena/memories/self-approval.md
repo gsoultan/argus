@@ -19,7 +19,15 @@ decides that kind**, typing `approve my own request`. Recorded as
   and refuse with `ErrOwnRequest` / `ErrSelfApproval`; handlers check
   `approveOwn`, then retry with `own` true. Decisions without a body accept
   `{"confirmSelf": "..."}`.
-- Console: `GET /api/v1/approvals/self` → `useDecidesAlone(kind)`;
+- Access requests carry `approveOwn` (set by `markApproveOwn` on the list and
+  on `GET /requests/{id}`) for the reader's own pending request, worked out
+  with the rule `postDecision` uses: `SoleDecider` plus `otherEditorsDecide`,
+  which counts only editors who could decide (enabled, not auditor:
+  `EditorsWhoDecide`). Approvals and the in-place buttons
+  (`ApproveOwnRequest`, `useMayApproveOwn`) use that flag, never the role
+  count alone, so the button is never shown where the server refuses.
+- Console: `GET /api/v1/approvals/self` → `useDecidesAlone(kind)` (for the
+  words said before asking, and runs);
   `ApproveOwn` is the button and typed dialog, `AloneOr` swaps the
   "another admin approves it" sentence where people ask.
 - Script review keeps its older version of the same exception
