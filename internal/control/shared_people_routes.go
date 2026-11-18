@@ -77,7 +77,7 @@ func (a *API) postSharedAccount(w http.ResponseWriter, r *http.Request) {
 		Email: email, DisplayName: in.DisplayName, Role: in.Role, HomeSlug: in.HomeOrg,
 	})
 	switch {
-	case errors.Is(err, ErrAccountExists):
+	case errors.Is(err, ErrAccountExists), errors.Is(err, ErrOwnAccountHere):
 		writeErr(w, http.StatusConflict, email+" "+err.Error())
 		return
 	case errors.Is(err, ErrNoShareable):
@@ -315,6 +315,11 @@ func (a *API) postPersonOrganization(w http.ResponseWriter, r *http.Request) {
 			// Already there: allowing it again is all that was needed.
 			out["added"] = true
 			out["already"] = true
+		case errors.Is(err, ErrOwnAccountHere):
+			// Allowed, but not added: target's own account for the address
+			// is still in use, and nothing takes it over.
+			writeErr(w, http.StatusConflict, target.Name+" is allowed, but "+email+" "+err.Error())
+			return
 		case err != nil:
 			// Allowed but not added: say both halves.
 			a.log.Error("add shared person after allowing", "error", err)

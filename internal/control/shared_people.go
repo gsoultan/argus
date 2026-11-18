@@ -43,6 +43,13 @@ var (
 	// ErrAccountExists means the organization already has its own account
 	// for the address.
 	ErrAccountExists = errors.New("already has an account in this organization")
+	// ErrOwnAccountHere means the organization has an account of its own for
+	// the address, with its own password, still in use. Adding the person
+	// from another organization would take that account over, so it is
+	// refused until the organization removes it.
+	ErrOwnAccountHere = errors.New("already has an account of its own in this organization, " +
+		"with its own password. Remove it there first (Teams, People, Remove), then add them again; " +
+		"the removed account becomes the one they share, with its history")
 	// ErrNotMember is returned by MemberOf when the signed-in identity has no
 	// usable account in the target organization.
 	ErrNotMember = errors.New("you are not a member of that organization")
@@ -204,12 +211,17 @@ func (s *Store) AddSharedMember(ctx context.Context, in SharedMember) (*Account,
 
 	// Our own row first: an existing account here is refused before the
 	// index is consulted, so the error says what the caller can already see
-	// in their own list and nothing about anywhere else.
-	if existing, err := s.Account(ctx, email); err == nil {
-		if existing.PasswordHash != "" || existing.Shared() {
+	// in their own list and nothing about anywhere else. A removed account,
+	// of their own or shared, is not refused: adding them again turns it
+	// into the shared one (below), the way the caller expects after Remove.
+	if existing, err := s.Account(ctx, email); err == nil && !existing.Disabled {
+		if existing.Shared() {
 			return nil, nil, ErrAccountExists
 		}
-	} else if !errors.Is(err, ErrNoAccount) {
+		if existing.PasswordHash != "" {
+			return nil, nil, ErrOwnAccountHere
+		}
+	} else if err != nil && !errors.Is(err, ErrNoAccount) {
 		return nil, nil, err
 	}
 
@@ -276,24 +288,58 @@ func (s *Store) AddSharedMember(ctx context.Context, in SharedMember) (*Account,
 		return nil, nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var id string
-	// A row with this address and no password can exist -- someone put on a
-	// team before they had an account -- and pointing it home is giving it
-	// one. A row that already is an account is left alone.
+	var (
+		id         string
+		wasOwnHome bool
+	)
+	// A row with this address can already exist and become theirs:
+	//   - no password and no home: someone put on a team before they had an
+	//     account; pointing it home is giving it one;
+	//   - removed (disabled), whether it had its own password or was shared:
+	//     adding them again keeps the row, so the audit log, teams and
+	//     grants keep pointing at one person, and drops every credential of
+	//     its own, so only the home's password and second factor sign in.
+	// An account in use is left alone; the WHERE re-checks it under the row
+	// lock, in case it was turned back on since the check above.
 	err = tx.QueryRow(ctx, `
+		WITH before AS (
+			SELECT home_tenant IS NULL AND password_hash IS NOT NULL AS own
+			  FROM users WHERE email = $1)
 		INSERT INTO users (email, display_name, role, home_tenant)
 		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (email) DO UPDATE
 		   SET display_name = EXCLUDED.display_name,
 		       role         = EXCLUDED.role,
-		       home_tenant  = EXCLUDED.home_tenant
-		 WHERE users.password_hash IS NULL AND users.home_tenant IS NULL
-		RETURNING id::text`, email, displayName, in.Role, home.ID).Scan(&id)
+		       home_tenant  = EXCLUDED.home_tenant,
+		       password_hash = NULL,
+		       password_change_required = false,
+		       password_expires_at = NULL,
+		       totp_secret = NULL,
+		       mfa_enrolled_at = NULL,
+		       shareable = false,
+		       disabled_at = NULL,
+		       disabled_by = NULL
+		 WHERE (users.password_hash IS NULL AND users.home_tenant IS NULL)
+		    OR users.disabled_at IS NOT NULL
+		RETURNING id::text, coalesce((SELECT own FROM before), false)`,
+		email, displayName, in.Role, home.ID).Scan(&id, &wasOwnHome)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil, ErrAccountExists
 	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("add shared person: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM recovery_codes WHERE user_id = $1`, id); err != nil {
+		return nil, nil, fmt.Errorf("drop old recovery codes: %w", err)
+	}
+	if wasOwnHome {
+		// This organization was their home for this address. It is not any
+		// more, so what it allowed others is void: they now come from home.
+		if _, err := tx.Exec(ctx, `
+			DELETE FROM argus_platform.share_allowances WHERE email = $1 AND home_tenant = $2`,
+			email, target); err != nil {
+			return nil, nil, fmt.Errorf("drop old allowances: %w", err)
+		}
 	}
 	if err := recordMembership(ctx, tx, email, target, home.ID); err != nil {
 		return nil, nil, err
@@ -676,7 +722,8 @@ func (s *Store) ManagedOrganizations(ctx context.Context, actor string) ([]Manag
 	}
 	present := map[string]bool{}
 	rows, err := s.db(ctx).Query(ctx, `
-		SELECT lower(email) FROM users WHERE password_hash IS NOT NULL OR home_tenant IS NOT NULL`)
+		SELECT lower(email) FROM users
+		 WHERE (password_hash IS NOT NULL OR home_tenant IS NOT NULL) AND disabled_at IS NULL`)
 	if err != nil {
 		return nil, err
 	}
