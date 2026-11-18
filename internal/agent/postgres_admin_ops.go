@@ -624,6 +624,9 @@ func pgAdminOp(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGA
 	if op.Kind == tunnel.AdminNetwork || op.Kind == tunnel.AdminNetworkSet {
 		return pgNetworkHelper(ctx, conn, req)
 	}
+	if tunnel.PGRoleKind(op.Kind) {
+		return pgRoleOp(ctx, conn, req)
+	}
 	built, err := buildAdminSQL(op, req.Owner)
 	if err != nil {
 		return PGAdminResult{Error: err.Error()}

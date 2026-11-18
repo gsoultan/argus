@@ -29,6 +29,7 @@ import {
   ActivityPanel, RolesPanel, type Admin, type AdminOp, type AdminResult, type Collect, type Collected,
 } from '~/components/DatabaseAdmin'
 import { ExtensionsPanel } from '~/components/DatabaseExtensions'
+import { RolesManager } from '~/components/DatabaseRoles'
 import { NetworkPanel } from '~/components/DatabaseNetwork'
 import { ReplicationPanel } from '~/components/DatabaseReplication'
 import { BackupsPanel } from '~/components/DatabaseBackups'
@@ -1431,7 +1432,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
           </Box>
         )}
         {view === 'query' && panel === 'activity' && <ActivityPanel {...adminProps} />}
-        {view === 'query' && panel === 'roles' && <RolesPanel {...adminProps} />}
+        {view === 'query' && panel === 'roles' && (level === 'dba' ? <RolesManager {...adminProps} /> : <RolesPanel {...adminProps} />)}
         {view === 'query' && panel === 'extensions' && <ExtensionsPanel {...adminProps} />}
         {view === 'query' && panel === 'replication' && <ReplicationPanel {...adminProps} database={database} />}
         {view === 'query' && panel === 'network' && <NetworkPanel {...adminProps} assetId={database.assetId} engine={mysql ? 'mysql' : 'postgres'} />}
@@ -1894,7 +1895,7 @@ const MANAGE: { key: ManagePanel; label: string; icon: typeof IconTable; hint: s
   { key: 'backups', label: 'Backups', icon: IconArchive, hint: 'Backups of this database, and putting one back', group: 'care' },
   { key: 'changes', label: 'Data changes', icon: IconHistory, hint: 'Who inserted, updated or deleted what, from the console', group: 'care' },
   { key: 'trash', label: 'Trash', icon: IconTrash, hint: 'Deleted rows, dropped tables and schemas, kept so they can be put back', group: 'care' },
-  { key: 'roles', label: 'Roles & access', icon: IconUsersGroup, hint: 'Who holds which level; give or take a level from an application role', dba: true, group: 'dba' },
+  { key: 'roles', label: 'Roles & access', icon: IconUsersGroup, hint: 'Create and change roles, grant and revoke privileges, and see what each role can do', dba: true, group: 'dba' },
   { key: 'extensions', label: 'Extensions', icon: IconPuzzle, hint: 'Installed and available extensions; install, update, remove', dba: true, group: 'dba' },
   { key: 'replication', label: 'Replication', icon: IconArrowsExchange, hint: 'Publications, subscriptions and streaming replicas of this server', dba: true, group: 'dba' },
   { key: 'network', label: 'Network', icon: IconNetwork, hint: 'Which machines can connect: where it listens, pg_hba.conf on Postgres, and the server’s firewall', dba: true, group: 'dba' },

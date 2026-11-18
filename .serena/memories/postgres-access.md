@@ -51,9 +51,11 @@ a session opens never reads the rules table.
 
 ## Living beside other applications
 
-- Argus only ever creates and alters roles that carry its `argus-managed`
-  comment, and only adds grants to its own level roles. Nothing revokes,
-  drops or terminates anything else; `TestPostgresLeavesOtherRolesAlone`
+- On its own, Argus only ever creates and alters roles that carry its
+  `argus-managed` comment, and only adds grants to its own level roles.
+  The one exception is a DBA acting through Roles & access (below), which is
+  explicit, recorded and approved like any change. Sessions never revoke,
+  drop or terminate anything else; `TestPostgresLeavesOtherRolesAlone`
   snapshots an application's roles, ACLs and default privileges around
   sessions at every level. Keep it that way.
 - The DBA level role holds read/write/owner `WITH ADMIN OPTION`, which is how
@@ -290,3 +292,42 @@ and the agent's guard (if any) still applies.
 
 - The Owner level role is granted `CREATE ON DATABASE` (pgEnsureLevels), so an
   Owner session can create schemas owned by the level. See database-create.md.
+
+## Roles and privileges (2026-11)
+
+Roles & access at DBA is `RolesManager` (`web/src/components/DatabaseRoles.tsx`):
+every role on the server, what one can do in this database, and pgAdmin's
+role and grant forms. Below DBA, `RolesPanel` is only the labelled gate.
+
+- **Admin ops, not typed statements** (`internal/tunnel/pgroles.go`, kinds
+  `role.*`, `grant`, `revoke`, `grant.objects`). Found the hard way: a GRANT
+  typed into the editor runs as the DBA level role, and on a table it does
+  not own (the owner sweep skips superuser- and createrole-owned objects)
+  Postgres answers success with only a WARNING "no privileges were granted".
+  Through the helper the grant is made as if by the owner.
+- **Builder in tunnel, pure**, so the control plane (approval text) and the
+  agent (recording, run) compute the same statement. `PGRoleSQL(op, db,
+  verifier)`; `PGRoleText` is the redacted text.
+- **Password**: the agent turns it into a SCRAM verifier (`rolePassword`)
+  before recording or calling the helper; the helper only accepts the
+  verifier. Text, recording and approval say `PASSWORD [redacted]`.
+- **One transaction** per change (BEGIN … COMMIT in `pgRoleOp`), so a grant
+  plus schema USAGE plus default privileges all hold or none does.
+- **Refused by the helper**: any `argus-managed` role as target or grantee
+  (a level role may still be given to an application role through
+  membership), the helper's own account losing SUPERUSER/LOGIN or being
+  renamed/dropped. Refused by the builder: `pg_*` names, comments starting
+  `argus-managed`, unknown privileges, function signatures outside a strict
+  charset.
+- **Approval**: `pgRoleGate` in statements.go, the network gate's shape. Where
+  writes need approval, a change waits for approval of its own text; making a
+  role SUPERUSER waits on every database (`PGRoleAlwaysApproval`, and
+  `makesSuperuser` lets it be asked on staging). Audit is the relay's
+  `db.admin` row per recorded admin line; the record carries the approval id.
+- **Default privileges need FOR ROLE**: they belong to whoever creates the
+  objects, so the form fills `forRoles` from `grant.objects`' owners of the
+  schema and what is in it; the helper's own default (postgres) would cover
+  nothing the application makes.
+- Tests: `TestPostgresRolesAndGrants` (agent, real Postgres, reproduces the
+  warning-only GRANT first), `TestPostgresRoleChangeWaits` (control),
+  `databaseRoles.test.tsx`.
