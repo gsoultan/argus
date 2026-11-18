@@ -39,6 +39,10 @@ type AccessRequest struct {
 	// AsEditor is set on a change request the reader may decide as an
 	// editor of its database, rather than by their role.
 	AsEditor bool `json:"asEditor,omitempty"`
+	// ApproveOwn is set on the reader's own pending request when nobody
+	// else could decide it, so they may approve it themselves
+	// (self_approval.go). The decision counts again with the same rule.
+	ApproveOwn bool `json:"approveOwn,omitempty"`
 	// Broker is set when the request is for a message broker (RabbitMQ,
 	// Kafka) rather than a database, so it is described as one.
 	Broker bool `json:"broker,omitempty"`

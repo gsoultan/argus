@@ -171,3 +171,97 @@ func auditActions(t *testing.T, s *Store, ctx context.Context, action string) in
 	}
 	return n
 }
+
+// A change on a database whose editors approve each other's is the asker's to
+// approve only when no other editor could decide it, and the console is told
+// exactly that: the list marks the request the way the decision rules on it.
+func TestApproveOwnChangeCountsOnlyEditorsWhoCouldDecide(t *testing.T) {
+	s := testStore(t)
+	tn, owner, _ := newTenant(t, s)
+	ctx := WithTenant(context.Background(), tn)
+	a := NewAPI(s, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	host := unique("db-host")
+	asset, err := s.CreateAsset(ctx, AssetInput{Hostname: host, Address: host, Port: 22, Protocol: "ssh",
+		Principals: []string{"ubuntu"}})
+	if err != nil {
+		t.Fatalf("CreateAsset: %v", err)
+	}
+	db, err := s.CreateDatabase(ctx, Database{AssetID: asset.ID, Name: "athena_etl_db"}, owner)
+	if err != nil {
+		t.Fatalf("CreateDatabase: %v", err)
+	}
+	db.Policy.WriteApprovers = ApproversEditors
+	if db, err = s.UpdateDatabase(ctx, db); err != nil {
+		t.Fatalf("UpdateDatabase: %v", err)
+	}
+	assign := func(email string) {
+		t.Helper()
+		if err := s.SetDBAssignment(ctx, DBAssignment{DatabaseID: db.ID, UserEmail: &email, Level: "write"}, owner); err != nil {
+			t.Fatalf("SetDBAssignment: %v", err)
+		}
+	}
+	assign(owner)
+	req, err := s.CreateStatementAsk(ctx, owner, db, []StatementItem{{SQL: "GRANT USAGE ON SCHEMA etl TO hermod"}},
+		nil, "assign schema etl to hermod, there is a permission denied")
+	if err != nil {
+		t.Fatalf("CreateStatementAsk: %v", err)
+	}
+	marked := func() bool {
+		t.Helper()
+		reqs := []AccessRequest{req}
+		if err := a.markApproveOwn(ctx, owner, reqs); err != nil {
+			t.Fatalf("markApproveOwn: %v", err)
+		}
+		return reqs[0].ApproveOwn
+	}
+	others := func() []string {
+		t.Helper()
+		o, err := a.otherEditorsDecide(ctx, owner, req.ID)
+		if err != nil {
+			t.Fatalf("otherEditorsDecide: %v", err)
+		}
+		return o
+	}
+	if !marked() || len(others()) != 0 {
+		t.Fatalf("the only owner and only editor: marked=%v others=%v", marked(), others())
+	}
+
+	// An address given Write with no account behind it decides nothing.
+	assign(unique("gone") + "@northwind.id")
+	if !marked() || len(others()) != 0 {
+		t.Fatalf("an editor with no account counted: marked=%v others=%v", marked(), others())
+	}
+
+	// An operator with Write decides it, so the owner may not.
+	operator := unique("op") + "@northwind.id"
+	if _, err := s.CreateAccount(ctx, operator, "Operator", "operator", "correct horse battery staple"); err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	assign(operator)
+	if marked() || len(others()) != 1 {
+		t.Fatalf("another editor could decide: marked=%v others=%v", marked(), others())
+	}
+	if msg := ownRefusal(ErrSelfApproval, others()); !strings.Contains(msg, strings.ToLower(operator)) {
+		t.Errorf("the refusal does not say who decides: %s", msg)
+	}
+
+	// Disabled, they decide nothing again.
+	if err := s.SetAccountDisabled(ctx, operator, true); err != nil {
+		t.Fatalf("SetAccountDisabled: %v", err)
+	}
+	if !marked() || len(others()) != 0 {
+		t.Fatalf("a disabled editor counted: marked=%v others=%v", marked(), others())
+	}
+
+	// Someone else's request is never marked, nor a decided one.
+	reqs := []AccessRequest{req}
+	if err := a.markApproveOwn(ctx, operator, reqs); err != nil || reqs[0].ApproveOwn {
+		t.Fatalf("marked for someone who did not ask: %v", err)
+	}
+	reqs = []AccessRequest{req}
+	reqs[0].State = "approved"
+	if err := a.markApproveOwn(ctx, owner, reqs); err != nil || reqs[0].ApproveOwn {
+		t.Fatalf("a decided request marked: %v", err)
+	}
+}

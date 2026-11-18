@@ -1,7 +1,10 @@
 import { useState, type ReactNode } from 'react'
 import { Alert, Button, Group, Modal, Stack, Text, TextInput } from '@mantine/core'
 import { IconCheck } from '@tabler/icons-react'
+import { useQuery } from '@tanstack/react-query'
 import { useDecidesAlone, useSelfApprovalPhrase } from '~/lib/selfApproval'
+import { requestQuery, useDecideRequest } from '~/lib/queries'
+import { run as notifyRun } from '~/lib/notify'
 import { FS } from '~/theme'
 
 /**
@@ -67,4 +70,39 @@ export function decidesAloneWords(what: string): string {
 export function AloneOr({ kind, what, children }: { kind: 'requests' | 'runs'; what: string; children: ReactNode }) {
   const alone = useDecidesAlone(kind)
   return <>{alone ? decidesAloneWords(what) : children}</>
+}
+
+/**
+ * Approve your own access request where it was asked for (a database, a
+ * broker, a restore), without going to Approvals. Shown only when the control
+ * plane marks the request as one nobody else could decide, which it works out
+ * with the rule the decision is taken by, so the button is never offered on a
+ * request it would refuse. Nothing is shown while that is being read, or once
+ * the request is decided.
+ */
+export function ApproveOwnRequest({ id, what, size, label, onApproved, fallback = null }: {
+  id: string | undefined
+  what: string
+  size?: 'compact-xs' | 'compact-sm' | 'xs' | 'sm'
+  label?: string
+  onApproved?: () => void
+  /** Shown instead while nobody else deciding is not known to be the case. */
+  fallback?: ReactNode
+}) {
+  const one = useQuery({ ...requestQuery(id ?? ''), enabled: !!id })
+  const decide = useDecideRequest()
+  if (!id || one.data?.state !== 'pending' || !one.data.approveOwn) return <>{fallback}</>
+  return (
+    <ApproveOwn what={what} size={size} label={label} loading={decide.isPending}
+      onApprove={(confirmSelf) => notifyRun(async () => {
+        await decide.mutateAsync({ id, decision: 'approved', note: '', confirmSelf })
+        onApproved?.()
+      }, { failure: 'Not approved' })} />
+  )
+}
+
+/** Whether the control plane says the reader may approve request id themselves. */
+export function useMayApproveOwn(id: string | undefined): boolean {
+  const one = useQuery({ ...requestQuery(id ?? ''), enabled: !!id })
+  return one.data?.state === 'pending' && !!one.data.approveOwn
 }

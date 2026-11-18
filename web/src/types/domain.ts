@@ -956,6 +956,12 @@ export interface AccessRequest {
   asEditor?: boolean
   /** Set when the request is for a message broker (RabbitMQ, Kafka), not a database. */
   broker?: boolean
+  /**
+   * Set on the reader's own pending request when nobody else could decide
+   * it, so they may approve it themselves. The control plane works it out
+   * with the rule it decides by, other editors of a database included.
+   */
+  approveOwn?: boolean
 }
 
 /** One statement of an ask to run statements on a database whose changes need approval. */
@@ -1166,6 +1172,8 @@ export interface ChangeApproval {
   approvers: ChangeApprovers
   /** Who may change it now (Write, Owner or DBA), when editors approve. */
   editors: string[]
+  /** Those of editors who could decide a change now: enabled accounts, not auditors. */
+  deciders?: string[]
 }
 
 /** What a database entry is: a Postgres database, a Redis server or a RabbitMQ vhost. */

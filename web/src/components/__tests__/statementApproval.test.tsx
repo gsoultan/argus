@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useState } from 'react'
 import { useStatementApproval } from '~/components/StatementApproval'
 import { renderWithProviders } from '~/test/render'
+import { api } from '~/lib/api'
 
 /**
  * Where a database's changes need approval, a statement that changes it waits for someone
@@ -64,5 +65,33 @@ describe('Statement approval', () => {
     expect(await screen.findByText(/budi denied it: use the import fix instead/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Close' }))
     await waitFor(() => expect(screen.getByTestId('got').textContent).toBe('null'))
+  })
+
+  it('offers approving your own ask only where the control plane marks it', async () => {
+    live.askStatements.mockResolvedValue({ requestId: 'r3', state: 'pending', items: [] })
+    live.statementAsk.mockResolvedValue({ requestId: 'r3', state: 'pending', items: [] })
+    const one = vi.spyOn(api, 'request').mockResolvedValue({ id: 'r3', state: 'pending', approveOwn: true } as never)
+    renderWithProviders(<Harness />)
+    fireEvent.click(screen.getByText('go'))
+    fireEvent.change(await screen.findByLabelText(/Why/), { target: { value: 'order 7 was imported twice by mistake' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Ask for approval' }))
+    expect(await screen.findByRole('button', { name: 'Approve my own' })).toBeInTheDocument()
+    expect(screen.getByText(/no need to go to Approvals/)).toBeInTheDocument()
+    expect(one).toHaveBeenCalledWith('r3')
+    one.mockRestore()
+  })
+
+  it('does not offer it when another editor could decide, whatever the roles say', async () => {
+    live.askStatements.mockResolvedValue({ requestId: 'r4', state: 'pending', items: [] })
+    live.statementAsk.mockResolvedValue({ requestId: 'r4', state: 'pending', items: [] })
+    const one = vi.spyOn(api, 'request').mockResolvedValue({ id: 'r4', state: 'pending' } as never)
+    renderWithProviders(<Harness />)
+    fireEvent.click(screen.getByText('go'))
+    fireEvent.change(await screen.findByLabelText(/Why/), { target: { value: 'order 7 was imported twice by mistake' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Ask for approval' }))
+    await screen.findByText(/Waiting for someone to approve it in Approvals/)
+    await waitFor(() => expect(one).toHaveBeenCalledWith('r4'))
+    expect(screen.queryByRole('button', { name: 'Approve my own' })).not.toBeInTheDocument()
+    one.mockRestore()
   })
 })

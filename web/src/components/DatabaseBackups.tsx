@@ -18,7 +18,7 @@ import {
   backupCatalogQuery, backupTestQuery, databaseBackupsQuery, useCancelBackup, useCancelBackupTest, useCancelRestore, useDeleteBackup,
   usePinBackup, useRestoreBackup, useSetBackupSchedule, useStartBackup, useTestBackup, useTryBackupChecks, useUndoRestore,
 } from '~/lib/queries'
-import { AloneOr } from '~/components/ApproveOwn'
+import { AloneOr, ApproveOwnRequest } from '~/components/ApproveOwn'
 import { FS, SP, INK } from '~/theme'
 import type {
   BackupDestination, BackupSchedule, BackupTest, BackupsView, CheckResult, DBLevel, Database, DatabaseBackup, DatabaseRestore, TestCheck,
@@ -203,7 +203,8 @@ function RestoreCard({ r, database, dba }: { r: DatabaseRestore; database: Datab
       </Group>
       {pending ? (
         <Text size={FS.micro} c="dimmed" mt={4}>
-          <AloneOr kind="requests" what="it">An approver has it.</AloneOr> Once it is approved, every session on {r.dbname} ends and the restore starts. <Anchor component={Link} to="/approvals" size={FS.micro}>Approvals</Anchor>
+          <AloneOr kind="requests" what="it">An approver has it.</AloneOr> Once it is approved, every session on {r.dbname} ends and the restore starts.{' '}
+          <ApproveOwnRequest id={r.requestId} what="this restore" fallback={<Anchor component={Link} to="/approvals" size={FS.micro}>Approvals</Anchor>} />
         </Text>
       ) : (
         <>

@@ -188,31 +188,65 @@ func (a *API) decidesAsEditor(ctx context.Context, email, id string) (Database, 
 	return db, isEditor(acc.Level), nil
 }
 
-// otherEditorsDecide is whether someone other than email may decide request
-// id as an editor of its database: a change on a database whose editors
-// approve each other's, with an editor besides them.
-func (a *API) otherEditorsDecide(ctx context.Context, email, id string) (bool, error) {
+// otherEditorsDecide lists who other than email may decide request id as an
+// editor of its database: a change on a database whose editors approve each
+// other's, and the editors besides them who could decide it now. Nil for
+// every other request.
+func (a *API) otherEditorsDecide(ctx context.Context, email, id string) ([]string, error) {
 	principal, dbID, err := a.store.requestDatabase(ctx, id)
 	if err != nil || principal != statementPrincipal || dbID == "" {
-		return false, err
+		return nil, err
 	}
 	db, err := a.store.Database(ctx, dbID)
 	if errors.Is(err, ErrDatabaseNotFound) {
-		return false, nil
+		return nil, nil
 	}
 	if err != nil || !db.EditorsApprove() {
-		return false, err
+		return nil, err
 	}
 	editors, err := a.store.DatabaseEditors(ctx, db.ID)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	for _, e := range editors {
+	deciders, err := a.store.EditorsWhoDecide(ctx, editors)
+	if err != nil {
+		return nil, err
+	}
+	var others []string
+	for _, e := range deciders {
 		if !strings.EqualFold(e, email) {
-			return true, nil
+			others = append(others, e)
 		}
 	}
-	return false, nil
+	return others, nil
+}
+
+// EditorsWhoDecide is those of editors who could decide a change as one now:
+// an enabled account whose role is not auditor, as postDecision lets in. An
+// assignment to an address with no account, a disabled account or an
+// auditor decides nothing, so it does not stop the person who asked from
+// approving their own change when nobody else could.
+func (s *Store) EditorsWhoDecide(ctx context.Context, editors []string) ([]string, error) {
+	out := []string{}
+	if len(editors) == 0 {
+		return out, nil
+	}
+	rows, err := s.db(ctx).Query(ctx, `
+		SELECT DISTINCT lower(email) FROM users
+		 WHERE lower(email) = ANY($1) AND disabled_at IS NULL AND role <> 'auditor'
+		 ORDER BY 1`, editors)
+	if err != nil {
+		return nil, fmt.Errorf("editors who decide: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var e string
+		if err := rows.Scan(&e); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }
 
 // changeLink is where a change request is reviewed.
@@ -335,6 +369,10 @@ type ChangeApproval struct {
 	Approvers string `json:"approvers"`
 	// Editors are who may change it now: who would decide with "editors".
 	Editors []string `json:"editors"`
+	// Deciders are those of Editors who could decide a change now (an
+	// enabled account, not an auditor): the ones counted when the person
+	// who asked wants to approve their own.
+	Deciders []string `json:"deciders"`
 }
 
 // GET /api/v1/databases/{id}/approval
@@ -347,6 +385,10 @@ func (a *API) getChangeApproval(w http.ResponseWriter, r *http.Request, _ string
 		return
 	}
 	out.Editors = editors
+	if out.Deciders, err = a.store.EditorsWhoDecide(r.Context(), editors); err != nil {
+		a.fail(w, "approval", err)
+		return
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 

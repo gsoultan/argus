@@ -47,6 +47,10 @@ func (a *API) getRequests(w http.ResponseWriter, r *http.Request) {
 			reqs[i].AsEditor = !strings.EqualFold(reqs[i].RequesterEmail, sess.Email)
 		}
 	}
+	if err := a.markApproveOwn(r.Context(), sess.Email, reqs); err != nil {
+		a.fail(w, "requests", err)
+		return
+	}
 	writeJSON(w, http.StatusOK, reqs)
 }
 
@@ -191,13 +195,14 @@ func (a *API) postDecision(w http.ResponseWriter, r *http.Request) {
 		in.Decision, in.Note, sess.Email, false)
 	if errors.Is(err, ErrSelfApproval) {
 		// Theirs: approved only when nobody else could (self_approval.go).
+		// The same count marks the requests the console offers it on.
 		others, oerr := a.otherEditorsDecide(r.Context(), sess.Email, r.PathValue("id"))
 		if oerr != nil {
 			a.fail(w, "decide", oerr)
 			return
 		}
-		if !a.approveOwn(w, r, sess.Email, in.Decision == "approved", requestDeciders, others, in.ConfirmSelf,
-			err.Error(), "request", r.PathValue("id")) {
+		if !a.approveOwn(w, r, sess.Email, in.Decision == "approved", requestDeciders, len(others) > 0, in.ConfirmSelf,
+			ownRefusal(err, others), "request", r.PathValue("id")) {
 			a.auditSelfApprovalBlocked(r, sess.Email)
 			return
 		}
@@ -369,6 +374,10 @@ func (a *API) getOneRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	one := []AccessRequest{req}
 	if err := a.hidePreviews(r.Context(), sess.Email, sess.Role, one); err != nil {
+		a.fail(w, "request", err)
+		return
+	}
+	if err := a.markApproveOwn(r.Context(), sess.Email, one); err != nil {
 		a.fail(w, "request", err)
 		return
 	}
