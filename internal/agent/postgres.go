@@ -213,6 +213,9 @@ type pgSession struct {
 	// own transaction with SET LOCAL for the role and the limits.
 	pooled  bool
 	prelude string
+	// notices is what Postgres warned about during the statement running
+	// now (postgres_notice.go).
+	notices pgNotices
 
 	rec    *os.File
 	seq    int64
@@ -370,6 +373,7 @@ func (s *pgSession) connect(ctx context.Context, password string) (*pgconn.PgCon
 			cfg.Fallbacks = []*pgconn.FallbackConfig{{Host: w.host, Port: uint16(w.port)}}
 		}
 		cfg.ConnectTimeout = 10 * time.Second
+		cfg.OnNotice = s.notices.add
 		// A cancelled statement sends Postgres a cancel request and keeps
 		// the connection; the default would close it.
 		cfg.BuildContextWatcherHandler = func(c *pgconn.PgConn) ctxwatch.Handler {
@@ -741,6 +745,7 @@ func (s *pgSession) run(ctx context.Context, req tunnel.PGRequest) error {
 	}()
 
 	start := time.Now()
+	s.notices.reset()
 	// Pooled: open our own transaction with the role and limits, unless the
 	// person is inside one of theirs, which already carries them.
 	wrapped := false
@@ -758,6 +763,8 @@ func (s *pgSession) run(ctx context.Context, req tunnel.PGRequest) error {
 			return s.send(tunnel.PGAnswer{ID: req.ID, Type: "done", Tag: "BEGIN", MS: elapsed})
 		}
 	}
+	// What the prelude said is the session's business, not the statement's.
+	s.notices.reset()
 	capKind, cerr := s.capOpen(sctx, req, class)
 	if cerr != nil {
 		return s.statementFailed(ctx, req.ID, cerr, 0, time.Since(start).Milliseconds())
@@ -862,18 +869,19 @@ func (s *pgSession) run(ctx context.Context, req tunnel.PGRequest) error {
 		return s.statementFailed(ctx, req.ID, err, rows, elapsed)
 	}
 	tagText := tag.String()
+	notices := s.notices.take()
 	if rerr := s.record(tunnel.PGRecord{Kind: "done", Request: req.ID, Tag: tagText, Rows: rowsOf(tag, rows),
-		MS: elapsed, ResultSHA256: resultSum, Truncated: truncated}); rerr != nil {
+		MS: elapsed, ResultSHA256: resultSum, Truncated: truncated, Notices: notices}); rerr != nil {
 		return rerr
 	}
 	return s.send(tunnel.PGAnswer{ID: req.ID, Type: "done", Tag: tagText, Rows: rowsOf(tag, rows),
-		MS: elapsed, Truncated: truncated})
+		MS: elapsed, Truncated: truncated, Notices: notices})
 }
 
 // statementFailed records and answers a statement's failure. Postgres's own
 // error is passed on as it is; a lost connection ends the session.
 func (s *pgSession) statementFailed(ctx context.Context, id uint32, err error, rows, elapsed int64) error {
-	a := tunnel.PGAnswer{ID: id, Type: "error", Error: err.Error(), MS: elapsed}
+	a := tunnel.PGAnswer{ID: id, Type: "error", Error: err.Error(), MS: elapsed, Notices: s.notices.take()}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
 		a.Error, a.Code, a.Position, a.Detail, a.Hint =
@@ -887,7 +895,7 @@ func (s *pgSession) statementFailed(ctx context.Context, id uint32, err error, r
 		return errors.New("the connection to Postgres ended")
 	}
 	if rerr := s.record(tunnel.PGRecord{Kind: "error", Request: id, Code: a.Code,
-		Error: a.Error, MS: elapsed, Rows: rows}); rerr != nil {
+		Error: a.Error, MS: elapsed, Rows: rows, Notices: a.Notices}); rerr != nil {
 		return rerr
 	}
 	return s.send(a)

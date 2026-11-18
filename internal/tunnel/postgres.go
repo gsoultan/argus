@@ -391,7 +391,34 @@ type PGAnswer struct {
 	// Trash is what a DELETE, DROP or TRUNCATE put in the database's trash
 	// instead of losing it, on done.
 	Trash []PGTrashItem `json:"trash,omitempty"`
+	// Notices are the warnings and notices Postgres sent while the statement
+	// ran, on done and error. A GRANT the session's role may not give ends
+	// "done" with only a WARNING saying nothing was granted; without these the
+	// console would call it a success.
+	Notices []PGNotice `json:"notices,omitempty"`
 }
+
+// PGNotice is one NoticeResponse: a WARNING, NOTICE or INFO Postgres sent
+// alongside a statement that otherwise succeeded.
+type PGNotice struct {
+	Severity string `json:"severity"`
+	Code     string `json:"code,omitempty"`
+	Message  string `json:"message"`
+	Detail   string `json:"detail,omitempty"`
+	Hint     string `json:"hint,omitempty"`
+}
+
+// Bounds on what one statement's notices may carry: a DO block can RAISE
+// NOTICE in a loop, and every one would otherwise go to the browser and the
+// recording.
+const (
+	MaxPGNotices    = 20
+	MaxPGNoticeText = 1000
+)
+
+// NoGrantCode is SQLSTATE 01007, warning_privilege_not_granted: a GRANT that
+// ran and granted less than it named, often nothing.
+const NoGrantCode = "01007"
 
 // PGTrashItem is one thing in a database's trash (the argus_trash schema):
 // rows a DELETE removed, a dropped table or schema, or a table's rows from
@@ -481,6 +508,8 @@ type PGRecord struct {
 	Code         string `json:"code,omitempty"`
 	Error        string `json:"error,omitempty"`
 	Truncated    bool   `json:"truncated,omitempty"`
+	// Notices are what Postgres warned about, on done and error.
+	Notices []PGNotice `json:"notices,omitempty"`
 	// Actor, Role and Level are set on open.
 	Actor string `json:"actor,omitempty"`
 	Role  string `json:"role,omitempty"`

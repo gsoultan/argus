@@ -9,6 +9,7 @@ import {
 import { FS, INK } from '~/theme'
 import { itemLabel, summary, type J } from '~/lib/jsonSummary'
 import { notifyOk, notifyWarn } from '~/lib/notify'
+import { NO_GRANT, NO_GRANT_NOTE, grantedLess, isWarning, noticeHeading, noticeShort, warningsIn, type PGNotice } from '~/lib/pgNotices'
 import {
   addToQuery, columnStats, copyAs, emptyView, isJSONType, isNumeric, pretty, singleTable, viewRows,
   type Cell, type Col, type CopyFormat, type Filter, type ViewState,
@@ -50,7 +51,7 @@ export interface GridResult {
   rows: Cell[][]
   /** Cells the agent cut at its size limit, as `row:col`. */
   cut?: Set<string>
-  done?: { tag?: string; truncated?: boolean; ms?: number }
+  done?: { tag?: string; truncated?: boolean; ms?: number; notices?: PGNotice[] }
   error?: { error?: string; code?: string; hint?: string; guard?: unknown }
 }
 
@@ -380,7 +381,7 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
   const summary = result.error
     ? null
     : result.done
-      ? `${result.done.tag ?? ''}${result.done.truncated ? ' · stopped at the row limit' : ''} · ${result.done.ms ?? 0} ms`
+      ? `${result.done.tag ?? ''}${noticeShort(result.done.notices) ? ` · ${noticeShort(result.done.notices)}` : ''}${result.done.truncated ? ' · stopped at the row limit' : ''} · ${result.done.ms ?? 0} ms`
       : `${result.rows.length.toLocaleString()} rows so far…`
 
   const narrowed = Boolean(view.sort || Object.keys(view.filters).length || view.hidden.length)
@@ -719,6 +720,7 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
         </Box>
       ) : (
         <>
+        {result.done?.notices && result.done.notices.length > 0 && <PGNotices notices={result.done.notices} />}
         {mode === 'summary' && (
           <Suspense fallback={null}>
             <ResultSummary cols={cols} rows={result.rows} sql={result.sql} truncated={Boolean(result.done?.truncated)}
@@ -973,5 +975,36 @@ export function ResultsGrid({ result, narrow, collect, onAddToQuery, edit, onRow
         )}
       </Drawer>
     </>
+  )
+}
+
+/**
+ * What Postgres said beside a statement that ran. A warning is shown as one,
+ * so a GRANT that granted nothing never reads as a plain success.
+ */
+export function PGNotices({ notices }: { notices: PGNotice[] }) {
+  const warn = warningsIn(notices).length > 0
+  const shown = notices.slice(0, 5)
+  const more = notices.length - shown.length
+  return (
+    <Box px="md" pt="sm" pb={4}>
+      <Box p="sm" role={warn ? 'alert' : 'status'} style={{
+        borderRadius: 8,
+        background: warn ? 'var(--mantine-color-amber-light)' : 'var(--color-raised)',
+        color: warn ? 'var(--mantine-color-amber-light-color)' : undefined,
+      }}>
+        <Text size={FS.body} fw={600}>{noticeHeading(notices)}</Text>
+        {shown.map((n, i) => (
+          <Text key={i} size={FS.meta} mt={4} style={{ overflowWrap: 'anywhere' }}>
+            <Text span size={FS.micro} ff="monospace" mr={6}>{n.severity}{n.code ? ` ${n.code}` : ''}</Text>
+            {n.message}
+            {n.detail && <Text span size={FS.meta} c={isWarning(n) ? undefined : 'dimmed'}> {n.detail}</Text>}
+            {n.hint && n.code !== NO_GRANT && <Text span size={FS.meta}> {n.hint}</Text>}
+          </Text>
+        ))}
+        {more > 0 && <Text size={FS.micro} mt={4}>and {more} more like {more === 1 ? 'it' : 'them'}</Text>}
+        {grantedLess(notices) && <Text size={FS.meta} mt={6}>{NO_GRANT_NOTE}</Text>}
+      </Box>
+    </Box>
   )
 }

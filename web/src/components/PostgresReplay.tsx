@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import { EmptyState } from '~/components/page'
 import { IconDatabaseOff } from '@tabler/icons-react'
 import { FS } from '~/theme'
+import { noticeShort, warningsIn, type PGNotice } from '~/lib/pgNotices'
 
 /*
 A database session's replay: the statements (or Redis and RabbitMQ commands),
@@ -31,6 +32,7 @@ interface Line {
   code?: string
   error?: string
   truncated?: boolean
+  notices?: PGNotice[]
   actor?: string
   role?: string
   level?: string
@@ -46,6 +48,8 @@ interface Statement {
   code?: string
   error?: string
   truncated?: boolean
+  /** What Postgres warned about: a GRANT that granted nothing, say. */
+  notices?: PGNotice[]
   cancelled?: boolean
   /** Ran through the helper as the server's postgres account. */
   admin?: boolean
@@ -92,7 +96,7 @@ export function parseRecording(text: string): { open?: Line; close?: Line; state
           break
         }
         if (l.kind === 'done') {
-          s.tag = l.tag; s.rows = l.rows; s.ms = l.ms; s.truncated = l.truncated
+          s.tag = l.tag; s.rows = l.rows; s.ms = l.ms; s.truncated = l.truncated; s.notices = l.notices
         } else if (l.kind === 'error') {
           s.code = l.code; s.error = l.error; s.ms = l.ms
         } else {
@@ -192,6 +196,11 @@ export function PostgresReplay({ text, verified, error, live }: {
                     )}
                     {typeof s.ms === 'number' && <Text size={FS.micro} c="dimmed">{s.ms} ms</Text>}
                     {s.error && <Text size={FS.micro} c="rose">{s.error}</Text>}
+                    {warningsIn(s.notices).length > 0 && (
+                      <Badge size="xs" variant="light" color="amber" title={warningsIn(s.notices).map((n) => n.message).join('\n')}>
+                        {noticeShort(s.notices)}
+                      </Badge>
+                    )}
                   </Group>
                 </Box>
               </Group>
