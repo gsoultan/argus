@@ -2437,7 +2437,7 @@ func (m *DatabaseReadEndpoint) Schema(t *storm.Table) {
 
 // ApprovalPolicyRule is table approval_policy_rules: one cell of an
 // organization's approval policy, who may act directly on a kind of action
-// in an environment (migration 096). A missing cell is "a second person".
+// in an environment (migration 097). A missing cell is "a second person".
 type ApprovalPolicyRule struct {
 	Kind        string
 	Environment string
@@ -2456,7 +2456,7 @@ func (m *ApprovalPolicyRule) Schema(t *storm.Table) {
 }
 
 // ApprovalPolicySetting is table approval_policy_settings: the approval
-// policy's switches, one row (migration 096).
+// policy's switches, one row (migration 097).
 type ApprovalPolicySetting struct {
 	ID               bool
 	RequireReason    bool
@@ -2475,7 +2475,7 @@ func (m *ApprovalPolicySetting) Schema(t *storm.Table) {
 }
 
 // ApprovalPolicyChange is table approval_policy_changes: a loosening of
-// the approval policy waiting for another owner (migration 096).
+// the approval policy waiting for another owner (migration 097).
 type ApprovalPolicyChange struct {
 	ID          [16]byte
 	RequestedBy string
