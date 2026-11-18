@@ -148,6 +148,9 @@ func (a *API) planNetwork(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 	}
 	ctx := r.Context()
 	ch.Environment = m.acct.Environment
+	if m.acct.Provider == "gcp" {
+		return a.planGCPNetwork(ctx, m, in, ch)
+	}
 	if in.Action == cloud.ActionFirewallCreate {
 		return a.planFirewallCreate(ctx, m, in, ch)
 	}

@@ -119,6 +119,8 @@ function Cloud() {
   const canChange = list.some((a) => a.access === 'manage')
   const can = (action: string) => list.some((a) => a.access === 'manage' && allows(a, action))
   const allocators = new Set(list.filter((a) => a.access === 'manage' && allows(a, 'address-allocate')).map((a) => a.provider))
+  const firewallMakers = new Set(list.filter((a) => a.access === 'manage' && allows(a, 'firewall-create')).map((a) => a.provider))
+  const firewallButton = firewallMakers.size > 1 ? 'New firewall' : firewallMakers.has('gcp') ? 'New firewall rule' : 'New security group'
   const addressButton = allocators.size > 1 ? 'New public address' : allocators.has('gcp') ? 'Reserve a static address' : 'Allocate an Elastic IP'
 
   return (
@@ -136,7 +138,7 @@ function Cloud() {
             {canChange && tab === 'schedules' && <ButtonLink to="/cloud/schedule" size="sm" leftSection={<IconCalendarTime size={16} />}>Make a schedule</ButtonLink>}
             {can('volume-create') && tab === 'disks' && <Button size="sm" leftSection={<IconCirclePlus size={16} />} onClick={() => setMaking('disk')}>New disk</Button>}
             {can('address-allocate') && tab === 'network' && <Button size="sm" variant="default" leftSection={<IconCirclePlus size={16} />} onClick={() => setMaking('address')}>{addressButton}</Button>}
-            {can('firewall-create') && tab === 'network' && <Button size="sm" leftSection={<IconShieldPlus size={16} />} onClick={() => setMaking('firewall')}>New security group</Button>}
+            {can('firewall-create') && tab === 'network' && <Button size="sm" leftSection={<IconShieldPlus size={16} />} onClick={() => setMaking('firewall')}>{firewallButton}</Button>}
             {can('launch') && tab !== 'schedules' && tab !== 'disks' && tab !== 'network' && tab !== 'access' && tab !== 'costs' && tab !== 'reservations' && tab !== 'risks' && <ButtonLink to="/cloud/launch" size="sm" leftSection={<IconCirclePlus size={16} />}>Launch an instance</ButtonLink>}
           </Group>
         ) : undefined}

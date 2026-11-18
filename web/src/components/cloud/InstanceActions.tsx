@@ -92,7 +92,7 @@ export function InstanceActions({ it }: { it: CloudItem }) {
               {can('protect') && protectedNow !== true && <Menu.Item leftSection={<IconLock size={14} />} onClick={() => setOpen('protect')}>Turn on {protectWord}</Menu.Item>}
               {can('unprotect') && protectedNow !== false && <Menu.Item leftSection={<IconLockOpen size={14} />} onClick={() => setOpen('unprotect')}>Turn off {protectWord}</Menu.Item>}
               {can('image-create') && <Menu.Item leftSection={<IconPhoto size={14} />} onClick={() => setOpen('image-create')}>Make an image…</Menu.Item>}
-              {can('instance-firewalls') && <Menu.Item leftSection={<IconShield size={14} />} onClick={() => setOpen('instance-firewalls')}>Change security groups…</Menu.Item>}
+              {can('instance-firewalls') && <Menu.Item leftSection={<IconShield size={14} />} onClick={() => setOpen('instance-firewalls')}>{gcp ? 'Change firewall rules…' : 'Change security groups…'}</Menu.Item>}
               {can('remove') && (
                 <>
                   <Menu.Divider />

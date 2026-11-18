@@ -667,3 +667,90 @@ func TestCloudGoogleProjectMakesAndDeletesImages(t *testing.T) {
 		t.Fatalf("delete: %+v", ch)
 	}
 }
+
+func TestCloudGoogleProjectChangesFirewallRulesByNetworkTag(t *testing.T) {
+	e, fake, project := gcpEnv(t)
+	w := do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts/prepare", "admin-token", `{"provider":"gcp","accountId":"`+project+`","manage":true}`)
+	var p CloudPrepared
+	_ = json.Unmarshal(w.Body.Bytes(), &p)
+	fake.Roles[p.ReadRoleARN] = p.ExternalID
+	fake.Roles[p.ManageRoleARN] = p.ExternalID
+	web := []cloud.Rule{{Inbound: true, Protocol: "tcp", FromPort: 443, ToPort: 443, Source: "10.0.0.0/8"}}
+	fake.Resources["us-central1"] = []cloud.Resource{
+		{Kind: cloud.KindInstance, ID: "101", Name: "web-1", Region: "us-central1", Zone: "us-central1-a", State: "running", Size: "e2-small", Network: "700",
+			Links: []cloud.Ref{{Kind: cloud.KindFirewall, ID: "901", Name: "web-in"}, {Kind: cloud.KindFirewall, ID: "905", Name: "allow-internal"}}},
+	}
+	fake.Resources[gcp.GlobalRegion] = []cloud.Resource{
+		{Kind: cloud.KindNetwork, ID: "700", Name: "default", Region: gcp.GlobalRegion},
+		{Kind: cloud.KindFirewall, ID: "901", Name: "web-in", Region: gcp.GlobalRegion, Network: "700", Rules: web,
+			Details: map[string]string{"direction": "ingress", "targetTags": "web-in"}},
+		{Kind: cloud.KindFirewall, ID: "902", Name: "ssh-in", Region: gcp.GlobalRegion, Network: "700",
+			Rules:   []cloud.Rule{{Inbound: true, Protocol: "tcp", FromPort: 22, ToPort: 22, Source: "35.235.240.0/20"}},
+			Details: map[string]string{"direction": "ingress", "targetTags": "ssh-in"}},
+		{Kind: cloud.KindFirewall, ID: "904", Name: "block-all", Region: gcp.GlobalRegion, Network: "700",
+			Details: map[string]string{"direction": "ingress", "action": "deny"}},
+		{Kind: cloud.KindFirewall, ID: "905", Name: "allow-internal", Region: gcp.GlobalRegion, Network: "700",
+			Rules:   []cloud.Rule{{Inbound: true, Protocol: "all", FromPort: 0, ToPort: 65535, Source: "10.128.0.0/9"}},
+			Details: map[string]string{"direction": "ingress"}},
+	}
+	w = do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts", "admin-token",
+		`{"provider":"gcp","name":"web-gcp","accountId":"`+project+`","environment":"development","manage":true}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("connect with changes: %d %s", w.Code, w.Body)
+	}
+	var c CloudAccount
+	_ = json.Unmarshal(w.Body.Bytes(), &c)
+	deadline := time.Now().Add(5 * time.Second)
+	for !e.a.SyncCloudAccount(context.Background(), c) {
+		if time.Now().After(deadline) {
+			t.Fatal("the project was being read for too long")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	ask := func(region, body string, want int) CloudChange {
+		t.Helper()
+		w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes", "admin-token",
+			`{"accountId":"`+c.ID+`","region":"`+region+`",`+body+`}`)
+		if w.Code != want {
+			t.Fatalf("%s: %d %s, want %d", body, w.Code, w.Body, want)
+		}
+		var ch CloudChange
+		_ = json.Unmarshal(w.Body.Bytes(), &ch)
+		return ch
+	}
+	g := gcp.GlobalRegion
+	// Making one: Google names, inbound only, every port from every source.
+	ask(g, `"action":"firewall-create","spec":{"network":"700","name":"API In","rules":[{"inbound":true,"protocol":"tcp","fromPort":8443,"source":"10.1.0.0/16"}]}`, http.StatusBadRequest)
+	ask(g, `"action":"firewall-create","spec":{"network":"700","name":"web-in","rules":[{"inbound":true,"protocol":"tcp","fromPort":8443,"source":"10.1.0.0/16"}]}`, http.StatusConflict)
+	ask(g, `"action":"firewall-create","spec":{"network":"700","name":"api-in","rules":[{"inbound":false,"protocol":"tcp","fromPort":8443,"source":"10.1.0.0/16"}]}`, http.StatusBadRequest)
+	ask(g, `"action":"firewall-create","spec":{"network":"700","name":"api-in","rules":[{"inbound":true,"protocol":"tcp","fromPort":8443,"source":"10.1.0.0/16"},{"inbound":true,"protocol":"tcp","fromPort":22,"source":"0.0.0.0/0"}]}`, http.StatusBadRequest)
+	ch := ask(g, `"action":"firewall-create","spec":{"network":"700","name":"api-in","rules":[{"inbound":true,"protocol":"tcp","fromPort":8443,"source":"10.1.0.0/16"},{"inbound":true,"protocol":"tcp","fromPort":9443,"source":"10.1.0.0/16"}]}`, http.StatusOK)
+	if ch.Summary != "Make firewall rule api-in in default: allow tcp 8443, tcp 9443 from 10.1.0.0/16 to VMs tagged api-in" {
+		t.Fatalf("create: %+v", ch)
+	}
+
+	// Changing one.
+	ask(g, `"action":"firewall-rules","resourceId":"904","spec":{"add":[{"inbound":true,"protocol":"tcp","fromPort":80,"source":"10.0.0.0/8"}]}`, http.StatusConflict)
+	ask(g, `"action":"firewall-rules","resourceId":"901","spec":{"add":[{"inbound":true,"protocol":"tcp","fromPort":22,"source":"0.0.0.0/0"}]}`, http.StatusBadRequest)
+	ask(g, `"action":"firewall-rules","resourceId":"901","spec":{"remove":[{"inbound":true,"protocol":"tcp","fromPort":443,"toPort":443,"source":"10.0.0.0/8"}]}`, http.StatusBadRequest)
+	ch = ask(g, `"action":"firewall-rules","resourceId":"901","spec":{"add":[{"inbound":true,"protocol":"tcp","fromPort":22,"source":"0.0.0.0/0"}],"remove":[{"inbound":true,"protocol":"tcp","fromPort":443,"toPort":443,"source":"10.0.0.0/8"}]}`, http.StatusOK)
+	if ch.Level != cloud.LevelRemove || !strings.HasPrefix(ch.Summary, "Change firewall rule web-in: add tcp 22 from anywhere; remove tcp 443 from 10.0.0.0/8; opens SSH (22)") ||
+		!strings.HasSuffix(ch.Summary, "(reaches 1 VM)") {
+		t.Fatalf("rules: %+v", ch)
+	}
+
+	// Giving a VM its rules, by tag.
+	ask("us-central1", `"action":"instance-firewalls","resourceId":"101","spec":{"firewalls":["901"]}`, http.StatusBadRequest)
+	ask("us-central1", `"action":"instance-firewalls","resourceId":"101","spec":{"firewalls":["901","905","904"]}`, http.StatusBadRequest)
+	ch = ask("us-central1", `"action":"instance-firewalls","resourceId":"101","spec":{"firewalls":["905","902"]}`, http.StatusOK)
+	if ch.Summary != "Set the firewall rules of web-1 to allow-internal, ssh-in, by its network tags" {
+		t.Fatalf("instance: %+v", ch)
+	}
+
+	// Deleting one: not while it reaches a VM by tag.
+	ask(g, `"action":"firewall-delete","resourceId":"901","confirm":"web-in"`, http.StatusConflict)
+	ch = ask(g, `"action":"firewall-delete","resourceId":"902","confirm":"ssh-in"`, http.StatusOK)
+	if ch.Summary != "Delete firewall rule ssh-in (902)" {
+		t.Fatalf("delete: %+v", ch)
+	}
+}

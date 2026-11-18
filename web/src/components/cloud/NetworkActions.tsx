@@ -8,8 +8,8 @@ import {
 import { useState } from 'react'
 import { Field, relTime } from '~/components/primitives'
 import {
-  allows, allowsTags, cloudAccountsQuery, cloudItemsQuery, envOf, exposures, firewallEnv, firewallUsers, normalSource, portText, roleLacks, sameRule,
-  stricterEnv, targetsOf, validSource, type CloudAccount, type CloudEnvironment, type CloudItem, type CloudRule,
+  allows, allowsTags, cloudAccountsQuery, cloudItemsQuery, envOf, exposures, firewallEnv, firewallUsers, gcpRulesProblem, gcpTargetTags, gcpUneditable,
+  normalSource, portText, roleLacks, sameRule, stricterEnv, targetsOf, validSource, type CloudAccount, type CloudEnvironment, type CloudItem, type CloudRule,
 } from '~/lib/cloud'
 import { FS, INK, SP } from '~/theme'
 import { ChangeModal, TagsChange, useSubmit } from './ChangeModal'
@@ -44,11 +44,11 @@ interface Draft { inbound: boolean; service: string; from: number | ''; to: numb
 const newDraft = (inbound: boolean): Draft => ({ inbound, service: 'https', from: '', to: '', source: '', description: '' })
 
 /** A draft as a rule, or null while it is not one yet. */
-function ruleOf(d: Draft): CloudRule | null {
+function ruleOf(d: Draft, gcp = false): CloudRule | null {
   const svc = SERVICES.find((s) => s.value === d.service)
   if (!svc) return null
   const source = normalSource(d.source.split(' · ')[0] ?? '')
-  if (!validSource(source)) return null
+  if (!validSource(source, gcp)) return null
   let from = 0
   let to = 65535
   if (svc.protocol === 'icmp') { from = -1; to = -1 }
@@ -66,19 +66,23 @@ export function ruleText(r: CloudRule, names: Map<string, string>): string {
   return `${portText(r)} ${r.inbound ? 'from' : 'to'} ${src}`
 }
 
-/** The groups a source can name, in the same account and region. */
-function useSources(accountId: string, region: string) {
+/** The groups a source can name, in the same account and region; in Google Cloud, the network tags rules target. */
+function useSources(accountId: string, region: string, gcp = false) {
   const groups = useQuery(cloudItemsQuery('firewall'))
   const here = (groups.data ?? []).filter((g) => g.accountId === accountId && g.resource.region === region)
   const names = new Map(here.map((g) => [g.resource.id, g.resource.name]))
+  if (gcp) {
+    const tags = [...new Set(here.flatMap((g) => gcpTargetTags(g.resource)))].sort()
+    return { options: ['0.0.0.0/0', ...tags.map((t) => `tag:${t}`)], names }
+  }
   return { options: ['0.0.0.0/0', '::/0', ...here.map((g) => `${g.resource.id} · ${g.resource.name}`)], names }
 }
 
-function DraftRow({ d, set, drop, options }: { d: Draft; set: (d: Draft) => void; drop: () => void; options: string[] }) {
+function DraftRow({ d, set, drop, options, gcp = false }: { d: Draft; set: (d: Draft) => void; drop: () => void; options: string[]; gcp?: boolean }) {
   const svc = SERVICES.find((s) => s.value === d.service)
   const custom = svc && !svc.port && (svc.protocol === 'tcp' || svc.protocol === 'udp')
-  const r = ruleOf(d)
-  const bad = d.source.trim() !== '' && !validSource(normalSource(d.source.split(' · ')[0] ?? ''))
+  const r = ruleOf(d, gcp)
+  const bad = d.source.trim() !== '' && !validSource(normalSource(d.source.split(' · ')[0] ?? ''), gcp)
   return (
     <Stack gap={4}>
       <Group gap="xs" wrap="nowrap" align="flex-start">
@@ -89,8 +93,10 @@ function DraftRow({ d, set, drop, options }: { d: Draft; set: (d: Draft) => void
             <NumberInput aria-label="To port" placeholder="to" value={d.to} onChange={(v) => set({ ...d, to: v === '' ? '' : Number(v) })} min={0} max={65535} w={78} hideControls />
           </>
         )}
-        <Autocomplete aria-label={d.inbound ? 'From' : 'To'} placeholder={d.inbound ? 'From: 10.0.0.0/16, an address or a group' : 'To: a range or a group'}
-          value={d.source} onChange={(v) => set({ ...d, source: v })} data={options} style={{ flex: 1 }} error={bad ? 'Not a range, address or group' : undefined} />
+        <Autocomplete aria-label={d.inbound ? 'From' : 'To'}
+          placeholder={gcp ? 'From: 10.0.0.0/16, an address or tag:NAME' : d.inbound ? 'From: 10.0.0.0/16, an address or a group' : 'To: a range or a group'}
+          value={d.source} onChange={(v) => set({ ...d, source: v })} data={options} style={{ flex: 1 }}
+          error={bad ? (gcp ? 'Not a range, address or tag:NAME' : 'Not a range, address or group') : undefined} />
         <ActionIcon variant="subtle" color="gray" aria-label="Drop this rule" onClick={drop} mt={6}><IconX size={14} /></ActionIcon>
       </Group>
       <TextInput aria-label="Description" placeholder="Description, optional" size="xs" value={d.description}
@@ -125,6 +131,8 @@ export function FirewallActions({ it }: { it: CloudItem }) {
   const env = firewallEnv(it, users)
   const close = () => setOpen(null)
   const gcp = account?.provider === 'gcp'
+  const locked = gcp ? gcpUneditable(it.resource) : undefined
+  const tags = gcp ? gcpTargetTags(it.resource) : []
   return (
     <Gate it={it} account={account}>
       <Stack gap="xs">
@@ -135,7 +143,7 @@ export function FirewallActions({ it }: { it: CloudItem }) {
         )}
         <Group gap="xs">
           {allows(account, 'firewall-rules') && (
-            <Button size="xs" variant="default" leftSection={<IconShield size={14} />} disabled={Boolean(waiting)} onClick={() => setOpen('rules')}>Edit rules</Button>
+            <Button size="xs" variant="default" leftSection={<IconShield size={14} />} disabled={Boolean(waiting) || Boolean(gcp && locked)} onClick={() => setOpen('rules')}>Edit rules</Button>
           )}
           {allowsTags(account, 'firewall') && (
             <Button size="xs" variant="default" leftSection={<IconTag size={14} />} disabled={Boolean(waiting)} onClick={() => setOpen('tags')}>Tags</Button>
@@ -147,14 +155,20 @@ export function FirewallActions({ it }: { it: CloudItem }) {
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Item color="rose" leftSection={<IconTrash size={14} />} onClick={() => setOpen('delete')}>
-                  Delete security group…
+                  {gcp ? 'Delete firewall rule…' : 'Delete security group…'}
                 </Menu.Item>
               </Menu.Dropdown>
             </Menu>
           )}
         </Group>
+        {locked && <Text size={FS.meta} c="dimmed">{locked} Change it in the Google Cloud console.</Text>}
+        {gcp && !locked && (
+          <Text size={FS.meta} c="dimmed">
+            {tags.length ? `It reaches VMs tagged ${tags.join(', ')}; give it to a VM from the VM's panel.` : 'It has no target tags, so it reaches every VM in its network.'}
+          </Text>
+        )}
         <Text size={FS.meta} c="dimmed">
-          {users.length === 0 ? 'Nothing uses this group.' : `Used by ${users.map((u) => u.resource.name).join(', ')}.`}
+          {users.length === 0 ? (gcp ? 'It reaches no VM now.' : 'Nothing uses this group.') : `${gcp ? 'Reaches' : 'Used by'} ${users.map((u) => u.resource.name).join(', ')}.`}
           {users.length > 0 && env !== envOf(it.resource.tags, it.environment) && ` Changes to it are ${env} changes, as the strictest of them.`}
         </Text>
         {open === 'rules' && <RulesEditor it={it} env={env} users={users} account={account} onClose={close} />}
@@ -186,15 +200,18 @@ function RulesEditor({ it, env, users, account, onClose, strike }: {
 }) {
   const r = it.resource
   const rules = r.rules ?? []
-  const { options, names } = useSources(it.accountId, r.region)
+  const gcp = account?.provider === 'gcp'
+  const { options, names } = useSources(it.accountId, r.region, gcp)
   const [removed, setRemoved] = useState<Set<number>>(() => new Set(strike ? rules.flatMap((x, i) => (sameRule(x, strike) ? [i] : [])) : []))
   const [drafts, setDrafts] = useState<Draft[]>([])
   const [reason, setReason] = useState('')
   const { submit, busy } = useSubmit(onClose)
-  const add = drafts.map(ruleOf)
+  const add = drafts.map((d) => ruleOf(d, gcp))
   const ready = add.every(Boolean)
   const adding = add.filter((x): x is CloudRule => x !== null)
   const remove = rules.filter((_, i) => removed.has(i))
+  const shapeProblem = gcp && ready && adding.length + remove.length > 0
+    ? gcpRulesProblem([...rules.filter((_, i) => !removed.has(i)), ...adding]) : undefined
   const dup = adding.some((x, i) => adding.slice(0, i).some((y) => sameRule(x, y)) ||
     rules.some((y, j) => !removed.has(j) && sameRule(x, y)))
   const exposes = exposures(adding)
@@ -220,7 +237,7 @@ function RulesEditor({ it, env, users, account, onClose, strike }: {
           </Group>
         ))}
         {drafts.map((d, i) => d.inbound !== inbound ? null : (
-          <DraftRow key={`d${i}`} d={d} options={options} set={(n) => setDrafts(drafts.map((x, j) => (j === i ? n : x)))}
+          <DraftRow key={`d${i}`} d={d} options={options} gcp={gcp} set={(n) => setDrafts(drafts.map((x, j) => (j === i ? n : x)))}
             drop={() => setDrafts(drafts.filter((_, j) => j !== i))} />
         ))}
         <Button variant="subtle" size="xs" w="fit-content" leftSection={<IconPlus size={13} />} onClick={() => setDrafts([...drafts, newDraft(inbound)])}>
@@ -232,12 +249,12 @@ function RulesEditor({ it, env, users, account, onClose, strike }: {
   return (
     <ChangeModal title={`Rules of ${r.name}`} env={env} level={exposes.length ? 'remove' : 'change'} reason={reason} setReason={setReason}
       onClose={onClose} busy={busy} submit={changes ? `Save ${changes} change${changes === 1 ? '' : 's'}` : 'Save'}
-      disabled={changes === 0 || !ready || dup || roleLacks(account, 'firewall-rules')}
+      disabled={changes === 0 || !ready || dup || Boolean(shapeProblem) || roleLacks(account, 'firewall-rules')}
       onSubmit={() => void submit({ accountId: it.accountId, region: r.region, action: 'firewall-rules', resourceId: r.id,
         spec: { add: adding, remove }, reason }, 'Rules changed')}>
       <RoleNeedsUpdate account={account} action="firewall-rules" />
       {section(true)}
-      {section(false)}
+      {!gcp && section(false)}
       {changes > 0 && (
         <Field label="What changes">
           <Stack gap={2} mt={4}>
@@ -247,8 +264,12 @@ function RulesEditor({ it, env, users, account, onClose, strike }: {
         </Field>
       )}
       {dup && <Text size={FS.meta} c={INK.denied}>A rule being added is already in the group, or added twice.</Text>}
+      {shapeProblem && <Text size={FS.meta} c={INK.denied}>{shapeProblem}</Text>}
       <ExposureAlert exposes={exposes} level />
-      {users.length > 0 && changes > 0 && (
+      {gcp && users.length > 0 && changes > 0 && (
+        <Text size={FS.meta} c="dimmed">Applies at once to the {users.length} VM{users.length === 1 ? '' : 's'} it reaches. Google replaces the rule's ports and sources in one update.</Text>
+      )}
+      {!gcp && users.length > 0 && changes > 0 && (
         <Text size={FS.meta} c="dimmed">
           Applies at once to {users.length} instance{users.length === 1 ? '' : 's'} or load balancer{users.length === 1 ? '' : 's'} using it.
           Rules are taken away before new ones are added, so the group is never briefly open to both.
@@ -269,20 +290,27 @@ function FirewallDelete({ it, env, users, account, onClose }: {
   const naming = (groups.data ?? []).find((g) => g.accountId === it.accountId && g.resource.id !== r.id &&
     (g.resource.rules ?? []).some((x) => x.source === r.id))
   const stack = r.tags?.['aws:cloudformation:stack-name']
-  const refusal = r.name === 'default' ? 'every network keeps its default group'
+  const gcp = account?.provider === 'gcp'
+  const tagged = gcp && gcpTargetTags(r).length > 0
+  const refusal = gcp ? (tagged && users.length ? `it reaches ${users.map((u) => u.resource.name).join(', ')}; take it off them first` : '')
+    : r.name === 'default' ? 'every network keeps its default group'
     : users.length ? `${users.map((u) => u.resource.name).join(', ')} use${users.length === 1 ? 's' : ''} it; take it off them first`
       : naming ? `a rule in ${naming.resource.name} names it; remove that rule first`
         : stack ? `it belongs to CloudFormation stack ${stack}` : ''
   return (
     <ChangeModal title={`Delete ${r.name}?`} env={env} level="remove" reason={reason} setReason={setReason} onClose={onClose} busy={busy}
-      submit="Delete security group" color="rose" disabled={Boolean(refusal) || (typed.trim() !== r.name && typed.trim() !== r.id) || roleLacks(account, 'firewall-delete')}
+      submit={gcp ? 'Delete firewall rule' : 'Delete security group'} color="rose" disabled={Boolean(refusal) || (typed.trim() !== r.name && typed.trim() !== r.id) || roleLacks(account, 'firewall-delete')}
       onSubmit={() => void submit({ accountId: it.accountId, region: r.region, action: 'firewall-delete', resourceId: r.id, confirm: typed.trim(), reason }, 'Deleted')}>
       <RoleNeedsUpdate account={account} action="firewall-delete" />
       {refusal ? (
         <Alert color="rose" variant="light" title="Argus will not do this"><Text size={FS.meta}>It cannot be deleted because {refusal}.</Text></Alert>
       ) : (
         <>
-          <Text size={FS.body} lh={1.55}>AWS deletes the group and its rules. Nothing uses it now. This cannot be undone.</Text>
+          <Text size={FS.body} lh={1.55}>
+            {gcp
+              ? `Google deletes the firewall rule.${users.length ? ` It reaches every VM in its network, so ${users.length} VM${users.length === 1 ? '' : 's'} lose what it lets in at once.` : ' It reaches no VM now.'} This cannot be undone.`
+              : 'AWS deletes the group and its rules. Nothing uses it now. This cannot be undone.'}
+          </Text>
           <TextInput label={<>Type <Text span ff="monospace" fw={700}>{r.name}</Text> to confirm</>} value={typed}
             onChange={(e) => setTyped(e.currentTarget.value)} data-autofocus />
         </>
@@ -298,7 +326,10 @@ export function NewFirewall({ onClose }: { onClose: () => void }) {
   const manageable = (accounts.data?.accounts ?? []).filter((a) => a.access === 'manage')
   const [acct, setAcct] = useState<string | null>(manageable.length === 1 ? manageable[0]!.id : null)
   const account = manageable.find((a) => a.id === acct)
-  const [reg, setReg] = useState<string | null>(account?.regions.length === 1 ? account.regions[0]! : null)
+  const gcp = account?.provider === 'gcp'
+  const [pickedReg, setReg] = useState<string | null>(account?.regions.length === 1 ? account.regions[0]! : null)
+  // A Google network and its firewall rules are global.
+  const reg = gcp ? 'global' : pickedReg
   const here = (networks.data ?? []).filter((n) => n.accountId === acct && n.resource.region === reg)
   const [net, setNet] = useState<string | null>(null)
   const [name, setName] = useState('')
@@ -306,16 +337,19 @@ export function NewFirewall({ onClose }: { onClose: () => void }) {
   const [drafts, setDrafts] = useState<Draft[]>([newDraft(true)])
   const [reason, setReason] = useState('')
   const { submit, busy } = useSubmit(onClose)
-  const { options } = useSources(acct ?? '', reg ?? '')
-  const rules = drafts.map(ruleOf)
+  const { options } = useSources(acct ?? '', reg ?? '', gcp)
+  const rules = drafts.map((d) => ruleOf(d, gcp))
   const ready = rules.every(Boolean)
-  const exposes = exposures(rules.filter((x): x is CloudRule => x !== null))
+  const good = rules.filter((x): x is CloudRule => x !== null)
+  const exposes = exposures(good)
+  const shapeProblem = gcp && ready ? gcpRulesProblem(good) : undefined
   const network = net ?? (here.length === 1 ? here[0]!.resource.id : null)
-  const validName = /^[A-Za-z0-9 ._\-:/()#,@[\]+=&;{}!$*]{1,255}$/.test(name.trim()) && !name.trim().toLowerCase().startsWith('sg-')
+  const validName = gcp ? /^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$/.test(name.trim())
+    : /^[A-Za-z0-9 ._\-:/()#,@[\]+=&;{}!$*]{1,255}$/.test(name.trim()) && !name.trim().toLowerCase().startsWith('sg-')
   return (
-    <ChangeModal title="New security group" env={account?.environment ?? 'production'} level={exposes.length ? 'remove' : 'change'}
-      reason={reason} setReason={setReason} onClose={onClose} busy={busy} submit="Make group"
-      disabled={!acct || !reg || !network || !validName || !ready || roleLacks(account, 'firewall-create')}
+    <ChangeModal title={gcp ? 'New firewall rule' : 'New security group'} env={account?.environment ?? 'production'} level={exposes.length ? 'remove' : 'change'}
+      reason={reason} setReason={setReason} onClose={onClose} busy={busy} submit={gcp ? 'Make firewall rule' : 'Make group'}
+      disabled={!acct || !reg || !network || !validName || !ready || Boolean(shapeProblem) || roleLacks(account, 'firewall-create')}
       onSubmit={() => void submit({ accountId: acct!, region: reg!, action: 'firewall-create', spec: {
         network, name: name.trim(), description: desc.trim() || name.trim(), rules }, reason }, 'Made the group')}>
       <RoleNeedsUpdate account={account} action="firewall-create" />
@@ -323,26 +357,31 @@ export function NewFirewall({ onClose }: { onClose: () => void }) {
         <Select label="Account" placeholder="Pick an account" value={acct} onChange={(v) => { setAcct(v); setReg(null); setNet(null) }}
           data={manageable.map((a) => ({ value: a.id, label: a.name }))} allowDeselect={false} />
       )}
-      {account && account.regions.length > 1 && (
+      {account && !gcp && account.regions.length > 1 && (
         <Select label="Region" value={reg} onChange={(v) => { setReg(v); setNet(null) }} data={account.regions} allowDeselect={false} />
       )}
       <Select label="Network" placeholder={here.length ? 'Pick a network' : 'No networks read here yet'} value={network} onChange={setNet}
-        data={here.map((n) => ({ value: n.resource.id, label: `${n.resource.name} · ${n.resource.size}` }))} allowDeselect={false} />
+        data={here.map((n) => ({ value: n.resource.id, label: n.resource.size ? `${n.resource.name} · ${n.resource.size}` : n.resource.name }))} allowDeselect={false} />
       <Group grow align="flex-start">
-        <TextInput label="Name" value={name} onChange={(e) => setName(e.currentTarget.value)} maxLength={255}
-          error={name && !validName ? 'Letters, digits, spaces and ._-:/()#,@[]+=&;{}!$*, not starting with sg-' : undefined} />
+        <TextInput label="Name" value={name} onChange={(e) => setName(e.currentTarget.value)} maxLength={gcp ? 63 : 255}
+          error={name && !validName ? (gcp ? 'Lowercase letters, digits and -, up to 63, starting with a letter' : 'Letters, digits, spaces and ._-:/()#,@[]+=&;{}!$*, not starting with sg-') : undefined} />
         <TextInput label="Description" placeholder="Same as the name" value={desc} onChange={(e) => setDesc(e.currentTarget.value)} maxLength={255} />
       </Group>
       <Field label="Inbound rules">
         <Stack gap={SP.tight} mt={4}>
           {drafts.map((d, i) => (
-            <DraftRow key={i} d={d} options={options} set={(n) => setDrafts(drafts.map((x, j) => (j === i ? n : x)))}
+            <DraftRow key={i} d={d} options={options} gcp={gcp} set={(n) => setDrafts(drafts.map((x, j) => (j === i ? n : x)))}
               drop={() => setDrafts(drafts.filter((_, j) => j !== i))} />
           ))}
           <Button variant="subtle" size="xs" w="fit-content" leftSection={<IconPlus size={13} />} onClick={() => setDrafts([...drafts, newDraft(true)])}>Add a rule</Button>
         </Stack>
       </Field>
-      <Text size={FS.meta} c="dimmed">AWS gives every new group one outbound rule, all traffic anywhere. Edit it afterwards if the group should be stricter.</Text>
+      {shapeProblem && <Text size={FS.meta} c={INK.denied}>{shapeProblem}</Text>}
+      <Text size={FS.meta} c="dimmed">
+        {gcp
+          ? `It reaches VMs tagged ${name.trim() || 'with its name'}, none at first: give it to a VM from the VM's panel. Google lets VMs reach out anywhere unless a rule says otherwise.`
+          : 'AWS gives every new group one outbound rule, all traffic anywhere. Edit it afterwards if the group should be stricter.'}
+      </Text>
       <ExposureAlert exposes={exposes} level />
     </ChangeModal>
   )
@@ -354,24 +393,38 @@ export function InstanceFirewalls({ it, env, onClose }: { it: CloudItem; env: Cl
   const accounts = useQuery(cloudAccountsQuery())
   const groups = useQuery(cloudItemsQuery('firewall'))
   const account = accounts.data?.accounts.find((a) => a.id === it.accountId)
+  const gcp = account?.provider === 'gcp' || it.provider === 'gcp'
   const now = (r.links ?? []).filter((l) => l.kind === 'firewall').map((l) => l.id)
   const [ids, setIds] = useState<string[]>(now)
   const [reason, setReason] = useState('')
   const { submit, busy } = useSubmit(onClose)
-  const here = (groups.data ?? []).filter((g) => g.accountId === it.accountId && g.resource.region === r.region && g.resource.network === r.network)
+  const inNetwork = (groups.data ?? []).filter((g) => g.accountId === it.accountId && g.resource.region === (gcp ? 'global' : r.region) && g.resource.network === r.network)
+  // A Google rule with no target tags, or one that targets service accounts, cannot be given or taken off by tag.
+  const byTag = (g: CloudItem) => gcpTargetTags(g.resource).length > 0 && !g.resource.details?.targetServiceAccounts
+  const fixed = gcp ? inNetwork.filter((g) => now.includes(g.resource.id) && !byTag(g)) : []
+  const here = gcp ? inNetwork.filter(byTag) : inNetwork
   const added = here.filter((g) => ids.includes(g.resource.id) && !now.includes(g.resource.id))
   const exposes = exposures(added.flatMap((g) => g.resource.rules ?? []))
   const shown = added.reduce((e, g) => stricterEnv(e, envOf(g.resource.tags, g.environment)), env)
   const same = ids.length === now.length && ids.every((x) => now.includes(x))
+  const tagIds = ids.filter((x) => !fixed.some((g) => g.resource.id === x))
+  const max = gcp ? 10 : 5
   return (
-    <ChangeModal title={`Security groups of ${r.name}`} env={shown} level={exposes.length ? 'remove' : 'change'} reason={reason} setReason={setReason}
-      onClose={onClose} busy={busy} submit="Save groups" disabled={same || ids.length === 0 || ids.length > 5 || roleLacks(account, 'instance-firewalls')}
+    <ChangeModal title={gcp ? `Firewall rules of ${r.name}` : `Security groups of ${r.name}`} env={shown} level={exposes.length ? 'remove' : 'change'} reason={reason} setReason={setReason}
+      onClose={onClose} busy={busy} submit={gcp ? 'Save rules' : 'Save groups'}
+      disabled={same || (!gcp && ids.length === 0) || tagIds.length > max || roleLacks(account, 'instance-firewalls')}
       onSubmit={() => void submit({ accountId: it.accountId, region: r.region, action: 'instance-firewalls', resourceId: r.id,
-        spec: { firewalls: ids }, reason }, 'Groups changed')}>
+        spec: { firewalls: ids }, reason }, gcp ? 'Rules changed' : 'Groups changed')}>
       <RoleNeedsUpdate account={account} action="instance-firewalls" />
-      <MultiSelect label="Security groups" description="One to five, from the instance's own network. The instance gets exactly these." searchable
-        value={ids} onChange={setIds} maxValues={5}
-        data={here.map((g) => ({ value: g.resource.id, label: `${g.resource.name} · ${g.resource.id}` }))} />
+      <MultiSelect label={gcp ? 'Firewall rules by network tag' : 'Security groups'} searchable
+        description={gcp
+          ? `Up to ${max}, from the VM's network. Argus gives it exactly these by setting its network tags.`
+          : "One to five, from the instance's own network. The instance gets exactly these."}
+        value={tagIds} onChange={(v) => setIds([...fixed.map((g) => g.resource.id), ...v])} maxValues={max}
+        data={here.map((g) => ({ value: g.resource.id, label: gcp ? `${g.resource.name} · tag ${gcpTargetTags(g.resource).join(', ')}` : `${g.resource.name} · ${g.resource.id}` }))} />
+      {fixed.length > 0 && (
+        <Text size={FS.meta} c="dimmed">Also reaching it, whatever its tags: {fixed.map((g) => g.resource.name).join(', ')}. Change those in the Google Cloud console.</Text>
+      )}
       {added.length > 0 && (
         <Field label="Adds">
           <Stack gap={2} mt={4}>
@@ -382,7 +435,11 @@ export function InstanceFirewalls({ it, env, onClose }: { it: CloudItem; env: Cl
         </Field>
       )}
       <ExposureAlert exposes={exposes} level />
-      <Text size={FS.meta} c="dimmed">AWS applies the change at once, while the instance runs. Connections the old groups allowed and the new ones do not are cut.</Text>
+      <Text size={FS.meta} c="dimmed">
+        {gcp
+          ? 'Google applies the new tags at once, while the VM runs. Connections the old rules allowed and the new ones do not are cut. Other tags on the VM stay.'
+          : 'AWS applies the change at once, while the instance runs. Connections the old groups allowed and the new ones do not are cut.'}
+      </Text>
     </ChangeModal>
   )
 }

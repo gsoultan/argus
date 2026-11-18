@@ -89,7 +89,8 @@ async function manageableProject(page: Page) {
     body.accounts = body.accounts.map((a: { provider: string }) => a.provider === 'gcp'
       ? { ...a, access: 'manage', manageRoleArn: 'argus-manage@analytics-prod-4182.iam.gserviceaccount.com', actions: ['start', 'stop', 'reboot', 'resize', 'tags', 'protect', 'unprotect', 'volume-grow',
         'volume-create', 'volume-attach', 'volume-detach', 'volume-delete', 'snapshot-create', 'snapshot-delete',
-        'address-allocate', 'address-associate', 'address-disassociate', 'address-release', 'remove', 'image-create', 'image-delete'], tagKinds: ['instance', 'volume'] }
+        'address-allocate', 'address-associate', 'address-disassociate', 'address-release', 'remove', 'image-create', 'image-delete',
+        'firewall-create', 'firewall-rules', 'firewall-delete', 'instance-firewalls'], tagKinds: ['instance', 'volume'] }
       : a)
     await route.fulfill({ response: res, json: body })
   })
@@ -102,7 +103,8 @@ async function manageableProject(page: Page) {
           size: '200 GiB', details: { type: 'pd-balanced' }, links: [{ kind: 'instance', id: '3301', name: 'etl-1' }] } }]
       : kind === 'instance'
         ? [{ ...base, resource: { kind: 'instance', id: '3301', name: 'etl-1', region: 'us-central1', zone: 'us-central1-a', state: 'running',
-            size: 'e2-standard-4', addresses: ['10.128.0.7'], tags: { team: 'data' } } },
+            size: 'e2-standard-4', addresses: ['10.128.0.7'], tags: { team: 'data' }, network: '700',
+            links: [{ kind: 'firewall', id: '905', name: 'allow-internal' }] } },
           { ...base, resource: { kind: 'instance', id: '3302', name: 'etl-2', region: 'us-central1', zone: 'us-central1-a', state: 'stopped',
             size: 'e2-standard-4', addresses: ['10.128.0.8'], details: { deletionProtection: 'on' } } }]
         : kind === 'snapshot'
@@ -113,6 +115,19 @@ async function manageableProject(page: Page) {
             ? [{ ...base, resource: { kind: 'address', id: '7701', name: 'etl-ip', region: 'us-central1', state: 'unattached', publicIp: '35.1.1.1', addresses: ['35.1.1.1'] } },
               { ...base, resource: { kind: 'address', id: '7702', name: 'etl-2-ip', region: 'us-central1', state: 'attached', publicIp: '35.2.2.2', addresses: ['35.2.2.2'],
                 links: [{ kind: 'instance', id: '3302', name: 'etl-2' }] } }]
+            : kind === 'network'
+              ? [{ ...base, resource: { kind: 'network', id: '700', name: 'default', region: 'global', state: 'available' } }]
+            : kind === 'firewall'
+              ? [{ ...base, resource: { kind: 'firewall', id: '903', name: 'web-in', region: 'global', network: '700', state: 'available',
+                  details: { network: 'default', direction: 'ingress', priority: '1000', targetTags: 'web-in' },
+                  rules: [{ inbound: true, protocol: 'tcp', fromPort: 443, toPort: 443, source: '10.0.0.0/8' },
+                    { inbound: true, protocol: 'tcp', fromPort: 8080, toPort: 8080, source: '10.0.0.0/8' }] } },
+                { ...base, resource: { kind: 'firewall', id: '904', name: 'block-telnet', region: 'global', network: '700', state: 'available',
+                  details: { network: 'default', direction: 'ingress', priority: '900', action: 'deny' },
+                  rules: [{ inbound: true, protocol: 'tcp', fromPort: 23, toPort: 23, source: '0.0.0.0/0' }] } },
+                { ...base, resource: { kind: 'firewall', id: '905', name: 'allow-internal', region: 'global', network: '700', state: 'available',
+                  details: { network: 'default', direction: 'ingress', priority: '65534' },
+                  rules: [{ inbound: true, protocol: 'all', fromPort: 0, toPort: 65535, source: '10.128.0.0/9' }] } }]
             : []
     await route.fulfill({ json: { items } })
   })
@@ -464,4 +479,94 @@ test('a Google image is made of a VM\'s boot disk and deleted with nothing else'
   await del.getByRole('button', { name: /Delete image|Ask for approval/ }).click()
   await expect.poll(() => asked.length).toBe(2)
   expect(asked[1]).toMatchObject({ action: 'image-delete', resourceId: '9001', confirm: 'etl-golden', spec: { withSnapshots: false } })
+})
+
+test('a Google firewall rule is made, changed, given to a VM by its tag and deleted', async ({ page }) => {
+  await manageableProject(page)
+  const asked: Record<string, unknown>[] = []
+  await page.route('**/api/v1/cloud/changes', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const body = route.request().postDataJSON() as Record<string, unknown>
+    asked.push(body)
+    await route.fulfill({ status: 202, json: { id: 'c' + asked.length, state: 'awaiting_approval', summary: 'Firewall', action: body.action } })
+  })
+  await signIn(page)
+  await page.goto('/cloud?tab=network')
+
+  // Making one: global, a Compute Engine name, sources may be network tags, and it reaches VMs tagged with its name.
+  await page.getByRole('button', { name: /^New firewall/ }).click()
+  const make = page.getByRole('dialog', { name: /New firewall rule/ })
+  await expect(make.getByLabel('Region')).toHaveCount(0)
+  await make.getByLabel('Name').fill('API In')
+  await expect(make.getByText(/Lowercase letters, digits and -/)).toBeVisible()
+  await make.getByLabel('Name').fill('api-in')
+  await expect(make.getByText(/It reaches VMs tagged api-in, none at first/)).toBeVisible()
+  await make.getByLabel('From', { exact: true }).fill('tag:web-in')
+  await make.getByRole('button', { name: 'Add a rule' }).click()
+  await make.getByLabel('Service', { exact: true }).nth(1).click()
+  await page.getByRole('option', { name: 'SSH · tcp 22' }).click()
+  await make.getByLabel('From', { exact: true }).nth(1).fill('10.1.0.0/16')
+  await expect(make.getByText(/every port it lists in from every source it lists/)).toBeVisible()
+  await expect(make.getByRole('button', { name: /Make firewall rule|Ask for approval/ })).toBeDisabled()
+  await make.getByLabel('From', { exact: true }).nth(1).fill('tag:web-in')
+  await expect(make.getByText(/every port it lists in from every source it lists/)).toHaveCount(0)
+  await make.getByLabel('Why').fill('API from the web tier')
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/20-new-firewall-rule.png` })
+  await make.getByRole('button', { name: /Make firewall rule|Ask for approval/ }).click()
+  await expect.poll(() => asked.length).toBe(1)
+  expect(asked[0]).toMatchObject({ action: 'firewall-create', region: 'global', spec: { network: '700', name: 'api-in',
+    rules: [{ protocol: 'tcp', fromPort: 443, source: 'tag:web-in' }, { protocol: 'tcp', fromPort: 22, source: 'tag:web-in' }] } })
+
+  // A deny rule is left to the Google Cloud console.
+  await page.goto('/cloud?tab=network')
+  await page.getByText('block-telnet').first().click()
+  await expect(page.getByRole('dialog').getByText(/It denies traffic/)).toBeVisible()
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'Edit rules' })).toBeDisabled()
+
+  // Changing one: inbound only, and each port keeps the same sources.
+  await page.goto('/cloud?tab=network')
+  await page.getByText('web-in').first().click()
+  await expect(page.getByRole('dialog').getByText(/It reaches VMs tagged web-in/)).toBeVisible()
+  await page.getByRole('dialog').getByRole('button', { name: 'Edit rules' }).click()
+  const rules = page.getByRole('dialog', { name: /Rules of web-in/ })
+  await expect(rules.getByText('Outbound rules')).toHaveCount(0)
+  await rules.getByRole('button', { name: 'Add an inbound rule' }).click()
+  await rules.getByLabel('From', { exact: true }).fill('192.168.0.0/16')
+  await expect(rules.getByText(/every port it lists in from every source it lists/)).toBeVisible()
+  await rules.getByRole('button', { name: 'Take this rule away' }).nth(1).click()
+  await rules.getByRole('button', { name: 'Take this rule away' }).first().click()
+  await expect(rules.getByText(/every port it lists in from every source it lists/)).toHaveCount(0)
+  await rules.getByLabel('Why').fill('Only the office reaches it now')
+  await rules.getByRole('button', { name: /Save 3 changes|Ask for approval/ }).click()
+  await expect.poll(() => asked.length).toBe(2)
+  expect(asked[1]).toMatchObject({ action: 'firewall-rules', resourceId: '903', region: 'global',
+    spec: { add: [{ protocol: 'tcp', fromPort: 443, source: '192.168.0.0/16' }], remove: [{ fromPort: 443 }, { fromPort: 8080 }] } })
+
+  // Giving rules to a VM: by network tag, and a rule with no targets stays.
+  await page.goto('/cloud?tab=instances')
+  await page.getByText('etl-1').first().click()
+  await page.getByRole('dialog').getByRole('button', { name: 'More actions' }).click()
+  await page.getByRole('menuitem', { name: 'Change firewall rules…' }).click()
+  const vm = page.getByRole('dialog', { name: /Firewall rules of etl-1/ })
+  await expect(vm.getByText(/Also reaching it, whatever its tags: allow-internal/)).toBeVisible()
+  await vm.getByLabel(/Firewall rules by network tag/).click()
+  await expect(page.getByRole('option', { name: /block-telnet/ })).toHaveCount(0)
+  await page.getByRole('option', { name: /web-in · tag web-in/ }).click()
+  await vm.getByLabel('Why').fill('Serve HTTPS')
+  await vm.getByRole('button', { name: /Save rules|Ask for approval/ }).click()
+  await expect.poll(() => asked.length).toBe(3)
+  expect(asked[2]).toMatchObject({ action: 'instance-firewalls', resourceId: '3301', spec: { firewalls: ['905', '903'] } })
+
+  // Deleting one that reaches no VM by tag.
+  await page.goto('/cloud?tab=network')
+  await page.getByText('web-in').first().click()
+  await page.getByRole('dialog').getByRole('button', { name: 'More actions' }).click()
+  await page.getByRole('menuitem', { name: 'Delete firewall rule…' }).click()
+  const del = page.getByRole('dialog', { name: /Delete/ }).last()
+  await expect(del.getByText(/Google deletes the firewall rule. It reaches no VM now/)).toBeVisible()
+  await del.getByLabel(/to confirm/).fill('web-in')
+  await del.getByLabel('Why').fill('Unused')
+  await del.getByRole('button', { name: /Delete firewall rule|Ask for approval/ }).click()
+  await expect.poll(() => asked.length).toBe(4)
+  expect(asked[3]).toMatchObject({ action: 'firewall-delete', resourceId: '903', confirm: 'web-in' })
 })

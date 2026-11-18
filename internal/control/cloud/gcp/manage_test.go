@@ -78,6 +78,11 @@ func (g *fakeManage) handler() http.Handler {
 		}
 	}))
 	mux.HandleFunc("GET /compute/v1/projects/{p}/zones/{z}/instances/{id}", auth(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Query().Get("fields"), "name,tags") {
+			_, _ = w.Write([]byte(`{"name":"web-1","tags":{"items":["http-server","team-x"],"fingerprint":"tg-1"},
+				"networkInterfaces":[{"network":"` + link + `/global/networks/default"}]}`))
+			return
+		}
 		if strings.HasPrefix(r.URL.Query().Get("fields"), "networkInterfaces") {
 			ip := "34.1.2.3"
 			if r.PathValue("id") == "web-1" {
@@ -117,6 +122,27 @@ func (g *fakeManage) handler() http.Handler {
 			{"name":"baking","status":"PENDING","diskSizeGb":"10"},
 			{"name":"win-golden","status":"READY","diskSizeGb":"50","guestOsFeatures":[{"type":"WINDOWS"}]}]}`))
 	}))
+	mux.HandleFunc("GET /compute/v1/projects/{p}/global/firewalls", auth(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"items":[
+			{"id":"901","name":"allow-http","network":"` + link + `/global/networks/default","targetTags":["http-server"]},
+			{"id":"903","name":"web-in","network":"` + link + `/global/networks/default","targetTags":["web-in"]},
+			{"id":"905","name":"allow-internal","network":"` + link + `/global/networks/default"},
+			{"id":"906","name":"by-sa","network":"` + link + `/global/networks/default","targetServiceAccounts":["x@y.iam.gserviceaccount.com"]},
+			{"id":"907","name":"elsewhere","network":"` + link + `/global/networks/other","targetTags":["web-in"]}]}`))
+	}))
+	mux.HandleFunc("GET /compute/v1/projects/{p}/global/networks/{id}", auth(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"selfLink":"` + link + `/global/networks/default"}`))
+	}))
+	mux.HandleFunc("PUT /compute/v1/", auth(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		g.mu.Lock()
+		g.posts = append(g.posts, "PUT "+r.URL.Path)
+		g.bodies = append(g.bodies, string(b))
+		g.agents = append(g.agents, r.Header.Get("User-Agent"))
+		g.queries = append(g.queries, r.URL.RawQuery)
+		g.mu.Unlock()
+		_, _ = w.Write([]byte(`{"name":"operation-p","status":"RUNNING"}`))
+	}))
 	mux.HandleFunc("GET /compute/v1/projects/{p}/regions/{rg}", auth(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"zones":["` + link + `/zones/us-central1-c","` + link + `/zones/us-central1-a"]}`))
 	}))
@@ -129,6 +155,12 @@ func (g *fakeManage) handler() http.Handler {
 			_, _ = w.Write([]byte(`{"name":"allow-http","network":"` + link + `/global/networks/default","targetTags":["http-server"]}`))
 		case "902":
 			_, _ = w.Write([]byte(`{"name":"allow-ssh","network":"` + link + `/global/networks/default","targetTags":["ssh","http-server"]}`))
+		case "903":
+			_, _ = w.Write([]byte(`{"id":"903","name":"web-in","network":"` + link + `/global/networks/default","direction":"INGRESS","priority":1000,
+				"allowed":[{"IPProtocol":"tcp","ports":["443","8080"]}],"sourceRanges":["10.0.0.0/8"],"targetTags":["web-in"],"fingerprint":"fw-1"}`))
+		case "904":
+			_, _ = w.Write([]byte(`{"id":"904","name":"block-all","network":"` + link + `/global/networks/default","direction":"INGRESS",
+				"denied":[{"IPProtocol":"all"}],"sourceRanges":["0.0.0.0/0"]}`))
 		default:
 			_, _ = w.Write([]byte(`{"name":"other-net","network":"` + link + `/global/networks/other"}`))
 		}
@@ -190,6 +222,10 @@ func (g *fakeManage) handler() http.Handler {
 		if strings.HasSuffix(r.URL.Path, "/zones/us-central1-a/disks") {
 			_, _ = w.Write([]byte(`{"name":"operation-c","status":"RUNNING","targetId":"301",
 				"selfLink":"` + link + `/zones/us-central1-a/operations/operation-c"}`))
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/global/firewalls") {
+			_, _ = w.Write([]byte(`{"name":"operation-f","status":"RUNNING","targetId":"908"}`))
 			return
 		}
 		if strings.HasSuffix(r.URL.Path, "/global/images") {
@@ -303,7 +339,7 @@ func TestOnlyBuiltChangesAreSupported(t *testing.T) {
 			t.Errorf("%s should be supported", a)
 		}
 	}
-	for _, a := range []cloud.Action{cloud.ActionHibernate, cloud.ActionFirewallCreate} {
+	for _, a := range []cloud.Action{cloud.ActionHibernate, cloud.ActionTargetRegister} {
 		if cloud.Supports(p, a) {
 			t.Errorf("%s is not built for Google Cloud yet", a)
 		}
@@ -689,7 +725,7 @@ func TestAVMIsLaunchedFromAnImageFamilyWithNoServiceAccount(t *testing.T) {
 	for _, bad := range []cloud.LaunchSpec{
 		func() cloud.LaunchSpec { b := spec; b.Zone = "europe-west1-b"; return b }(),
 		func() cloud.LaunchSpec { b := spec; b.Image = "projects/evil/global/images/x"; return b }(),
-		func() cloud.LaunchSpec { b := spec; b.Firewalls = []string{"903"}; return b }(),
+		func() cloud.LaunchSpec { b := spec; b.Firewalls = []string{"999"}; return b }(),
 		func() cloud.LaunchSpec { b := spec; b.Name = "Web 3"; return b }(),
 	} {
 		if _, err := p.Launch(ctx, acct, "alice@example.com", bad); err == nil {

@@ -66,6 +66,11 @@ var supported = map[cloud.Action]bool{
 
 	cloud.ActionRemove: true,
 	cloud.ActionLaunch: true,
+
+	cloud.ActionFirewallCreate:    true,
+	cloud.ActionFirewallRules:     true,
+	cloud.ActionFirewallDelete:    true,
+	cloud.ActionInstanceFirewalls: true,
 }
 
 // TaggableKinds are the kinds Argus labels in Google Cloud so far.
@@ -83,7 +88,8 @@ func SupportedActions() []cloud.Action {
 		cloud.ActionVolumeCreate, cloud.ActionVolumeAttach, cloud.ActionVolumeDetach, cloud.ActionVolumeDelete,
 		cloud.ActionSnapshotCreate, cloud.ActionSnapshotDelete, cloud.ActionImageCreate, cloud.ActionImageDelete,
 		cloud.ActionAddressAllocate, cloud.ActionAddressAssociate, cloud.ActionAddressDisassociate, cloud.ActionAddressRelease,
-		cloud.ActionRemove, cloud.ActionLaunch} {
+		cloud.ActionRemove, cloud.ActionLaunch,
+		cloud.ActionFirewallCreate, cloud.ActionFirewallRules, cloud.ActionFirewallDelete, cloud.ActionInstanceFirewalls} {
 		if supported[a] {
 			out = append(out, a)
 		}
