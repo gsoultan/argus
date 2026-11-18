@@ -431,7 +431,8 @@ func (a *API) postAssetLogRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := RunQueued
-	if t.view.Rule.NeedsApproval {
+	dr := directRuns{}
+	if a.runWaits(r.Context(), t.view.Rule.NeedsApproval, KindServerUpkeep, asset.Tags, sess.Email, asset.Hostname, dr) {
 		state = RunAwaitingApproval
 	}
 	run, err := a.store.CreateLogRun(r.Context(), newLogRun{Hostname: t.agent, AssetHostname: asset.Hostname,
@@ -444,6 +445,7 @@ func (a *API) postAssetLogRun(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "log cleanup", err)
 		return
 	}
+	dr.record(r.Context(), a, sess.Email, asset.Hostname, "Ran a log cleanup on "+asset.Hostname+": "+plan.Summary)
 	waits := ""
 	if state == RunAwaitingApproval {
 		waits = "; it waits for another admin to approve it"

@@ -480,7 +480,8 @@ func (a *API) postAndroidAppRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "action is install, uninstall, disable or restore")
 		return
 	}
-	if t.view.Rule.NeedsApproval {
+	dr := directRuns{}
+	if a.runWaits(r.Context(), t.view.Rule.NeedsApproval, KindServerRuns, asset.Tags, sess.Email, asset.Hostname, dr) {
 		n.State = RunAwaitingApproval
 	}
 	runs, err := a.store.CreatePackageRuns(r.Context(), []newRun{n})
@@ -494,6 +495,7 @@ func (a *API) postAndroidAppRun(w http.ResponseWriter, r *http.Request) {
 	}
 	run := runs[0]
 	run.AssetID = asset.ID
+	dr.record(r.Context(), a, sess.Email, asset.Hostname, "Ran "+runPhrase(run)+" on "+asset.Hostname+" (run "+run.ID+")")
 	extra := ""
 	if n.Mode == AppInstall {
 		extra = fmt.Sprintf(" from %s (SHA-256 %s)", file.FileName, file.SHA256)

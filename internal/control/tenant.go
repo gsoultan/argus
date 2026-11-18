@@ -321,6 +321,16 @@ CREATE TABLE IF NOT EXISTS argus_platform.recovery_key (
 	created_by    TEXT NOT NULL,
 	replace_token TEXT NOT NULL DEFAULT ''
 );
+-- Approval policy rows no organization may loosen (approval_policy.go).
+-- environment is production, staging, other or all.
+CREATE TABLE IF NOT EXISTS argus_platform.approval_locks (
+	kind        TEXT NOT NULL,
+	environment TEXT NOT NULL,
+	reason      TEXT NOT NULL DEFAULT '',
+	set_by      TEXT NOT NULL,
+	set_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+	PRIMARY KEY (kind, environment)
+);
 CREATE TABLE IF NOT EXISTS argus_platform.rekey_orders (
 	tenant_id  TEXT PRIMARY KEY,
 	token      TEXT NOT NULL,

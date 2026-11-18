@@ -131,6 +131,11 @@ func (a *API) postRequest(w http.ResponseWriter, r *http.Request) {
 	}); aerr != nil {
 		a.log.Error("audit append failed", "error", aerr)
 	}
+	if out, ok := a.approveByPolicy(r.Context(), created, "",
+		"Gave themselves "+in.Principal+" on "+joinHosts(in.AssetHostnames)); ok {
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
 	a.alertRequestWaiting(r.Context(), created)
 
 	writeJSON(w, http.StatusOK, created)

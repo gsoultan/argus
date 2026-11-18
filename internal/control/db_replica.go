@@ -302,7 +302,10 @@ func (a *API) postReplica(w http.ResponseWriter, r *http.Request, email string, 
 	a.auditDB(ctx, "db.replica_requested", "notice", email, db.Hostname,
 		fmt.Sprintf("Asked for a streaming replica of %s's Postgres on %s (%s): %s. Waiting for an approver (request %s).",
 			db.Hostname, target.Hostname, in.Name, in.Reason, req.ID))
-	a.alertRequestWaiting(ctx, req)
+	if _, ok := a.approveByPolicy(ctx, req, db.Label,
+		"Made a streaming replica of "+db.Hostname+"'s Postgres on "+target.Hostname); !ok {
+		a.alertRequestWaiting(ctx, req)
+	}
 	row, _ = a.store.Replica(ctx, row.ID)
 	writeJSON(w, http.StatusAccepted, row)
 }

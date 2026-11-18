@@ -628,7 +628,7 @@ func (in *runRequest) validate() error {
 	return nil
 }
 
-func (a *API) newManualRun(t packageTarget, in runRequest, by string) newRun {
+func (a *API) newManualRun(ctx context.Context, t packageTarget, in runRequest, by string, dr directRuns) newRun {
 	n := newRun{
 		Hostname: t.agent, AssetHostname: t.asset.Hostname, Mode: in.Mode, Packages: in.Packages,
 		Holds: t.view.Holds, Reboot: in.Reboot, Trigger: "manual", State: RunQueued, RequestedBy: by,
@@ -646,7 +646,7 @@ func (a *API) newManualRun(t packageTarget, in runRequest, by string) newRun {
 	if in.Mode == PackagesPrepareRabbitMQ {
 		n.Holds = []string{}
 	}
-	if t.view.Rule.NeedsApproval {
+	if a.runWaits(ctx, t.view.Rule.NeedsApproval, KindServerRuns, t.asset.Tags, by, t.asset.Hostname, dr) {
 		n.State = RunAwaitingApproval
 	}
 	return n
@@ -683,7 +683,8 @@ func (a *API) postAssetPackageRun(w http.ResponseWriter, r *http.Request) {
 	if !packagesReady(w, t) || !rebootReady(w, t, in) || !releaseReady(w, t, in) || !rabbitMQReady(w, t, in) {
 		return
 	}
-	runs, err := a.store.CreatePackageRuns(r.Context(), []newRun{a.newManualRun(t, in, sess.Email)})
+	dr := directRuns{}
+	runs, err := a.store.CreatePackageRuns(r.Context(), []newRun{a.newManualRun(r.Context(), t, in, sess.Email, dr)})
 	if errors.Is(err, ErrRunActive) {
 		writeErr(w, http.StatusConflict, err.Error())
 		return
@@ -693,6 +694,7 @@ func (a *API) postAssetPackageRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.packageRunsAsked(r, sess.Email, runs, map[string]string{asset.Hostname: asset.ID})
+	a.recordDirectPackageRuns(r.Context(), dr, sess.Email, runs)
 	writeJSON(w, http.StatusAccepted, runs[0])
 }
 
@@ -744,6 +746,7 @@ func (a *API) postPackageRuns(w http.ResponseWriter, r *http.Request) {
 	var (
 		runs  []newRun
 		links = map[string]string{}
+		dr    = directRuns{}
 	)
 	for _, id := range ids {
 		asset, err := a.store.AssetByID(r.Context(), id)
@@ -769,7 +772,7 @@ func (a *API) postPackageRuns(w http.ResponseWriter, r *http.Request) {
 				"update the agent from its Settings tab first")
 			return
 		}
-		runs = append(runs, a.newManualRun(t, req, sess.Email))
+		runs = append(runs, a.newManualRun(r.Context(), t, req, sess.Email, dr))
 		links[asset.Hostname] = asset.ID
 	}
 	out, err := a.store.CreatePackageRuns(r.Context(), runs)
@@ -782,7 +785,15 @@ func (a *API) postPackageRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.packageRunsAsked(r, sess.Email, out, links)
+	a.recordDirectPackageRuns(r.Context(), dr, sess.Email, out)
 	writeJSON(w, http.StatusAccepted, out)
+}
+
+// recordDirectPackageRuns records the runs the approval policy let through.
+func (a *API) recordDirectPackageRuns(ctx context.Context, dr directRuns, by string, runs []PackageRun) {
+	for _, run := range runs {
+		dr.record(ctx, a, by, run.AssetHostname, "Ran "+describeMode(run)+" on "+run.AssetHostname+" (run "+run.ID+")")
+	}
 }
 
 // packageRunsAsked audits runs asked for and asks for the approvals they

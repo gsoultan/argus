@@ -389,6 +389,13 @@ func (a *API) postCloudSchedule(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "cloud schedule", err)
 		return
 	}
+	var direct *DirectAllowance
+	if p.NeedsApproval {
+		// Unless the approval policy lets them act directly.
+		if direct = a.actsDirectlyWithReason(r.Context(), KindCloudSchedule, EnvProduction, actor, in.Reason); direct != nil {
+			p.NeedsApproval = false
+		}
+	}
 	state := "active"
 	if p.NeedsApproval {
 		state = "awaiting_approval"
@@ -414,6 +421,7 @@ func (a *API) postCloudSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.auditSchedule(r.Context(), "applied", actor, s.Name, detail+".")
+	a.recordDirect(r.Context(), direct, actor, "schedule "+s.Name, "Made schedule "+s.Name+", which reaches Production", in.Reason)
 	writeJSON(w, http.StatusCreated, s)
 }
 
@@ -460,6 +468,13 @@ func (a *API) putCloudSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	waits := p.NeedsApproval || old.NeedsApproval
+	var direct *DirectAllowance
+	if waits && cur.State != "awaiting_approval" {
+		// Unless the approval policy lets them act directly.
+		if direct = a.actsDirectlyWithReason(r.Context(), KindCloudSchedule, EnvProduction, actor, in.Reason); direct != nil {
+			waits = false
+		}
+	}
 	detail := "Change " + cur.Name + " to " + describeVersion(in.CloudScheduleVersion)
 	if in.Reason != "" {
 		detail += ". Reason: " + in.Reason
@@ -492,6 +507,7 @@ func (a *API) putCloudSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.auditSchedule(r.Context(), "applied", actor, s.Name, detail+".")
+	a.recordDirect(r.Context(), direct, actor, "schedule "+s.Name, "Changed schedule "+s.Name+", which reaches Production", in.Reason)
 	writeJSON(w, http.StatusOK, s)
 }
 

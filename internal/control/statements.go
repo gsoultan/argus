@@ -293,8 +293,10 @@ func (a *API) postStatementAsk(w http.ResponseWriter, r *http.Request, email str
 	a.auditDB(r.Context(), "db.statement_requested", "notice", email, db.Hostname,
 		fmt.Sprintf("Asked to run %s on %s (%s): %s. Waiting for an approver (request %s).",
 			what, db.Name, db.Label, req.Justification, req.ID))
-	a.alertRequestWaiting(r.Context(), req)
-	a.alertEditorsWaiting(r.Context(), db, req, in.Summary)
+	if !a.approveAskByPolicy(r.Context(), req, db, in.Items) {
+		a.alertRequestWaiting(r.Context(), req)
+		a.alertEditorsWaiting(r.Context(), db, req, in.Summary)
+	}
 	asks, err := a.store.StatementAsks(r.Context(), []string{req.ID})
 	if err != nil || asks[req.ID] == nil {
 		a.fail(w, "statement approval", err)
