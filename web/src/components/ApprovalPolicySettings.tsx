@@ -40,7 +40,16 @@ export function ApprovalPolicySettings({ me }: { me: string }) {
       </Alert>
     )
   }
-  if (isLoading || !data) return <Skeleton h={320} />
+  if (isLoading) return <Skeleton h={320} />
+  // A control plane without the policy (older, or not answering) is said so
+  // plainly rather than drawn from a reply of the wrong shape.
+  if (!data || !Array.isArray(data.kinds) || !data.policy) {
+    return (
+      <Alert color="slate">
+        <Text size={FS.body}>This control plane has no approval policy yet. Every action waits for a second person, as before.</Text>
+      </Alert>
+    )
+  }
 
   const saved = data.policy
   const p = draft ?? saved

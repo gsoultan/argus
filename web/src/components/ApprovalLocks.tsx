@@ -16,7 +16,9 @@ export function ApprovalLocksCard() {
   const { data, isLoading } = useQuery(approvalLocksQuery(true))
   const save = useSaveApprovalLocks()
   const [draft, setDraft] = useState<ApprovalLock[] | null>(null)
-  if (isLoading || !data) return <Skeleton h={200} />
+  if (isLoading) return <Skeleton h={200} />
+  // A control plane without approval locks (older) shows nothing here.
+  if (!data || !Array.isArray(data.kinds) || !Array.isArray(data.locks)) return null
   const locks = draft ?? data.locks
   const has = (kind: string, env: string) => locks.find((l) => l.kind === kind && l.env === env)
   const toggle = (kind: string, env: ApprovalLock['env'], on: boolean) =>
