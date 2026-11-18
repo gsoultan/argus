@@ -275,6 +275,11 @@ type PGAdminOp struct {
 	Sources   []string `json:"sources,omitempty"`
 	Confirm   string   `json:"confirm,omitempty"`
 	Restart   bool     `json:"restart,omitempty"`
+	// Roles and privileges (see pgroles.go): the role to create, change,
+	// drop or describe; a membership; a grant or revoke.
+	RoleSpec  *PGRoleSpec   `json:"role,omitempty"`
+	Member    *PGMemberSpec `json:"member,omitempty"`
+	GrantSpec *PGGrantSpec  `json:"grant,omitempty"`
 }
 
 // PGConnInfo is a publisher, as fields. The helper turns it into a libpq
@@ -293,7 +298,8 @@ type PGConnInfo struct {
 // and is neither recorded nor audited.
 func (o *PGAdminOp) Mutates() bool {
 	switch o.Kind {
-	case AdminExtensionList, AdminPublicationList, AdminSubscriptionList, AdminNetwork:
+	case AdminExtensionList, AdminPublicationList, AdminSubscriptionList, AdminNetwork,
+		AdminRoleList, AdminRolePrivileges, AdminGrantObjects:
 		return false
 	}
 	return true
@@ -308,6 +314,11 @@ func (o *PGAdminOp) Redacted() PGAdminOp {
 			cc.Password = "[redacted]"
 		}
 		c.Conn = &cc
+	}
+	if c.RoleSpec != nil && c.RoleSpec.Password != "" {
+		r := *c.RoleSpec
+		r.Password = "[redacted]"
+		c.RoleSpec = &r
 	}
 	return c
 }

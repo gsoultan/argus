@@ -1090,19 +1090,38 @@ func (s *pgSession) adminOp(ctx context.Context, req tunnel.PGRequest) error {
 	}
 	if s.db.Level != tunnel.LevelDBA {
 		return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Code: "42501",
-			Error: "extensions and replication are DBA work; this session is at " + s.db.Level})
+			Error: "this is DBA work, through the server's postgres account; this session is at " + s.db.Level})
 	}
 	if op.Kind == tunnel.AdminNetwork || op.Kind == tunnel.AdminNetworkSet {
 		return s.network(ctx, req)
 	}
-	built, err := buildAdminSQL(op, s.g.Email)
-	if err != nil {
-		return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: err.Error()})
+	// A role's password becomes a SCRAM verifier here, before it is
+	// recorded, built or sent anywhere; only the verifier reaches the helper.
+	verifier := ""
+	if tunnel.PGRoleKind(op.Kind) {
+		var err error
+		if op, verifier, err = rolePassword(op); err != nil {
+			return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: err.Error()})
+		}
+	}
+	var text string
+	if tunnel.PGRoleKind(op.Kind) {
+		t, err := tunnel.PGRoleText(op, s.db.Name)
+		if err != nil {
+			return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: err.Error()})
+		}
+		text = t
+	} else {
+		built, err := buildAdminSQL(op, s.g.Email)
+		if err != nil {
+			return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: err.Error()})
+		}
+		text = built.text()
 	}
 	recorded := op.Mutates() && !op.Preview
 	if recorded {
 		// Recorded before the helper runs it. No record, no statement.
-		if err := s.record(tunnel.PGRecord{Kind: "admin", Request: req.ID, SQL: built.text()}); err != nil {
+		if err := s.record(tunnel.PGRecord{Kind: "admin", Request: req.ID, SQL: text, Approval: req.Approval}); err != nil {
 			return fmt.Errorf("the recording failed: %w", err)
 		}
 	}
@@ -1110,7 +1129,7 @@ func (s *pgSession) adminOp(ctx context.Context, req tunnel.PGRequest) error {
 	actx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	res := s.admin(actx, PGAdminRequest{Op: "admin", Database: s.db.Name, Socket: socketDir(s.db),
-		Port: s.db.Port, AdminUser: s.cfg.AdminUser, Role: s.g.Principal, Owner: s.g.Email, Admin: op})
+		Port: s.db.Port, AdminUser: s.cfg.AdminUser, Role: s.g.Principal, Owner: s.g.Email, Admin: op, Verifier: verifier})
 	elapsed := time.Since(start).Milliseconds()
 	if !res.OK {
 		if res.Error == "" {
