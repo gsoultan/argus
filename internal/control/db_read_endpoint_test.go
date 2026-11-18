@@ -130,10 +130,40 @@ func TestDatabaseReadEndpoint(t *testing.T) {
 	put("admin-token", "arn:tg/pg-ip", true, http.StatusBadRequest)
 	put("admin-token", "arn:tg/web", true, http.StatusBadRequest)
 
-	// Set: the primary and the replica go in, as argus-replicas.
-	ep := put("admin-token", "arn:tg/pg-read", true, http.StatusOK)
-	if ep.PrimaryInstance != pInst || ep.TargetName != "pg-read" || ep.Note != "" || ep.SetBy != e.admin {
+	// The account is production: setting it waits for a second person, and
+	// nothing goes in until then. It is not a change asked from Cloud.
+	body, _ := json.Marshal(map[string]any{"accountId": e.acct.ID, "region": storageRegion, "targetGroup": "arn:tg/pg-read",
+		"includePrimary": true, "reason": "reports"})
+	w := do(t, e.h, http.MethodPut, path, "admin-token", string(body))
+	var asked CloudChange
+	_ = json.Unmarshal(w.Body.Bytes(), &asked)
+	if w.Code != http.StatusAccepted || asked.State != "awaiting_approval" || asked.Action != cloud.ActionReadEndpoint ||
+		!strings.HasPrefix(asked.Summary, "Make pg-read the read endpoint of orders on "+primaryAsset.Hostname) {
+		t.Fatalf("ask: %d %s", w.Code, w.Body)
+	}
+	want(byHand)
+	if v := view(); v.Endpoint != nil || v.Pending == nil || v.Pending.ID != asked.ID {
+		t.Fatalf("pending not shown: %+v", v)
+	}
+	e.ask(t, "admin-token", `{"accountId":"`+e.acct.ID+`","region":"`+storageRegion+`","action":"read-endpoint","resourceId":"arn:tg/pg-read"}`,
+		http.StatusBadRequest)
+	if w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes/"+asked.ID+"/approve", "admin-token", ""); w.Code == http.StatusOK {
+		t.Fatal("the person who asked approved their own")
+	}
+
+	// Approved: the primary and the replica go in, as argus-replicas.
+	if done := e.decide(t, "approver-token", asked.ID, true); done.State != "applied" {
+		t.Fatalf("approve: %+v", done)
+	}
+	ep := view().Endpoint
+	if ep == nil || ep.PrimaryInstance != pInst || ep.TargetName != "pg-read" || ep.Note != "" || ep.SetBy != e.admin {
 		t.Fatalf("set: %+v", ep)
+	}
+	var approvedBy int
+	_ = e.s.pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action = 'db.read_endpoint_set' AND target = $1
+		AND detail LIKE '%approved by ' || $2 || '%'`, primary.Hostname, e.approve).Scan(&approvedBy)
+	if approvedBy != 1 {
+		t.Fatal("the set is not audited with who approved it")
 	}
 	e.called(t, "target-register arn:tg/pg-read "+pInst+" argus-replicas")
 	e.called(t, "target-register arn:tg/pg-read "+rInst+" argus-replicas")
@@ -169,7 +199,11 @@ func TestDatabaseReadEndpoint(t *testing.T) {
 	}
 	want(byHand, pInst, rInst)
 
-	// Leaving the primary out takes it out.
+	// On a staging account it is set at once. Leaving the primary out
+	// takes it out.
+	if _, err := e.s.pool.Exec(ctx, `UPDATE cloud_accounts SET environment = 'staging' WHERE id = $1::uuid`, e.acct.ID); err != nil {
+		t.Fatal(err)
+	}
 	if ep := put("admin-token", "arn:tg/pg-read", false, http.StatusOK); ep.PrimaryInstance != "" {
 		t.Fatalf("primary still in: %+v", ep)
 	}

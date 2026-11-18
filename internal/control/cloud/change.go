@@ -62,7 +62,8 @@ func LevelOf(a Action) Level {
 		ActionFirewallCreate, ActionFirewallRules, ActionInstanceFirewalls, ActionTargetRegister, ActionTargetDeregister,
 		ActionCapacityCreate, ActionCapacityCancel,
 		ActionTargetGroupCreate, ActionHealthCheck, ActionBalancerCreate, ActionGroupSize,
-		ActionScaleGroupCreate, ActionScaleGroupChange, ActionScaleAdd, ActionScaleRemove, ActionReplicaCreate:
+		ActionScaleGroupCreate, ActionScaleGroupChange, ActionScaleAdd, ActionScaleRemove, ActionReplicaCreate,
+		ActionReadEndpoint:
 		return LevelChange
 	case ActionRemove, ActionVolumeDelete, ActionSnapshotDelete, ActionImageDelete, ActionAddressRelease,
 		ActionFirewallDelete, ActionRIBuy, ActionSPBuy, ActionReplicaRemove:

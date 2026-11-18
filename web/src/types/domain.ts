@@ -1572,4 +1572,18 @@ export interface ReadEndpointChoice {
 export interface ReadEndpointView {
   endpoint: ReadEndpoint | null
   choices: ReadEndpointChoice[]
+  /** Setting it, asked on a production account and waiting for a second person in Approvals. */
+  pending?: ReadEndpointAsk
+}
+
+/** The cloud change that sets a read endpoint where it waits for approval: what the Streaming replicas tab shows of it. */
+export interface ReadEndpointAsk {
+  id: UUID
+  state: 'awaiting_approval' | 'applying' | 'applied' | 'failed' | 'declined' | 'cancelled' | 'lapsed'
+  resourceName: string
+  summary: string
+  reason: string
+  requestedBy: string
+  requestedAt: ISOTime
+  environment: string
 }

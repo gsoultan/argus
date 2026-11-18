@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Alert, Badge, Box, Button, Checkbox, Group, Loader, Modal, Paper, Select, Stack, Table, Text, Textarea, TextInput } from '@mantine/core'
+import { Alert, Anchor, Badge, Box, Button, Checkbox, Group, Loader, Modal, Paper, Select, Stack, Table, Text, Textarea, TextInput } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { IconLock } from '@tabler/icons-react'
 import { ButtonLink } from '~/components/links'
@@ -15,7 +15,7 @@ import {
 import { assetName } from '~/lib/assetType'
 import { FS } from '~/theme'
 import { canSee } from '~/lib/roles'
-import type { Database, DatabaseReplica, ReadEndpoint, ReadEndpointChoice } from '~/types/domain'
+import type { Database, DatabaseReplica, ReadEndpoint, ReadEndpointAsk, ReadEndpointChoice } from '~/types/domain'
 
 const MONO = { input: { fontFamily: 'var(--mantine-font-family-monospace)' } }
 
@@ -48,7 +48,7 @@ export function StreamingReplicas({ database, narrow }: { database: Database; na
       {refusal && <Alert color="slate" variant="light" p="xs" mb="sm"><Text size={FS.meta}>{refusal}.</Text></Alert>}
       {error && <Alert color="rose" variant="light" p="xs" mb="sm"><Text size={FS.meta}>{String((error as Error).message ?? error)}</Text></Alert>}
       {(ep || rows.some((r) => r.state === 'done')) && (
-        <ReadEndpointSection database={database} endpoint={ep} choices={endpoint.data?.choices ?? []} />
+        <ReadEndpointSection database={database} endpoint={ep} choices={endpoint.data?.choices ?? []} pending={endpoint.data?.pending} />
       )}
       {isLoading ? <Loader size={16} /> : rows.length === 0 ? (
         <Text size={FS.meta} c="dimmed">No streaming replicas of {database.hostname} were made from Argus.</Text>
@@ -120,8 +120,8 @@ of a network load balancer that Argus keeps to the primary, if asked, and
 the replicas that are not behind. Setting it is an admin's, on top of DBA
 access to the database; the server says no to anyone else as well.
 */
-function ReadEndpointSection({ database, endpoint, choices }: {
-  database: Database; endpoint: ReadEndpoint | null; choices: ReadEndpointChoice[]
+function ReadEndpointSection({ database, endpoint, choices, pending }: {
+  database: Database; endpoint: ReadEndpoint | null; choices: ReadEndpointChoice[]; pending?: ReadEndpointAsk
 }) {
   const { data: me } = useQuery(meQuery())
   const admin = canSee(me?.role, 'admin')
@@ -129,6 +129,7 @@ function ReadEndpointSection({ database, endpoint, choices }: {
   const [editing, setEditing] = useState(false)
   const usable = choices.filter((c) => !c.problem)
   const why = !admin ? 'Setting a read endpoint needs the admin or owner role'
+    : pending ? 'A change to it already waits for approval'
     : usable.length === 0 ? `No target group in a connected account takes TCP on port ${database.port} to instances` : undefined
   const drop = async () => {
     try {
@@ -144,6 +145,15 @@ function ReadEndpointSection({ database, endpoint, choices }: {
       <Group justify="space-between" align="flex-start" wrap="nowrap" gap="md">
         <Box>
           <Text size={FS.body} fw={600}>Read endpoint</Text>
+          {pending && (
+            <Alert color="amber" variant="light" p="xs" my={4} icon={<IconLock size={14} />} data-testid="read-endpoint-pending">
+              <Text size={FS.meta}>Waiting for approval: {pending.summary}.</Text>
+              <Text size={FS.micro} c="dimmed">
+                Asked by {pending.requestedBy} · {relTime(pending.requestedAt)}{pending.reason ? ` · ${pending.reason}` : ''}.
+                Someone else approves it in <Anchor href="/approvals" size={FS.micro}>Approvals</Anchor>; nothing goes in until then.
+              </Text>
+            </Alert>
+          )}
           {endpoint ? (
             <>
               <Text size={FS.meta}>
@@ -189,14 +199,19 @@ function SetReadEndpoint({ database, endpoint, choices, onClose }: {
   const set = useSetReadEndpoint()
   const [key, setKey] = useState<string | null>(endpoint ? choiceKey(endpoint) : null)
   const [primary, setPrimary] = useState(endpoint?.includePrimary ?? true)
+  const [reason, setReason] = useState('')
   const picked = choices.find((c) => choiceKey(c) === key)
   const moving = endpoint && picked && choiceKey(endpoint) !== key
   const submit = async () => {
     if (!picked) return
     try {
-      const ep = await set.mutateAsync({ id: database.id, accountId: picked.accountId, region: picked.region,
-        targetGroup: picked.targetGroup, includePrimary: primary })
-      notifyOk('Read endpoint set', ep.note ? ep.note : `Argus keeps ${ep.targetName} from now on.`)
+      const out = await set.mutateAsync({ id: database.id, accountId: picked.accountId, region: picked.region,
+        targetGroup: picked.targetGroup, includePrimary: primary, reason: reason.trim() || undefined })
+      if ('state' in out) {
+        notifyOk('Sent to approvers', `${picked.accountName} is ${out.environment}: nothing goes in ${picked.name} until someone else approves it in Approvals.`)
+      } else {
+        notifyOk('Read endpoint set', out.note ? out.note : `Argus keeps ${out.targetName} from now on.`)
+      }
       onClose()
     } catch (err) {
       notifyError('Not set', err)
@@ -223,6 +238,9 @@ function SetReadEndpoint({ database, endpoint, choices, onClose }: {
             <Text size={FS.meta}>3 · Only ever takes out what it put in. Targets added by hand stay. In the cloud it runs as argus-replicas.</Text>
           </Stack>
         </Box>
+        <Textarea label="Why (approvers see this on production)" value={reason} onChange={(e) => setReason(e.currentTarget.value)}
+          autosize minRows={1} maxLength={500} placeholder="Send the hourly reports to the replicas" />
+        <Text size={FS.micro} c="dimmed">On a production account this waits for someone else in Approvals before anything goes in.</Text>
         {moving && (
           <Alert color="amber" variant="light" p="xs">
             <Text size={FS.meta}>What Argus put in {endpoint!.targetName} comes out first.</Text>

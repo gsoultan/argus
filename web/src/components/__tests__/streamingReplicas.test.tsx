@@ -200,6 +200,22 @@ describe('read endpoint', () => {
     }))
   })
 
+  it('shows a setting that waits for a second person, and asks no other meanwhile', async () => {
+    live.databaseReplicas.mockResolvedValue([done()])
+    live.readEndpoint.mockResolvedValue({ endpoint: null, choices: [choice()], pending: {
+      id: 'c1', state: 'awaiting_approval', resourceName: 'pg-read', environment: 'production', reason: 'hourly reports',
+      summary: 'Make pg-read the read endpoint of orders on orders-db-01: Argus keeps its replicas that are not behind in it',
+      requestedBy: 'ann@example.com', requestedAt: new Date().toISOString(),
+    } })
+    renderWithProviders(<StreamingReplicas database={db} narrow={false} />)
+    const box = await screen.findByTestId('read-endpoint-pending')
+    expect(within(box).getByText(/Waiting for approval: Make pg-read the read endpoint of orders/)).toBeInTheDocument()
+    expect(within(box).getByText(/hourly reports/)).toBeInTheDocument()
+    const open = screen.getByRole('button', { name: 'Set a read endpoint' })
+    await waitFor(() => expect(open).toHaveAttribute('title', 'A change to it already waits for approval'))
+    expect(open).toBeDisabled()
+  })
+
   it('keeps setting it to admins', async () => {
     live.me.mockResolvedValue({ email: 'dev@example.com', role: 'developer' })
     live.databaseReplicas.mockResolvedValue([done()])
