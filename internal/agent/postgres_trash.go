@@ -558,6 +558,7 @@ func (s *pgSession) runTrashed(ctx context.Context, req tunnel.PGRequest, sql, r
 		Ran: ran, Approval: req.Approval}); err != nil {
 		return fmt.Errorf("the recording failed: %w", err)
 	}
+	s.notices.reset()
 	sctx, cancel := context.WithCancel(ctx)
 	s.cmu.Lock()
 	s.cancel, s.curID = cancel, req.ID
@@ -631,10 +632,11 @@ func (s *pgSession) runTrashed(ctx context.Context, req tunnel.PGRequest, sql, r
 	default:
 		tag = "DROP " + strings.ToUpper(c.Object)
 	}
-	if rerr := s.record(tunnel.PGRecord{Kind: "done", Request: req.ID, Tag: tag, Rows: removed, MS: elapsed}); rerr != nil {
+	notices := s.notices.take()
+	if rerr := s.record(tunnel.PGRecord{Kind: "done", Request: req.ID, Tag: tag, Rows: removed, MS: elapsed, Notices: notices}); rerr != nil {
 		return rerr
 	}
-	return s.send(tunnel.PGAnswer{ID: req.ID, Type: "done", Tag: tag, Rows: removed, MS: elapsed, Trash: items})
+	return s.send(tunnel.PGAnswer{ID: req.ID, Type: "done", Tag: tag, Rows: removed, MS: elapsed, Trash: items, Notices: notices})
 }
 
 // trashedRows is how many rows a trashed statement removed, from the rows

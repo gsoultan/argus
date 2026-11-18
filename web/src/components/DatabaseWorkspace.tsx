@@ -37,6 +37,7 @@ import { SchemaDiagram } from '~/components/SchemaDiagram'
 import { WriteCheckDialog, dropFactsSQL, type PGCheck, type WriteCheckState } from '~/components/WriteCheck'
 import { GUARD_DROP_DB, needsCheck, type PGGuard } from '~/lib/sqlClass'
 import { splitSQL } from '~/lib/sqlSplit'
+import { grantedLess, noticeShort, warningsIn, type PGNotice } from '~/lib/pgNotices'
 import { SaveQueryDialog, SavedQueriesList } from '~/components/SavedQueries'
 import { explainSQL, explainable, parsePlan } from '~/lib/explainPlan'
 import {
@@ -125,6 +126,8 @@ interface PGAnswer {
   guard?: PGGuard
   /** What a checked write would do. */
   check?: PGCheck
+  /** What Postgres warned or noticed while the statement ran. */
+  notices?: PGNotice[]
   /** What a DELETE, DROP or TRUNCATE put in the trash instead of losing. */
   trash?: TrashItem[]
 }
@@ -721,7 +724,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         ran++
       }
       sc.state = ran === total ? 'done' : 'stopped'
-      if (ran === total) sc.note = `All ${total} statements ran.${open()}`
+      if (ran === total) sc.note = `All ${total} statements ran.${warnedNote(sc.parts)}${open()}`
       // Show the failure if there was one, otherwise the last answer with
       // columns: what a script usually ends by showing.
       const last = sc.state === 'stopped' ? sc.parts[sc.parts.length - 1] : [...sc.parts].reverse().find((p) => p.cols.length > 0) ?? sc.parts[sc.parts.length - 1]
@@ -1512,6 +1515,20 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
 /* ── Results ────────────────────────────────────────────────────────────── */
 
 /**
+ * The part of a finished script's note that says which statements Postgres
+ * warned about: "All 3 statements ran" is not the whole story when two of
+ * them were GRANTs that granted nothing.
+ */
+function warnedNote(parts: Result[]): string {
+  const at = parts.flatMap((p, i) => (warningsIn(p?.done?.notices).length > 0 ? [i + 1] : []))
+  if (at.length === 0) return ''
+  const list = at.length === 1 ? `statement ${at[0]}` : `statements ${at.slice(0, -1).join(', ')} and ${at[at.length - 1]}`
+  const granted = parts.filter((p) => grantedLess(p?.done?.notices)).length
+  const what = granted === at.length ? (granted === 1 ? '; it granted less than it names' : '; they granted less than they name') : ''
+  return ` Postgres warned on ${list}${what}. Pick one to read why.`
+}
+
+/**
  * A script's statements in a row: each one's place, what Postgres said, and
  * a click to show its result below. The note says where it stopped and
  * whether a transaction is still open.
@@ -1527,7 +1544,7 @@ function ScriptSteps({ script, shownId, narrow, onPick }: {
     <Box px={narrow ? 'sm' : 'md'} py={6} style={{ borderBottom: '1px solid var(--color-line)' }}>
       <Group gap={6} wrap="nowrap" mb={4}>
         <Text size={FS.meta} fw={600} style={{ whiteSpace: 'nowrap' }}>Script</Text>
-        <Text size={FS.meta} c={script.state === 'stopped' ? 'rose' : 'dimmed'} style={{ minWidth: 0 }} lineClamp={2}>
+        <Text size={FS.meta} c={script.state === 'stopped' ? 'rose' : script.parts.some((p) => warningsIn(p.done?.notices).length > 0) ? 'amber' : 'dimmed'} style={{ minWidth: 0 }} lineClamp={2}>
           {script.state === 'running'
             ? `Running statement ${script.at} of ${total}…`
             : script.note}
@@ -1538,8 +1555,9 @@ function ScriptSteps({ script, shownId, narrow, onPick }: {
           {script.stmts.map((stmt, i) => {
             const r = script.parts[i]
             const failed = Boolean(r?.error)
+            const warned = warningsIn(r?.done?.notices).length > 0
             const label = r?.done
-              ? `${r.done.tag ?? 'done'}${r.cols.length ? ` · ${r.rows.length.toLocaleString()}` : ''}`
+              ? `${r.done.tag ?? 'done'}${r.cols.length ? ` · ${r.rows.length.toLocaleString()}` : ''}${warned ? ` · ${noticeShort(r.done.notices)}` : ''}`
               : failed ? 'failed' : r ? 'running…' : 'not run'
             const here = r !== undefined && r.id === shownId
             return (
@@ -1549,10 +1567,10 @@ function ScriptSteps({ script, shownId, narrow, onPick }: {
                   style={{
                     flexShrink: 0, padding: '2px 8px', borderRadius: 6, whiteSpace: 'nowrap',
                     border: `1px solid ${here ? 'var(--color-brand)' : 'var(--color-line)'}`,
-                    background: failed ? 'var(--mantine-color-rose-light)' : here ? 'var(--color-raised)' : undefined,
+                    background: failed ? 'var(--mantine-color-rose-light)' : warned ? 'var(--mantine-color-amber-light)' : here ? 'var(--color-raised)' : undefined,
                     opacity: r ? 1 : 0.5, cursor: r ? 'pointer' : 'default',
                   }}>
-                  <Text size={FS.micro} ff="monospace" c={failed ? 'rose' : undefined}>
+                  <Text size={FS.micro} ff="monospace" c={failed ? 'rose' : warned ? 'amber' : undefined}>
                     <Text span size={FS.micro} c="dimmed">{i + 1}</Text> {label}
                   </Text>
                 </UnstyledButton>
