@@ -116,6 +116,11 @@ and adds in one step; both chains get `user.share_allowed`/`user.shared_in`/
 organization allows only that organization for its creator.
 `AnyAccountExists` counts shared rows, so an organization of only shared
 people is not shown first-run setup.
+Adding someone where the organization has a *removed* (disabled) row for the
+address, of their own or shared, reuses that row as the shared one: it drops
+its own password, second factor and recovery codes, is turned back on, and
+keeps its id (audit, teams, grants). An *active* account of its own is never
+taken over: `ErrOwnAccountHere` (409) says to remove it first.
 
 **What a person can reach** is `person_access.go`: `accessKinds` (servers,
 databases, brokers, cloud) feeds `GET /api/v1/users/{email}/access`, the
