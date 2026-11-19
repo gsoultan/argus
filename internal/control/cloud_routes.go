@@ -14,6 +14,7 @@ import (
 
 	"github.com/gsoultan/argus/internal/control/cloud"
 	"github.com/gsoultan/argus/internal/control/cloud/aws"
+	"github.com/gsoultan/argus/internal/control/cloud/azure"
 	"github.com/gsoultan/argus/internal/control/cloud/gcp"
 )
 
@@ -216,14 +217,28 @@ func cloudRoleARN(accountID, name string) string {
 
 // CloudProviders is every cloud an account can be connected in, in the
 // order the console offers them.
-var CloudProviders = []string{"aws", "gcp"}
+var CloudProviders = []string{"aws", "gcp", "azure"}
 
 // cloudProviderName is a provider as people call it.
 func cloudProviderName(p string) string {
-	if p == "gcp" {
+	switch p {
+	case "gcp":
 		return "Google Cloud"
+	case "azure":
+		return "Azure"
 	}
 	return "AWS"
+}
+
+// cloudAccountWord is what a provider calls an account.
+func cloudAccountWord(p string) string {
+	switch p {
+	case "gcp":
+		return "project"
+	case "azure":
+		return "subscription"
+	}
+	return "account"
 }
 
 // checkCloudAccountID refuses an id that cannot be an account in provider.
@@ -237,8 +252,12 @@ func checkCloudAccountID(provider, id string) error {
 		if !gcp.ValidProject(id) {
 			return errors.New("a Google Cloud project id is 6 to 30 lower case letters, digits and dashes, starting with a letter")
 		}
+	case "azure":
+		if !azure.ValidSubscription(id) {
+			return errors.New("an Azure subscription id is a GUID in lower case, like 6b1f2c0e-8a44-4f0b-9d55-0c2a7e4d1a90")
+		}
 	default:
-		return errors.New("Argus connects AWS accounts and Google Cloud projects")
+		return errors.New("Argus connects AWS accounts, Google Cloud projects and Azure subscriptions")
 	}
 	return nil
 }
@@ -248,6 +267,9 @@ func (a *API) cloudPrepare(ctx context.Context, in cloudPrepareIn) (CloudPrepare
 	provider, accountID := in.Provider, in.AccountID
 	if err := checkCloudAccountID(provider, accountID); err != nil {
 		return CloudPrepared{}, http.StatusBadRequest, err
+	}
+	if provider == "azure" && in.Manage {
+		return CloudPrepared{}, http.StatusBadRequest, errors.New("Azure subscriptions are read only in Argus so far")
 	}
 	if in.Identity == "" {
 		// An account already connected keeps the identity it uses: its
@@ -297,6 +319,16 @@ func (a *API) cloudPrepare(ctx context.Context, in cloudPrepareIn) (CloudPrepare
 		}
 		return out, http.StatusOK, nil
 	}
+	if provider == "azure" {
+		// Nothing is made in the subscription but a role assignment: the
+		// "role" is Azure's own Reader, held there by argus-control.
+		return CloudPrepared{
+			Provider: provider, AccountID: accountID, ExternalID: ext, Principal: base.Principal, Source: base.Source,
+			Identity: ident.ID, IdentityName: ident.Name, Kept: kept,
+			RoleName: azure.ReadRoleName, ReadRoleARN: azure.RoleID(accountID, azure.ReaderRoleID),
+			Command: azure.SetupCommandFor(accountID, principals, ext),
+		}, http.StatusOK, nil
+	}
 	out := CloudPrepared{
 		Provider: provider, AccountID: accountID, ExternalID: ext, Principal: base.Principal, Source: base.Source,
 		Identity: ident.ID, IdentityName: ident.Name, Kept: kept,
@@ -317,6 +349,13 @@ func (a *API) cloudPrepare(ctx context.Context, in cloudPrepareIn) (CloudPrepare
 // cloudIdentityNextStep is who fixes an identity that does not answer:
 // only the default organization edits the identities.
 func cloudIdentityNextStep(ctx context.Context, provider string) string {
+	if provider == "azure" {
+		if platformScope(ctx) {
+			return "Run argus-control on an Azure VM with a managed identity, " +
+				"or set cloud.azure in its config to an app registration: tenant_id, client_id and a credentials_file holding its client secret"
+		}
+		return "The platform's owner sets argus-control's Azure identity in its config"
+	}
 	if provider == "gcp" {
 		if platformScope(ctx) {
 			return "Run argus-control on a Google Cloud VM with a service account and the cloud-platform access scope, " +
@@ -406,6 +445,9 @@ func (in *cloudAccountIn) validate() error {
 	if in.Provider == "gcp" {
 		return in.validateGCP()
 	}
+	if in.Provider == "azure" {
+		return in.validateAzure()
+	}
 	if !aws.ValidRoleARN(in.RoleARN) {
 		return errors.New("that is not an IAM role ARN; it looks like arn:aws:iam::" + in.AccountID + ":role/" + aws.ReadRoleName)
 	}
@@ -435,6 +477,23 @@ func (in *cloudAccountIn) validateGCP() error {
 	}
 	if err := checkGCPManage(in.ManageRoleARN, in.AccountID, in.RoleARN); err != nil {
 		return err
+	}
+	return in.checkEnvironment()
+}
+
+// validateAzure checks a subscription: Reader there, and read only. The
+// role is not the person's to name: it is always Azure's own Reader at the
+// subscription.
+func (in *cloudAccountIn) validateAzure() error {
+	reader := azure.RoleID(in.AccountID, azure.ReaderRoleID)
+	if in.RoleARN == "" {
+		in.RoleARN = reader
+	}
+	if in.RoleARN != reader {
+		return errors.New("Argus reads a subscription through Azure's Reader role at the subscription, and no other")
+	}
+	if in.Manage || in.ManageRoleARN != "" {
+		return errors.New("Azure subscriptions are read only in Argus so far")
 	}
 	return in.checkEnvironment()
 }
@@ -490,10 +549,15 @@ func (a *API) postCloudAccount(w http.ResponseWriter, r *http.Request) {
 			Target: cloudTarget(in.Provider, in.AccountID, in.Name),
 			Detail: "Could not connect " + in.RoleARN + ": " + err.Error()})
 		next := ". Check the stack finished and the template came from this Argus."
+		what := in.RoleARN
 		if in.Provider == "gcp" {
 			next = ". Check the command from this page finished without an error."
 		}
-		writeErr(w, http.StatusUnprocessableEntity, "Argus could not use "+in.RoleARN+": "+err.Error()+next)
+		if in.Provider == "azure" {
+			what = "subscription " + in.AccountID
+			next = ". Check the command from this page finished without an error; Azure can take a few minutes to apply a new role."
+		}
+		writeErr(w, http.StatusUnprocessableEntity, "Argus could not use "+what+": "+err.Error()+next)
 		return
 	}
 	access := "read only"
@@ -521,11 +585,7 @@ func (a *API) postCloudAccount(w http.ResponseWriter, r *http.Request) {
 		Environment: in.Environment, IdentityARN: id.ARN, Regions: id.Regions, ConnectedBy: actor, Identity: ident.ID,
 	})
 	if errors.Is(err, ErrCloudAccountExists) {
-		what := "account "
-		if in.Provider == "gcp" {
-			what = "project "
-		}
-		writeErr(w, http.StatusConflict, what+in.AccountID+" is already connected")
+		writeErr(w, http.StatusConflict, cloudAccountWord(in.Provider)+" "+in.AccountID+" is already connected")
 		return
 	}
 	if err != nil {
@@ -558,7 +618,7 @@ func (a *API) deleteCloudAccount(w http.ResponseWriter, r *http.Request) {
 		Target: cloudTarget(c.Provider, c.AccountID, c.Name),
 		Detail: "Disconnected. Argus no longer reads or changes it, and nothing in the account was changed by disconnecting: " +
 			"its instances, disks and tags are as they were. Changes still waiting for a decision were cancelled. " +
-			"The roles in the account are still there until someone deletes their stack."})
+			cloudLeftBehind(c.Provider)})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -704,6 +764,18 @@ func matchServers(items []CloudItem, assets []Asset, reported map[string][]Asset
 	}
 }
 
+// cloudLeftBehind says what disconnecting leaves in the account, for
+// whoever has to remove it there.
+func cloudLeftBehind(provider string) string {
+	switch provider {
+	case "gcp":
+		return "The service accounts in the project are still there until someone deletes them."
+	case "azure":
+		return "argus-control's role assignment in the subscription is still there until someone removes it under Access control (IAM)."
+	}
+	return "The roles in the account are still there until someone deletes their stack."
+}
+
 func cloudTarget(provider, accountID, name string) string {
 	return provider + " account " + accountID + " (" + name + ")"
 }
@@ -766,6 +838,10 @@ func (a *API) putCloudManage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		a.fail(w, "cloud account", err)
+		return
+	}
+	if c.Provider == "azure" {
+		writeErr(w, http.StatusNotImplemented, "Azure subscriptions are read only in Argus so far")
 		return
 	}
 	in.RoleARN = strings.TrimSpace(in.RoleARN)

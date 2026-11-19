@@ -1,6 +1,6 @@
 import { Alert, Badge, Box, Button, Card, Flex, Group, List, Modal, SimpleGrid, Stack, Text, TextInput, ThemeIcon, Tooltip } from '@mantine/core'
 import {
-  IconAlertTriangle, IconBrandAws, IconBrandGoogle, IconCheck, IconCircleCheck, IconCoin, IconMinus, IconCloud, IconDeviceDesktopOff, IconLockOpen, IconPencil, IconRefresh, IconServer2,
+  IconAlertTriangle, IconBrandAws, IconBrandAzure, IconBrandGoogle, IconCheck, IconCircleCheck, IconCoin, IconMinus, IconCloud, IconDeviceDesktopOff, IconLockOpen, IconPencil, IconRefresh, IconServer2,
 } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
@@ -64,7 +64,7 @@ export function CloudOverview({ accounts, bases, instances, firewalls, findings,
       </SimpleGrid>
 
       <Box style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))', gap: 16 }}>
-        <SectionCard title="Accounts" icon={providers.size === 1 && providers.has('gcp') ? IconBrandGoogle : providers.size === 1 ? IconBrandAws : IconCloud} flush
+        <SectionCard title="Accounts" icon={providers.size !== 1 ? IconCloud : providers.has('gcp') ? IconBrandGoogle : providers.has('azure') ? IconBrandAzure : IconBrandAws} flush
           action={admin ? <ButtonLink to="/cloud/connect" size="xs" variant="light">Connect another</ButtonLink> : undefined}>
           <Stack gap={0}>
             {accounts.map((a) => <AccountRow key={a.id} a={a} admin={admin} bases={bases} />)}
@@ -148,6 +148,8 @@ function AccountRow({ a, admin, bases: all }: { a: CloudAccount; admin: boolean;
   // Only this cloud's identities: an AWS account cannot move to a Google one.
   const bases = all.filter((b) => (b.provider || 'aws') === a.provider)
   const aws = a.provider === 'aws'
+  // Argus only reads an Azure subscription so far, so changes are not offered there.
+  const azure = a.provider === 'azure'
   const sync = useSyncCloudAccount()
   const [confirm, setConfirm] = useState(false)
   const [moving, setMoving] = useState(false)
@@ -168,7 +170,11 @@ function AccountRow({ a, admin, bases: all }: { a: CloudAccount; admin: boolean;
             <EnvBadge env={a.environment} />
             {a.access === 'manage'
               ? <Badge variant="light" color="azure" radius="sm" tt="none" fw={500}>Can change</Badge>
-              : <Badge variant="default" radius="sm" tt="none" fw={500}>Read only</Badge>}
+              : azure
+                ? <Tooltip label="Argus only reads Azure subscriptions so far. Changes from Argus come later for Azure." multiline w={280}>
+                    <Badge variant="default" radius="sm" tt="none" fw={500}>Read only</Badge>
+                  </Tooltip>
+                : <Badge variant="default" radius="sm" tt="none" fw={500}>Read only</Badge>}
             {a.access === 'manage' && a.manageMissing?.length > 0 && (
               <Tooltip label={`The manage role lacks ${a.manageMissing.join(', ')}, so Argus cannot change disks, images or addresses here yet.`} multiline w={300}>
                 <Badge variant="light" color="amber" radius="sm" tt="none" fw={500}>Role needs an update</Badge>
@@ -205,7 +211,7 @@ function AccountRow({ a, admin, bases: all }: { a: CloudAccount; admin: boolean;
             )}
             {a.access === 'manage'
               ? <Button size="xs" variant="subtle" color="gray" onClick={() => setAccess(true)}>Make read only</Button>
-              : <Button size="xs" variant="subtle" leftSection={<IconPencil size={13} />} onClick={() => setAccess(true)}>Allow changes</Button>}
+              : !azure && <Button size="xs" variant="subtle" leftSection={<IconPencil size={13} />} onClick={() => setAccess(true)}>Allow changes</Button>}
             {aws && (a.identityMissing || bases.length > 1) && (
               <Button size="xs" variant={a.identityMissing ? 'light' : 'subtle'} color={a.identityMissing ? 'rose' : undefined}
                 onClick={() => setMoving(true)}>
@@ -308,12 +314,49 @@ function ReadOnly({ a, onClose }: { a: CloudAccount; onClose: () => void }) {
 function Disconnect({ a, opened, onClose }: { a: CloudAccount; opened: boolean; onClose: () => void }) {
   const del = useDisconnectCloudAccount()
   const [typed, setTyped] = useState('')
+  const azure = a.provider === 'azure'
+  const cloud = PROVIDER_LABEL[a.provider] ?? 'AWS'
+  if (azure) {
+    return (
+      <Modal opened={opened} onClose={onClose} title={<Text fw={700}>Disconnect {a.name}?</Text>} centered>
+        <Stack gap="md">
+          <Text size={FS.body}>Disconnecting makes no call to Azure. Argus only forgets the subscription.</Text>
+          <Box>
+            <Text size={FS.meta} fw={700} mb={4}>Stays in Azure, untouched</Text>
+            <List fz={FS.meta} spacing={4} icon={<ThemeIcon size={16} radius="xl" variant="light" color="teal"><IconCheck size={11} /></ThemeIcon>}>
+              <List.Item>Every VM, disk, snapshot and image, as they are now</List.Item>
+              <List.Item>Network security groups and every rule</List.Item>
+              <List.Item>The Reader role Argus was given, until someone removes it under Access control (IAM)</List.Item>
+              <List.Item>Argus agents on VMs, until you uninstall them</List.Item>
+            </List>
+          </Box>
+          <Box>
+            <Text size={FS.meta} fw={700} mb={4}>Changes in Argus only</Text>
+            <List fz={FS.meta} spacing={4} icon={<ThemeIcon size={16} radius="xl" variant="light" color="gray"><IconMinus size={11} /></ThemeIcon>}>
+              <List.Item>Argus stops reading the subscription, and its resources leave these lists</List.Item>
+            </List>
+            <Text size={FS.micro} c="dimmed" mt={6}>Reconnect it any time.</Text>
+          </Box>
+          <TextInput label={<>Type <Text span ff="monospace" fw={700}>{a.name}</Text> to confirm</>} value={typed}
+            onChange={(e) => setTyped(e.currentTarget.value)} data-autofocus />
+          <Group justify="flex-end">
+            <Button variant="default" onClick={onClose}>Cancel</Button>
+            <Button color="rose" disabled={typed !== a.name} loading={del.isPending}
+              onClick={() => void run(() => del.mutateAsync(a.id), { failure: 'Could not disconnect',
+                success: ['Disconnected', `${a.name} is no longer read. The audit log has the entry.`] }).then((ok) => ok && onClose())}>
+              Disconnect
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+    )
+  }
   return (
     <Modal opened={opened} onClose={onClose} title={<Text fw={700}>Disconnect {a.name}?</Text>} centered>
       <Stack gap="md">
-        <Text size={FS.body}>Disconnecting makes no call to AWS. Argus only forgets the account.</Text>
+        <Text size={FS.body}>Disconnecting makes no call to {cloud}. Argus only forgets the account.</Text>
         <Box>
-          <Text size={FS.meta} fw={700} mb={4}>Stays in AWS, untouched</Text>
+          <Text size={FS.meta} fw={700} mb={4}>Stays in {cloud}, untouched</Text>
           <List fz={FS.meta} spacing={4} icon={<ThemeIcon size={16} radius="xl" variant="light" color="teal"><IconCheck size={11} /></ThemeIcon>}>
             <List.Item>Every instance, disk, snapshot and image, as they are now</List.Item>
             <List.Item>Security groups and every rule, including rules changed from Argus</List.Item>
@@ -352,14 +395,14 @@ function FirstAccount({ admin, platform, base }: { admin: boolean; platform: boo
       <Stack align="center" gap="lg" maw={640} mx="auto" py="lg">
         <ThemeIcon size={56} radius="xl" variant="light" color="azure"><IconCloud size={30} /></ThemeIcon>
         <Box ta="center">
-          <Text fw={700} size="lg">Connect your first AWS account or Google Cloud project</Text>
+          <Text fw={700} size="lg">Connect your first AWS account, Google Cloud project or Azure subscription</Text>
           <Text size={FS.body} c="dimmed" mt={SP.tight} lh={1.6}>
             See every instance, disk and firewall across your accounts and regions, which ones have an Argus server, and what is
-            open to the internet. Argus never asks for access keys: it uses a role or service account made in the account, read only unless you allow changes.
+            open to the internet. Argus never asks for access keys: it uses a role or service account made in the account, or the Reader role you give it in a subscription, read only unless you allow changes.
           </Text>
         </Box>
         <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm" w="100%">
-          {[['1', 'Name the account', 'Its AWS account id or Google Cloud project id, and whether it is production.'],
+          {[['1', 'Name the account', 'Its AWS account id, Google Cloud project id or Azure subscription id, and whether it is production.'],
             ['2', 'Give Argus access', 'One command in CloudShell or Cloud Shell. Argus connects as soon as it works.']].map(([n, t, d]) => (
             <Box key={n} p="sm" style={{ border: '1px solid var(--color-line)', borderRadius: 10 }}>
               <Text size={FS.micro} c={INK.brand} fw={700}>STEP {n}</Text>
@@ -388,6 +431,9 @@ function FirstAccount({ admin, platform, base }: { admin: boolean; platform: boo
             <ButtonLink to="/cloud/connect" size="sm" leftSection={<IconBrandAws size={16} />}>Connect an AWS account</ButtonLink>
             <ButtonLink to="/cloud/connect" search={{ provider: 'gcp' }} size="sm" variant="default" leftSection={<IconBrandGoogle size={15} />}>
               Connect a Google Cloud project
+            </ButtonLink>
+            <ButtonLink to="/cloud/connect" search={{ provider: 'azure' }} size="sm" variant="default" leftSection={<IconBrandAzure size={15} />}>
+              Connect an Azure subscription
             </ButtonLink>
           </Group>
         ) : (

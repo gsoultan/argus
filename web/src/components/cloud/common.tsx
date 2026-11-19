@@ -4,7 +4,7 @@ import { AnchorLink } from '~/components/links'
 import type { ReactNode } from 'react'
 import { Field, relTime } from '~/components/primitives'
 import {
-  ENV_COLOR, ENV_LABEL, openToInternet, portText, ruleExposure, stateColor, stateLabel,
+  ENV_COLOR, ENV_LABEL, PROVIDER_LABEL, openToInternet, portText, ruleExposure, stateColor, stateLabel,
   type CloudEnvironment, type CloudItem, type CloudResource,
 } from '~/lib/cloud'
 import { FS, INK, SP } from '~/theme'
@@ -148,7 +148,7 @@ export function ResourceDrawer({ it, onClose, names }: {
             <Field label={it.provider === 'gcp' ? 'Labels' : 'Tags'}><KeyValues m={r.tags} /></Field>
           )}
           {r.details && Object.keys(r.details).length > 0 && (
-            <Field label={it.provider === 'gcp' ? 'Google Cloud details' : 'AWS details'}><KeyValues m={r.details} /></Field>
+            <Field label={`${PROVIDER_LABEL[(it.provider ?? 'aws') as keyof typeof PROVIDER_LABEL] ?? 'AWS'} details`}><KeyValues m={r.details} /></Field>
           )}
         </Stack>
       )}

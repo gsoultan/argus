@@ -9,13 +9,18 @@ import { queryOptions, useMutation, useQueryClient, type QueryClient } from '@ta
 import { get, isConfigured, send } from '~/lib/live'
 
 export type CloudEnvironment = 'production' | 'staging' | 'development'
-/** A cloud an account can be connected in. A Google Cloud project is an account here. */
-export type CloudProvider = 'aws' | 'gcp'
+/** A cloud an account can be connected in. A Google Cloud project and an Azure subscription are accounts here. */
+export type CloudProvider = 'aws' | 'gcp' | 'azure'
 
-export const PROVIDER_LABEL: Record<CloudProvider, string> = { aws: 'AWS', gcp: 'Google Cloud' }
+export const CLOUD_PROVIDERS: CloudProvider[] = ['aws', 'gcp', 'azure']
+
+export const PROVIDER_LABEL: Record<CloudProvider, string> = { aws: 'AWS', gcp: 'Google Cloud', azure: 'Azure' }
 
 /** What one account is called in a provider. */
-export const ACCOUNT_WORD: Record<CloudProvider, string> = { aws: 'account', gcp: 'project' }
+export const ACCOUNT_WORD: Record<CloudProvider, string> = { aws: 'account', gcp: 'project', azure: 'subscription' }
+
+/** An Azure subscription id: a GUID, kept in lower case. */
+export const AZURE_SUBSCRIPTION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 /** An account's id as people read it: AWS's twelve digits in groups of four, a project id as it is. */
 export function accountIdText(provider: CloudProvider, id: string): string {

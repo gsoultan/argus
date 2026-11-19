@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MakeItForMe, WatchForRoles } from '~/components/cloud/ConnectRoles'
 import { IdentityPicker } from '~/components/cloud/IdentityPicker'
+import { AzureSetup } from '~/components/cloud/AzureSetup'
 import { GcpSetup } from '~/components/cloud/GcpSetup'
 import { RoleSetup } from '~/components/cloud/RoleSetup'
 import type { CloudPrepared } from '~/lib/cloud'
@@ -155,5 +156,34 @@ describe('Connect a Google Cloud project', () => {
     fireEvent.click(screen.getByText(/Rather click through the console/))
     expect(screen.getByText(/argus-external-id=argus-0123/)).toBeInTheDocument()
     expect(screen.getByText(gcp.principal)).toBeInTheDocument()
+  })
+})
+
+describe('Connect an Azure subscription', () => {
+  const azure: CloudPrepared = {
+    provider: 'azure', accountId: '6b1f2c0e-8a44-4f0b-9d55-0c2a7e4d1a90', externalId: 'argus-0123',
+    principal: '3f8a1c52-7b0e-4d19-a6c4-91d2e0b57f36', source: 'the app registration', roleName: 'Reader',
+    readRoleArn: '/subscriptions/6b1f2c0e-8a44-4f0b-9d55-0c2a7e4d1a90/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7',
+    template: '', command: 'az rest --method put', canDeploy: false, identity: 'main', identityName: 'Main',
+  }
+
+  it('watches for the Reader role in the subscription and connects by itself', async () => {
+    api.checkCloudAccount.mockResolvedValueOnce({ ready: false, detail: 'no Reader role' }).mockResolvedValue({ ready: true })
+    const onReady = vi.fn()
+    renderWithProviders(<WatchForRoles prepared={azure} manage={false} connecting={false} failed={null} onReady={onReady} />)
+    expect(await screen.findByText(`Waiting for the Reader role in ${azure.accountId}`)).toBeInTheDocument()
+    // A refusal before the command can have run is only the expected "not yet".
+    expect(screen.queryByText(/no Reader role/)).not.toBeInTheDocument()
+    await waitFor(() => expect(onReady).toHaveBeenCalledTimes(1), { timeout: 8_000 })
+    expect(api.checkCloudAccount).toHaveBeenCalledWith(azure.accountId, false, 'main', 'azure')
+  }, 10_000)
+
+  it('gives one command and Cloud Shell, with the portal steps one click away', () => {
+    renderWithProviders(<AzureSetup prepared={azure} />)
+    expect(screen.getByRole('button', { name: /Copy the command/ })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Open Cloud Shell/ })).toHaveAttribute('href', expect.stringContaining('shell.azure.com'))
+    fireEvent.click(screen.getByText(/Rather click through the portal/))
+    expect(screen.getByText(/argus-external-id=argus-0123/)).toBeInTheDocument()
+    expect(screen.getByText(azure.principal)).toBeInTheDocument()
   })
 })

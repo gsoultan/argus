@@ -103,7 +103,7 @@ export function cloudHeaderLabel(data: AssetCloud | undefined): string | null {
 }
 
 function providerName(p: string): string {
-  return p === 'aws' ? 'AWS' : p === 'gcp' ? 'Google Cloud' : p
+  return p === 'aws' ? 'AWS' : p === 'gcp' ? 'Google Cloud' : p === 'azure' ? 'Azure' : p
 }
 
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {

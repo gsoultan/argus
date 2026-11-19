@@ -4,15 +4,16 @@ import {
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
-  IconBrandAws, IconBrandGoogle, IconCheck, IconCircleCheck, IconEye, IconPencil, IconShieldLock,
+  IconBrandAws, IconBrandAzure, IconBrandGoogle, IconCheck, IconCircleCheck, IconEye, IconPencil, IconShieldLock,
 } from '@tabler/icons-react'
 import { useState } from 'react'
 import { ButtonLink } from '~/components/links'
 import { PageBody, PageHeader } from '~/components/page'
 import {
-  ENV_LABEL, GCP_PROJECT, PROVIDER_LABEL, accountIdText, cloudAccountsQuery, prepareCloudAccount, useConnectCloudAccount,
+  AZURE_SUBSCRIPTION, ENV_LABEL, GCP_PROJECT, PROVIDER_LABEL, accountIdText, cloudAccountsQuery, prepareCloudAccount, useConnectCloudAccount,
   type CloudAccount, type CloudEnvironment, type CloudPrepared, type CloudProvider,
 } from '~/lib/cloud'
+import { AzureSetup } from '~/components/cloud/AzureSetup'
 import { GcpSetup } from '~/components/cloud/GcpSetup'
 import { MakeItForMe, WatchForRoles } from '~/components/cloud/ConnectRoles'
 import { IdentityPicker } from '~/components/cloud/IdentityPicker'
@@ -21,18 +22,19 @@ import { guard } from '~/lib/guard'
 import { FS, INK, SP } from '~/theme'
 
 /**
- * Connect an AWS account or a Google Cloud project in two steps: say which
- * one and, on AWS, whether Argus may change it, then make the roles in it.
- * The roles have fixed names, so Argus watches for them and connects by
- * itself; nothing is copied back. Where argus-control's own AWS identity is
- * in that account, Argus can make them itself. Argus never asks for access
- * keys; the roles trust only this control plane and require an external id
- * only it can compute.
+ * Connect an AWS account, a Google Cloud project or an Azure subscription in
+ * two steps: say which one and, where Argus can change it, whether it may,
+ * then give Argus access in it. What Argus looks for has a fixed name, so
+ * Argus watches for it and connects by itself; nothing is copied back. Where
+ * argus-control's own AWS identity is in that account, Argus can make the
+ * roles itself. Argus never asks for access keys; the access trusts only
+ * this control plane and carries an external id only it can compute. An
+ * Azure subscription is read only so far.
  */
 export const Route = createFileRoute('/cloud/connect')({
   beforeLoad: ({ context }) => guard(context.queryClient, 'admin'),
   validateSearch: (s: Record<string, unknown>): { provider?: CloudProvider } =>
-    s.provider === 'gcp' || s.provider === 'aws' ? { provider: s.provider } : {},
+    s.provider === 'gcp' || s.provider === 'aws' || s.provider === 'azure' ? { provider: s.provider } : {},
   component: Connect,
 })
 
@@ -42,6 +44,7 @@ function Connect() {
   const navigate = useNavigate()
   const provider: CloudProvider = Route.useSearch().provider ?? 'aws'
   const gcp = provider === 'gcp'
+  const azure = provider === 'azure'
   const setProvider = (p: CloudProvider) => { reset(); void navigate({ to: '/cloud/connect', search: p === 'aws' ? {} : { provider: p }, replace: true }) }
   const [step, setStep] = useState(0)
   const [name, setName] = useState('')
@@ -57,8 +60,8 @@ function Connect() {
   const connect = useConnectCloudAccount()
   const prepared: CloudPrepared | undefined = prepare.data
 
-  const digits = gcp ? accountId.trim().toLowerCase() : accountId.replace(/[\s-]/g, '')
-  const idOk = gcp ? GCP_PROJECT.test(digits) : /^\d{12}$/.test(digits)
+  const digits = gcp || azure ? accountId.trim().toLowerCase() : accountId.replace(/[\s-]/g, '')
+  const idOk = azure ? AZURE_SUBSCRIPTION.test(digits) : gcp ? GCP_PROJECT.test(digits) : /^\d{12}$/.test(digits)
   const nameOk = name.trim().length > 0 && name.trim().length <= 64
 
   const next = () => prepare.mutate(digits, { onSuccess: () => { connect.reset(); setStep(1) } })
@@ -71,14 +74,16 @@ function Connect() {
 
   return (
     <Box>
-      <PageHeader crumbs={[{ label: 'Cloud', to: '/cloud' }, { label: gcp ? 'Connect a project' : 'Connect an account' }]}
-        title={gcp ? 'Connect a Google Cloud project' : 'Connect an AWS account'}
-        description={gcp
-          ? 'Argus reads the project through a service account in it. No keys are asked for or stored.'
-          : 'Argus reads the account through a role in it. No access keys are asked for or stored.'} />
+      <PageHeader crumbs={[{ label: 'Cloud', to: '/cloud' }, { label: azure ? 'Connect a subscription' : gcp ? 'Connect a project' : 'Connect an account' }]}
+        title={azure ? 'Connect an Azure subscription' : gcp ? 'Connect a Google Cloud project' : 'Connect an AWS account'}
+        description={azure
+          ? 'Argus reads the subscription through the Reader role you give it there. No keys are asked for or stored.'
+          : gcp
+            ? 'Argus reads the project through a service account in it. No keys are asked for or stored.'
+            : 'Argus reads the account through a role in it. No access keys are asked for or stored.'} />
       <PageBody>
         <Box maw={820} mx="auto">
-          <Steps step={step} gcp={gcp} />
+          <Steps step={step} provider={provider} />
 
           {step === 0 && (
             <Card padding="lg">
@@ -89,11 +94,16 @@ function Connect() {
                     data={[
                       { value: 'aws', label: <Group gap={6} wrap="nowrap"><IconBrandAws size={16} />{PROVIDER_LABEL.aws}</Group> },
                       { value: 'gcp', label: <Group gap={6} wrap="nowrap"><IconBrandGoogle size={15} />{PROVIDER_LABEL.gcp}</Group> },
+                      { value: 'azure', label: <Group gap={6} wrap="nowrap"><IconBrandAzure size={15} />{PROVIDER_LABEL.azure}</Group> },
                     ]} />
                 </Box>
                 <TextInput label="Name in Argus" description="How people here call it, for example payments-prod." placeholder="payments-prod"
                   value={name} onChange={(e) => setName(e.currentTarget.value)} maxLength={64} data-autofocus />
-                {gcp ? (
+                {azure ? (
+                  <TextInput label="Subscription id" description="Shown under Subscriptions in the Azure portal, on the subscription's Overview."
+                    placeholder="6b1f2c0e-8a44-4f0b-9d55-0c2a7e4d1a90" value={accountId} onChange={(e) => setAccountId(e.currentTarget.value)}
+                    error={accountId && !idOk ? 'A subscription id is a GUID: 32 letters a to f and digits, in five groups' : undefined} styles={MONO} />
+                ) : gcp ? (
                   <TextInput label="Project id" description="Shown in the project picker at the top of the Google Cloud console, next to the project's name."
                     placeholder="payments-prod-418203" value={accountId} onChange={(e) => setAccountId(e.currentTarget.value)}
                     error={accountId && !idOk ? 'A project id is 6 to 30 lower case letters, digits and dashes, starting with a letter' : undefined} styles={MONO} />
@@ -108,6 +118,22 @@ function Connect() {
                   <SegmentedControl value={env} onChange={(v) => setEnv(v as CloudEnvironment)}
                     data={ENVS.map((e) => ({ value: e, label: ENV_LABEL[e] }))} />
                 </Box>
+                {azure ? (
+                  <Box>
+                    <Text size="sm" fw={500}>What Argus may do</Text>
+                    <Group gap="sm" wrap="nowrap" align="flex-start" mt={6} p="sm"
+                      style={{ border: '1px solid var(--color-line)', borderRadius: 'var(--mantine-radius-md)' }}>
+                      <IconEye size={15} style={{ marginTop: 3, flexShrink: 0 }} />
+                      <Box>
+                        <Text fw={600} size={FS.body}>Read only</Text>
+                        <Text size={FS.meta} c="dimmed" lh={1.5} mt={2}>
+                          See VMs, disks, snapshots, images, network security groups, virtual networks and public addresses. Nothing in
+                          the subscription can be changed from Argus yet; changes from Argus come later for Azure.
+                        </Text>
+                      </Box>
+                    </Group>
+                  </Box>
+                ) : (
                 <Box>
                   <Text size="sm" fw={500}>What Argus may do</Text>
                   <Text size={FS.meta} c="dimmed" mb={6}>You can allow changes later, and take them back.</Text>
@@ -124,12 +150,13 @@ function Connect() {
                     </SimpleGrid>
                   </Radio.Group>
                 </Box>
+                )}
                 {choose && bases && <IdentityPicker bases={bases} value={identity} onChange={setPicked} />}
                 {prepare.error && <Alert color="amber" variant="light" title="Argus cannot make the role yet">{(prepare.error as Error).message}</Alert>}
                 <Group justify="space-between" mt="xs">
                   <ButtonLink to="/cloud" variant="default">Cancel</ButtonLink>
                   <Button disabled={!idOk || !nameOk || (choose && !identity)} loading={prepare.isPending} onClick={next}>
-                    {gcp ? 'Next: give Argus access' : 'Next: create the role'}
+                    {gcp || azure ? 'Next: give Argus access' : 'Next: create the role'}
                   </Button>
                 </Group>
               </Stack>
@@ -139,11 +166,11 @@ function Connect() {
           {step === 1 && prepared && (
             <Card padding="lg">
               <Stack gap="lg">
-                {gcp ? <GcpSummary prepared={prepared} /> : <RoleSummary prepared={prepared} digits={digits} />}
+                {azure ? <AzureSummary prepared={prepared} /> : gcp ? <GcpSummary prepared={prepared} /> : <RoleSummary prepared={prepared} digits={digits} />}
                 {prepared.canDeploy && <MakeItForMe prepared={prepared} name={name.trim()} manage={manage} />}
                 <Box style={{ minWidth: 0 }}>
                   {prepared.canDeploy && <Text fw={600} size={FS.body} mb="xs">Or make it yourself</Text>}
-                  {gcp ? <GcpSetup prepared={prepared} /> : <RoleSetup prepared={prepared} />}
+                  {azure ? <AzureSetup prepared={prepared} /> : gcp ? <GcpSetup prepared={prepared} /> : <RoleSetup prepared={prepared} />}
                 </Box>
                 <WatchForRoles prepared={prepared} manage={manage} connecting={connect.isPending} failed={connect.error as Error | null}
                   onReady={submit} />
@@ -160,7 +187,9 @@ function Connect() {
                 <ThemeIcon size={52} radius="xl" variant="light" color="teal"><IconCircleCheck size={30} /></ThemeIcon>
                 <Text fw={700} size="lg">{done.name} is connected</Text>
                 <Text size={FS.body} c="dimmed" ta="center" maw={520}>
-                  {gcp
+                  {azure
+                    ? `Argus is reading its ${done.regions.length} regions now. VMs, disks and network security groups appear in a minute or two, and are read again every five minutes.`
+                    : gcp
                     ? `Argus is reading its ${done.regions.filter((r) => r !== 'global').length} regions now. VMs, disks and firewalls appear in a minute or two, and are read again every five minutes.`
                     : `Argus is reading its ${done.regions.length} regions now. Instances, disks and firewalls appear in a minute or two, and are read again every five minutes.`}
                 </Text>
@@ -169,7 +198,7 @@ function Connect() {
                   <Badge variant="light" color={done.access === 'manage' ? 'azure' : 'slate'} radius="sm" tt="none">
                     {done.access === 'manage' ? 'Read and change' : 'Read only'}
                   </Badge>
-                  <Text size={FS.micro} c={INK.brand} ff="monospace">{done.identityArn}</Text>
+                  {!azure && <Text size={FS.micro} c={INK.brand} ff="monospace">{done.identityArn}</Text>}
                 </Group>
                 <Group mt="md">
                   <Button variant="default" onClick={reset}>Connect another</Button>
@@ -251,6 +280,37 @@ function GcpSummary({ prepared }: { prepared: CloudPrepared }) {
   )
 }
 
+/** What the Reader assignment is and lets Argus do in a subscription, with the details one click away. */
+function AzureSummary({ prepared }: { prepared: CloudPrepared }) {
+  const [more, setMore] = useState(false)
+  return (
+    <Group gap="sm" wrap="nowrap" align="flex-start">
+      <ThemeIcon variant="light" color="azure" size={34} radius="md"><IconShieldLock size={18} /></ThemeIcon>
+      <Box style={{ minWidth: 0 }}>
+        <Text fw={600}>Argus needs the Reader role in {prepared.accountId}</Text>
+        <Text size={FS.meta} c="dimmed" lh={1.55}>
+          One command gives argus-control Azure's own <Text span ff="monospace" size={FS.meta}>Reader</Text> role at the subscription. It can
+          list and describe resources, never read what is on a disk, a secret or a key, or change anything. Nothing is made in the
+          subscription but that assignment, and it costs nothing.{' '}
+          <Text span size={FS.meta} c="azure" style={{ cursor: 'pointer' }} onClick={() => setMore((m) => !m)}>
+            {more ? 'Less' : 'How it is locked down'}
+          </Text>
+        </Text>
+        {more && (
+          <Text size={FS.meta} c="dimmed" lh={1.55} mt={4} style={{ overflowWrap: 'anywhere' }}>
+            The role is given to <Text span ff="monospace" size={FS.meta}>{prepared.principal}</Text>, argus-control's own application in
+            Microsoft Entra, and to nothing else. The assignment's description carries the external id{' '}
+            <Text span ff="monospace" size={FS.meta}>{prepared.externalId}</Text>, made for this organization and subscription, and Argus
+            refuses to read the subscription without it. Azure's activity log names that application, not a person: Azure has no
+            field for one, so who asked for what is in Argus's own audit log. Remove the assignment under Access control (IAM) and
+            Argus is out at once.
+          </Text>
+        )}
+      </Box>
+    </Group>
+  )
+}
+
 const MONO = { input: { fontFamily: 'var(--mantine-font-family-monospace)' } }
 
 function Choice({ value, icon: Icon, title, text }: { value: string; icon: typeof IconEye; title: string; text: string }) {
@@ -277,11 +337,16 @@ const GCP_STEPS = [
   ['Give Argus access', 'Argus connects by itself'],
 ] as const
 
+const AZURE_STEPS = [
+  ['The subscription', 'Name and subscription id'],
+  ['Give Argus access', 'Argus connects by itself'],
+] as const
+
 /** Where the person is in the two steps: done in teal, current in azure. */
-function Steps({ step, gcp }: { step: number; gcp: boolean }) {
+function Steps({ step, provider }: { step: number; provider: CloudProvider }) {
   return (
     <SimpleGrid cols={2} spacing="sm" mb="xl" aria-label="Steps">
-      {(gcp ? GCP_STEPS : STEPS).map(([t, d], i) => {
+      {(provider === 'azure' ? AZURE_STEPS : provider === 'gcp' ? GCP_STEPS : STEPS).map(([t, d], i) => {
         const state = i < step ? 'done' : i === step ? 'current' : 'next'
         const color = state === 'done' ? 'var(--mantine-color-teal-6)' : state === 'current' ? 'var(--mantine-color-azure-6)' : 'var(--color-line)'
         return (

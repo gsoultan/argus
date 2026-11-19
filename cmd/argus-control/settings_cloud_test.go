@@ -292,3 +292,63 @@ func TestValidateCloudRefusesHandEdits(t *testing.T) {
 		}
 	}
 }
+
+// Azure's identity is set in the config, by hand. A block argus-control
+// could not run on is refused when the config is read, and saving the AWS
+// identities in Settings keeps the block as it was.
+func TestValidateAzure(t *testing.T) {
+	const tenant, client = "11111111-1111-4111-8111-111111111111", "33333333-3333-4333-8333-333333333333"
+	good := []*azureCloudConfig{
+		{},
+		{TenantID: tenant, ClientID: client, CredentialsFile: "/var/lib/argus-control/secrets/azure"},
+		{TenantID: strings.ToUpper(tenant), ClientID: client, CredentialsFile: "/x"},
+		{Default: "vm", Identities: []azureIdentityConfig{{ID: "vm", Name: "The VM"},
+			{ID: "partners", Name: "Partners", TenantID: tenant, ClientID: client, CredentialsFile: "/x", Organizations: []string{"a1b2c3d4e5f6"}}}},
+	}
+	for _, z := range good {
+		if err := validateCloud(&cloudConfig{Azure: z}); err != nil {
+			t.Errorf("%+v must be accepted: %v", z, err)
+		}
+	}
+	bad := map[string]*azureCloudConfig{
+		"half an app registration":     {TenantID: tenant},
+		"no secret":                    {TenantID: tenant, ClientID: client},
+		"a secret with nothing to use": {CredentialsFile: "/x"},
+		"a tenant by name":             {TenantID: "contoso.onmicrosoft.com", ClientID: client, CredentialsFile: "/x"},
+		"a relative path":              {TenantID: tenant, ClientID: client, CredentialsFile: "secrets/azure"},
+		"both shapes at once":          {TenantID: tenant, ClientID: client, CredentialsFile: "/x", Identities: []azureIdentityConfig{{ID: "vm", Name: "VM"}}},
+		"two from the host":            {Identities: []azureIdentityConfig{{ID: "a", Name: "A"}, {ID: "b", Name: "B"}}},
+		"an id twice":                  {Identities: []azureIdentityConfig{{ID: "a", Name: "A"}, {ID: "a", Name: "B", TenantID: tenant, ClientID: client, CredentialsFile: "/x"}}},
+		"no name":                      {Identities: []azureIdentityConfig{{ID: "a"}}},
+		"a default that is not there":  {Default: "gone", Identities: []azureIdentityConfig{{ID: "a", Name: "A"}}},
+		"an organization that is not":  {Identities: []azureIdentityConfig{{ID: "a", Name: "A", Organizations: []string{"Everyone"}}}},
+	}
+	for why, z := range bad {
+		if err := validateCloud(&cloudConfig{Azure: z}); err == nil || !strings.Contains(err.Error(), "cloud.azure") {
+			t.Errorf("%s must be refused, naming cloud.azure: %v", why, err)
+		}
+	}
+
+	// No block is one identity, Main, from the host.
+	list, def := (*cloudConfig)(nil).azureIdentities()
+	if len(list) != 1 || list[0].ID != mainIdentity || def != mainIdentity || list[0].ClientID != "" {
+		t.Fatalf("no block: %+v %q", list, def)
+	}
+	if ids := (&cloudConfig{Azure: good[1]}).azureCloudIdentities(); len(ids) != 1 || !ids[0].Default || ids[0].Provider.Kind() != "azure" {
+		t.Fatalf("one app registration is Main: %+v", ids)
+	}
+
+	// Saving AWS's identities leaves Azure's alone, both when AWS's go back
+	// to the host alone and when they do not.
+	c := &config{Cloud: &cloudConfig{Azure: good[1]}}
+	if err := applyCloud(c, identities("main", control.AWSIdentitySettings{ID: "main", Name: "Main"}), nil); err != nil || c.Cloud == nil || c.Cloud.Azure != good[1] {
+		t.Fatalf("the host alone must keep the Azure block: %+v %v", c.Cloud, err)
+	}
+	if err := applyCloud(c, identities("main", control.AWSIdentitySettings{ID: "main", Name: "Main", HomeRegion: "eu-west-1"}), nil); err != nil || c.Cloud.Azure != good[1] {
+		t.Fatalf("a changed AWS identity must keep the Azure block: %+v %v", c.Cloud, err)
+	}
+	b, err := yaml.Marshal(c.Cloud)
+	if err != nil || !strings.Contains(string(b), "azure:") || !strings.Contains(string(b), "tenant_id: "+tenant) {
+		t.Fatalf("the block must be written back as it was read: %s %v", b, err)
+	}
+}

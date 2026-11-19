@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	azurecloud "github.com/gsoultan/argus/internal/control/cloud/azure"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -139,21 +140,22 @@ func applyCloud(c *config, in *control.CloudSettings, st *secretStage) error {
 		return control.BadInput(fmt.Errorf("the default identity %q is not in the list", def))
 	}
 	// The host's own identity alone, as Main, is what no cloud block means.
-	// Google Cloud's identities are set in the config, not here: a save
-	// keeps them as they are.
+	// Google Cloud's and Azure's identities are set in the config, not
+	// here: a save keeps them as they are.
 	var gcp *gcpCloudConfig
+	var azure *azureCloudConfig
 	if c.Cloud != nil {
-		gcp = c.Cloud.GCP
+		gcp, azure = c.Cloud.GCP, c.Cloud.Azure
 	}
 	if len(out) == 1 && out[0].ID == mainIdentity && out[0].Name == "Main" && out[0].source() == control.IdentityDefault &&
 		out[0].HomeRegion == "" && len(out[0].Organizations) == 0 {
 		c.Cloud = nil
-		if gcp != nil {
-			c.Cloud = &cloudConfig{GCP: gcp}
+		if gcp != nil || azure != nil {
+			c.Cloud = &cloudConfig{GCP: gcp, Azure: azure}
 		}
 		return nil
 	}
-	c.Cloud = &cloudConfig{AWS: awsCloudConfig{Default: def, Identities: out}, GCP: gcp}
+	c.Cloud = &cloudConfig{AWS: awsCloudConfig{Default: def, Identities: out}, GCP: gcp, Azure: azure}
 	return nil
 }
 
@@ -306,6 +308,9 @@ func validateCloud(c *cloudConfig) error {
 	if err := validateGCP(c); err != nil {
 		return err
 	}
+	if err := validateAzure(c); err != nil {
+		return err
+	}
 	if c == nil || len(c.AWS.Identities) == 0 {
 		return nil
 	}
@@ -379,6 +384,76 @@ func validateGCP(c *cloudConfig) error {
 	}
 	if d := g.Default; d != "" && !seen[d] {
 		return fmt.Errorf("cloud.gcp.default: no identity has the id %q", d)
+	}
+	return nil
+}
+
+// validateAzure refuses an Azure block argus-control could not run on, the
+// same way as Google Cloud's: ids, a default that is there, one identity
+// from the host at most, and each app registration whole, with its secret's
+// file given as a full path.
+func validateAzure(c *cloudConfig) error {
+	if c == nil || c.Azure == nil {
+		return nil
+	}
+	z := c.Azure
+	// app checks one identity's three settings: all of them, or none.
+	app := func(where, tenant, client, file string) (host bool, err error) {
+		if tenant == "" && client == "" && file == "" {
+			return true, nil
+		}
+		switch {
+		case !azurecloud.ValidGUID(strings.ToLower(tenant)):
+			return false, fmt.Errorf("%s: tenant_id is the app registration's directory (tenant) id, a GUID", where)
+		case !azurecloud.ValidGUID(strings.ToLower(client)):
+			return false, fmt.Errorf("%s: client_id is the app registration's application (client) id, a GUID", where)
+		case file == "":
+			return false, fmt.Errorf("%s: credentials_file names the file holding the app registration's client secret", where)
+		case !filepath.IsAbs(file):
+			return false, fmt.Errorf("%s: credentials_file must be a full path", where)
+		}
+		return false, nil
+	}
+	if len(z.Identities) == 0 {
+		_, err := app("cloud.azure", z.TenantID, z.ClientID, z.CredentialsFile)
+		return err
+	}
+	if z.TenantID != "" || z.ClientID != "" || z.CredentialsFile != "" {
+		return errors.New("cloud.azure: with identities listed, each has its own tenant_id, client_id and credentials_file")
+	}
+	if len(z.Identities) > control.MaxCloudIdentities {
+		return fmt.Errorf("cloud.azure: at most %d identities", control.MaxCloudIdentities)
+	}
+	seen, hosts := map[string]bool{}, 0
+	for _, i := range z.Identities {
+		if !reIdentityID.MatchString(i.ID) {
+			return fmt.Errorf("cloud.azure.identities: %q is not an id: lower case letters, digits and dashes", i.ID)
+		}
+		if seen[i.ID] {
+			return fmt.Errorf("cloud.azure.identities: the id %q is there twice", i.ID)
+		}
+		seen[i.ID] = true
+		if strings.TrimSpace(i.Name) == "" {
+			return fmt.Errorf("cloud.azure.identities: %q has no name", i.ID)
+		}
+		host, err := app(fmt.Sprintf("cloud.azure.identities: %q", i.ID), i.TenantID, i.ClientID, i.CredentialsFile)
+		if err != nil {
+			return err
+		}
+		if host {
+			hosts++
+		}
+		for _, o := range i.Organizations {
+			if !reOrgID.MatchString(o) {
+				return fmt.Errorf("cloud.azure.identities: %q: %q is not an organization", i.ID, o)
+			}
+		}
+	}
+	if hosts > 1 {
+		return errors.New("cloud.azure.identities: only one identity can come from where argus-control runs")
+	}
+	if d := z.Default; d != "" && !seen[d] {
+		return fmt.Errorf("cloud.azure.default: no identity has the id %q", d)
 	}
 	return nil
 }

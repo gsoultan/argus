@@ -17,6 +17,7 @@ import (
 	"flag"
 	"fmt"
 	awscloud "github.com/gsoultan/argus/internal/control/cloud/aws"
+	azurecloud "github.com/gsoultan/argus/internal/control/cloud/azure"
 	gcpcloud "github.com/gsoultan/argus/internal/control/cloud/gcp"
 	"github.com/gsoultan/argus/internal/control/confexpand"
 	"github.com/gsoultan/argus/internal/control/servertls"
@@ -671,6 +672,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	go api.RunRecordingArchive(ctx, time.Hour)
 	api.SetCloudIdentities("aws", cfg.Cloud.cloudIdentities())
 	api.SetCloudIdentities("gcp", cfg.Cloud.gcpCloudIdentities())
+	api.SetCloudIdentities("azure", cfg.Cloud.azureCloudIdentities())
 	go api.RunCloudSync(ctx, control.CloudSyncInterval)
 	go api.RunCloudSchedules(ctx, time.Minute)
 	go api.RunScaleGroups(ctx, time.Minute)
@@ -1317,6 +1319,67 @@ type cloudConfig struct {
 	// argus-control runs: the VM's service account, or the key
 	// GOOGLE_APPLICATION_CREDENTIALS names.
 	GCP *gcpCloudConfig `yaml:"gcp,omitempty"`
+	// Azure is Azure's identities. Absent is one, Main: the managed
+	// identity of the Azure VM argus-control runs on.
+	Azure *azureCloudConfig `yaml:"azure,omitempty"`
+}
+
+// azureCloudConfig is the identities argus-control can start from in
+// Azure. A connected subscription gives one of them the Reader role.
+type azureCloudConfig struct {
+	// Default is the identity a new connection starts with.
+	Default string `yaml:"default,omitempty"`
+	// Identities is every identity, in the order the console lists them.
+	Identities []azureIdentityConfig `yaml:"identities,omitempty"`
+	// TenantID, ClientID and CredentialsFile are the one identity, Main,
+	// when Identities is empty: an app registration's directory (tenant)
+	// id, its application (client) id, and a file only its owner can read
+	// that holds its client secret. All empty is the VM's managed identity.
+	TenantID        string `yaml:"tenant_id,omitempty"`
+	ClientID        string `yaml:"client_id,omitempty"`
+	CredentialsFile string `yaml:"credentials_file,omitempty"`
+}
+
+// azureIdentityConfig is one Azure identity.
+type azureIdentityConfig struct {
+	ID   string `yaml:"id"`
+	Name string `yaml:"name"`
+	// TenantID, ClientID and CredentialsFile name an app registration;
+	// all empty is the managed identity of the VM argus-control runs on.
+	TenantID        string `yaml:"tenant_id,omitempty"`
+	ClientID        string `yaml:"client_id,omitempty"`
+	CredentialsFile string `yaml:"credentials_file,omitempty"`
+	// Organizations may use it, by id. Empty is every organization.
+	Organizations []string `yaml:"organizations,omitempty"`
+}
+
+// azureIdentities is the configured Azure identities and the default.
+func (c *cloudConfig) azureIdentities() ([]azureIdentityConfig, string) {
+	if c == nil || c.Azure == nil || len(c.Azure.Identities) == 0 {
+		m := azureIdentityConfig{ID: mainIdentity, Name: "Main"}
+		if c != nil && c.Azure != nil {
+			m.TenantID, m.ClientID, m.CredentialsFile = c.Azure.TenantID, c.Azure.ClientID, c.Azure.CredentialsFile
+		}
+		return []azureIdentityConfig{m}, mainIdentity
+	}
+	def := c.Azure.Default
+	if def == "" {
+		def = c.Azure.Identities[0].ID
+	}
+	return c.Azure.Identities, def
+}
+
+// azureCloudIdentities is the Azure identities as the API registers them,
+// each with its own provider and token cache.
+func (c *cloudConfig) azureCloudIdentities() []control.CloudIdentity {
+	list, def := c.azureIdentities()
+	out := make([]control.CloudIdentity, 0, len(list))
+	for _, i := range list {
+		out = append(out, control.CloudIdentity{ID: i.ID, Name: i.Name, Default: i.ID == def, Organizations: i.Organizations,
+			Provider: azurecloud.New(azurecloud.Options{TenantID: strings.ToLower(i.TenantID), ClientID: strings.ToLower(i.ClientID),
+				CredentialsFile: i.CredentialsFile})})
+	}
+	return out
 }
 
 // gcpCloudConfig is the service accounts argus-control can start from in

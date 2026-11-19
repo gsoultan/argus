@@ -175,3 +175,14 @@ log_level: "info"
 #   # through the command Cloud › Connect an account gives for each.
 #   gcp:
 #     credentials_file: "/var/lib/argus-control/secrets/gcp-key.json"
+#   # Azure: on an Azure VM with a managed identity, argus-control uses it,
+#   # and nothing is needed here; it reaches subscriptions in its own
+#   # directory. Anywhere else, or for subscriptions in other directories, an
+#   # app registration: its directory (tenant) id, its application (client)
+#   # id, and a file only the argus user can read that holds its client
+#   # secret and nothing else. Connected subscriptions give it the Reader
+#   # role through the command Cloud › Connect an account gives for each.
+#   azure:
+#     tenant_id: "00000000-0000-0000-0000-000000000000"
+#     client_id: "00000000-0000-0000-0000-000000000000"
+#     credentials_file: "/var/lib/argus-control/secrets/azure-client-secret"

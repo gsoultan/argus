@@ -166,6 +166,15 @@ func TestMatchServersByReportedInstance(t *testing.T) {
 
 func TestHostCloudBounded(t *testing.T) {
 	good := HostCloud{Provider: "aws", Account: "412788931204", Region: "ap-southeast-3", Zone: "ap-southeast-3a", ID: "i-0a41c27b9e3f1d27d", Type: "m6i.large"}
+	az := HostCloud{Provider: "azure", Account: "6b1f2c0e-8a44-4f0b-9d55-0c2a7e4d1a90", Region: "eastus", Zone: "eastus-2",
+		ID: "aaaaaaaa-0000-4000-8000-000000000001", Type: "Standard_B2s"}
+	if az.bounded() == nil {
+		t.Fatal("an Azure VM's identity must be kept")
+	}
+	az.ID = "web-1"
+	if az.bounded() != nil {
+		t.Fatal("an Azure VM is named by its vmId, nothing else")
+	}
 	if good.bounded() == nil {
 		t.Fatal("a real identity was dropped")
 	}
