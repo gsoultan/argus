@@ -40,6 +40,10 @@ type cloudState struct {
 	// something between two states, so the loop reads just those again
 	// sooner. Bounded by connected accounts times their regions.
 	settling map[string][]string
+	// follow holds, per account, the regions a change was just made in and
+	// how many more reads each is owed; see syncCloudAfterChange. Bounded
+	// like settling, and every entry counts down to nothing.
+	follow map[string]map[string]int
 	// bases caches each identity's answer from its provider for a few
 	// minutes, by provider and identity id; bounded like identities.
 	bases map[string]cachedBase

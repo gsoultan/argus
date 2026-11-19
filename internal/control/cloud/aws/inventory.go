@@ -251,6 +251,11 @@ func Volume(v types.Volume, region string) cloud.Resource {
 		if awssdk.ToBool(a.DeleteOnTermination) {
 			set(r.Details, "deleteOnTermination", "yes")
 		}
+		// The disk itself stays "in-use" until a detach finishes, and
+		// is "in-use" before an attach has.
+		if a.State == types.VolumeAttachmentStateAttaching || a.State == types.VolumeAttachmentStateDetaching {
+			r.Details[cloud.DetailSettling] = "yes"
+		}
 	}
 	set(r.Details, "encrypted", yesNo(awssdk.ToBool(v.Encrypted)))
 	if v.Iops != nil {

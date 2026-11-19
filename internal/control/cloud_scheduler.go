@@ -468,8 +468,11 @@ func (a *API) act(ctx context.Context, s CloudSchedule, run *CloudScheduleRun, w
 			cancel()
 		}
 	}
+	// Waited for when a read is in flight: that one may have read the
+	// instances before they were started or stopped.
 	for _, c := range touched {
-		a.syncCloudAccountSoon(ctx, c)
+		bg := context.WithoutCancel(ctx)
+		go a.readWhenFree(func() bool { return a.SyncCloudAccount(bg, c) })
 	}
 }
 
