@@ -29,6 +29,20 @@ roles, `MSSQLWrites`), `internal/agent/mssql.go` (sessions, go-mssqldb),
 - **Approvals.** A batch needs no semicolons ("SELECT 1 DELETE FROM t"), so
   `statementGate` uses `tunnel.MSSQLWrites`: any reserved write word anywhere,
   or a first word that is not a read. The guard still reads the first statement.
+- **Logins & access (PR 2).** `internal/tunnel/mssqlaccess.go` builds the
+  `ms.*` admin ops (users with a new SQL login / existing login / none,
+  roles, ALTER ROLE ADD/DROP MEMBER, GRANT/REVOKE/DENY on DATABASE::,
+  SCHEMA::, OBJECT::); `internal/agent/mssql_access.go` runs them as the admin
+  login in one transaction, recorded first. Passwords become SQL Server's
+  hash in the agent (0x0200 + salt + SHA-512, `PASSWORD = 0x.. HASHED`); the
+  text says `[redacted]`. Refused: `argus-*`, dbo/guest/sys/public, changing
+  fixed roles; the agent refuses touching a login that is not the user's,
+  holds a server role or CONTROL SERVER, or (to drop) has users elsewhere.
+  `mssqlAccessGate` in control: waits where changes wait; db_owner
+  membership and CONTROL/TAKE OWNERSHIP ON DATABASE always wait. Effective
+  permissions come from EXECUTE AS USER + fn_my_permissions/HAS_PERMS_BY_NAME.
+  Console: `DatabaseMSSQLAccess.tsx` (lazy), Manage tab for mssql shows
+  `MSSQL_MANAGE` only.
 - **Testing.** Agent tests need `ARGUS_TEST_MSSQL_SA_PASSWORD` (+ `_PORT`).
 - **Plan.** PR 1 foundation; then logins/Grant-Revoke-Deny, DBA tools
   (activity, blocking, waits, index/stats, DBCC, Agent jobs), backup/restore/

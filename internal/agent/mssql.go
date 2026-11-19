@@ -518,7 +518,18 @@ func mssqlDisable(ctx context.Context, admin *mssqlAdmin, login string) error {
 
 // mssqlKillLogin ends every connection of a login.
 func mssqlKillLogin(ctx context.Context, admin *mssqlAdmin, login string) {
-	rows, err := admin.db.QueryContext(ctx,
+	mssqlKillOn(ctx, admin.db, login)
+}
+
+// mssqlQueryer is a *sql.DB or a *sql.Conn.
+type mssqlQueryer interface {
+	QueryContext(ctx context.Context, q string, args ...any) (*sql.Rows, error)
+	ExecContext(ctx context.Context, q string, args ...any) (sql.Result, error)
+}
+
+// mssqlKillOn ends every connection of a login, on q.
+func mssqlKillOn(ctx context.Context, q mssqlQueryer, login string) {
+	rows, err := q.QueryContext(ctx,
 		"SELECT session_id FROM sys.dm_exec_sessions WHERE login_name = @p1 AND session_id <> @@SPID", login)
 	if err != nil {
 		return
@@ -532,7 +543,7 @@ func mssqlKillLogin(ctx context.Context, admin *mssqlAdmin, login string) {
 	}
 	_ = rows.Close()
 	for _, id := range ids {
-		_ = admin.exec(ctx, "KILL "+strconv.FormatInt(id, 10))
+		_, _ = q.ExecContext(ctx, "KILL "+strconv.FormatInt(id, 10))
 	}
 }
 
@@ -679,7 +690,12 @@ func (s *mssqlSession) serve(ctx context.Context, st tunnel.Stream) {
 			case "schema":
 				err = s.schema(ctx, req)
 			case "admin":
-				err = s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: "extensions and replication are Postgres's"})
+				if !limiter.allow(time.Now()) {
+					err = s.send(tunnel.PGAnswer{ID: req.ID, Type: "error",
+						Error: "too many statements in a minute; wait a moment"})
+					break
+				}
+				err = s.adminOp(ctx, req)
 			default:
 				// check is Postgres's: the console treats this answer as an
 				// agent without it and runs as before.

@@ -101,7 +101,7 @@ describe('SQL Server workspace', () => {
   beforeEach(() => { localStorage.clear(); vi.stubGlobal('WebSocket', FakeSocket) })
   afterEach(() => { vi.unstubAllGlobals(); FakeSocket.last = null })
 
-  it('shows the query editor only, opens dbo, and names the release', async () => {
+  it('shows Query and Manage, opens dbo, and names the release', async () => {
     const ms: Database = { ...db, engine: 'mssql', port: 1433, dbname: 'sales' }
     renderWithProviders(
       <DatabaseWorkspace database={ms} access={{ level: 'write' }} endpoint="/api/v1/postgres"
@@ -112,13 +112,20 @@ describe('SQL Server workspace', () => {
     ws.push({ type: 'ready' })
     ws.answer({ id: 0, type: 'ready', level: 'write', role: 'ana@write', version: '16.0.4135.4' })
     const tabs = screen.getByRole('tablist', { name: 'View' })
-    expect(within(tabs).getAllByRole('tab').map((t) => t.textContent)).toEqual(['Query'])
+    expect(within(tabs).getAllByRole('tab').map((t) => t.textContent)).toEqual(['Query', 'Manage'])
     expect(screen.getByText(/core-db-01 · SQL Server 2022 \(16\.0\.4135\.4\)/)).toBeInTheDocument()
     await waitFor(() => expect(ws.sent.some((r) => r.op === 'schema' && r.kind === 'schemas')).toBe(true))
     for (const r of ws.sent.filter((x) => x.op === 'schema' && x.kind === 'schemas')) ws.answer({ id: r.id, type: 'schema', objects: [{ name: 'dbo', kind: 'schema' }, { name: 'sales', kind: 'schema' }] })
     // dbo opens by itself, as public does on Postgres; other schemas wait for a click.
     await waitFor(() => expect(ws.sent.some((r) => r.op === 'schema' && r.kind === 'objects' && r.schema === 'dbo')).toBe(true))
     expect(ws.sent.some((r) => r.op === 'schema' && r.kind === 'objects' && r.schema === 'sales')).toBe(false)
+
+    // Manage has SQL Server's own panels: logins and access, at DBA only.
+    fireEvent.click(within(tabs).getByRole('tab', { name: 'Manage' }))
+    const nav = screen.getByLabelText('Manage')
+    expect(within(nav).getAllByRole('button').map((b) => b.textContent)).toEqual(['Logins & accessDBA'])
+    expect(await screen.findByText('Logins & access needs DBA access')).toBeInTheDocument()
+    expect(ws.sent.some((r) => r.op === 'admin')).toBe(false)
   })
 })
 

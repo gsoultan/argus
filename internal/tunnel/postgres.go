@@ -280,6 +280,10 @@ type PGAdminOp struct {
 	RoleSpec  *PGRoleSpec   `json:"role,omitempty"`
 	Member    *PGMemberSpec `json:"member,omitempty"`
 	GrantSpec *PGGrantSpec  `json:"grant,omitempty"`
+	// SQL Server logins and access (see mssqlaccess.go): the user or role,
+	// and a grant, revoke or deny. Membership is Member.
+	Principal *MSSQLPrincipalSpec `json:"principal,omitempty"`
+	MSGrant   *MSSQLGrantSpec     `json:"msGrant,omitempty"`
 }
 
 // PGConnInfo is a publisher, as fields. The helper turns it into a libpq
@@ -299,7 +303,8 @@ type PGConnInfo struct {
 func (o *PGAdminOp) Mutates() bool {
 	switch o.Kind {
 	case AdminExtensionList, AdminPublicationList, AdminSubscriptionList, AdminNetwork,
-		AdminRoleList, AdminRolePrivileges, AdminGrantObjects:
+		AdminRoleList, AdminRolePrivileges, AdminGrantObjects,
+		AdminMSPrincipals, AdminMSPermissions, AdminMSObjects:
 		return false
 	}
 	return true
@@ -319,6 +324,11 @@ func (o *PGAdminOp) Redacted() PGAdminOp {
 		r := *c.RoleSpec
 		r.Password = "[redacted]"
 		c.RoleSpec = &r
+	}
+	if c.Principal != nil && c.Principal.Password != "" {
+		p := *c.Principal
+		p.Password = PasswordRedacted
+		c.Principal = &p
 	}
 	return c
 }

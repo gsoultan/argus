@@ -275,7 +275,7 @@ func (a *API) postStatementAsk(w http.ResponseWriter, r *http.Request, email str
 	// Opening a database to anywhere, and making a role a superuser, wait
 	// for approval on every database, so they may be asked for where
 	// nothing else is.
-	if !db.WritesNeedApproval() && !opensToAnywhere(in.Items) && !makesSuperuser(in.Items) {
+	if !db.WritesNeedApproval() && !opensToAnywhere(in.Items) && !makesSuperuser(in.Items) && !makesDBOwner(db, in.Items) {
 		writeErr(w, http.StatusBadRequest, "statements on "+db.Name+" run without approval")
 		return
 	}
@@ -356,6 +356,9 @@ func (a *API) statementGate(ctx context.Context, email string, db Database, leve
 	}
 	if req.Op == "admin" && req.Admin != nil && tunnel.PGRoleKind(req.Admin.Kind) {
 		return a.pgRoleGate(ctx, email, db, req)
+	}
+	if req.Op == "admin" && req.Admin != nil && tunnel.MSSQLAccessKind(req.Admin.Kind) {
+		return a.mssqlAccessGate(ctx, email, db, req)
 	}
 	if req.Op != "run" || !db.WritesNeedApproval() || level == "" || level == tunnel.LevelRead {
 		return nil
@@ -500,6 +503,62 @@ func makesSuperuser(items []StatementItem) bool {
 	}
 	for _, it := range items {
 		if !tunnel.PGRoleTextMakesSuperuser(it.SQL) {
+			return false
+		}
+	}
+	return true
+}
+
+// mssqlAccessGate decides whether a SQL Server user, role or permission
+// change may pass: after approval where the database's changes wait, and
+// always after approval when it makes someone db_owner or gives CONTROL or
+// TAKE OWNERSHIP of the database. The approval is for the change's own text,
+// with any password redacted, which is what the agent records.
+func (a *API) mssqlAccessGate(ctx context.Context, email string, db Database, req *tunnel.PGRequest) *tunnel.PGAnswer {
+	op := req.Admin
+	if op.Preview || !op.Mutates() {
+		return nil
+	}
+	if db.Engine != tunnel.EngineMSSQL {
+		return &tunnel.PGAnswer{ID: req.ID, Type: "error", Error: "logins and access are managed here for SQL Server only"}
+	}
+	text, err := tunnel.MSSQLAccessText(op, db.Name)
+	if err != nil {
+		return &tunnel.PGAnswer{ID: req.ID, Type: "error", Error: err.Error()}
+	}
+	always := tunnel.MSSQLAlwaysApproval(op)
+	if !db.WritesNeedApproval() && !always {
+		req.Approval = ""
+		return nil
+	}
+	if req.Approval == "" {
+		why := db.Name + approvalWhy(db)
+		if always && !db.WritesNeedApproval() {
+			why = "giving the whole of " + db.Name
+		}
+		return &tunnel.PGAnswer{ID: req.ID, Type: "error", Code: tunnel.GuardNeedsApproval,
+			Error: why + ": this change runs once someone else approves it", Approve: text}
+	}
+	if _, err := a.store.UseStatementApproval(ctx, req.Approval, email, db.ID, text, nil); err != nil {
+		var why errNoApproval
+		if errors.As(err, &why) {
+			return &tunnel.PGAnswer{ID: req.ID, Type: "error", Code: tunnel.GuardNeedsApproval, Error: why.why}
+		}
+		a.log.Error("checking an access change approval failed", "database", db.Name, "email", email, "error", err)
+		return &tunnel.PGAnswer{ID: req.ID, Type: "error", Code: tunnel.GuardNeedsApproval, Error: "could not check the approval; try again"}
+	}
+	return nil
+}
+
+// makesDBOwner says db is SQL Server's and every item makes someone
+// db_owner or gives the whole database: the ones that wait for approval
+// whatever the database's rules.
+func makesDBOwner(db Database, items []StatementItem) bool {
+	if db.Engine != tunnel.EngineMSSQL || len(items) == 0 {
+		return false
+	}
+	for _, it := range items {
+		if !tunnel.MSSQLTextAlwaysApproval(it.SQL) {
 			return false
 		}
 	}
