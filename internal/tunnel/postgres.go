@@ -285,7 +285,8 @@ type PGAdminOp struct {
 	Principal *MSSQLPrincipalSpec `json:"principal,omitempty"`
 	MSGrant   *MSSQLGrantSpec     `json:"msGrant,omitempty"`
 	// SQL Server's DBA tools (see mssqldba.go).
-	MSDBA *MSSQLDBASpec `json:"msdba,omitempty"`
+	MSDBA  *MSSQLDBASpec  `json:"msdba,omitempty"`
+	MSRepl *MSSQLReplSpec `json:"msrepl,omitempty"`
 }
 
 // PGConnInfo is a publisher, as fields. The helper turns it into a libpq
@@ -307,7 +308,8 @@ func (o *PGAdminOp) Mutates() bool {
 	case AdminExtensionList, AdminPublicationList, AdminSubscriptionList, AdminNetwork,
 		AdminRoleList, AdminRolePrivileges, AdminGrantObjects,
 		AdminMSPrincipals, AdminMSPermissions, AdminMSObjects,
-		AdminMSActivity, AdminMSPerformance, AdminMSIndexes, AdminMSIntegrity, AdminMSJobs, AdminMSSettings:
+		AdminMSActivity, AdminMSPerformance, AdminMSIndexes, AdminMSIntegrity, AdminMSJobs, AdminMSSettings,
+		AdminMSReplication:
 		return false
 	}
 	return true
@@ -332,6 +334,11 @@ func (o *PGAdminOp) Redacted() PGAdminOp {
 		p := *c.Principal
 		p.Password = PasswordRedacted
 		c.Principal = &p
+	}
+	if c.MSRepl != nil && c.MSRepl.Password != "" {
+		r := *c.MSRepl
+		r.Password = PasswordRedacted
+		c.MSRepl = &r
 	}
 	return c
 }

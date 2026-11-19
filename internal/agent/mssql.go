@@ -233,6 +233,9 @@ type mssqlAdmin struct {
 	edition string
 	// the admin file's backup folders; see mssqlAdminCreds.
 	backupDir, backupLocal string
+	// the login itself, for the replication agents SQL Server on Linux
+	// signs in with SQL authentication; never sent anywhere else.
+	user, pw string
 }
 
 func (a *mssqlAdmin) close() { _ = a.db.Close() }
@@ -269,7 +272,7 @@ func mssqlAdminConn(ctx context.Context, host string, port int, file string) (*m
 		_ = h.Close()
 		return nil, fmt.Errorf("SQL Server on port %d refused the login in %s: %s", port, file, mssqlMessage(err))
 	}
-	a := &mssqlAdmin{db: h, version: version, edition: edition, backupDir: c.backupDir, backupLocal: c.backupLocal}
+	a := &mssqlAdmin{db: h, version: version, edition: edition, backupDir: c.backupDir, backupLocal: c.backupLocal, user: c.user, pw: c.pw}
 	if err := mssqlVersionOK(version); err != nil {
 		a.close()
 		return nil, err

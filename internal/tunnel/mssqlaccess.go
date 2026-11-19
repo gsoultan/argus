@@ -218,6 +218,9 @@ func MSSQLAlwaysApproval(op *PGAdminOp) bool {
 	if op == nil || op.Preview {
 		return false
 	}
+	if MSSQLReplAlwaysApproval(op) {
+		return true
+	}
 	switch op.Kind {
 	case AdminMSDBSet:
 		// Simple recovery ends the log backups a restore to a point in
@@ -242,6 +245,9 @@ func MSSQLAlwaysApproval(op *PGAdminOp) bool {
 // approval for it may be asked on any database.
 func MSSQLTextAlwaysApproval(text string) bool {
 	for _, s := range strings.Split(text, ";\n") {
+		if msReplTextAlwaysApproval(s) {
+			return true
+		}
 		if strings.HasPrefix(s, "ALTER DATABASE ") && strings.HasSuffix(s, " SET RECOVERY SIMPLE") {
 			return true
 		}

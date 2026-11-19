@@ -106,7 +106,9 @@ func MSSQLDBAKind(kind string) bool {
 
 // MSSQLAdminKind says whether kind is any of SQL Server's administrative
 // operations: access or DBA.
-func MSSQLAdminKind(kind string) bool { return MSSQLAccessKind(kind) || MSSQLDBAKind(kind) }
+func MSSQLAdminKind(kind string) bool {
+	return MSSQLAccessKind(kind) || MSSQLDBAKind(kind) || MSSQLReplKind(kind)
+}
 
 // msSettings are the database settings db.set changes, each with the values
 // it takes. A number setting takes a range instead.
@@ -298,6 +300,9 @@ func msTable(d *MSSQLDBASpec) (string, error) {
 func MSSQLAdminText(op *PGAdminOp, database string) (string, error) {
 	if op != nil && MSSQLDBAKind(op.Kind) {
 		return MSSQLDBASQL(op, database)
+	}
+	if op != nil && MSSQLReplKind(op.Kind) {
+		return MSSQLReplSQL(op, database)
 	}
 	return MSSQLAccessText(op, database)
 }

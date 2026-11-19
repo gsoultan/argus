@@ -135,6 +135,9 @@ func (s *mssqlSession) adminOp(ctx context.Context, req tunnel.PGRequest) error 
 	if tunnel.MSSQLDBAKind(op.Kind) {
 		return s.dbaOp(ctx, req)
 	}
+	if tunnel.MSSQLReplKind(op.Kind) {
+		return s.replOp(ctx, req)
+	}
 	// The password becomes SQL Server's hash here, before it is recorded,
 	// built or sent anywhere.
 	hash := ""

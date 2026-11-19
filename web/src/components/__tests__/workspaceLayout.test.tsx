@@ -125,7 +125,7 @@ describe('SQL Server workspace', () => {
     const nav = screen.getByLabelText('Manage')
     expect(within(nav).getAllByRole('button').map((b) => b.textContent)).toEqual([
       'Activity & blockingDBA', 'Waits & queriesDBA', 'IntegrityDBA', 'Backups',
-      'Indexes & statisticsDBA', 'Agent jobsDBA', 'Logins & accessDBA', 'SettingsDBA',
+      'Indexes & statisticsDBA', 'Agent jobsDBA', 'ReplicationDBA', 'Logins & accessDBA', 'SettingsDBA',
     ])
     expect(await screen.findByText('Activity & blocking needs DBA access')).toBeInTheDocument()
     fireEvent.click(within(nav).getByRole('button', { name: /Logins & access/ }))

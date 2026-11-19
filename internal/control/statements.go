@@ -537,8 +537,17 @@ func (a *API) mssqlAdminGate(ctx context.Context, email string, db Database, req
 		why := db.Name + approvalWhy(db)
 		if always && !db.WritesNeedApproval() {
 			why = "giving the whole of " + db.Name
-			if op.Kind == tunnel.AdminMSDBSet {
+			switch op.Kind {
+			case tunnel.AdminMSDBSet:
 				why = "simple recovery ends " + db.Name + "'s log backups"
+			case tunnel.AdminMSAGRemove:
+				why = "removing " + db.Name + " from its availability group ends its copies on the other replicas"
+			case tunnel.AdminMSAGFailover:
+				why = "a failover moves the primary of " + db.Name + "'s availability group"
+			case tunnel.AdminMSReplDistributor:
+				why = "making this server a distributor changes the whole server"
+			case tunnel.AdminMSReplPubDrop, tunnel.AdminMSReplPublish:
+				why = "ending a publication of " + db.Name + " stops its subscribers"
 			}
 		}
 		return &tunnel.PGAnswer{ID: req.ID, Type: "error", Code: tunnel.GuardNeedsApproval,
