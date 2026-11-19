@@ -361,7 +361,13 @@ func (a *API) statementGate(ctx context.Context, email string, db Database, leve
 		return nil
 	}
 	c := tunnel.ClassifySQL(req.SQL)
-	if !tunnel.NeedsApproval(c, req.SQL) {
+	if db.Engine == tunnel.EngineMSSQL {
+		// A T-SQL batch is many statements with nothing between them; the
+		// first word alone would call "SELECT 1 DELETE FROM t" a read.
+		if !tunnel.MSSQLWrites(req.SQL) {
+			return nil
+		}
+	} else if !tunnel.NeedsApproval(c, req.SQL) {
 		return nil
 	}
 	// The agent refuses what its guard stops, so nothing is used up on it;

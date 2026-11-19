@@ -92,6 +92,6 @@ func oneLine(s string) string { return strings.ReplaceAll(s, "\n", "; ") }
 // approvalEngines are the engines whose changes can wait for approval:
 // Postgres's statements, a Redis's bulk, configuration and user changes, and
 // a MySQL's, MongoDB's, RabbitMQ's or Kafka's change of which machines can
-// connect.
+// connect, and SQL Server's batches.
 var approvalEngines = []string{tunnel.EnginePostgres, tunnel.EngineRedis, tunnel.EngineMySQL,
-	tunnel.EngineMongoDB, tunnel.EngineRabbitMQ, tunnel.EngineKafka}
+	tunnel.EngineMongoDB, tunnel.EngineRabbitMQ, tunnel.EngineKafka, tunnel.EngineMSSQL}

@@ -422,6 +422,15 @@ func runDaemon(args []string) int {
 			Executable: exe,
 			StateDir:   *stateDir,
 		}})
+		// SQL Server on this server, as the person's own login for the level
+		// and database, every batch recorded before it runs.
+		services[agent.MSSQLService] = agent.MSSQL(agent.StoreConfig{
+			Verifier:   &tunnel.GrantVerifier{Host: hostname},
+			RecordDir:  *dir,
+			Log:        log,
+			Executable: exe,
+			StateDir:   *stateDir,
+		})
 		// Backups of those databases, as the postgres account, encrypted
 		// here before they touch a disk; see internal/agent/backup.go.
 		services[agent.BackupService] = agent.Backup(agent.BackupConfig{

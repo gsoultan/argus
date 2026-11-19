@@ -65,12 +65,14 @@ function lex(s: string): Tok[] {
         j++
       }
       i = j
-    } else if (c === '"') {
+    } else if (c === '"' || c === '[') {
+      // "name", or SQL Server's [name]; the closing quote doubled is one.
+      const q = c === '[' ? ']' : c
       let j = i + 1
       let b = ''
       while (j < s.length) {
-        if (s.charAt(j) === '"') {
-          if (s.charAt(j + 1) === '"') { b += '"'; j += 2; continue }
+        if (s.charAt(j) === q) {
+          if (s.charAt(j + 1) === q) { b += q; j += 2; continue }
           break
         }
         b += s.charAt(j)
@@ -122,6 +124,12 @@ function closeParen(t: Tok[], i: number): number {
   const d = at(t, i).depth
   for (let j = i + 1; j < t.length; j++) if (at(t, j).punct === ')' && at(t, j).depth === d) return j + 1
   return t.length
+}
+
+/** Past SQL Server's TOP (n) [PERCENT] after UPDATE or DELETE. */
+function skipTop(t: Tok[], i: number): number {
+  if (at(t, i).text === 'top' && !at(t, i).punct && !at(t, i).quoted && at(t, i + 1).punct === '(') return skip(t, closeParen(t, i + 1), 'percent')
+  return i
 }
 
 function readName(t: Tok[], i: number): [string, number] {
@@ -192,14 +200,14 @@ export function classifySQL(sql: string): SQLClass {
       break
     case 'update': {
       c.writes = true
-      const [name] = readName(rest, skip(rest, 0, 'only'))
+      const [name] = readName(rest, skip(rest, skipTop(rest, 0), 'only'))
       if (name) c.targets = [name]
       if (hasTopWord(rest, 'where')) c.hasWhere = true
       break
     }
     case 'delete': {
       c.writes = true
-      const [name] = readName(rest, skip(rest, skip(rest, 0, 'from'), 'only'))
+      const [name] = readName(rest, skip(rest, skip(rest, skipTop(rest, 0), 'from'), 'only'))
       if (name) c.targets = [name]
       if (hasTopWord(rest, 'where')) c.hasWhere = true
       break

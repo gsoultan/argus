@@ -238,7 +238,7 @@ function Reach({ l, withPort = false }: { l: ServerAppListen; withPort?: boolean
  * its admin password from Valkey's own config file.
  */
 const APP_ENGINES: Record<string, DBEngine> = {
-  postgres: 'postgres', mysql: 'mysql', mariadb: 'mysql', mongodb: 'mongodb', redis: 'redis', valkey: 'redis', rabbitmq: 'rabbitmq', kafka: 'kafka',
+  postgres: 'postgres', mysql: 'mysql', mariadb: 'mysql', mssql: 'mssql', mongodb: 'mongodb', redis: 'redis', valkey: 'redis', rabbitmq: 'rabbitmq', kafka: 'kafka',
 }
 function engineOfApp(kind: string): DBEngine | undefined {
   return APP_ENGINES[kind]
@@ -292,7 +292,7 @@ function AddThroughPooler({ app, postgres, dbs, onAdd }: {
 }
 
 /**
- * Adds a Postgres, MySQL, MariaDB, Redis, RabbitMQ or Kafka the agent found. A containerised one is
+ * Adds a Postgres, MySQL, MariaDB, SQL Server, Redis, RabbitMQ or Kafka the agent found. A containerised one is
  * not offered: Argus opens it as the host's own admin over a local socket or
  * the server's own tools, which a container does not share.
  *
@@ -306,6 +306,7 @@ function AddFound({ app, engine, added, onAdd }: {
   app: ServerApp; engine: DBEngine; added: Map<number, Database>; onAdd: (port?: number) => void
 }) {
   const what = engine === 'postgres' ? 'postgres account' : engine === 'mysql' ? 'MySQL root account'
+    : engine === 'mssql' ? 'SQL Server admin file'
     : engine === 'mongodb' ? 'MongoDB admin file' : engine === 'redis' ? `${app.name} admin` : engine === 'kafka' ? 'Kafka admin' : 'rabbitmqctl'
   if (app.container) {
     return (
@@ -322,7 +323,7 @@ function AddFound({ app, engine, added, onAdd }: {
     : listening.length ? listening : [undefined]
   const inArgus = (p: number | undefined) =>
     engine === 'redis' || isBroker(engine) ? [...added.values()][0]
-      : added.get(p ?? (engine === 'mysql' ? 3306 : engine === 'mongodb' ? 27017 : 5432))
+      : added.get(p ?? (engine === 'mysql' ? 3306 : engine === 'mssql' ? 1433 : engine === 'mongodb' ? 27017 : 5432))
   return (
     <Stack gap={4} align="flex-end">
       {ports.map((p) => {

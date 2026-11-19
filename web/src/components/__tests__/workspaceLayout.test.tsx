@@ -97,6 +97,31 @@ describe('Workspace layout', () => {
   })
 })
 
+describe('SQL Server workspace', () => {
+  beforeEach(() => { localStorage.clear(); vi.stubGlobal('WebSocket', FakeSocket) })
+  afterEach(() => { vi.unstubAllGlobals(); FakeSocket.last = null })
+
+  it('shows the query editor only, opens dbo, and names the release', async () => {
+    const ms: Database = { ...db, engine: 'mssql', port: 1433, dbname: 'sales' }
+    renderWithProviders(
+      <DatabaseWorkspace database={ms} access={{ level: 'write' }} endpoint="/api/v1/postgres"
+        getTicket={async () => ({ ticket: 't', role: 'ana', level: 'write' })} />,
+    )
+    await waitFor(() => expect(FakeSocket.last).not.toBeNull())
+    const ws = FakeSocket.last!
+    ws.push({ type: 'ready' })
+    ws.answer({ id: 0, type: 'ready', level: 'write', role: 'ana@write', version: '16.0.4135.4' })
+    const tabs = screen.getByRole('tablist', { name: 'View' })
+    expect(within(tabs).getAllByRole('tab').map((t) => t.textContent)).toEqual(['Query'])
+    expect(screen.getByText(/core-db-01 · SQL Server 2022 \(16\.0\.4135\.4\)/)).toBeInTheDocument()
+    await waitFor(() => expect(ws.sent.some((r) => r.op === 'schema' && r.kind === 'schemas')).toBe(true))
+    for (const r of ws.sent.filter((x) => x.op === 'schema' && x.kind === 'schemas')) ws.answer({ id: r.id, type: 'schema', objects: [{ name: 'dbo', kind: 'schema' }, { name: 'sales', kind: 'schema' }] })
+    // dbo opens by itself, as public does on Postgres; other schemas wait for a click.
+    await waitFor(() => expect(ws.sent.some((r) => r.op === 'schema' && r.kind === 'objects' && r.schema === 'dbo')).toBe(true))
+    expect(ws.sent.some((r) => r.op === 'schema' && r.kind === 'objects' && r.schema === 'sales')).toBe(false)
+  })
+})
+
 describe('compactCount', () => {
   it('shortens without rounding up into the next unit', () => {
     expect(compactCount(940)).toBe('940')

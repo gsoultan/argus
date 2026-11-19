@@ -83,7 +83,7 @@ export function DatabaseSettings({ dbId, initialTab, section }: {
   }
   const info = engineOf(db.engine)
   const LEVELS = levelsFor(db)
-  const title = db.engine === 'redis' ? `Redis · db ${db.dbname}` : db.engine === 'mysql' ? `MySQL · ${db.dbname}` : db.engine === 'mongodb' ? `MongoDB · ${db.dbname}` : db.engine === 'rabbitmq' ? `RabbitMQ · ${db.dbname}` : db.engine === 'kafka' ? `Kafka · ${db.dbname === '*' ? 'every topic' : db.dbname}` : db.dbname
+  const title = db.engine === 'redis' ? `Redis · db ${db.dbname}` : db.engine === 'mysql' ? `MySQL · ${db.dbname}` : db.engine === 'mssql' ? `SQL Server · ${db.dbname}` : db.engine === 'mongodb' ? `MongoDB · ${db.dbname}` : db.engine === 'rabbitmq' ? `RabbitMQ · ${db.dbname}` : db.engine === 'kafka' ? `Kafka · ${db.dbname === '*' ? 'every topic' : db.dbname}` : db.dbname
   const names = new Map((users ?? []).map((u) => [u.email, u.displayName]))
 
   const onRemove = async (id: string, label: string) => {
@@ -299,7 +299,7 @@ function StoreConnection({ db }: { db: Database }) {
   const [host, setHost] = useState(db.host)
   const [port, setPort] = useState<number | string>(db.port)
   const [conf, setConf] = useState(db.configPath ?? '')
-  const withConf = db.engine === 'redis' || db.engine === 'mysql' || db.engine === 'mongodb' || db.engine === 'kafka'
+  const withConf = db.engine === 'redis' || db.engine === 'mysql' || db.engine === 'mssql' || db.engine === 'mongodb' || db.engine === 'kafka'
   const dirty = host.trim() !== db.host || Number(port) !== db.port || (withConf && conf.trim() !== (db.configPath ?? ''))
   const save = async () => {
     try {
@@ -312,8 +312,10 @@ function StoreConnection({ db }: { db: Database }) {
   }
   return (
     <Stack gap="md">
-      <SectionCard title={db.engine === 'redis' ? 'Redis' : db.engine === 'mysql' ? 'MySQL' : db.engine === 'mongodb' ? 'MongoDB' : db.engine === 'kafka' ? 'Kafka listener' : 'RabbitMQ management API'}
-        description={db.engine !== 'rabbitmq' && db.engine !== 'kafka'
+      <SectionCard title={db.engine === 'redis' ? 'Redis' : db.engine === 'mysql' ? 'MySQL' : db.engine === 'mssql' ? 'SQL Server' : db.engine === 'mongodb' ? 'MongoDB' : db.engine === 'kafka' ? 'Kafka listener' : 'RabbitMQ management API'}
+        description={db.engine === 'mssql'
+          ? 'On the server itself, on loopback: SQL Server listens on TCP only. The agent refuses anything else.'
+          : db.engine !== 'rabbitmq' && db.engine !== 'kafka'
           ? 'On the server itself: a loopback address or the path of its unix socket. The agent refuses anything else.'
           : db.engine === 'kafka' ? 'On the server itself, on loopback: a SASL listener with SCRAM. The agent refuses anything else, and a cluster with no authorizer.'
           : 'On the server itself, on loopback. The agent refuses anything else.'}>
@@ -325,6 +327,11 @@ function StoreConnection({ db }: { db: Database }) {
           {db.engine === 'mysql' && (
             <TextInput label="Option file" value={conf} onChange={(e) => setConf(e.currentTarget.value)} w={420} placeholder="none: root over the socket"
               description="Empty: the agent signs in as root over the server’s socket, as Debian, Ubuntu and MariaDB 10.4+ allow root to. Otherwise a .cnf on the server, private to root, whose [client] user and password may create users and grant. It is read there and never sent or stored." />
+          )}
+          {db.engine === 'mssql' && (
+            <TextInput label="Admin file" value={conf} onChange={(e) => setConf(e.currentTarget.value)} w={420}
+              placeholder="/etc/argus/mssql.conf"
+              description="A file on the server, readable by root only, with user = and password = for a sysadmin login such as sa (or one with ALTER ANY LOGIN, ALTER ANY CONNECTION and db_owner here). The agent reads it only to give and take each person’s login. Empty means /etc/argus/mssql.conf." />
           )}
           {db.engine === 'redis' && (
             <TextInput label="Config file" value={conf} onChange={(e) => setConf(e.currentTarget.value)} w={420}
@@ -346,6 +353,8 @@ function StoreConnection({ db }: { db: Database }) {
         <Text size={FS.meta} c="dimmed">
           {db.engine === 'mysql'
             ? 'Each person gets a MySQL user named argus-<login>-<level> with only the level’s privileges on this database. Between sessions it is locked; a session unlocks it with a one-time password, and the last one to close locks it again and ends its connections. Users are kept so views and routines they define keep working. MySQL 5.7 or MariaDB 10.4 and later. Argus never touches a user whose name does not start with argus-.'
+            : db.engine === 'mssql'
+            ? 'Each person gets a SQL Server login named argus-<login>-<level>-<tag> for this database, mapped to a user here with only the level’s roles. Between sessions it is disabled with a password nobody knows; a session enables it with a one-time password, and the last one to close disables it again and ends its connections. Logins and users are kept so what a person created keeps its owner. SQL Server 2016 or later. Argus never touches a login whose name does not start with argus-.'
             : db.engine === 'mongodb'
             ? 'Each person gets a MongoDB user named argus-<login>-<level> in this database, with that level’s built-in roles on it and a one-time password for their session, and it is dropped when their last session closes. MongoDB 5.0 or later, with access control on: a server anyone can use without signing in is refused. Argus never touches a user whose name does not start with argus-.'
             : db.engine === 'redis'

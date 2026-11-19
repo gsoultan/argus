@@ -195,11 +195,14 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
   /** The engines offered: brokers on the Brokers page, for one. */
   onlyEngines?: DBEngine[]
 }) {
-  const [mode, setMode] = useState<'existing' | 'create'>(initialMode ?? 'existing')
+  const [chosenMode, setMode] = useState<'existing' | 'create'>(initialMode ?? 'existing')
   const create = useCreateDatabase()
   const narrow = useMediaQuery('(max-width: 48em)')
   const [engine, setEngine] = useState<DBEngine>(initialEngine ?? 'postgres')
   const info = ENGINES[engine]
+  // Argus does not make SQL Server databases yet; one already there is added.
+  const canCreate = engine !== 'mssql'
+  const mode = canCreate ? chosenMode : 'existing'
   const [typed, setTyped] = useState('')
   const [manual, setManual] = useState(false)
   const [picked, setPicked] = useState<string[]>([])
@@ -241,6 +244,8 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
   const nameOk = (n: string) => engine === 'postgres' ? n.length > 0 && n.length <= 63 && !/["'\\\x00]/.test(n)
     : engine === 'mysql' ? n.length > 0 && n.length <= 63 && !/[/\\.\x00]/.test(n) && !/ $/.test(n)
       && !['mysql', 'sys', 'information_schema', 'performance_schema'].includes(n.toLowerCase())
+    : engine === 'mssql' ? n.length > 0 && n.length <= 63 && n.trim() === n && !/[\x00-\x1f\x7f]/.test(n)
+      && !['master', 'model', 'msdb', 'tempdb', 'distribution'].includes(n.toLowerCase())
     : engine === 'redis' ? /^\d{1,4}$/.test(n)
     : engine === 'mongodb' ? n.length > 0 && new TextEncoder().encode(n).length < 64 && !/[/\\. "$*<>:|?\x00]/.test(n) && !['admin', 'local', 'config'].includes(n)
     : engine === 'kafka' ? /^(\*|[A-Za-z0-9._-]{1,63})$/.test(n) && n !== '.' && n !== '..'
@@ -263,7 +268,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
             : viaPooler?.host ? { host: viaPooler.host } : {}),
           ...(engine === 'postgres' ? { poolerPort: Number(poolerPort) || 0 } : {}),
           ...(engine === 'redis' ? { configPath: configPath.trim() || info.defaults.configPath } : {}),
-          ...((engine === 'mysql' || engine === 'mongodb' || engine === 'kafka') && configPath.trim() ? { configPath: configPath.trim() } : {}),
+          ...((engine === 'mysql' || engine === 'mssql' || engine === 'mongodb' || engine === 'kafka') && configPath.trim() ? { configPath: configPath.trim() } : {}),
         })
         added.push(n)
       }
@@ -307,8 +312,10 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
       <Stack gap="sm">
         <SegmentedControl value={engine} onChange={(v) => pick(v as DBEngine)} fullWidth
           data={(onlyEngines ?? (Object.keys(ENGINES) as DBEngine[])).map((e) => ({ label: ENGINES[e].label, value: e }))} />
-        <SegmentedControl value={mode} onChange={(v) => setMode(v as typeof mode)} size="xs"
-          data={[{ label: `Already on ${asset.hostname.split('.')[0]}`, value: 'existing' }, { label: 'Create new', value: 'create' }]} />
+        {canCreate && (
+          <SegmentedControl value={mode} onChange={(v) => setMode(v as typeof mode)} size="xs"
+            data={[{ label: `Already on ${asset.hostname.split('.')[0]}`, value: 'existing' }, { label: 'Create new', value: 'create' }]} />
+        )}
 
         {mode === 'create' ? (
           <Suspense fallback={<Loader size="sm" />}>
@@ -381,7 +388,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
                     const off = Boolean(d.added) || redisAdded
                     const meta = d.added ? null
                       : engine === 'postgres' ? [d.owner && `owner ${d.owner}`, d.bytes ? bytes(d.bytes) : ''].filter(Boolean).join(' · ')
-                      : engine === 'mysql' ? (d.bytes ? bytes(d.bytes) : '')
+                      : engine === 'mysql' || engine === 'mssql' ? (d.bytes ? bytes(d.bytes) : '')
                       : engine === 'redis' ? `${(d.keys ?? 0).toLocaleString()} keys`
                       : engine === 'mongodb' && d.bytes ? bytes(d.bytes)
                       : ''
@@ -411,6 +418,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
               <Text size={FS.micro} c="dimmed">
                 {engine === 'postgres' && 'Template databases and the postgres maintenance database are left out. '}
                 {engine === 'mysql' && 'MySQL’s own schemas (mysql, sys, information_schema, performance_schema) are left out. '}
+                {engine === 'mssql' && 'SQL Server’s own databases (master, model, msdb, tempdb, distribution) are left out. '}
                 {engine === 'redis' && (redisAdded ? 'This Redis is already in Argus; one entry covers every db. ' : 'Pick the db sessions open in; SELECT moves between them. ')}
                 {ans?.truncated && 'Only the first 500 are listed. '}
                 Not listed? <Anchor component="button" type="button" size={FS.micro} onClick={() => setManual(true)}>Type a name instead</Anchor>
@@ -443,6 +451,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
           <TextInput label={engine === 'rabbitmq' ? 'Management API address' : engine === 'kafka' ? 'Listener address' : 'Address'} placeholder={info.defaults.host}
             value={host} onChange={(e) => setHost(e.currentTarget.value)}
             description={engine === 'kafka' ? 'On this server: a SASL listener with SCRAM, and an authorizer on the cluster.'
+              : engine === 'mssql' ? 'On this server, on loopback: 127.0.0.1, ::1 or localhost.'
               : engine !== 'rabbitmq' ? 'On this server: 127.0.0.1, or the path of its unix socket.'
               : 'On this server, with the management plugin on (rabbitmq-plugins enable rabbitmq_management).'} />
         )}
@@ -458,6 +467,11 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
           <TextInput label="Option file" placeholder="none: root over the socket" value={configPath}
             onChange={(e) => setConfigPath(e.currentTarget.value)}
             description="Only if root cannot sign in over the socket: a .cnf on the server, private to root, with a [client] user and password that may create users and grant. The agent reads it there; it is never sent or stored in Argus." />
+        )}
+        {engine === 'mssql' && (
+          <TextInput label="Admin file" placeholder={info.defaults.configPath} value={configPath}
+            onChange={(e) => setConfigPath(e.currentTarget.value)}
+            description="A file on the server, readable by root only, with user = and password = for a sysadmin login such as sa. The agent reads it there to give each person their own login for their session; the password never leaves the server and is never stored in Argus." />
         )}
         {engine === 'mongodb' && (
           <TextInput label="Admin file" placeholder={info.defaults.configPath} value={configPath}

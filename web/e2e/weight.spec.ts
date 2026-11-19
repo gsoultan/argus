@@ -209,8 +209,11 @@ const BUDGET_KB = {
    * downloading a recording past 32 MB, says how far a download has got, and
    * shows a removed recording in the player's place. The remove dialog
    * itself is a lazy chunk, fetched only when an admin opens it.
+   * 416.0 kB with SQL Server: its entry in the engine table (name, defaults,
+   * what each level grants), its release names, and [name] in the statement
+   * classifier, which the recording's statement list shares.
    */
-  sessionDetail: 416,
+  sessionDetail: 417,
 }
 
 /**

@@ -65,7 +65,10 @@ var controlOnlyModules = []string{
 	"github.com/gsoultan/storm",
 	"github.com/minio/minio-go",
 	"gopkg.in/yaml.v3",
-	"github.com/google/uuid",
+	// github.com/google/uuid used to be here. The SQL Server driver the
+	// agent signs in with (github.com/microsoft/go-mssqldb) links it for its
+	// uniqueidentifier type; it is a small standard-library-only package and
+	// carries nothing of the control plane's.
 }
 
 func isAgent(pkg string) bool {

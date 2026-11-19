@@ -50,6 +50,8 @@ func ServiceForEngine(engine string) string {
 		return MongoDBService
 	case EngineKafka:
 		return KafkaService
+	case EngineMSSQL:
+		return MSSQLService
 	}
 	return PostgresService
 }

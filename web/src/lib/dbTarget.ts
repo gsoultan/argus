@@ -11,6 +11,7 @@ export function targetName(d: Pick<Database, 'engine' | 'dbname'>): string {
   if (d.engine === 'rabbitmq') return `RabbitMQ · ${d.dbname}`
   if (d.engine === 'kafka') return `Kafka · ${d.dbname === '*' ? 'every topic' : d.dbname}`
   if (d.engine === 'mysql') return `MySQL · ${d.dbname}`
+  if (d.engine === 'mssql') return `SQL Server · ${d.dbname}`
   if (d.engine === 'mongodb') return `MongoDB · ${d.dbname}`
   return d.dbname
 }

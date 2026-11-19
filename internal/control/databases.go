@@ -155,9 +155,11 @@ func (d *Database) validate() error {
 		return d.validateMongo()
 	case tunnel.EngineKafka:
 		return d.validateKafka()
+	case tunnel.EngineMSSQL:
+		return d.validateMSSQL()
 	case tunnel.EnginePostgres:
 	default:
-		return ErrInvalidDatabase{"the engine must be postgres, mysql, mongodb, redis, rabbitmq or kafka"}
+		return ErrInvalidDatabase{"the engine must be postgres, mysql, mssql, mongodb, redis, rabbitmq or kafka"}
 	}
 	if d.ConfigPath != "" {
 		return ErrInvalidDatabase{"a config file is only for Redis, MySQL and MongoDB"}
@@ -297,7 +299,7 @@ func (d *Database) validateRedis() error {
 }
 
 // SQL says the entry speaks SQL through the Postgres session's frames:
-// Postgres and MySQL. Its statements can wait for approval and its sessions
+// Postgres, MySQL and SQL Server. Its statements can wait for approval and its sessions
 // open the SQL workspace.
 // Broker reports whether the entry is a message broker (RabbitMQ, Kafka),
 // which the console lists under Brokers rather than Databases.
@@ -314,7 +316,38 @@ func (d Database) Noun() string {
 }
 
 func (d Database) SQL() bool {
-	return d.Engine == "" || d.Engine == tunnel.EnginePostgres || d.Engine == tunnel.EngineMySQL
+	return d.Engine == "" || d.Engine == tunnel.EnginePostgres || d.Engine == tunnel.EngineMySQL ||
+		d.Engine == tunnel.EngineMSSQL
+}
+
+// validateMSSQL: one database of a SQL Server on this asset, reached on
+// loopback; dbname is the database. ConfigPath is the file on the server with
+// the admin credentials the agent signs in with; empty means
+// tunnel.MSSQLAdminFile.
+func (d *Database) validateMSSQL() error {
+	switch {
+	case !tunnel.ValidMSSQLDB(d.Name) || len(d.Name) > 63:
+		return ErrInvalidDatabase{"the database name must be 1 to 63 characters with no control characters or " +
+			"surrounding spaces, and not one of SQL Server's own (master, model, msdb, tempdb, distribution)"}
+	case strings.HasPrefix(d.Name, tunnel.TestDBPrefix):
+		return ErrInvalidDatabase{tunnel.TestDBPrefix + " databases are the throwaway copies test restores make; Argus does not add them"}
+	}
+	if d.Host == "" {
+		d.Host = "127.0.0.1"
+	}
+	if !tunnel.LocalLoopback(d.Host) {
+		return ErrInvalidDatabase{"SQL Server must be on the server itself: 127.0.0.1, ::1 or localhost, not " + d.Host}
+	}
+	if d.Port == 0 {
+		d.Port = 1433
+	}
+	if d.Port < 1 || d.Port > 65535 {
+		return ErrInvalidDatabase{"the port must be between 1 and 65535"}
+	}
+	if d.ConfigPath != "" && !tunnel.ValidMSSQLAdminFile(d.ConfigPath) {
+		return ErrInvalidDatabase{"the admin file must be an absolute path to a .conf file on the server"}
+	}
+	return d.validateCommon()
 }
 
 // validateMySQL: one database of a MySQL or MariaDB on this asset, reached
