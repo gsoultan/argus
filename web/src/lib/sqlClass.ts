@@ -65,26 +65,14 @@ function lex(s: string): Tok[] {
         j++
       }
       i = j
-    } else if (c === '"') {
+    } else if (c === '"' || c === '[') {
+      // "name", or SQL Server's [name]; the closing quote doubled is one.
+      const q = c === '[' ? ']' : c
       let j = i + 1
       let b = ''
       while (j < s.length) {
-        if (s.charAt(j) === '"') {
-          if (s.charAt(j + 1) === '"') { b += '"'; j += 2; continue }
-          break
-        }
-        b += s.charAt(j)
-        j++
-      }
-      out.push({ text: b, quoted: true, punct: '', depth })
-      i = j + 1
-    } else if (c === '[') {
-      // [name] in SQL Server, ]] for a ] inside.
-      let j = i + 1
-      let b = ''
-      while (j < s.length) {
-        if (s.charAt(j) === ']') {
-          if (s.charAt(j + 1) === ']') { b += ']'; j += 2; continue }
+        if (s.charAt(j) === q) {
+          if (s.charAt(j + 1) === q) { b += q; j += 2; continue }
           break
         }
         b += s.charAt(j)

@@ -137,8 +137,7 @@ export function isSQLEngine(e: string | undefined): boolean {
 export function engineVersion(engine: string | undefined, version: string): string {
   const v = version.split(' ')[0] ?? ''
   if (engine === 'mssql') {
-    const year: Record<string, string> = { 13: '2016', 14: '2017', 15: '2019', 16: '2022', 17: '2025' }
-    const y = year[v.split('.')[0] ?? '']
+    const y = ({ 13: 2016, 14: 2017, 15: 2019, 16: 2022, 17: 2025 } as Record<string, number>)[v.split('.')[0] ?? '']
     return y ? `SQL Server ${y} (${v})` : `SQL Server ${v}`
   }
   if (engine !== 'mysql') return `Postgres ${v}`
