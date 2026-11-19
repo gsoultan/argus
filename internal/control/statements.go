@@ -357,8 +357,8 @@ func (a *API) statementGate(ctx context.Context, email string, db Database, leve
 	if req.Op == "admin" && req.Admin != nil && tunnel.PGRoleKind(req.Admin.Kind) {
 		return a.pgRoleGate(ctx, email, db, req)
 	}
-	if req.Op == "admin" && req.Admin != nil && tunnel.MSSQLAccessKind(req.Admin.Kind) {
-		return a.mssqlAccessGate(ctx, email, db, req)
+	if req.Op == "admin" && req.Admin != nil && tunnel.MSSQLAdminKind(req.Admin.Kind) {
+		return a.mssqlAdminGate(ctx, email, db, req)
 	}
 	if req.Op != "run" || !db.WritesNeedApproval() || level == "" || level == tunnel.LevelRead {
 		return nil
@@ -509,20 +509,22 @@ func makesSuperuser(items []StatementItem) bool {
 	return true
 }
 
-// mssqlAccessGate decides whether a SQL Server user, role or permission
-// change may pass: after approval where the database's changes wait, and
-// always after approval when it makes someone db_owner or gives CONTROL or
-// TAKE OWNERSHIP of the database. The approval is for the change's own text,
+// mssqlAdminGate decides whether a SQL Server administrative change (a
+// user, role or permission; ending a session, index and statistics upkeep,
+// CHECKDB, an Agent job, a database setting) may pass: after approval where
+// the database's changes wait, and always after approval when it makes
+// someone db_owner, gives CONTROL or TAKE OWNERSHIP of the database, or puts
+// it in simple recovery. The approval is for the change's own text,
 // with any password redacted, which is what the agent records.
-func (a *API) mssqlAccessGate(ctx context.Context, email string, db Database, req *tunnel.PGRequest) *tunnel.PGAnswer {
+func (a *API) mssqlAdminGate(ctx context.Context, email string, db Database, req *tunnel.PGRequest) *tunnel.PGAnswer {
 	op := req.Admin
 	if op.Preview || !op.Mutates() {
 		return nil
 	}
 	if db.Engine != tunnel.EngineMSSQL {
-		return &tunnel.PGAnswer{ID: req.ID, Type: "error", Error: "logins and access are managed here for SQL Server only"}
+		return &tunnel.PGAnswer{ID: req.ID, Type: "error", Error: "this is SQL Server administration"}
 	}
-	text, err := tunnel.MSSQLAccessText(op, db.Name)
+	text, err := tunnel.MSSQLAdminText(op, db.Name)
 	if err != nil {
 		return &tunnel.PGAnswer{ID: req.ID, Type: "error", Error: err.Error()}
 	}
@@ -535,6 +537,9 @@ func (a *API) mssqlAccessGate(ctx context.Context, email string, db Database, re
 		why := db.Name + approvalWhy(db)
 		if always && !db.WritesNeedApproval() {
 			why = "giving the whole of " + db.Name
+			if op.Kind == tunnel.AdminMSDBSet {
+				why = "simple recovery ends " + db.Name + "'s log backups"
+			}
 		}
 		return &tunnel.PGAnswer{ID: req.ID, Type: "error", Code: tunnel.GuardNeedsApproval,
 			Error: why + ": this change runs once someone else approves it", Approve: text}

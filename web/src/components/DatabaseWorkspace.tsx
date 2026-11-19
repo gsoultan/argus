@@ -10,7 +10,7 @@ import {
   IconChevronDown, IconChevronRight, IconDownload, IconLock, IconMenu2, IconPlayerPlay,
   IconPlayerStop, IconTable, IconEye, IconFunction, IconHash, IconActivity, IconUsersGroup, IconPuzzle,
   IconArrowsExchange, IconArchive, IconNetwork, IconDots, IconStar, IconIndentIncrease, IconTrash, IconHistory,
-  IconAdjustmentsHorizontal, IconSettings,
+  IconAdjustmentsHorizontal, IconSettings, IconGauge, IconShieldCheck, IconListTree, IconClock,
 } from '@tabler/icons-react'
 import { Link } from '@tanstack/react-router'
 import { EngineMark } from '~/components/EngineMark'
@@ -61,6 +61,15 @@ import { TARGET_BY_NAME_SQL, parseTarget } from '~/lib/rowEdit'
 // The query builder loads when it is first opened.
 const QueryBuilder = lazy(() => import('~/components/QueryBuilder').then((m) => ({ default: m.QueryBuilder })))
 const MSSQLAccess = lazy(() => import('~/components/DatabaseMSSQLAccess').then((m) => ({ default: m.MSSQLAccess })))
+const msDBA = () => import('~/components/DatabaseMSSQLDBA')
+const MSSQL_PANELS = {
+  activity: lazy(() => msDBA().then((m) => ({ default: m.MSSQLActivity }))),
+  performance: lazy(() => msDBA().then((m) => ({ default: m.MSSQLPerformance }))),
+  indexes: lazy(() => msDBA().then((m) => ({ default: m.MSSQLIndexes }))),
+  integrity: lazy(() => msDBA().then((m) => ({ default: m.MSSQLIntegrity }))),
+  jobs: lazy(() => msDBA().then((m) => ({ default: m.MSSQLJobs }))),
+  dbsettings: lazy(() => msDBA().then((m) => ({ default: m.MSSQLSettings }))),
+}
 
 /*
 The query workspace: a left bar with the object tree, a SQL editor, and a
@@ -135,6 +144,7 @@ interface PGAnswer {
 }
 
 type Panel = 'query' | 'activity' | 'roles' | 'extensions' | 'replication' | 'network' | 'backups' | 'trash' | 'changes'
+  | 'performance' | 'indexes' | 'integrity' | 'jobs' | 'dbsettings'
 type ManagePanel = Exclude<Panel, 'query'>
 type WorkspaceTab = 'query' | 'diagram' | 'manage'
 
@@ -265,12 +275,11 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   // Statements the administration panels run: collected whole, by request
   // id, without touching the editor's result.
   const collectors = useRef(new Map<number, Collected>())
-  const [panel, setPanel] = useState<Panel>((initialPanel === 'roles' && dialect === 'mssql') || (initialPanel === 'network' && dialect !== 'mssql') || (!notPg && (initialPanel === 'changes' || initialPanel === 'trash' || initialPanel === 'backups')) ? initialPanel : 'query')
+  const [panel, setPanel] = useState<Panel>((dialect === 'mssql' && MSSQL_MANAGE.some((m) => m.key === initialPanel)) || (initialPanel === 'network' && dialect !== 'mssql') || (!notPg && (initialPanel === 'changes' || initialPanel === 'trash' || initialPanel === 'backups')) ? initialPanel as Panel : 'query')
   const [view, setView] = useState<'query' | 'diagram'>('query')
   // The three tabs under the header. Manage is any administration panel;
   // it reopens the one last looked at.
-  // SQL Server's Manage has its own panels; for now, logins and access.
-  const lastManage = useRef<ManagePanel>(panel === 'query' ? (dialect === 'mssql' ? 'roles' : 'activity') : panel)
+  const lastManage = useRef<ManagePanel>(panel === 'query' ? 'activity' : panel)
   if (panel !== 'query') lastManage.current = panel
   const tabNow: WorkspaceTab = view === 'diagram' ? 'diagram' : panel === 'query' ? 'query' : 'manage'
   const goTab = (t: WorkspaceTab) => {
@@ -1437,7 +1446,13 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
             )}
           </Box>
         )}
-        {view === 'query' && panel === 'activity' && <ActivityPanel {...adminProps} />}
+        {view === 'query' && panel === 'activity' && dialect !== 'mssql' && <ActivityPanel {...adminProps} />}
+        {view === 'query' && dialect === 'mssql' && panel in MSSQL_PANELS && (() => {
+          const P = MSSQL_PANELS[panel as keyof typeof MSSQL_PANELS]
+          return level === 'dba'
+            ? <Suspense fallback={<Loader size={16} m="md" />}><P {...adminProps} /></Suspense>
+            : <NeedsDBA what={MSSQL_MANAGE.find((m) => m.key === panel)!.label} onAskForAccess={onAskForAccess} />
+        })()}
         {view === 'query' && panel === 'roles' && dialect === 'mssql' && (level === 'dba'
           ? <Suspense fallback={<Loader size={16} m="md" />}><MSSQLAccess {...adminProps} /></Suspense>
           : <NeedsDBA what="Logins & access" onAskForAccess={onAskForAccess} />)}
@@ -1833,7 +1848,7 @@ function WorkspaceHeader({ database, narrow, level, status, version, viaPooler, 
     ? [{ key: 'query', label: 'Query', hint: 'Write and run statements' }]
     : database.engine === 'mssql'
       ? [{ key: 'query', label: 'Query', hint: 'Write and run statements' },
-        { key: 'manage', label: 'Manage', hint: 'Logins and access' }]
+        { key: 'manage', label: 'Manage', hint: 'Activity, waits, indexes, integrity, Agent jobs, settings, logins and access' }]
     : [
       { key: 'query', label: 'Query', hint: 'Write and run statements' },
       { key: 'diagram', label: 'Diagram', hint: 'Tables and how they link' },
@@ -1916,9 +1931,15 @@ const MANAGE: { key: ManagePanel; label: string; icon: typeof IconTable; hint: s
   { key: 'network', label: 'Network', icon: IconNetwork, hint: 'Which machines can connect: where it listens, pg_hba.conf on Postgres, and the server’s firewall', dba: true, group: 'dba' },
 ]
 
-/** SQL Server's administration panels, so far. */
+/** SQL Server's administration panels. Each runs as the admin login, so each is DBA's. */
 const MSSQL_MANAGE: typeof MANAGE = [
+  { key: 'activity', label: 'Activity & blocking', icon: IconActivity, hint: 'Who is connected, what each runs and waits on, and who blocks whom', dba: true, group: 'care' },
+  { key: 'performance', label: 'Waits & queries', icon: IconGauge, hint: 'What the server waits on, and this database’s costliest statements', dba: true, group: 'care' },
+  { key: 'integrity', label: 'Integrity', icon: IconShieldCheck, hint: 'DBCC CHECKDB, and pages found damaged', dba: true, group: 'care' },
+  { key: 'indexes', label: 'Indexes & statistics', icon: IconListTree, hint: 'Fragmentation, use, rebuild and reorganize; statistics; missing indexes', dba: true, group: 'dba' },
+  { key: 'jobs', label: 'Agent jobs', icon: IconClock, hint: 'SQL Server Agent jobs that work on this database', dba: true, group: 'dba' },
   { key: 'roles', label: 'Logins & access', icon: IconUsersGroup, hint: 'Users and roles, grant, revoke and deny, and what each can do', dba: true, group: 'dba' },
+  { key: 'dbsettings', label: 'Settings', icon: IconSettings, hint: 'Recovery model, compatibility and other options; files; server options', dba: true, group: 'dba' },
 ]
 
 /** What a Manage panel says to someone below DBA. */

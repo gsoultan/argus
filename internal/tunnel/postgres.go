@@ -284,6 +284,8 @@ type PGAdminOp struct {
 	// and a grant, revoke or deny. Membership is Member.
 	Principal *MSSQLPrincipalSpec `json:"principal,omitempty"`
 	MSGrant   *MSSQLGrantSpec     `json:"msGrant,omitempty"`
+	// SQL Server's DBA tools (see mssqldba.go).
+	MSDBA *MSSQLDBASpec `json:"msdba,omitempty"`
 }
 
 // PGConnInfo is a publisher, as fields. The helper turns it into a libpq
@@ -304,7 +306,8 @@ func (o *PGAdminOp) Mutates() bool {
 	switch o.Kind {
 	case AdminExtensionList, AdminPublicationList, AdminSubscriptionList, AdminNetwork,
 		AdminRoleList, AdminRolePrivileges, AdminGrantObjects,
-		AdminMSPrincipals, AdminMSPermissions, AdminMSObjects:
+		AdminMSPrincipals, AdminMSPermissions, AdminMSObjects,
+		AdminMSActivity, AdminMSPerformance, AdminMSIndexes, AdminMSIntegrity, AdminMSJobs, AdminMSSettings:
 		return false
 	}
 	return true

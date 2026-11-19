@@ -125,12 +125,15 @@ func (s *mssqlSession) adminOp(ctx context.Context, req tunnel.PGRequest) error 
 	if op == nil || op.Kind == "" {
 		return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: "there is no operation to run"})
 	}
-	if !tunnel.MSSQLAccessKind(op.Kind) {
+	if !tunnel.MSSQLAdminKind(op.Kind) {
 		return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: "extensions and replication are Postgres's"})
 	}
 	if s.db.Level != tunnel.LevelDBA {
 		return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Code: "42501",
 			Error: "this is DBA work, through SQL Server's admin login; this session is at " + s.db.Level})
+	}
+	if tunnel.MSSQLDBAKind(op.Kind) {
+		return s.dbaOp(ctx, req)
 	}
 	// The password becomes SQL Server's hash here, before it is recorded,
 	// built or sent anywhere.

@@ -43,6 +43,20 @@ roles, `MSSQLWrites`), `internal/agent/mssql.go` (sessions, go-mssqldb),
   permissions come from EXECUTE AS USER + fn_my_permissions/HAS_PERMS_BY_NAME.
   Console: `DatabaseMSSQLAccess.tsx` (lazy), Manage tab for mssql shows
   `MSSQL_MANAGE` only.
+- **DBA tools (PR 3).** `internal/tunnel/mssqldba.go` builds `ms.*` DBA ops
+  (`MSDBA *MSSQLDBASpec`): reads ms.activity / performance / indexes /
+  integrity / jobs / settings; changes ms.kill, index.rebuild/reorganize,
+  stats.update, checkdb, job.start/stop/enable, db.set (whitelisted
+  settings). `MSSQLAdminKind`/`MSSQLAdminText` cover access + DBA; the
+  control gate is `mssqlAdminGate`; SET RECOVERY SIMPLE always waits. Agent
+  `internal/agent/mssql_dba.go`: one statement, no transaction (ALTER
+  DATABASE / DBCC refuse one); upkeep and CHECKDB run up to 25 min as the
+  session's current request so Cancel reaches them. Reach: KILL only a user
+  session in this database or blocking one here; jobs only with a step whose
+  database_name is this one. Console `DatabaseMSSQLDBA.tsx` (lazy panels,
+  `ConfirmOp` modal with the agent's preview); all SQL Server Manage panels
+  are DBA only. Local test container has SQL Server Agent enabled
+  (`mssql-conf set sqlagent.enabled true`).
 - **Testing.** Agent tests need `ARGUS_TEST_MSSQL_SA_PASSWORD` (+ `_PORT`).
 - **Plan.** PR 1 foundation; then logins/Grant-Revoke-Deny, DBA tools
   (activity, blocking, waits, index/stats, DBCC, Agent jobs), backup/restore/

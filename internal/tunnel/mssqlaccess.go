@@ -212,12 +212,17 @@ func mssqlRoleOrUser(name string) (string, error) {
 // MSSQLAlwaysApproval says the change waits for someone else's approval on
 // every database, whatever its rules: making someone db_owner, or giving
 // CONTROL or TAKE OWNERSHIP of the whole database, hands them everything in
-// it, including who else may do what.
+// it, including who else may do what; and simple recovery ends the log
+// backups the database can be put back from.
 func MSSQLAlwaysApproval(op *PGAdminOp) bool {
 	if op == nil || op.Preview {
 		return false
 	}
 	switch op.Kind {
+	case AdminMSDBSet:
+		// Simple recovery ends the log backups a restore to a point in
+		// time needs, and breaks log shipping and availability groups.
+		return op.MSDBA != nil && strings.EqualFold(op.MSDBA.Setting, "RECOVERY") && strings.EqualFold(strings.TrimSpace(op.MSDBA.Value), "SIMPLE")
 	case AdminMSMember:
 		return op.Member != nil && strings.EqualFold(op.Member.Role, "db_owner")
 	case AdminMSUserCreate, AdminMSRoleCreate:
@@ -231,11 +236,15 @@ func MSSQLAlwaysApproval(op *PGAdminOp) bool {
 	return false
 }
 
-// MSSQLTextAlwaysApproval says text, as MSSQLAccessText writes it, makes
-// someone db_owner or gives CONTROL or TAKE OWNERSHIP of the database: an
+// MSSQLTextAlwaysApproval says text, as MSSQLAdminText writes it, makes
+// someone db_owner, gives CONTROL or TAKE OWNERSHIP of the database, or puts
+// it in simple recovery: an
 // approval for it may be asked on any database.
 func MSSQLTextAlwaysApproval(text string) bool {
 	for _, s := range strings.Split(text, ";\n") {
+		if strings.HasPrefix(s, "ALTER DATABASE ") && strings.HasSuffix(s, " SET RECOVERY SIMPLE") {
+			return true
+		}
 		if strings.HasPrefix(s, "ALTER ROLE [db_owner] ADD MEMBER ") {
 			return true
 		}

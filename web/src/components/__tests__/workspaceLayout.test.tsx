@@ -120,10 +120,15 @@ describe('SQL Server workspace', () => {
     await waitFor(() => expect(ws.sent.some((r) => r.op === 'schema' && r.kind === 'objects' && r.schema === 'dbo')).toBe(true))
     expect(ws.sent.some((r) => r.op === 'schema' && r.kind === 'objects' && r.schema === 'sales')).toBe(false)
 
-    // Manage has SQL Server's own panels: logins and access, at DBA only.
+    // Manage has SQL Server's own panels, each at DBA only.
     fireEvent.click(within(tabs).getByRole('tab', { name: 'Manage' }))
     const nav = screen.getByLabelText('Manage')
-    expect(within(nav).getAllByRole('button').map((b) => b.textContent)).toEqual(['Logins & accessDBA'])
+    expect(within(nav).getAllByRole('button').map((b) => b.textContent)).toEqual([
+      'Activity & blockingDBA', 'Waits & queriesDBA', 'IntegrityDBA',
+      'Indexes & statisticsDBA', 'Agent jobsDBA', 'Logins & accessDBA', 'SettingsDBA',
+    ])
+    expect(await screen.findByText('Activity & blocking needs DBA access')).toBeInTheDocument()
+    fireEvent.click(within(nav).getByRole('button', { name: /Logins & access/ }))
     expect(await screen.findByText('Logins & access needs DBA access')).toBeInTheDocument()
     expect(ws.sent.some((r) => r.op === 'admin')).toBe(false)
   })

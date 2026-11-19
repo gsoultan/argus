@@ -94,6 +94,11 @@ export interface AdminOp {
     grantee?: string; on?: 'database' | 'schema' | 'object'; schema?: string; objects?: string[]; privileges?: string[]
     withGrant?: boolean; cascade?: boolean
   }
+  /** SQL Server's DBA tools (see DatabaseMSSQLDBA and internal/tunnel/mssqldba.go). */
+  msdba?: {
+    session?: number; schema?: string; table?: string; index?: string; online?: boolean; fullScan?: boolean; sample?: number
+    physicalOnly?: boolean; job?: string; enabled?: boolean; sort?: string; setting?: string; value?: string
+  }
 }
 export interface AdminFailure { error?: string; code?: string; detail?: string; hint?: string }
 export interface AdminResult<T = unknown> { data?: T; tag?: string; ms?: number; error?: AdminFailure }

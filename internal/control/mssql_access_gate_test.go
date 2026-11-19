@@ -11,10 +11,10 @@ import (
 	"github.com/gsoultan/argus/internal/tunnel"
 )
 
-// A SQL Server user, role or permission change waits for approval where the
-// database's changes do, for its own text with the password redacted;
-// approved, it runs once and only as approved. Making someone db_owner waits
-// on every database.
+// A SQL Server user, role or permission change, or a DBA tool's change,
+// waits for approval where the database's changes do, for its own text with
+// the password redacted; approved, it runs once and only as approved. Making
+// someone db_owner, or simple recovery, waits on every database.
 func TestMSSQLAccessChangeWaits(t *testing.T) {
 	a, s, h, pg, admin := dbFixture(t)
 	ctx := context.Background()
@@ -36,6 +36,9 @@ func TestMSSQLAccessChangeWaits(t *testing.T) {
 		w := do(t, h, http.MethodPost, "/api/v1/databases/"+db.ID+"/statements", "ana", string(body))
 		var got StatementAsk
 		_ = json.Unmarshal(w.Body.Bytes(), &got)
+		if w.Code >= 300 {
+			t.Logf("ask %q: %s", text, w.Body)
+		}
 		return w.Code, got.RequestID
 	}
 	grant := tunnel.PGAdminOp{Kind: tunnel.AdminMSGrant, MSGrant: &tunnel.MSSQLGrantSpec{Grantee: "reports",
@@ -75,6 +78,15 @@ func TestMSSQLAccessChangeWaits(t *testing.T) {
 		t.Fatal("an approval was used twice")
 	}
 
+	// The DBA tools: reads pass; a change waits for its own text.
+	if no := gate(tunnel.PGAdminOp{Kind: tunnel.AdminMSActivity}, ""); no != nil {
+		t.Fatalf("activity waited: %+v", no)
+	}
+	kill := tunnel.PGAdminOp{Kind: tunnel.AdminMSKill, MSDBA: &tunnel.MSSQLDBASpec{Session: 61}}
+	if no := gate(kill, ""); no == nil || no.Approve != "KILL 61" {
+		t.Fatalf("ending a session on production did not wait: %+v", no)
+	}
+
 	// A password is approved as [redacted].
 	no = gate(tunnel.PGAdminOp{Kind: tunnel.AdminMSUserCreate, Principal: &tunnel.MSSQLPrincipalSpec{Name: "app",
 		Auth: tunnel.MSAuthSQL, Password: "s3cret-for-app"}}, "")
@@ -101,10 +113,21 @@ func TestMSSQLAccessChangeWaits(t *testing.T) {
 	if code, _ := ask("GRANT SELECT ON SCHEMA::[sales] TO [reports]", "no need"); code != http.StatusBadRequest {
 		t.Fatalf("an ordinary grant ask on staging: %d", code)
 	}
+	if no := gate(kill, ""); no != nil {
+		t.Fatalf("ending a session on staging waited: %+v", no)
+	}
+	simple := tunnel.PGAdminOp{Kind: tunnel.AdminMSDBSet, MSDBA: &tunnel.MSSQLDBASpec{Setting: "RECOVERY", Value: "SIMPLE"}}
+	no = gate(simple, "")
+	if no == nil || !strings.Contains(no.Error, "ends sales's log backups") || no.Approve != "ALTER DATABASE [sales] SET RECOVERY SIMPLE" {
+		t.Fatalf("simple recovery on staging did not wait: %+v", no)
+	}
+	if code, _ := ask(no.Approve, "a scratch copy that needs no log backups"); code != http.StatusCreated {
+		t.Fatalf("asking for simple recovery on staging: %d", code)
+	}
 
 	// Not SQL Server: refused rather than passed on.
 	db.Engine = tunnel.EnginePostgres
-	if no := gate(grant, ""); no == nil || !strings.Contains(no.Error, "SQL Server only") {
+	if no := gate(grant, ""); no == nil || !strings.Contains(no.Error, "SQL Server administration") {
 		t.Fatalf("a Postgres access change: %+v", no)
 	}
 }
