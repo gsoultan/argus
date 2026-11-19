@@ -190,6 +190,21 @@ func TestCreateDatabaseThroughTheAgent(t *testing.T) {
 		t.Fatalf("kafka coverage: %s", w.Body)
 	}
 
+	// A SQL Server database: the dry run shows the bracketed name, its
+	// collation and recovery model; an injected collation is refused.
+	w = do(t, e.h, http.MethodPost, url, "admin-token",
+		`{"dryRun":true,"engine":"mssql","port":1433,"name":"crm","mssql":{"collation":"Latin1_General_100_CI_AS_SC_UTF8","recovery":"simple"}}`)
+	ans = CreateAnswer{}
+	_ = json.Unmarshal(w.Body.Bytes(), &ans)
+	if ans.State != "ok" || len(ans.Statements) != 2 || ans.Statements[0] != "CREATE DATABASE [crm] COLLATE Latin1_General_100_CI_AS_SC_UTF8" ||
+		ans.Statements[1] != "ALTER DATABASE [crm] SET RECOVERY SIMPLE" {
+		t.Fatalf("mssql dry run: %s", w.Body)
+	}
+	if w := do(t, e.h, http.MethodPost, url, "admin-token",
+		`{"dryRun":true,"engine":"mssql","name":"crm","mssql":{"collation":"x; DROP DATABASE y"}}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("an injected collation: %d %s", w.Code, w.Body)
+	}
+
 	// An agent from before the service: "too old".
 	cancel()
 	old := unique("create-old")

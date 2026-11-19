@@ -61,3 +61,4 @@ roles, `MSSQLWrites`), `internal/agent/mssql.go` (sessions, go-mssqldb),
 - **Plan.** PR 1 foundation; then logins/Grant-Revoke-Deny, DBA tools
   (activity, blocking, waits, index/stats, DBCC, Agent jobs), backup/restore/
   create database, replication (AGs, transactional, log shipping).
+- Create database (PR 4a): dbcreate service takes `mssql:{collation,recovery}`; plan is `CREATE DATABASE [n] COLLATE c` then optional `ALTER DATABASE [n] SET RECOVERY r`. Agent `createMSSQL` checks name free and collation in sys.fn_helpcollations(); options list collations + model's recovery. Web: CreateOnServer mssql fields; the "Create new" toggle is now shown for every engine.

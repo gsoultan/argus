@@ -44,6 +44,7 @@ type CreateRequest struct {
 	Mongo    *tunnel.MongoCreate  `json:"mongo,omitempty"`
 	Rabbit   *tunnel.RabbitCreate `json:"rabbit,omitempty"`
 	Kafka    *tunnel.KafkaCreate  `json:"kafka,omitempty"`
+	MSSQL    *tunnel.MSSQLCreate  `json:"mssql,omitempty"`
 
 	// AddEntry adds a Kafka topic as its own entry even when an existing
 	// entry's scope covers it. Every other engine is always added.
@@ -96,7 +97,7 @@ func probeCreate(in CreateRequest, op string) (tunnel.GrantCreate, Database, err
 	}
 	c := tunnel.GrantCreate{Op: op, Engine: d.Engine, Host: d.Host, Port: d.Port, AdminUser: d.AdminUser,
 		ConfigPath: d.ConfigPath, Name: name,
-		Postgres: in.Postgres, MySQL: in.MySQL, Mongo: in.Mongo, Rabbit: in.Rabbit, Kafka: in.Kafka}
+		Postgres: in.Postgres, MySQL: in.MySQL, Mongo: in.Mongo, Rabbit: in.Rabbit, Kafka: in.Kafka, MSSQL: in.MSSQL}
 	if err := c.Validate(); err != nil {
 		return c, d, ErrInvalidDatabase{err.Error()}
 	}
@@ -292,6 +293,8 @@ func engineCreateNoun(engine string) string {
 		return "RabbitMQ vhost"
 	case tunnel.EngineKafka:
 		return "Kafka topic"
+	case tunnel.EngineMSSQL:
+		return "SQL Server database"
 	}
 	return engine
 }
