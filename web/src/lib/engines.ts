@@ -44,6 +44,19 @@ export const ENGINES: Record<DBEngine, EngineInfo> = {
       dba: 'Every privilege on this database, grant them to others, see all connections. Never SUPER, nothing on other databases.',
     },
   },
+  mssql: {
+    label: 'SQL Server',
+    noun: 'database',
+    nameLabel: 'Database name',
+    nameHint: 'As SQL Server knows it. The agent signs in as a sysadmin login, such as sa, with the admin file on the server.',
+    defaults: { dbname: '', host: '127.0.0.1', port: 1433, configPath: '/etc/argus/mssql.conf' },
+    levels: {
+      read: 'db_datareader on this database, and see every definition and plan. The default.',
+      write: 'Change rows too (db_datawriter), and run procedures.',
+      owner: 'Create, alter and drop tables, views, procedures and indexes too (db_ddladmin).',
+      dba: 'db_owner of this database, and see every connection on the server. Never sysadmin, nothing on other databases.',
+    },
+  },
   mongodb: {
     label: 'MongoDB',
     noun: 'database',
@@ -109,19 +122,25 @@ export function engineOf(e: string | undefined): EngineInfo {
 
 /** A sessions-list protocol that is a database's statement recording. */
 export function isStatementProtocol(protocol: string | undefined): boolean {
-  return protocol === 'postgres' || protocol === 'mysql' || protocol === 'mongodb' || protocol === 'redis' || protocol === 'rabbitmq' || protocol === 'kafka'
+  return protocol === 'postgres' || protocol === 'mysql' || protocol === 'mssql' || protocol === 'mongodb' || protocol === 'redis' || protocol === 'rabbitmq' || protocol === 'kafka'
 }
 
-/** An engine the SQL workspace opens: Postgres, or MySQL and MariaDB. */
+/** An engine the SQL workspace opens: Postgres, MySQL and MariaDB, or SQL Server. */
 export function isSQLEngine(e: string | undefined): boolean {
-  return e === undefined || e === '' || e === 'postgres' || e === 'mysql'
+  return e === undefined || e === '' || e === 'postgres' || e === 'mysql' || e === 'mssql'
 }
 
 // engineVersion names the server a session reached from the version its agent
 // reported: "Postgres 16.4", "MySQL 8.0.46" or "MariaDB 10.11.14" (MariaDB
-// reports itself as "10.11.14-MariaDB-…").
+// reports itself as "10.11.14-MariaDB-…"). SQL Server reports its build,
+// "16.0.4135.4", which reads as "SQL Server 2022 (16.0.4135.4)".
 export function engineVersion(engine: string | undefined, version: string): string {
   const v = version.split(' ')[0] ?? ''
+  if (engine === 'mssql') {
+    const year: Record<string, string> = { 13: '2016', 14: '2017', 15: '2019', 16: '2022', 17: '2025' }
+    const y = year[v.split('.')[0] ?? '']
+    return y ? `SQL Server ${y} (${v})` : `SQL Server ${v}`
+  }
   if (engine !== 'mysql') return `Postgres ${v}`
   const n = v.split('-')[0]
   return /mariadb/i.test(version) ? `MariaDB ${n}` : `MySQL ${n}`

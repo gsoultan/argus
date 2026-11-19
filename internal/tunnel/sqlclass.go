@@ -182,6 +182,26 @@ func lexSQL(s string) []sqlToken {
 			}
 			out = append(out, sqlToken{text: b.String(), quoted: true, depth: depth})
 			i = j + 1
+		case c == '[':
+			// [name] in SQL Server, ]] for a ] inside. Postgres's array
+			// subscripts read as a name here, which hides nothing the
+			// classifier looks for: they never hold a statement's own words.
+			j := i + 1
+			var b strings.Builder
+			for j < len(s) {
+				if s[j] == ']' {
+					if j+1 < len(s) && s[j+1] == ']' {
+						b.WriteByte(']')
+						j += 2
+						continue
+					}
+					break
+				}
+				b.WriteByte(s[j])
+				j++
+			}
+			out = append(out, sqlToken{text: b.String(), quoted: true, depth: depth})
+			i = j + 1
 		case c == '$':
 			// $tag$ ... $tag$, or a parameter like $1.
 			j := i + 1
@@ -288,7 +308,8 @@ func ClassifySQL(sql string) SQLClass {
 		c.Writes = true
 	case "update":
 		c.Writes = true
-		j := skipWords(rest, 0, "only")
+		j := skipTop(rest, 0)
+		j = skipWords(rest, j, "only")
 		name, _ := readName(rest, j)
 		if name != "" {
 			c.Targets = []string{name}
@@ -296,7 +317,8 @@ func ClassifySQL(sql string) SQLClass {
 		c.HasWhere = hasTopWord(rest, "where")
 	case "delete":
 		c.Writes = true
-		j := skipWords(rest, 0, "from")
+		j := skipTop(rest, 0)
+		j = skipWords(rest, j, "from")
 		j = skipWords(rest, j, "only")
 		name, k := readName(rest, j)
 		if name != "" {
@@ -387,6 +409,14 @@ func closeParen(toks []sqlToken, i int) int {
 		}
 	}
 	return len(toks)
+}
+
+// skipTop moves past SQL Server's TOP (n) [PERCENT] after UPDATE or DELETE.
+func skipTop(toks []sqlToken, i int) int {
+	if i+1 < len(toks) && toks[i].punct == 0 && !toks[i].quoted && toks[i].text == "top" && toks[i+1].punct == '(' {
+		return skipWords(toks, closeParen(toks, i+1), "percent")
+	}
+	return i
 }
 
 func skipWords(toks []sqlToken, i int, w string) int {

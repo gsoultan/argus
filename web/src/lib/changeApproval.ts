@@ -18,7 +18,7 @@ approver sees what the asker saw, and the run stops if it would change more.
  * a Redis: whether its bulk, configuration and user changes wait.
  */
 export function writesNeedApproval(db: Pick<Database, 'engine' | 'label' | 'policy'>): boolean {
-  if (db.engine !== 'postgres' && db.engine !== 'mysql' && db.engine !== 'redis') return false
+  if (db.engine !== 'postgres' && db.engine !== 'mysql' && db.engine !== 'mssql' && db.engine !== 'redis') return false
   return db.policy?.writeApproval ?? db.label === 'production'
 }
 

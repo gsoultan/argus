@@ -23,6 +23,14 @@ describe('engines', () => {
   it('records MySQL sessions statement by statement', () => {
     expect(isStatementProtocol('mysql')).toBe(true)
   })
+
+  it('opens SQL Server in the SQL workspace and names its release', () => {
+    expect(isSQLEngine('mssql')).toBe(true)
+    expect(isStatementProtocol('mssql')).toBe(true)
+    expect(engineVersion('mssql', '16.0.4135.4')).toBe('SQL Server 2022 (16.0.4135.4)')
+    expect(engineVersion('mssql', '15.0.2000.5')).toBe('SQL Server 2019 (15.0.2000.5)')
+    expect(engineVersion('mssql', '99.0.1')).toBe('SQL Server 99.0.1')
+  })
 })
 
 describe('levelName', () => {

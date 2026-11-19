@@ -233,17 +233,21 @@ type Job =
 const DEFAULT_H = { wide: 170, narrow: 110 }
 
 /*
-MySQL and MariaDB open this workspace too: the session speaks the same frames.
-What is Postgres's alone -- explain plans, the diagram, Manage, generating
-SQL from the tree, the query builder, dry runs -- reads Postgres's catalogue
-or writes Postgres's dialect, so it is left out for MySQL rather than shown
-working wrongly. The tree quotes names with backticks there.
+MySQL, MariaDB and SQL Server open this workspace too: the session speaks the
+same frames. What is Postgres's alone -- explain plans, the diagram, Manage,
+generating SQL from the tree, the query builder, dry runs -- reads Postgres's
+catalogue or writes Postgres's dialect, so it is left out for them rather
+than shown working wrongly. The tree quotes names with backticks on MySQL and
+brackets on SQL Server.
 */
-const MySQLDialect = createContext(false)
+type Dialect = 'postgres' | 'mysql' | 'mssql'
+const SQLDialect = createContext<Dialect>('postgres')
 
 export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAskForAccess, orgAdmin, initialPanel }: WorkspaceProps) {
-  const mysql = database.engine === 'mysql'
-  const engineName = mysql ? 'MySQL' : 'Postgres'
+  const dialect: Dialect = database.engine === 'mysql' ? 'mysql' : database.engine === 'mssql' ? 'mssql' : 'postgres'
+  // notPg: an engine without Postgres's own parts of the workspace.
+  const notPg = dialect !== 'postgres'
+  const engineName = dialect === 'mysql' ? 'MySQL' : dialect === 'mssql' ? 'SQL Server' : 'Postgres'
   const narrow = useMediaQuery('(max-width: 48em)')
   const [treeOpen, tree] = useDisclosure(false)
   const wsRef = useRef<WebSocket | null>(null)
@@ -260,7 +264,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   // Statements the administration panels run: collected whole, by request
   // id, without touching the editor's result.
   const collectors = useRef(new Map<number, Collected>())
-  const [panel, setPanel] = useState<Panel>(initialPanel === 'network' || (!mysql && (initialPanel === 'changes' || initialPanel === 'trash' || initialPanel === 'backups')) ? initialPanel : 'query')
+  const [panel, setPanel] = useState<Panel>((initialPanel === 'network' && dialect !== 'mssql') || (!notPg && (initialPanel === 'changes' || initialPanel === 'trash' || initialPanel === 'backups')) ? initialPanel : 'query')
   const [view, setView] = useState<'query' | 'diagram'>('query')
   // The three tabs under the header. Manage is any administration panel;
   // it reopens the one last looked at.
@@ -483,7 +487,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   }), [send])
   const { data: me } = useQuery(meQuery())
   const { ask: askApproval, dialog: approvalDialog } = useStatementApproval(database.id, database.dbname,
-    { label: database.label, me: me?.email, check: mysql ? undefined : checkForApproval })
+    { label: database.label, me: me?.email, check: notPg ? undefined : checkForApproval })
 
   // collect runs one statement for a panel and resolves with everything it
   // returned. Recorded like any other statement; it is one. onId hears the
@@ -523,7 +527,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   // TRUNCATE what it would take with it, read as the person's role.
   const openGuard = useCallback((stmt: string, key: string, guard: PGGuard) => {
     setWriteCheck({ kind: 'guard', sql: stmt, tab: key, guard, facts: guard.code === GUARD_DROP_DB || guard.verb === 'update' || guard.verb === 'delete' ? null : undefined })
-    if (guard.code === GUARD_DROP_DB || guard.verb === 'update' || guard.verb === 'delete' || mysql) return
+    if (guard.code === GUARD_DROP_DB || guard.verb === 'update' || guard.verb === 'delete' || notPg) return
     const q = dropFactsSQL(guard)
     void (async () => {
       const facts: NonNullable<Extract<WriteCheckState, { kind: 'guard' }>['facts']> = { dependents: [] }
@@ -1038,7 +1042,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
     if (!s.text.trim()) return
     void import('sql-formatter').then(({ format: fmt }) => {
       try {
-        editorRef.current?.replaceSelectionOrAll(fmt(s.text, { language: mysql ? 'mysql' : 'postgresql', keywordCase: 'preserve', paramTypes: { named: [':'], positional: true, numbered: ['$'] } }))
+        editorRef.current?.replaceSelectionOrAll(fmt(s.text, { language: dialect === 'mysql' ? 'mysql' : dialect === 'mssql' ? 'transactsql' : 'postgresql', keywordCase: 'preserve', paramTypes: { named: [':'], positional: true, numbered: ['$'] } }))
       } catch (e) {
         notifyWarn('Format could not read this statement', e instanceof Error ? (e.message.split('\n')[0] ?? '') : String(e))
       }
@@ -1188,7 +1192,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   const gen: GenContext = useMemo(() => ({ act: (a) => void genAct(a), canWrite: Boolean(level) && level !== 'read', ownerRole }), [genAct, level, ownerRole])
 
   const bar = (
-    <MySQLDialect.Provider value={mysql}><GenerateContext.Provider value={mysql ? null : gen}><LeftBar
+    <SQLDialect.Provider value={dialect}><GenerateContext.Provider value={notPg ? null : gen}><LeftBar
       database={database}
       schema={schema}
       onPick={(q) => { setView('query'); insert(q); if (narrow) tree.close() }}
@@ -1196,7 +1200,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       history={history}
       onOpenSaved={openSaved}
       orgAdmin={Boolean(orgAdmin)}
-    /></GenerateContext.Provider></MySQLDialect.Provider>
+    /></GenerateContext.Provider></SQLDialect.Provider>
   )
   const adminProps = {
     collect, admin, level, levels: ready?.levels ?? {}, self: ready?.role ?? '', narrow,
@@ -1303,7 +1307,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         styles={{ label: { overflow: 'hidden', textOverflow: 'ellipsis' } }}>
         {runLabel}
       </Button>
-      {!mysql && explainMenu}
+      {!notPg && explainMenu}
       {narrow ? (
         <>
           <ActionIcon size={30} variant="default" onClick={() => setSaving(true)} disabled={!sql.trim()} aria-label="Save query">
@@ -1316,7 +1320,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
             <Menu.Dropdown>
               <Menu.Item leftSection={<IconPlayerStop size={14} />} onClick={cancel} disabled={!runningHere && !waitingHere}>Cancel</Menu.Item>
               <Menu.Item leftSection={<IconIndentIncrease size={14} />} onClick={format} disabled={!sql.trim()}>Format</Menu.Item>
-              {!mysql && <Menu.Item leftSection={<IconAdjustmentsHorizontal size={14} />} onClick={() => setBuilding({})}>Build a query</Menu.Item>}
+              {!notPg && <Menu.Item leftSection={<IconAdjustmentsHorizontal size={14} />} onClick={() => setBuilding({})}>Build a query</Menu.Item>}
               <Menu.Item leftSection={<IconDownload size={14} />} onClick={exportCsv} disabled={!result || result.rows.length === 0}>Export CSV</Menu.Item>
               <Menu.Divider />
               <Box px="sm" py={6}><Group gap={6}><Text size={FS.micro} c="dimmed">Show up to</Text>{rowLimit}</Group></Box>
@@ -1337,7 +1341,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
               <IconIndentIncrease size={15} />
             </ActionIcon>
           </Tooltip>
-          {!mysql && (
+          {!notPg && (
             <Tooltip label="Build a query by picking tables and columns" withinPortal>
               <ActionIcon size={30} variant="subtle" color="slate" onClick={() => setBuilding({})} aria-label="Build">
                 <IconAdjustmentsHorizontal size={15} />
@@ -1435,7 +1439,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         {view === 'query' && panel === 'roles' && (level === 'dba' ? <RolesManager {...adminProps} /> : <RolesPanel {...adminProps} />)}
         {view === 'query' && panel === 'extensions' && <ExtensionsPanel {...adminProps} />}
         {view === 'query' && panel === 'replication' && <ReplicationPanel {...adminProps} database={database} />}
-        {view === 'query' && panel === 'network' && <NetworkPanel {...adminProps} assetId={database.assetId} engine={mysql ? 'mysql' : 'postgres'} />}
+        {view === 'query' && panel === 'network' && <NetworkPanel {...adminProps} assetId={database.assetId} engine={dialect === 'mysql' ? 'mysql' : 'postgres'} />}
         {view === 'query' && panel === 'trash' && <TrashPanel collect={collect} level={level} narrow={narrow} />}
         {view === 'query' && panel === 'changes' && <ChangesPanel databaseId={database.id} narrow={Boolean(narrow)} />}
         {view === 'query' && panel === 'backups' && <BackupsPanel database={database} level={level} narrow={narrow} admin={Boolean(orgAdmin)} />}
@@ -1643,8 +1647,8 @@ function SchemaNode({ s, schema, onPick, onRun }: {
   onPick: (t: string) => void
   onRun: (q: string) => void
 }) {
-  const mysql = useContext(MySQLDialect)
-  const [open, setOpen] = useState(s.name === 'public' || mysql)
+  const dialect = useContext(SQLDialect)
+  const [open, setOpen] = useState(s.name === 'public' || s.name === 'dbo' || dialect === 'mysql')
   const [objs, setObjs] = useState<Obj[] | null>(null)
   useEffect(() => {
     if (open && objs === null) void schema('objects', s.name).then(setObjs)
@@ -1738,10 +1742,13 @@ function ObjectNode({ o, schemaName, schema, onPick, onRun }: {
   const [open, setOpen] = useState(false)
   const [cols, setCols] = useState<Obj[] | null>(null)
   const Icon = KIND_ICON[o.kind] ?? IconTable
-  const mysql = useContext(MySQLDialect)
-  const q = (n: string) => (/^[a-z_][a-z0-9_]*$/.test(n) ? n : mysql ? `\`${n.replace(/`/g, '``')}\`` : `"${n.replace(/"/g, '""')}"`)
+  const dialect = useContext(SQLDialect)
+  const q = (n: string) => (/^[a-z_][a-z0-9_]*$/.test(n) ? n
+    : dialect === 'mysql' ? `\`${n.replace(/`/g, '``')}\``
+      : dialect === 'mssql' ? `[${n.replace(/]/g, ']]')}]`
+        : `"${n.replace(/"/g, '""')}"`)
   // A MySQL session is in its database already; the name alone is enough.
-  const qualified = mysql ? q(o.name) : `${q(schemaName)}.${q(o.name)}`
+  const qualified = dialect === 'mysql' ? q(o.name) : `${q(schemaName)}.${q(o.name)}`
   const expandable = o.kind === 'table' || o.kind === 'view' || o.kind === 'matview'
   useEffect(() => {
     if (open && expandable && cols === null) void schema('columns', schemaName, o.name).then(setCols)
@@ -1798,7 +1805,7 @@ statement lands in is visible before it is read. Under it, three tabs: the
 editor, the diagram, and Manage, which holds every administration panel that
 used to hang under the object tree.
 */
-/** The server's version as the header says it: "Postgres 16.4", "MySQL 8.0.46", "MariaDB 10.11.14". */
+/** The server's version as the header says it: "Postgres 16.4", "MySQL 8.0.46", "MariaDB 10.11.14", "SQL Server 2022 (16.0.4135.4)". */
 function WorkspaceHeader({ database, narrow, level, status, version, viaPooler, canAsk, onAskForAccess, settings, tab, onTab, onOpenTree }: {
   database: Database
   narrow: boolean
@@ -1817,7 +1824,7 @@ function WorkspaceHeader({ database, narrow, level, status, version, viaPooler, 
   const prod = database.label === 'production'
   const where = `${database.hostname}${version ? ` · ${engineVersion(database.engine, version)}` : ''}${viaPooler ? ' · via PgBouncer' : ''}`
   const recorded = status === 'ready' ? 'Recorded' : status === 'connecting' ? 'Connecting' : 'Closed'
-  const tabs: { key: WorkspaceTab; label: string; hint: string }[] = database.engine === 'mysql'
+  const tabs: { key: WorkspaceTab; label: string; hint: string }[] = database.engine === 'mysql' || database.engine === 'mssql'
     ? [{ key: 'query', label: 'Query', hint: 'Write and run statements' }]
     : [
       { key: 'query', label: 'Query', hint: 'Write and run statements' },

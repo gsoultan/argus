@@ -87,6 +87,13 @@ func (d *GrantDiscover) Validate() error {
 		if d.ConfigPath != "" && !ValidMySQLOptionFile(d.ConfigPath) {
 			return errors.New("the option file must be an absolute path to a .cnf file")
 		}
+	case EngineMSSQL:
+		if !LocalLoopback(d.Host) {
+			return fmt.Errorf("SQL Server must be on this server; %s is not", d.Host)
+		}
+		if d.ConfigPath != "" && !ValidMSSQLAdminFile(d.ConfigPath) {
+			return errors.New("the admin file must be an absolute path to a .conf file on the server")
+		}
 	default:
 		return errors.New("unknown engine " + d.Engine)
 	}

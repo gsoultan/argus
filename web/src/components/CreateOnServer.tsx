@@ -236,6 +236,7 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
         description={{
           postgres: 'Up to 63 characters. Lowercase letters, digits and _ need no quoting in SQL.',
           mysql: 'Up to 63 characters, no / \\ or . (MySQL makes a folder of it).',
+          mssql: 'Up to 63 characters.',
           mongodb: 'Up to 63 bytes, none of / \\ . " $ * < > : | ? or spaces; not admin, local or config.',
           rabbitmq: 'Up to 63 characters, no quotes.',
           kafka: 'Up to 249 letters, digits, . _ or -.',
