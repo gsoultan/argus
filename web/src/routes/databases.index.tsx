@@ -288,9 +288,9 @@ function Databases() {
                         <Text size={FS.micro} c="dimmed">{describeAccess(acc)}</Text>
                       </Group></Table.Td>
                       <Table.Td>
-                        {d.engine === 'postgres'
+                        {d.engine === 'postgres' || d.engine === 'mssql'
                           ? <LastBackupCell b={data?.lastBackups?.[d.id]} />
-                          : <Text size={FS.meta} c="dimmed" title="Backups are for Postgres databases">—</Text>}
+                          : <Text size={FS.meta} c="dimmed" title="Backups are for Postgres and SQL Server databases">—</Text>}
                       </Table.Td>
                       <Table.Td>
                         <Group gap={6} wrap="nowrap">

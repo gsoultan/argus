@@ -188,6 +188,10 @@ type GrantBackup struct {
 	BackupID string `json:"backupId,omitempty"`
 	// Organization is bound into the archive header too.
 	Organization string `json:"org,omitempty"`
+	// Engine is the database's engine: postgres (the default) or mssql.
+	// ConfigPath is SQL Server's admin file.
+	Engine     string `json:"engine,omitempty"`
+	ConfigPath string `json:"configPath,omitempty"`
 	// The database on this server, as a postgres grant names it.
 	DatabaseID string `json:"databaseId"`
 	Name       string `json:"name"`
@@ -310,6 +314,16 @@ type BackupCatalog struct {
 // than Postgres allows, so it is never quoted and never surprising.
 var ValidDBName = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
 
+// ValidBackupDBName is a database name Argus backs up, restores into or
+// keeps a copy under, on engine: ValidDBName for Postgres, ValidMSSQLDB for
+// SQL Server.
+func ValidBackupDBName(engine, name string) bool {
+	if engine == EngineMSSQL {
+		return ValidMSSQLDB(name)
+	}
+	return ValidDBName.MatchString(name)
+}
+
 // ValidBackupID is a UUID as the control plane prints it, which is the only
 // thing a backup id is ever used as on the server: a file name.
 var ValidBackupID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -325,13 +339,31 @@ func (b *GrantBackup) Validate() error {
 	default:
 		return fmt.Errorf("unknown backup job %q", b.Job)
 	}
+	switch b.Engine {
+	case "", EnginePostgres:
+		if b.ConfigPath != "" {
+			return errors.New("a Postgres backup reads no admin file")
+		}
+	case EngineMSSQL:
+		switch b.Job {
+		case BackupJobDump, BackupJobRestore, BackupJobCatalog, BackupJobPrune, BackupJobDrop, BackupJobUndo:
+		default:
+			return fmt.Errorf("SQL Server has no %s job", b.Job)
+		}
+		if b.ConfigPath != "" && !ValidMSSQLAdminFile(b.ConfigPath) {
+			return fmt.Errorf("%s is not an admin file the agent will read", b.ConfigPath)
+		}
+	default:
+		return fmt.Errorf("backups are not for %s", b.Engine)
+	}
+	valid := func(n string) bool { return ValidBackupDBName(b.Engine, n) }
 	if !LocalPGHost(b.Host) {
 		return fmt.Errorf("the database must be on this server; %s is not", b.Host)
 	}
 	if b.Port <= 0 || b.Port > 65535 {
 		return errors.New("the grant does not say which port")
 	}
-	if b.Job != BackupJobCatalog && b.Job != BackupJobPrune && !ValidDBName.MatchString(b.Name) {
+	if b.Job != BackupJobCatalog && b.Job != BackupJobPrune && !valid(b.Name) {
 		return fmt.Errorf("not a database name Argus will act on: %q", b.Name)
 	}
 	if b.AdminUser != "" && !safeAccount.MatchString(b.AdminUser) {
@@ -363,7 +395,7 @@ func (b *GrantBackup) Validate() error {
 		}
 		switch b.Restore.Mode {
 		case RestoreNew:
-			if !ValidDBName.MatchString(b.Restore.NewName) {
+			if !valid(b.Restore.NewName) {
 				return fmt.Errorf("not a database name Argus will create: %q", b.Restore.NewName)
 			}
 			if strings.HasPrefix(b.Restore.NewName, TestDBPrefix) {
@@ -376,7 +408,7 @@ func (b *GrantBackup) Validate() error {
 			if b.Restore.ApprovalID == "" {
 				return errors.New("replacing a database needs an approval, and the grant names none")
 			}
-			if !ValidDBName.MatchString(b.Restore.RenameTo) || b.Restore.RenameTo == b.Name {
+			if !valid(b.Restore.RenameTo) || b.Restore.RenameTo == b.Name {
 				return errors.New("the grant does not say where the replaced database goes")
 			}
 		default:
@@ -416,7 +448,7 @@ func (b *GrantBackup) Validate() error {
 			return errors.New("not a test copy Argus made: " + b.Kept)
 		}
 	case BackupJobDrop, BackupJobUndo:
-		if !ValidDBName.MatchString(b.Kept) || !strings.Contains(b.Kept, KeptMarker) {
+		if !valid(b.Kept) || !strings.Contains(b.Kept, KeptMarker) {
 			return errors.New("not a copy Argus kept: " + b.Kept)
 		}
 	case BackupJobPrune:

@@ -592,8 +592,14 @@ func scanRestore(row pgx.Row) (DatabaseRestore, error) {
 // CreateRestore records a restore, pending (replace, waiting on an
 // approval) or running (new).
 func (s *Store) CreateRestore(ctx context.Context, r DatabaseRestore) (DatabaseRestore, error) {
-	if r.Mode == tunnel.RestoreNew && !tunnel.ValidDBName.MatchString(r.NewName) {
-		return r, ErrInvalidDatabase{"the new database's name must be lower-case letters, digits and underscores, up to 63"}
+	if r.Mode == tunnel.RestoreNew {
+		engine := tunnel.EnginePostgres
+		if d, err := s.Database(ctx, r.DatabaseID); err == nil {
+			engine = d.Engine
+		}
+		if !tunnel.ValidBackupDBName(engine, r.NewName) {
+			return r, ErrInvalidDatabase{restoreNameRule(engine)}
+		}
 	}
 	if r.Mode == tunnel.RestoreReplace {
 		r.NewName = ""
@@ -724,4 +730,12 @@ func (s *Store) MarkKeptDropped(ctx context.Context, id string, undone bool) err
 	_, err := s.db(ctx).Exec(ctx, `UPDATE database_restores SET kept_dropped = true, state = $2, reported_at = now()
 		WHERE id = $1::uuid`, id, state)
 	return err
+}
+
+// restoreNameRule says what a new database's name may be, on engine.
+func restoreNameRule(engine string) string {
+	if engine == tunnel.EngineMSSQL {
+		return "the new database's name must be up to 63 characters, not a system database's"
+	}
+	return "the new database's name must be lower-case letters, digits and underscores, up to 63"
 }

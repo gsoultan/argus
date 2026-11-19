@@ -52,13 +52,23 @@ function whereIs(b: DatabaseBackup): string {
   return '—'
 }
 
-function stageWords(stage: string, detail: string): string {
+/** SQL Server is backed up with BACKUP DATABASE, not pg_dump. */
+const isMS = (d: Pick<Database, 'engine'>) => d.engine === 'mssql'
+
+/** The words SQL Server's stages use where Postgres's name its tools. */
+const MS_STAGES: Record<string, string> = {
+  starting: 'starting', data: 'backing up', verifying: 'reading it back', encrypting: 'encrypting',
+  unpacking: 'unpacking the backup',
+}
+
+function stageWords(stage: string, detail: string, ms = false): string {
   const s: Record<string, string> = {
     starting: 'starting pg_dump', schema: 'dumping the schema', data: 'dumping', verifying: 'reading it back with pg_restore',
     uploading: 'sending to the control plane', restoring: 'restoring', preparing: 'preparing', finishing: 'finishing',
     creating: 'creating the database', renaming: 'renaming the current database', downloading: 'fetching the backup',
     room: 'checking free space', fetching: 'fetching the backup', checking: 'checking the copy', counting: 'counting rows',
-    dropping: 'dropping the copy', queued: 'waiting for the server',
+    dropping: 'dropping the copy', queued: 'waiting for the server', encrypting: 'encrypting', unpacking: 'unpacking the backup',
+    ...(ms ? MS_STAGES : {}),
   }
   const w = s[stage] ?? stage
   return detail ? `${w} ${detail}` : w
@@ -90,11 +100,12 @@ export function BackupsPanel({ database, level, narrow, onBack, admin }: {
   const [report, setReport] = useState<string | null>(null)
   const canBackup = atLeast(level, 'owner')
   const dba = level === 'dba'
+  const ms = isMS(database)
 
   const onCancel = async (b: DatabaseBackup) => {
     try {
       await cancel.mutateAsync({ id: database.id, backupId: b.id })
-      notifyOk('Stopping', 'pg_dump is being stopped; the partial file is removed.')
+      notifyOk('Stopping', `${ms ? 'BACKUP DATABASE' : 'pg_dump'} is being stopped; the partial file is removed.`)
     } catch (err) {
       notifyError('Not stopped', err)
     }
@@ -122,7 +133,7 @@ export function BackupsPanel({ database, level, narrow, onBack, admin }: {
         <Stack gap="md" p="md">
           {error && <Alert color="rose" variant="light">{(error as Error).message}</Alert>}
           {isPending && <Loader size="sm" />}
-          {data?.running && <RunningCard b={data.running} view={data} onCancel={canBackup ? () => void onCancel(data.running!) : undefined} />}
+          {data?.running && <RunningCard b={data.running} view={data} ms={ms} onCancel={canBackup ? () => void onCancel(data.running!) : undefined} />}
           {data?.testing && <TestingCard t={data.testing} database={database} dba={dba} onOpen={() => setReport(data.testing!.id)} />}
           {data?.restores.filter((r) => r.state === 'running' || r.state === 'pending').map((r) => (
             <RestoreCard key={r.id} r={r} database={database} dba={dba} />
@@ -131,12 +142,12 @@ export function BackupsPanel({ database, level, narrow, onBack, admin }: {
           {data && data.restores.some((r) => r.state === 'done' && r.renamedTo && !r.keptDropped) && (
             <KeptCopies restores={data.restores} database={database} dba={dba} />
           )}
-          {data && <LastGoodCard view={data} onOpen={setReport} />}
+          {data && !ms && <LastGoodCard view={data} onOpen={setReport} />}
           {data && <BackupTable view={data} database={database} level={level} onRestore={setRestoring} onReport={setReport} />}
           {data && (
             <Text size={FS.micro} c="dimmed">
               Retention keeps the last {data.schedule.keepLast}{data.schedule.keepDays ? ` and anything newer than ${data.schedule.keepDays} days` : ''}.
-              Pinned backups are kept until you unpin them, and so is the newest one that passed a test restore. Deleting one is audited.
+              Pinned backups are kept until you unpin them{ms ? '' : ', and so is the newest one that passed a test restore'}. Deleting one is audited.
             </Text>
           )}
         </Stack>
@@ -151,7 +162,7 @@ export function BackupsPanel({ database, level, narrow, onBack, admin }: {
 }
 
 /** A backup in progress. pg_dump has no percentage, so the bar is scaled to the previous run and says so. */
-function RunningCard({ b, view, onCancel }: { b: DatabaseBackup; view: BackupsView; onCancel?: () => void }) {
+function RunningCard({ b, view, ms, onCancel }: { b: DatabaseBackup; view: BackupsView; ms?: boolean; onCancel?: () => void }) {
   const last = view.backups.find((x) => x.state === 'done' && x.id !== b.id)
   const [, tick] = useState(0)
   useEffect(() => { const t = setInterval(() => tick((n) => n + 1), 1000); return () => clearInterval(t) }, [])
@@ -170,7 +181,7 @@ function RunningCard({ b, view, onCancel }: { b: DatabaseBackup; view: BackupsVi
       </Group>
       <Progress value={pct ?? 100} animated={pct === null} size="sm" mt={6} color="azure" />
       <Group justify="space-between" mt={4}>
-        <Text size={FS.micro} ff="monospace">{stageWords(b.stage, b.detail)}</Text>
+        <Text size={FS.micro} ff="monospace">{stageWords(b.stage, b.detail, ms)}</Text>
         <Text size={FS.micro} c={stale ? 'amber' : 'dimmed'}>
           {stale ? `nothing reported for ${relTime(b.reportedAt)}` : pct !== null ? `Last backup was ${bytes(last!.bytes)}, so this is about ${pct} %` : 'first backup, so no estimate'}
         </Text>
@@ -209,7 +220,7 @@ function RestoreCard({ r, database, dba }: { r: DatabaseRestore; database: Datab
       ) : (
         <>
           <Progress value={100} animated size="sm" mt={6} color="azure" />
-          <Text size={FS.micro} ff="monospace" mt={4}>{stageWords(r.stage, r.detail)}</Text>
+          <Text size={FS.micro} ff="monospace" mt={4}>{stageWords(r.stage, r.detail, isMS(database))}</Text>
         </>
       )}
     </Box>
@@ -230,7 +241,7 @@ function ScheduleLine({ s, database, admin, storage }: { s: BackupSchedule; data
         <Text size={FS.meta} c="dimmed">Nothing runs on its own{storage ? '' : '; the control plane has no storage, so backups can only stay on the server'}.</Text>
       )}
       {s.enabled && s.nextRunAt && <Text size={FS.micro} c="dimmed">Next: {absTime(s.nextRunAt)}</Text>}
-      {s.enabled && s.testEvery === 'off' && (
+      {s.enabled && s.testEvery === 'off' && !isMS(database) && (
         <Tooltip label="A backup that pg_restore can read may still not restore. A test restore proves it on this server, then drops the copy." withArrow multiline w={300}>
           <Badge size="xs" color="amber" variant="light" leftSection={<IconFlask size={10} />}>never test-restored on a schedule</Badge>
         </Tooltip>
@@ -607,10 +618,12 @@ function BackupTable({ view, database, level, onRestore, onReport }: {
                     <Menu position="bottom-end" withinPortal>
                       <Menu.Target><ActionIcon variant="subtle" size="sm" aria-label="More"><IconDotsVertical size={14} /></ActionIcon></Menu.Target>
                       <Menu.Dropdown>
-                        <Menu.Item leftSection={<IconFlask size={14} />} disabled={Boolean(view.testing) || Boolean(view.running) || !database.tunnelConnected}
-                          onClick={() => void onTest(b)}>
-                          Test restore: restore a copy, check it, drop it
-                        </Menu.Item>
+                        {!isMS(database) && (
+                          <Menu.Item leftSection={<IconFlask size={14} />} disabled={Boolean(view.testing) || Boolean(view.running) || !database.tunnelConnected}
+                            onClick={() => void onTest(b)}>
+                            Test restore: restore a copy, check it, drop it
+                          </Menu.Item>
+                        )}
                         <Menu.Item leftSection={b.pinned ? <IconPinnedOff size={14} /> : <IconPin size={14} />} onClick={() => void onPin(b)}>
                           {b.pinned ? 'Unpin' : 'Pin: keep it past retention'}
                         </Menu.Item>
@@ -636,7 +649,7 @@ function StartModal({ database, opened, onClose, view }: { database: Database; o
   const submit = async () => {
     try {
       await start.mutateAsync({ id: database.id, reason: reason.trim(), destination: (dest || dflt) as BackupDestination })
-      notifyOk('Backing up', `pg_dump is running on ${database.hostname}. The list shows its progress.`)
+      notifyOk('Backing up', `${isMS(database) ? 'BACKUP DATABASE' : 'pg_dump'} is running on ${database.hostname}. The list shows its progress.`)
       onClose(); setReason('')
     } catch (err) {
       notifyError('Not started', err)
@@ -646,7 +659,9 @@ function StartModal({ database, opened, onClose, view }: { database: Database; o
     <Modal opened={opened} onClose={onClose} title={`Back up ${database.dbname} now`} centered>
       <Stack gap="sm">
         <Text size={FS.meta} c="dimmed">
-          pg_dump runs on {database.hostname} as the local admin account; the file is encrypted as it is written. Sessions keep running.
+          {isMS(database)
+            ? <>SQL Server backs it up on {database.hostname} as a copy-only backup, so the backups you already take are not affected. The agent checks it, encrypts it and deletes SQL Server’s file. Sessions keep running.</>
+            : <>pg_dump runs on {database.hostname} as the local admin account; the file is encrypted as it is written. Sessions keep running.</>}
         </Text>
         <TextInput label="Reason" placeholder="before the price import" value={reason} onChange={(e) => setReason(e.currentTarget.value)} maxLength={200}
           description="Optional; shown next to the backup and in the audit log." />
@@ -666,13 +681,20 @@ function StartModal({ database, opened, onClose, view }: { database: Database; o
 
 /* ── Restore ────────────────────────────────────────────────────────────── */
 
-function suggestName(dbname: string): string {
+export function suggestName(dbname: string, ms = false): string {
   const d = new Date()
   const base = `${dbname}_${d.getFullYear()}_${String(d.getMonth() + 1).padStart(2, '0')}_${String(d.getDate()).padStart(2, '0')}`
-  return base.toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 63)
+  return ms ? [...base].slice(0, 63).join('') : base.toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 63)
 }
 
 const NAME = /^[a-z_][a-z0-9_]{0,62}$/
+const MS_SYSTEM = new Set(['master', 'model', 'msdb', 'tempdb'])
+
+/** Whether name is one a restore may create: Postgres's plain names, or SQL Server's up to 63 characters. */
+export function restoreNameOk(name: string, ms: boolean): boolean {
+  if (!ms) return NAME.test(name)
+  return name.length > 0 && [...name].length <= 63 && name.trim() === name && !MS_SYSTEM.has(name.toLowerCase()) && !/[\u0000-\u001f\u007f]/.test(name) && !name.startsWith('argus_test_')
+}
 
 export function RestoreModal({ database, b, level, opened, onClose }: {
   database: Database; b: DatabaseBackup; level: DBLevel | ''; opened: boolean; onClose: () => void
@@ -681,10 +703,11 @@ export function RestoreModal({ database, b, level, opened, onClose }: {
   const { data: cat } = useQuery({ ...backupCatalogQuery(database.id), enabled: opened })
   const dba = level === 'dba'
   const [mode, setMode] = useState<'new' | 'replace'>('new')
-  const [name, setName] = useState(() => suggestName(database.dbname))
+  const ms = isMS(database)
+  const [name, setName] = useState(() => suggestName(database.dbname, ms))
   const [confirm, setConfirm] = useState('')
   const [why, setWhy] = useState('')
-  const nameOk = NAME.test(name) && name !== database.dbname
+  const nameOk = restoreNameOk(name, ms) && name !== database.dbname
   const canSubmit = mode === 'new' ? nameOk : dba && confirm === database.dbname && why.trim().length >= 10
   const stamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', 'T')
   const submit = async () => {
@@ -703,7 +726,7 @@ export function RestoreModal({ database, b, level, opened, onClose }: {
       <Stack gap="sm">
         <Text size={FS.meta} c="dimmed">
           From the backup of <b>{absTime(b.startedAt)}</b> · {bytes(b.bytes)} · {startedBy(b)}{b.reason ? ` · “${b.reason}”` : ''}
-          {b.serverVersion ? ` · Postgres ${b.serverVersion}` : ''} · {b.verified ? 'verified' : 'not verified'}
+          {b.serverVersion ? ` · ${ms ? 'SQL Server' : 'Postgres'} ${b.serverVersion}` : ''} · {b.verified ? 'verified' : 'not verified'}
         </Text>
         <Radio.Group value={mode} onChange={(v) => setMode(v as 'new' | 'replace')}>
           <Stack gap="xs">
@@ -712,8 +735,8 @@ export function RestoreModal({ database, b, level, opened, onClose }: {
                 description="Nothing that exists is touched. The new database is added to Argus with no one assigned until an admin says who." />
               <Group gap="xs" mt="xs" pl={28}>
                 <Text size={FS.meta} c="dimmed">Name</Text>
-                <TextInput value={name} onChange={(e) => setName(e.currentTarget.value.toLowerCase())} ff="monospace" w={260} disabled={mode !== 'new'}
-                  error={mode === 'new' && !nameOk ? (name === database.dbname ? 'that is the existing name' : 'lower-case letters, digits and _') : undefined} aria-label="New database name" />
+                <TextInput value={name} onChange={(e) => setName(ms ? e.currentTarget.value : e.currentTarget.value.toLowerCase())} ff="monospace" w={260} disabled={mode !== 'new'}
+                  error={mode === 'new' && !nameOk ? (name === database.dbname ? 'that is the existing name' : ms ? 'up to 63 characters, not a system database' : 'lower-case letters, digits and _') : undefined} aria-label="New database name" />
               </Group>
             </Box>
             <Box p="sm" style={{ border: `1px solid ${mode === 'replace' ? 'var(--mantine-color-azure-5)' : 'var(--color-line)'}`, borderRadius: 8, opacity: dba ? 1 : .6 }}>
@@ -731,7 +754,9 @@ export function RestoreModal({ database, b, level, opened, onClose }: {
         </Radio.Group>
         {compatible && (
           <Alert color="teal" variant="light" icon={<IconCheck size={14} />} p="xs">
-            pg_restore {compatible} on {database.hostname} can read this backup{b.serverVersion ? ` (Postgres ${b.serverVersion})` : ''}.
+            {ms
+              ? <>{compatible} on {database.hostname} restores it with RESTORE DATABASE, into new files beside the current ones.</>
+              : <>pg_restore {compatible} on {database.hostname} can read this backup{b.serverVersion ? ` (Postgres ${b.serverVersion})` : ''}.</>}
           </Alert>
         )}
         {!database.tunnelConnected && <Alert color="rose" variant="light" p="xs">The agent on {database.hostname} is offline, so nothing can run there.</Alert>}
@@ -765,7 +790,7 @@ export function BackupSettings({ db }: { db: Database }) {
   const last = data.backups.find((b) => b.state === 'done')
   const save = async () => {
     try {
-      await set.mutateAsync({ id: db.id, ...pick(s) })
+      await set.mutateAsync({ id: db.id, ...pick(s), ...(isMS(db) ? { testEvery: 'off' as const } : {}) })
       setForm(null)
       notifyOk('Saved', s.enabled
         ? `${describeSchedule(s)}, keeping the last ${s.keepLast}${s.testEvery !== 'off' ? `; ${describeTests(s)}` : ''}.`
@@ -807,7 +832,7 @@ export function BackupSettings({ db }: { db: Database }) {
             A run missed while the agent is offline happens when it is back, if less than 6 hours late; three misses in a row are flagged on the list.
           </Text>
         </SectionCard>
-        <TestRestoreSettings s={s} saved={saved!} dirty={dirty} db={db} patch={patch} />
+        {!isMS(db) && <TestRestoreSettings s={s} saved={saved!} dirty={dirty} db={db} patch={patch} />}
         <SectionCard title="Keep">
           <Group align="flex-end" gap="md">
             <NumberInput label="Last" value={s.keepLast} onChange={(v) => patch({ keepLast: Number(v) || 1 })} min={1} max={1000} w={120} suffix=" runs" />
@@ -847,11 +872,15 @@ export function BackupSettings({ db }: { db: Database }) {
           {cat && (
             <Table verticalSpacing={2} fz={FS.meta}>
               <Table.Tbody>
-                <Table.Tr><Table.Td c="dimmed">pg_dump</Table.Td><Table.Td ff="monospace">{cat.catalog.dumpVersion} · {cat.catalog.compression}</Table.Td></Table.Tr>
-                <Table.Tr><Table.Td c="dimmed">Postgres</Table.Td><Table.Td ff="monospace">{cat.catalog.serverVersion}</Table.Td></Table.Tr>
+                {isMS(db)
+                  ? <Table.Tr><Table.Td c="dimmed">SQL Server</Table.Td><Table.Td ff="monospace">{cat.catalog.serverVersion} · {cat.catalog.compression === 'none' ? 'no compression' : 'compressed'}</Table.Td></Table.Tr>
+                  : <>
+                    <Table.Tr><Table.Td c="dimmed">pg_dump</Table.Td><Table.Td ff="monospace">{cat.catalog.dumpVersion} · {cat.catalog.compression}</Table.Td></Table.Tr>
+                    <Table.Tr><Table.Td c="dimmed">Postgres</Table.Td><Table.Td ff="monospace">{cat.catalog.serverVersion}</Table.Td></Table.Tr>
+                  </>}
                 <Table.Tr><Table.Td c="dimmed">Free space</Table.Td><Table.Td ff="monospace">{bytes(cat.catalog.freeBytes)} under {cat.catalog.dir}</Table.Td></Table.Tr>
                 {last && <Table.Tr><Table.Td c="dimmed">Last backup</Table.Td><Table.Td ff="monospace">{bytes(last.bytes)}{last.finishedAt ? ` · ${Math.round((Date.parse(last.finishedAt) - Date.parse(last.startedAt)) / 1000)} s` : ''}</Table.Td></Table.Tr>}
-                <Table.Tr><Table.Td c="dimmed">Runs as</Table.Td><Table.Td ff="monospace">{db.adminUser} · peer auth</Table.Td></Table.Tr>
+                <Table.Tr><Table.Td c="dimmed">Runs as</Table.Td><Table.Td ff="monospace">{isMS(db) ? `the login in ${db.configPath || '/etc/argus/mssql.conf'}` : `${db.adminUser} · peer auth`}</Table.Td></Table.Tr>
               </Table.Tbody>
             </Table>
           )}

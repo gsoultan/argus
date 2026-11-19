@@ -163,7 +163,14 @@ func mssqlDSN(host string, port int, user, pw, db string) string {
 }
 
 // mssqlAdminCreds is what the admin file holds.
-type mssqlAdminCreds struct{ user, pw string }
+type mssqlAdminCreds struct {
+	user, pw string
+	// backupDir is where SQL Server writes a backup before the agent
+	// encrypts it, as SQL Server sees it; backupLocal is the same folder as
+	// the agent sees it, when SQL Server runs in a container. Both are
+	// optional: the server's default backup folder is used.
+	backupDir, backupLocal string
+}
 
 // readMSSQLAdmin reads user and password from the admin file: lines of
 // key = value, # for a comment. The file must be private to its owner, like
@@ -207,6 +214,10 @@ func readMSSQLAdmin(path string) (mssqlAdminCreds, error) {
 			c.user = v
 		case "password", "pass":
 			c.pw = v
+		case "backup_dir":
+			c.backupDir = v
+		case "backup_dir_local":
+			c.backupLocal = v
 		}
 	}
 	if c.user == "" || c.pw == "" {
@@ -220,6 +231,8 @@ type mssqlAdmin struct {
 	db      *sql.DB
 	version string
 	edition string
+	// the admin file's backup folders; see mssqlAdminCreds.
+	backupDir, backupLocal string
 }
 
 func (a *mssqlAdmin) close() { _ = a.db.Close() }
@@ -256,7 +269,7 @@ func mssqlAdminConn(ctx context.Context, host string, port int, file string) (*m
 		_ = h.Close()
 		return nil, fmt.Errorf("SQL Server on port %d refused the login in %s: %s", port, file, mssqlMessage(err))
 	}
-	a := &mssqlAdmin{db: h, version: version, edition: edition}
+	a := &mssqlAdmin{db: h, version: version, edition: edition, backupDir: c.backupDir, backupLocal: c.backupLocal}
 	if err := mssqlVersionOK(version); err != nil {
 		a.close()
 		return nil, err
