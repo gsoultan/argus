@@ -10,7 +10,7 @@ import {
   IconChevronDown, IconChevronRight, IconDownload, IconLock, IconMenu2, IconPlayerPlay,
   IconPlayerStop, IconTable, IconEye, IconFunction, IconHash, IconActivity, IconUsersGroup, IconPuzzle,
   IconArrowsExchange, IconArchive, IconNetwork, IconDots, IconStar, IconIndentIncrease, IconTrash, IconHistory,
-  IconAdjustmentsHorizontal, IconSettings,
+  IconAdjustmentsHorizontal, IconSettings, IconGauge, IconShieldCheck, IconListTree, IconClock,
 } from '@tabler/icons-react'
 import { Link } from '@tanstack/react-router'
 import { EngineMark } from '~/components/EngineMark'
@@ -60,6 +60,16 @@ import { TARGET_BY_NAME_SQL, parseTarget } from '~/lib/rowEdit'
 
 // The query builder loads when it is first opened.
 const QueryBuilder = lazy(() => import('~/components/QueryBuilder').then((m) => ({ default: m.QueryBuilder })))
+const MSSQLAccess = lazy(() => import('~/components/DatabaseMSSQLAccess').then((m) => ({ default: m.MSSQLAccess })))
+const msDBA = () => import('~/components/DatabaseMSSQLDBA')
+const MSSQL_PANELS = {
+  activity: lazy(() => msDBA().then((m) => ({ default: m.MSSQLActivity }))),
+  performance: lazy(() => msDBA().then((m) => ({ default: m.MSSQLPerformance }))),
+  indexes: lazy(() => msDBA().then((m) => ({ default: m.MSSQLIndexes }))),
+  integrity: lazy(() => msDBA().then((m) => ({ default: m.MSSQLIntegrity }))),
+  jobs: lazy(() => msDBA().then((m) => ({ default: m.MSSQLJobs }))),
+  dbsettings: lazy(() => msDBA().then((m) => ({ default: m.MSSQLSettings }))),
+}
 
 /*
 The query workspace: a left bar with the object tree, a SQL editor, and a
@@ -134,6 +144,7 @@ interface PGAnswer {
 }
 
 type Panel = 'query' | 'activity' | 'roles' | 'extensions' | 'replication' | 'network' | 'backups' | 'trash' | 'changes'
+  | 'performance' | 'indexes' | 'integrity' | 'jobs' | 'dbsettings'
 type ManagePanel = Exclude<Panel, 'query'>
 type WorkspaceTab = 'query' | 'diagram' | 'manage'
 
@@ -264,7 +275,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   // Statements the administration panels run: collected whole, by request
   // id, without touching the editor's result.
   const collectors = useRef(new Map<number, Collected>())
-  const [panel, setPanel] = useState<Panel>((initialPanel === 'network' && dialect !== 'mssql') || (!notPg && (initialPanel === 'changes' || initialPanel === 'trash' || initialPanel === 'backups')) ? initialPanel : 'query')
+  const [panel, setPanel] = useState<Panel>((dialect === 'mssql' && MSSQL_MANAGE.some((m) => m.key === initialPanel)) || (initialPanel === 'network' && dialect !== 'mssql') || (!notPg && (initialPanel === 'changes' || initialPanel === 'trash' || initialPanel === 'backups')) ? initialPanel as Panel : 'query')
   const [view, setView] = useState<'query' | 'diagram'>('query')
   // The three tabs under the header. Manage is any administration panel;
   // it reopens the one last looked at.
@@ -1409,7 +1420,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       ) : (
         <Box w={tabNow === 'manage' ? 220 : 280} style={{ flexShrink: 0, borderRight: '1px solid var(--color-line)', overflow: 'hidden', background: 'var(--color-surface)' }}>
           <ScrollArea h="100%" type="auto">
-            {tabNow === 'manage' ? <ManageNav panel={panel as ManagePanel} level={level} narrow={false} onPick={setPanel} /> : bar}
+            {tabNow === 'manage' ? <ManageNav panel={panel as ManagePanel} level={level} dialect={dialect} narrow={false} onPick={setPanel} /> : bar}
           </ScrollArea>
         </Box>
       )}
@@ -1418,7 +1429,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
         <WorkspaceHeader database={database} narrow={Boolean(narrow)} level={level} status={status} version={ready?.version} viaPooler={ready?.via === 'pgbouncer'}
           canAsk={Boolean((access.approvable || onAskForAccess) && level === 'read')} onAskForAccess={onAskForAccess}
           settings={orgAdmin} tab={tabNow} onTab={goTab} onOpenTree={tree.open} />
-        {tabNow === 'manage' && narrow && <ManageNav panel={panel as ManagePanel} level={level} narrow onPick={setPanel} />}
+        {tabNow === 'manage' && narrow && <ManageNav panel={panel as ManagePanel} level={level} dialect={dialect} narrow onPick={setPanel} />}
 
         {writesNeedApproval(database) && <ChangesWaitingBanner database={database} me={me?.email} />}
         {fatal && (
@@ -1435,8 +1446,17 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
             )}
           </Box>
         )}
-        {view === 'query' && panel === 'activity' && <ActivityPanel {...adminProps} />}
-        {view === 'query' && panel === 'roles' && (level === 'dba' ? <RolesManager {...adminProps} /> : <RolesPanel {...adminProps} />)}
+        {view === 'query' && panel === 'activity' && dialect !== 'mssql' && <ActivityPanel {...adminProps} />}
+        {view === 'query' && dialect === 'mssql' && panel in MSSQL_PANELS && (() => {
+          const P = MSSQL_PANELS[panel as keyof typeof MSSQL_PANELS]
+          return level === 'dba'
+            ? <Suspense fallback={<Loader size={16} m="md" />}><P {...adminProps} /></Suspense>
+            : <NeedsDBA what={MSSQL_MANAGE.find((m) => m.key === panel)!.label} onAskForAccess={onAskForAccess} />
+        })()}
+        {view === 'query' && panel === 'roles' && dialect === 'mssql' && (level === 'dba'
+          ? <Suspense fallback={<Loader size={16} m="md" />}><MSSQLAccess {...adminProps} /></Suspense>
+          : <NeedsDBA what="Logins & access" onAskForAccess={onAskForAccess} />)}
+        {view === 'query' && panel === 'roles' && dialect !== 'mssql' && (level === 'dba' ? <RolesManager {...adminProps} /> : <RolesPanel {...adminProps} />)}
         {view === 'query' && panel === 'extensions' && <ExtensionsPanel {...adminProps} />}
         {view === 'query' && panel === 'replication' && <ReplicationPanel {...adminProps} database={database} />}
         {view === 'query' && panel === 'network' && <NetworkPanel {...adminProps} assetId={database.assetId} engine={dialect === 'mysql' ? 'mysql' : 'postgres'} />}
@@ -1824,8 +1844,11 @@ function WorkspaceHeader({ database, narrow, level, status, version, viaPooler, 
   const prod = database.label === 'production'
   const where = `${database.hostname}${version ? ` · ${engineVersion(database.engine, version)}` : ''}${viaPooler ? ' · via PgBouncer' : ''}`
   const recorded = status === 'ready' ? 'Recorded' : status === 'connecting' ? 'Connecting' : 'Closed'
-  const tabs: { key: WorkspaceTab; label: string; hint: string }[] = database.engine === 'mysql' || database.engine === 'mssql'
+  const tabs: { key: WorkspaceTab; label: string; hint: string }[] = database.engine === 'mysql'
     ? [{ key: 'query', label: 'Query', hint: 'Write and run statements' }]
+    : database.engine === 'mssql'
+      ? [{ key: 'query', label: 'Query', hint: 'Write and run statements' },
+        { key: 'manage', label: 'Manage', hint: 'Activity, waits, indexes, integrity, Agent jobs, settings, logins and access' }]
     : [
       { key: 'query', label: 'Query', hint: 'Write and run statements' },
       { key: 'diagram', label: 'Diagram', hint: 'Tables and how they link' },
@@ -1908,15 +1931,38 @@ const MANAGE: { key: ManagePanel; label: string; icon: typeof IconTable; hint: s
   { key: 'network', label: 'Network', icon: IconNetwork, hint: 'Which machines can connect: where it listens, pg_hba.conf on Postgres, and the server’s firewall', dba: true, group: 'dba' },
 ]
 
+/** SQL Server's administration panels. Each runs as the admin login, so each is DBA's. */
+const MSSQL_MANAGE: typeof MANAGE = [
+  { key: 'activity', label: 'Activity & blocking', icon: IconActivity, hint: 'Who is connected, what each runs and waits on, and who blocks whom', dba: true, group: 'care' },
+  { key: 'performance', label: 'Waits & queries', icon: IconGauge, hint: 'What the server waits on, and this database’s costliest statements', dba: true, group: 'care' },
+  { key: 'integrity', label: 'Integrity', icon: IconShieldCheck, hint: 'DBCC CHECKDB, and pages found damaged', dba: true, group: 'care' },
+  { key: 'indexes', label: 'Indexes & statistics', icon: IconListTree, hint: 'Fragmentation, use, rebuild and reorganize; statistics; missing indexes', dba: true, group: 'dba' },
+  { key: 'jobs', label: 'Agent jobs', icon: IconClock, hint: 'SQL Server Agent jobs that work on this database', dba: true, group: 'dba' },
+  { key: 'roles', label: 'Logins & access', icon: IconUsersGroup, hint: 'Users and roles, grant, revoke and deny, and what each can do', dba: true, group: 'dba' },
+  { key: 'dbsettings', label: 'Settings', icon: IconSettings, hint: 'Recovery model, compatibility and other options; files; server options', dba: true, group: 'dba' },
+]
+
+/** What a Manage panel says to someone below DBA. */
+function NeedsDBA({ what, onAskForAccess }: { what: string; onAskForAccess?: () => void }) {
+  return (
+    <Box p="md">
+      <Text size={FS.body} fw={600}>{what} needs DBA access</Text>
+      <Text size={FS.meta} c="dimmed" mt={4}>It runs as the server’s admin login, so it is open to sessions at the DBA level only.</Text>
+      {onAskForAccess && <Button size="xs" mt="sm" variant="default" onClick={onAskForAccess}>Ask for access</Button>}
+    </Box>
+  )
+}
+
 /** The list of administration panels: a column on a wide screen, a row of chips on a phone. */
-function ManageNav({ panel, level, narrow, onPick }: {
-  panel: ManagePanel; level: DBLevel | ''; narrow: boolean; onPick: (p: ManagePanel) => void
+function ManageNav({ panel, level, dialect, narrow, onPick }: {
+  panel: ManagePanel; level: DBLevel | ''; dialect: Dialect; narrow: boolean; onPick: (p: ManagePanel) => void
 }) {
+  const items = dialect === 'mssql' ? MSSQL_MANAGE : MANAGE
   if (narrow) {
     return (
       <Group gap={6} px="sm" py={8} wrap="nowrap" role="tablist" aria-label="Manage"
         style={{ overflowX: 'auto', scrollbarWidth: 'none', borderBottom: '1px solid var(--color-line)' }}>
-        {MANAGE.map((m) => (
+        {items.map((m) => (
           <UnstyledButton key={m.key} role="tab" aria-selected={m.key === panel} onClick={() => onPick(m.key)}
             px={10} py={5}
             style={{ flexShrink: 0, borderRadius: 999, border: '1px solid', fontSize: 12.5,
@@ -1932,7 +1978,7 @@ function ManageNav({ panel, level, narrow, onPick }: {
   const section = (group: 'care' | 'dba', title: string) => (
     <Box mb="sm">
       <Text size={FS.micro} c="dimmed" tt="uppercase" fw={600} px={10} py={4} style={{ letterSpacing: '.06em' }}>{title}</Text>
-      {MANAGE.filter((m) => m.group === group).map((m) => {
+      {items.filter((m) => m.group === group).map((m) => {
         const on = m.key === panel
         const Icon = m.icon
         return (
@@ -1953,7 +1999,7 @@ function ManageNav({ panel, level, narrow, onPick }: {
   )
   return (
     <Box p="xs" pt="sm" aria-label="Manage">
-      {section('care', 'Look after')}
+      {items.some((m) => m.group === 'care') && section('care', 'Look after')}
       {section('dba', 'DBA')}
     </Box>
   )

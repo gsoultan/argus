@@ -85,6 +85,20 @@ export interface AdminOp {
     grantee: string; on: string; schema?: string; objects?: string[]; privileges: string[]; withGrant?: boolean
     schemaUsage?: boolean; future?: boolean; forRoles?: string[]; cascade?: boolean
   }
+  /** SQL Server users and roles (see DatabaseMSSQLAccess and internal/tunnel/mssqlaccess.go). */
+  principal?: {
+    name: string; rename?: string; auth?: 'sql' | 'login' | 'none'; login?: string; password?: string
+    defaultSchema?: string; enabled?: boolean; memberOf?: string[]; dropLogin?: boolean
+  }
+  msGrant?: {
+    grantee?: string; on?: 'database' | 'schema' | 'object'; schema?: string; objects?: string[]; privileges?: string[]
+    withGrant?: boolean; cascade?: boolean
+  }
+  /** SQL Server's DBA tools (see DatabaseMSSQLDBA and internal/tunnel/mssqldba.go). */
+  msdba?: {
+    session?: number; schema?: string; table?: string; index?: string; online?: boolean; fullScan?: boolean; sample?: number
+    physicalOnly?: boolean; job?: string; enabled?: boolean; sort?: string; setting?: string; value?: string
+  }
 }
 export interface AdminFailure { error?: string; code?: string; detail?: string; hint?: string }
 export interface AdminResult<T = unknown> { data?: T; tag?: string; ms?: number; error?: AdminFailure }
@@ -153,11 +167,11 @@ export function NeedsDBA({ level, what, onAskForAccess }: { level: DBLevel | '';
 }
 
 /** Postgres's refusal of an administrative operation, with its next step. */
-export function AdminRefused({ error }: { error: AdminFailure }) {
+export function AdminRefused({ error, who = 'Postgres' }: { error: AdminFailure; who?: string }) {
   return (
     <Box p="sm" style={{ borderRadius: 8, background: 'var(--mantine-color-rose-light)', color: 'var(--mantine-color-rose-light-color)' }}>
       <Text size={FS.body} fw={600}>
-        Postgres refused this: {error.error}
+        {who} refused this: {error.error}
         {error.code && <Text span size={FS.micro} ff="monospace" ml={6}>({error.code})</Text>}
       </Text>
       {error.detail && <Text size={FS.meta} mt={4} style={{ whiteSpace: 'pre-wrap' }}>{error.detail}</Text>}
