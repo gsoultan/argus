@@ -3,7 +3,6 @@ package notify
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"html"
 	"html/template"
@@ -530,19 +529,21 @@ func (n *SignInNotifier) ConsoleURL() string {
 // address so they do not learn each other's. With platform set -- a sign-in to
 // the default organization -- the configured email recipients and Telegram
 // chats are told as well; another organization's sign-ins never reach them.
-func (n *SignInNotifier) Admins(e SignIn, to []string, platform bool) {
+// A non-nil tg takes over Telegram: it is handed the message to send where
+// the organization chose, and the configured chats are not used.
+func (n *SignInNotifier) Admins(e SignIn, to []string, platform bool, tg func(Rendered)) {
 	if n == nil {
 		return
 	}
-	n.toAdmins(SignInAdminMessage(e, n.consoleURL), to, platform, "sign-in of "+e.Email)
+	n.toAdmins(SignInAdminMessage(e, n.consoleURL), to, platform, "sign-in of "+e.Email, tg)
 }
 
 // Reported tells administrators that the account holder disowned a sign-in.
-func (n *SignInNotifier) Reported(r SignInReport, to []string, platform bool) {
+func (n *SignInNotifier) Reported(r SignInReport, to []string, platform bool, tg func(Rendered)) {
 	if n == nil {
 		return
 	}
-	n.toAdmins(SignInReportedMessage(r, n.consoleURL), to, platform, "reported sign-in of "+r.Email)
+	n.toAdmins(SignInReportedMessage(r, n.consoleURL), to, platform, "reported sign-in of "+r.Email, tg)
 }
 
 // Person emails the person who signed in. Never Telegram: the chats are the
@@ -558,7 +559,7 @@ func (n *SignInNotifier) Person(e SignIn, reportURL string) {
 	}})
 }
 
-func (n *SignInNotifier) toAdmins(m Rendered, to []string, platform bool, what string) {
+func (n *SignInNotifier) toAdmins(m Rendered, to []string, platform bool, what string, tg func(Rendered)) {
 	if n.email != nil {
 		recipients := to
 		if platform {
@@ -571,38 +572,15 @@ func (n *SignInNotifier) toAdmins(m Rendered, to []string, platform bool, what s
 			}})
 		}
 	}
+	if tg != nil {
+		tg(m)
+		return
+	}
 	if n.telegram != nil && platform {
 		n.enqueue(signInJob{what: what + " to telegram", send: func(ctx context.Context) error {
 			return n.telegram.SendHTML(ctx, m.Telegram, m.LinkLabel, m.Link)
 		}})
 	}
-}
-
-// TelegramChats are the chats Telegram is set up for; nil when it is not.
-func (n *SignInNotifier) TelegramChats() []string {
-	if n == nil || n.telegram == nil {
-		return nil
-	}
-	return n.telegram.ChatIDs()
-}
-
-// TelegramTo queues an HTML message to some of the configured chats (empty
-// is all), for a feature that chooses its own: website checks.
-func (n *SignInNotifier) TelegramTo(chats []string, text, linkLabel, link, what string) {
-	if n == nil || n.telegram == nil {
-		return
-	}
-	n.enqueue(signInJob{what: what + " to telegram", send: func(ctx context.Context) error {
-		return n.telegram.SendHTMLTo(ctx, chats, text, linkLabel, link)
-	}})
-}
-
-// TelegramNow sends at once and says how it went, for a Test button.
-func (n *SignInNotifier) TelegramNow(ctx context.Context, chats []string, text, linkLabel, link string) error {
-	if n == nil || n.telegram == nil {
-		return errors.New("Telegram is not set up: add a bot under Settings, Alerts")
-	}
-	return n.telegram.SendHTMLTo(ctx, chats, text, linkLabel, link)
 }
 
 // TelegramHTML escapes s for a Telegram HTML message.
@@ -664,4 +642,12 @@ func (n *SignInNotifier) run() {
 		}
 		n.log.Info("sign-in alert sent", "about", j.what)
 	}
+}
+
+// PlatformTelegram is the bot from the config file, or nil.
+func (n *SignInNotifier) PlatformTelegram() *Telegram {
+	if n == nil {
+		return nil
+	}
+	return n.telegram
 }

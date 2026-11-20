@@ -57,6 +57,7 @@ enforces all of it and CI runs it by name.
 | [asset-types](asset-types.md) | Servers, workstations and devices: the kind, the tabs each type gets, the plan for who is asked before a session |
 | [self-approval](self-approval.md) | Approvals: who decides, and when the person who asked may approve their own |
 | [website-checks](website-checks.md) | Websites: uptime checks, the four confirmations before "down", canaries, agent second opinions |
+| [telegram-bots](telegram-bots.md) | Organizations' own Telegram bots, sealed tokens, and which bot each kind of alert uses |
 
 ## Standing rules for this repo
 

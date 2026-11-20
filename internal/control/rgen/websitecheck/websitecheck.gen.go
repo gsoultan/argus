@@ -32,6 +32,7 @@ type Row struct {
 	ConfirmFrom    [][16]byte
 	Paused         bool
 	Telegram       string
+	TelegramBot    string
 	TelegramChats  []string
 	CreatedBy      string
 	State          string
@@ -83,7 +84,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 25
+const nCols = 26
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -275,84 +276,91 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.strs[q.ns] = r.Telegram
 		q.ns++
-	case 13:
+	case 12:
 		if int(q.ns) >= len(q.strs) {
 			q.over = true
 			return
 		}
-		q.strs[q.ns] = r.CreatedBy
+		q.strs[q.ns] = r.TelegramBot
 		q.ns++
 	case 14:
 		if int(q.ns) >= len(q.strs) {
 			q.over = true
 			return
 		}
-		q.strs[q.ns] = r.State
+		q.strs[q.ns] = r.CreatedBy
 		q.ns++
 	case 15:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.State
+		q.ns++
+	case 16:
 		if int(q.ntm) >= len(q.tims) {
 			q.over = true
 			return
 		}
 		q.tims[q.ntm] = r.StateSince.V
 		q.ntm++
-	case 16:
+	case 17:
 		if int(q.nn) >= len(q.nums) {
 			q.over = true
 			return
 		}
 		q.nums[q.nn] = int64(r.FailingRounds)
 		q.nn++
-	case 17:
+	case 18:
 		if int(q.ntm) >= len(q.tims) {
 			q.over = true
 			return
 		}
 		q.tims[q.ntm] = r.LastAt.V
 		q.ntm++
-	case 18:
+	case 19:
 		if int(q.nn) >= len(q.nums) {
 			q.over = true
 			return
 		}
 		q.nums[q.nn] = int64(r.LastMs.V)
 		q.nn++
-	case 19:
+	case 20:
 		if int(q.nn) >= len(q.nums) {
 			q.over = true
 			return
 		}
 		q.nums[q.nn] = int64(r.LastStatus.V)
 		q.nn++
-	case 20:
+	case 21:
 		if int(q.ns) >= len(q.strs) {
 			q.over = true
 			return
 		}
 		q.strs[q.ns] = r.LastDetail
 		q.ns++
-	case 21:
+	case 22:
 		if int(q.ns) >= len(q.strs) {
 			q.over = true
 			return
 		}
 		q.strs[q.ns] = r.LastOutcome
 		q.ns++
-	case 22:
+	case 23:
 		if int(q.ntm) >= len(q.tims) {
 			q.over = true
 			return
 		}
 		q.tims[q.ntm] = r.CertNotAfter.V
 		q.ntm++
-	case 23:
+	case 24:
 		if int(q.ntm) >= len(q.tims) {
 			q.over = true
 			return
 		}
 		q.tims[q.ntm] = r.NextAt
 		q.ntm++
-	case 24:
+	case 25:
 		if int(q.ntm) >= len(q.tims) {
 			q.over = true
 			return
@@ -539,19 +547,20 @@ var (
 	ConfirmFrom    = UUIDArrayCol{9}
 	Paused         = BoolCol{10}
 	Telegram       = TextCol{11}
-	TelegramChats  = TextArrayCol{12}
-	CreatedBy      = TextCol{13}
-	State          = TextCol{14}
-	StateSince     = NullTimeCol{15}
-	FailingRounds  = Int32Col{16}
-	LastAt         = NullTimeCol{17}
-	LastMs         = NullInt32Col{18}
-	LastStatus     = NullInt32Col{19}
-	LastDetail     = TextCol{20}
-	LastOutcome    = TextCol{21}
-	CertNotAfter   = NullTimeCol{22}
-	NextAt         = TimeCol{23}
-	LeaseUntil     = NullTimeCol{24}
+	TelegramBot    = TextCol{12}
+	TelegramChats  = TextArrayCol{13}
+	CreatedBy      = TextCol{14}
+	State          = TextCol{15}
+	StateSince     = NullTimeCol{16}
+	FailingRounds  = Int32Col{17}
+	LastAt         = NullTimeCol{18}
+	LastMs         = NullInt32Col{19}
+	LastStatus     = NullInt32Col{20}
+	LastDetail     = TextCol{21}
+	LastOutcome    = TextCol{22}
+	CertNotAfter   = NullTimeCol{23}
+	NextAt         = TimeCol{24}
+	LeaseUntil     = NullTimeCol{25}
 )
 
 // UUIDCol addresses a uuid column.
@@ -993,14 +1002,14 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
-		case 16:
-			if int(q.nai32) >= 3 {
+		case 15:
+			if int(q.nas) >= 3 {
 				q.over = true
 				return
 			}
-			q.anyI32[q.nai32] = p.anyI32
-			q.nai32++
-		case 18:
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 17:
 			if int(q.nai32) >= 3 {
 				q.over = true
 				return
@@ -1015,13 +1024,20 @@ func (q *Query) leaf(p Pred) {
 			q.anyI32[q.nai32] = p.anyI32
 			q.nai32++
 		case 20:
+			if int(q.nai32) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyI32[q.nai32] = p.anyI32
+			q.nai32++
+		case 21:
 			if int(q.nas) >= 3 {
 				q.over = true
 				return
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
-		case 21:
+		case 22:
 			if int(q.nas) >= 3 {
 				q.over = true
 				return
@@ -1114,7 +1130,7 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.strs[q.ns] = p.str
 		q.ns++
-	case 13:
+	case 12:
 		if int(q.ns) >= 6 {
 			q.over = true
 			return
@@ -1129,33 +1145,33 @@ func (q *Query) leaf(p Pred) {
 		q.strs[q.ns] = p.str
 		q.ns++
 	case 15:
-		if int(q.ntm) >= 4 {
+		if int(q.ns) >= 6 {
 			q.over = true
 			return
 		}
-		q.tims[q.ntm] = p.tim
-		q.ntm++
+		q.strs[q.ns] = p.str
+		q.ns++
 	case 16:
-		if int(q.nn) >= 6 {
-			q.over = true
-			return
-		}
-		q.nums[q.nn] = p.num
-		q.nn++
-	case 17:
 		if int(q.ntm) >= 4 {
 			q.over = true
 			return
 		}
 		q.tims[q.ntm] = p.tim
 		q.ntm++
-	case 18:
+	case 17:
 		if int(q.nn) >= 6 {
 			q.over = true
 			return
 		}
 		q.nums[q.nn] = p.num
 		q.nn++
+	case 18:
+		if int(q.ntm) >= 4 {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = p.tim
+		q.ntm++
 	case 19:
 		if int(q.nn) >= 6 {
 			q.over = true
@@ -1164,12 +1180,12 @@ func (q *Query) leaf(p Pred) {
 		q.nums[q.nn] = p.num
 		q.nn++
 	case 20:
-		if int(q.ns) >= 6 {
+		if int(q.nn) >= 6 {
 			q.over = true
 			return
 		}
-		q.strs[q.ns] = p.str
-		q.ns++
+		q.nums[q.nn] = p.num
+		q.nn++
 	case 21:
 		if int(q.ns) >= 6 {
 			q.over = true
@@ -1178,12 +1194,12 @@ func (q *Query) leaf(p Pred) {
 		q.strs[q.ns] = p.str
 		q.ns++
 	case 22:
-		if int(q.ntm) >= 4 {
+		if int(q.ns) >= 6 {
 			q.over = true
 			return
 		}
-		q.tims[q.ntm] = p.tim
-		q.ntm++
+		q.strs[q.ns] = p.str
+		q.ns++
 	case 23:
 		if int(q.ntm) >= 4 {
 			q.over = true
@@ -1192,6 +1208,13 @@ func (q *Query) leaf(p Pred) {
 		q.tims[q.ntm] = p.tim
 		q.ntm++
 	case 24:
+		if int(q.ntm) >= 4 {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = p.tim
+		q.ntm++
+	case 25:
 		if int(q.ntm) >= 4 {
 			q.over = true
 			return
@@ -1294,6 +1317,17 @@ func (q Query) TelegramLike(v string) Query             { return q.Where(Telegra
 func (q Query) TelegramILike(v string) Query            { return q.Where(Telegram.ILike(v)) }
 func (q Query) TelegramIn(v ...string) Query            { return q.Where(Telegram.In(v...)) }
 func (q Query) TelegramNotIn(v ...string) Query         { return q.Where(Telegram.NotIn(v...)) }
+func (q Query) TelegramBotEq(v string) Query            { return q.Where(TelegramBot.Eq(v)) }
+func (q Query) TelegramBotNotEq(v string) Query         { return q.Where(TelegramBot.NotEq(v)) }
+func (q Query) TelegramBotGt(v string) Query            { return q.Where(TelegramBot.Gt(v)) }
+func (q Query) TelegramBotGte(v string) Query           { return q.Where(TelegramBot.Gte(v)) }
+func (q Query) TelegramBotLt(v string) Query            { return q.Where(TelegramBot.Lt(v)) }
+func (q Query) TelegramBotLte(v string) Query           { return q.Where(TelegramBot.Lte(v)) }
+func (q Query) TelegramBotEqLower(v string) Query       { return q.Where(TelegramBot.EqLower(v)) }
+func (q Query) TelegramBotLike(v string) Query          { return q.Where(TelegramBot.Like(v)) }
+func (q Query) TelegramBotILike(v string) Query         { return q.Where(TelegramBot.ILike(v)) }
+func (q Query) TelegramBotIn(v ...string) Query         { return q.Where(TelegramBot.In(v...)) }
+func (q Query) TelegramBotNotIn(v ...string) Query      { return q.Where(TelegramBot.NotIn(v...)) }
 func (q Query) TelegramChatsContains(v ...string) Query { return q.Where(TelegramChats.Contains(v...)) }
 func (q Query) TelegramChatsContainedBy(v ...string) Query {
 	return q.Where(TelegramChats.ContainedBy(v...))
@@ -1410,7 +1444,7 @@ func (q Query) LeaseUntilLte(v time.Time) Query         { return q.Where(LeaseUn
 func (q Query) LeaseUntilIsNull() Query                 { return q.Where(LeaseUntil.IsNull()) }
 func (q Query) LeaseUntilIsNotNull() Query              { return q.Where(LeaseUntil.IsNotNull()) }
 
-const selectPrefix = `SELECT "id", "created_at", "updated_at", "name", "url", "expect_status", "keyword", "every_seconds", "timeout_seconds", "confirm_from", "paused", "telegram", "telegram_chats", "created_by", "state", "state_since", "failing_rounds", "last_at", "last_ms", "last_status", "last_detail", "last_outcome", "cert_not_after", "next_at", "lease_until" FROM "website_checks"`
+const selectPrefix = `SELECT "id", "created_at", "updated_at", "name", "url", "expect_status", "keyword", "every_seconds", "timeout_seconds", "confirm_from", "paused", "telegram", "telegram_bot", "telegram_chats", "created_by", "state", "state_since", "failing_rounds", "last_at", "last_ms", "last_status", "last_detail", "last_outcome", "cert_not_after", "next_at", "lease_until" FROM "website_checks"`
 const countPrefix = `SELECT count(*) FROM "website_checks"`
 const existsPrefix = `SELECT 1 FROM "website_checks"`
 const existsSuffix = ` LIMIT 1`
@@ -1519,6 +1553,12 @@ var orderTable = [nCols][4]string{
 		"\"telegram\" ASC NULLS FIRST",
 		"\"telegram\" DESC NULLS LAST",
 	},
+	{ // telegram_bot
+		"\"telegram_bot\"",
+		"\"telegram_bot\" DESC",
+		"\"telegram_bot\" ASC NULLS FIRST",
+		"\"telegram_bot\" DESC NULLS LAST",
+	},
 	{ // telegram_chats
 		"\"telegram_chats\"",
 		"\"telegram_chats\" DESC",
@@ -1614,6 +1654,7 @@ var identTable = [nCols]string{
 	"\"confirm_from\"",
 	"\"paused\"",
 	"\"telegram\"",
+	"\"telegram_bot\"",
 	"\"telegram_chats\"",
 	"\"created_by\"",
 	"\"state\"",
@@ -1659,7 +1700,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [25][28]runtime.Frag{
+var fragTable = [26][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -2008,6 +2049,36 @@ var fragTable = [25][28]runtime.Frag{
 		{},
 		{A: "\"telegram\" = ANY($", B: ")"},
 		{A: "\"telegram\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // telegram_bot
+		{}, // opNone
+		{A: "\"telegram_bot\" = $", B: ""},
+		{A: "\"telegram_bot\" <> $", B: ""},
+		{A: "\"telegram_bot\" > $", B: ""},
+		{A: "\"telegram_bot\" >= $", B: ""},
+		{A: "\"telegram_bot\" < $", B: ""},
+		{A: "\"telegram_bot\" <= $", B: ""},
+		{A: "lower(\"telegram_bot\") = lower($", B: ")"},
+		{A: "\"telegram_bot\" LIKE $", B: ""},
+		{A: "\"telegram_bot\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"telegram_bot\" = ANY($", B: ")"},
+		{A: "\"telegram_bot\" <> ALL($", B: ")"},
 		{},
 		{},
 		{},
@@ -2582,22 +2653,23 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	}
 	r.Paused = runtime.Bool(rv[10])
 	r.Telegram = sl.Str(rv[11])
-	r.TelegramChats, decErr = runtime.TextArray(rv[12], sl)
+	r.TelegramBot = sl.Str(rv[12])
+	r.TelegramChats, decErr = runtime.TextArray(rv[13], sl)
 	if decErr != nil {
 		return decErr
 	}
-	r.CreatedBy = sl.Str(rv[13])
-	r.State = sl.Str(rv[14])
-	r.StateSince = runtime.Nullable(rv[15], runtime.Timestamptz)
-	r.FailingRounds = runtime.Int4(rv[16])
-	r.LastAt = runtime.Nullable(rv[17], runtime.Timestamptz)
-	r.LastMs = runtime.Nullable(rv[18], runtime.Int4)
-	r.LastStatus = runtime.Nullable(rv[19], runtime.Int4)
-	r.LastDetail = sl.Str(rv[20])
-	r.LastOutcome = sl.Str(rv[21])
-	r.CertNotAfter = runtime.Nullable(rv[22], runtime.Timestamptz)
-	r.NextAt = runtime.Timestamptz(rv[23])
-	r.LeaseUntil = runtime.Nullable(rv[24], runtime.Timestamptz)
+	r.CreatedBy = sl.Str(rv[14])
+	r.State = sl.Str(rv[15])
+	r.StateSince = runtime.Nullable(rv[16], runtime.Timestamptz)
+	r.FailingRounds = runtime.Int4(rv[17])
+	r.LastAt = runtime.Nullable(rv[18], runtime.Timestamptz)
+	r.LastMs = runtime.Nullable(rv[19], runtime.Int4)
+	r.LastStatus = runtime.Nullable(rv[20], runtime.Int4)
+	r.LastDetail = sl.Str(rv[21])
+	r.LastOutcome = sl.Str(rv[22])
+	r.CertNotAfter = runtime.Nullable(rv[23], runtime.Timestamptz)
+	r.NextAt = runtime.Timestamptz(rv[24])
+	r.LeaseUntil = runtime.Nullable(rv[25], runtime.Timestamptz)
 	return decErr
 }
 
@@ -2716,11 +2788,11 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
-			case 16:
-				b.anyI32[nai32] = q.anyI32[nai32]
-				v = append(v, &b.anyI32[nai32])
-				nai32++
-			case 18:
+			case 15:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 17:
 				b.anyI32[nai32] = q.anyI32[nai32]
 				v = append(v, &b.anyI32[nai32])
 				nai32++
@@ -2729,10 +2801,14 @@ func (q Query) bindPreds(b *binder) []any {
 				v = append(v, &b.anyI32[nai32])
 				nai32++
 			case 20:
+				b.anyI32[nai32] = q.anyI32[nai32]
+				v = append(v, &b.anyI32[nai32])
+				nai32++
+			case 21:
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
-			case 21:
+			case 22:
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
@@ -2784,7 +2860,7 @@ func (q Query) bindPreds(b *binder) []any {
 			b.strs[ns] = q.strs[ns]
 			v = append(v, &b.strs[ns])
 			ns++
-		case 13:
+		case 12:
 			b.strs[ns] = q.strs[ns]
 			v = append(v, &b.strs[ns])
 			ns++
@@ -2793,42 +2869,46 @@ func (q Query) bindPreds(b *binder) []any {
 			v = append(v, &b.strs[ns])
 			ns++
 		case 15:
-			b.tims[ntm] = q.tims[ntm]
-			v = append(v, &b.tims[ntm])
-			ntm++
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
 		case 16:
-			b.nums[nn] = q.nums[nn]
-			v = append(v, &b.nums[nn])
-			nn++
-		case 17:
 			b.tims[ntm] = q.tims[ntm]
 			v = append(v, &b.tims[ntm])
 			ntm++
-		case 18:
+		case 17:
 			b.nums[nn] = q.nums[nn]
 			v = append(v, &b.nums[nn])
 			nn++
+		case 18:
+			b.tims[ntm] = q.tims[ntm]
+			v = append(v, &b.tims[ntm])
+			ntm++
 		case 19:
 			b.nums[nn] = q.nums[nn]
 			v = append(v, &b.nums[nn])
 			nn++
 		case 20:
-			b.strs[ns] = q.strs[ns]
-			v = append(v, &b.strs[ns])
-			ns++
+			b.nums[nn] = q.nums[nn]
+			v = append(v, &b.nums[nn])
+			nn++
 		case 21:
 			b.strs[ns] = q.strs[ns]
 			v = append(v, &b.strs[ns])
 			ns++
 		case 22:
-			b.tims[ntm] = q.tims[ntm]
-			v = append(v, &b.tims[ntm])
-			ntm++
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
 		case 23:
 			b.tims[ntm] = q.tims[ntm]
 			v = append(v, &b.tims[ntm])
 			ntm++
 		case 24:
+			b.tims[ntm] = q.tims[ntm]
+			v = append(v, &b.tims[ntm])
+			ntm++
+		case 25:
 			b.tims[ntm] = q.tims[ntm]
 			v = append(v, &b.tims[ntm])
 			ntm++
@@ -2969,7 +3049,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "website_checks" ("id", "created_at", "updated_at", "name", "url", "expect_status", "keyword", "every_seconds", "timeout_seconds", "confirm_from", "paused", "telegram", "telegram_chats", "created_by", "state", "state_since", "failing_rounds", "last_at", "last_ms", "last_status", "last_detail", "last_outcome", "cert_not_after", "next_at", "lease_until") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25) RETURNING "id", "created_at", "updated_at", "name", "url", "expect_status", "keyword", "every_seconds", "timeout_seconds", "confirm_from", "paused", "telegram", "telegram_chats", "created_by", "state", "state_since", "failing_rounds", "last_at", "last_ms", "last_status", "last_detail", "last_outcome", "cert_not_after", "next_at", "lease_until"`
+const insertSQL = `INSERT INTO "website_checks" ("id", "created_at", "updated_at", "name", "url", "expect_status", "keyword", "every_seconds", "timeout_seconds", "confirm_from", "paused", "telegram", "telegram_bot", "telegram_chats", "created_by", "state", "state_since", "failing_rounds", "last_at", "last_ms", "last_status", "last_detail", "last_outcome", "cert_not_after", "next_at", "lease_until") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26) RETURNING "id", "created_at", "updated_at", "name", "url", "expect_status", "keyword", "every_seconds", "timeout_seconds", "confirm_from", "paused", "telegram", "telegram_bot", "telegram_chats", "created_by", "state", "state_since", "failing_rounds", "last_at", "last_ms", "last_status", "last_detail", "last_outcome", "cert_not_after", "next_at", "lease_until"`
 
 const updatePrefix = `UPDATE "website_checks" SET `
 const deletePrefix = `DELETE FROM "website_checks"`
@@ -2987,22 +3067,23 @@ const (
 	dConfirmFrom    uint64 = 1 << 7
 	dPaused         uint64 = 1 << 8
 	dTelegram       uint64 = 1 << 9
-	dTelegramChats  uint64 = 1 << 10
-	dCreatedBy      uint64 = 1 << 11
-	dState          uint64 = 1 << 12
-	dStateSince     uint64 = 1 << 13
-	dFailingRounds  uint64 = 1 << 14
-	dLastAt         uint64 = 1 << 15
-	dLastMs         uint64 = 1 << 16
-	dLastStatus     uint64 = 1 << 17
-	dLastDetail     uint64 = 1 << 18
-	dLastOutcome    uint64 = 1 << 19
-	dCertNotAfter   uint64 = 1 << 20
-	dNextAt         uint64 = 1 << 21
-	dLeaseUntil     uint64 = 1 << 22
+	dTelegramBot    uint64 = 1 << 10
+	dTelegramChats  uint64 = 1 << 11
+	dCreatedBy      uint64 = 1 << 12
+	dState          uint64 = 1 << 13
+	dStateSince     uint64 = 1 << 14
+	dFailingRounds  uint64 = 1 << 15
+	dLastAt         uint64 = 1 << 16
+	dLastMs         uint64 = 1 << 17
+	dLastStatus     uint64 = 1 << 18
+	dLastDetail     uint64 = 1 << 19
+	dLastOutcome    uint64 = 1 << 20
+	dCertNotAfter   uint64 = 1 << 21
+	dNextAt         uint64 = 1 << 22
+	dLeaseUntil     uint64 = 1 << 23
 )
 
-const nUpdatable = 23
+const nUpdatable = 24
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -3016,6 +3097,7 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"confirm_from\" = $", B: ""},    // confirm_from
 	{A: "\"paused\" = $", B: ""},          // paused
 	{A: "\"telegram\" = $", B: ""},        // telegram
+	{A: "\"telegram_bot\" = $", B: ""},    // telegram_bot
 	{A: "\"telegram_chats\" = $", B: ""},  // telegram_chats
 	{A: "\"created_by\" = $", B: ""},      // created_by
 	{A: "\"state\" = $", B: ""},           // state
@@ -3045,6 +3127,7 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{},                                    // confirm_from has no server-side form
 	{},                                    // paused has no server-side form
 	{},                                    // telegram has no server-side form
+	{},                                    // telegram_bot has no server-side form
 	{},                                    // telegram_chats has no server-side form
 	{},                                    // created_by has no server-side form
 	{},                                    // state has no server-side form
@@ -3081,22 +3164,23 @@ const (
 	iConfirmFrom    uint64 = 1 << 9
 	iPaused         uint64 = 1 << 10
 	iTelegram       uint64 = 1 << 11
-	iTelegramChats  uint64 = 1 << 12
-	iCreatedBy      uint64 = 1 << 13
-	iState          uint64 = 1 << 14
-	iStateSince     uint64 = 1 << 15
-	iFailingRounds  uint64 = 1 << 16
-	iLastAt         uint64 = 1 << 17
-	iLastMs         uint64 = 1 << 18
-	iLastStatus     uint64 = 1 << 19
-	iLastDetail     uint64 = 1 << 20
-	iLastOutcome    uint64 = 1 << 21
-	iCertNotAfter   uint64 = 1 << 22
-	iNextAt         uint64 = 1 << 23
-	iLeaseUntil     uint64 = 1 << 24
+	iTelegramBot    uint64 = 1 << 12
+	iTelegramChats  uint64 = 1 << 13
+	iCreatedBy      uint64 = 1 << 14
+	iState          uint64 = 1 << 15
+	iStateSince     uint64 = 1 << 16
+	iFailingRounds  uint64 = 1 << 17
+	iLastAt         uint64 = 1 << 18
+	iLastMs         uint64 = 1 << 19
+	iLastStatus     uint64 = 1 << 20
+	iLastDetail     uint64 = 1 << 21
+	iLastOutcome    uint64 = 1 << 22
+	iCertNotAfter   uint64 = 1 << 23
+	iNextAt         uint64 = 1 << 24
+	iLeaseUntil     uint64 = 1 << 25
 )
 
-const nInsertable = 25
+const nInsertable = 26
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -3112,6 +3196,7 @@ var insCols = [nInsertable]string{
 	"\"confirm_from\"",
 	"\"paused\"",
 	"\"telegram\"",
+	"\"telegram_bot\"",
 	"\"telegram_chats\"",
 	"\"created_by\"",
 	"\"state\"",
@@ -3133,7 +3218,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"website_checks\""
-const insReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"name\", \"url\", \"expect_status\", \"keyword\", \"every_seconds\", \"timeout_seconds\", \"confirm_from\", \"paused\", \"telegram\", \"telegram_chats\", \"created_by\", \"state\", \"state_since\", \"failing_rounds\", \"last_at\", \"last_ms\", \"last_status\", \"last_detail\", \"last_outcome\", \"cert_not_after\", \"next_at\", \"lease_until\""
+const insReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"name\", \"url\", \"expect_status\", \"keyword\", \"every_seconds\", \"timeout_seconds\", \"confirm_from\", \"paused\", \"telegram\", \"telegram_bot\", \"telegram_chats\", \"created_by\", \"state\", \"state_since\", \"failing_rounds\", \"last_at\", \"last_ms\", \"last_status\", \"last_detail\", \"last_outcome\", \"cert_not_after\", \"next_at\", \"lease_until\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -3152,7 +3237,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"name\", \"url\", \"expect_status\", \"keyword\", \"every_seconds\", \"timeout_seconds\", \"confirm_from\", \"paused\", \"telegram\", \"telegram_chats\", \"created_by\", \"state\", \"state_since\", \"failing_rounds\", \"last_at\", \"last_ms\", \"last_status\", \"last_detail\", \"last_outcome\", \"cert_not_after\", \"next_at\", \"lease_until\""
+const updReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"name\", \"url\", \"expect_status\", \"keyword\", \"every_seconds\", \"timeout_seconds\", \"confirm_from\", \"paused\", \"telegram\", \"telegram_bot\", \"telegram_chats\", \"created_by\", \"state\", \"state_since\", \"failing_rounds\", \"last_at\", \"last_ms\", \"last_status\", \"last_detail\", \"last_outcome\", \"cert_not_after\", \"next_at\", \"lease_until\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -3299,6 +3384,12 @@ func (m *Mut) SetTelegram(v string) {
 	m.row.Telegram = v
 	m.dirty |= dTelegram
 	m.expr &^= dTelegram
+}
+
+func (m *Mut) SetTelegramBot(v string) {
+	m.row.TelegramBot = v
+	m.dirty |= dTelegramBot
+	m.expr &^= dTelegramBot
 }
 
 func (m *Mut) SetTelegramChats(v []string) {
@@ -3649,6 +3740,11 @@ func (n *Ins) SetTelegram(v string) {
 	n.set |= iTelegram
 }
 
+func (n *Ins) SetTelegramBot(v string) {
+	n.row.TelegramBot = v
+	n.set |= iTelegramBot
+}
+
 func (n *Ins) SetTelegramChats(v []string) {
 	n.row.TelegramChats = v
 	n.set |= iTelegramChats
@@ -3821,7 +3917,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 23)
+	set := make([]string, 0, 24)
 	switch i {
 	case 0:
 		if mask&(1<<2) != 0 {
@@ -3855,42 +3951,45 @@ func assignable(i uint8, mask uint64) []string {
 			set = append(set, "telegram")
 		}
 		if mask&(1<<12) != 0 {
-			set = append(set, "telegram_chats")
+			set = append(set, "telegram_bot")
 		}
 		if mask&(1<<13) != 0 {
-			set = append(set, "created_by")
+			set = append(set, "telegram_chats")
 		}
 		if mask&(1<<14) != 0 {
-			set = append(set, "state")
+			set = append(set, "created_by")
 		}
 		if mask&(1<<15) != 0 {
-			set = append(set, "state_since")
+			set = append(set, "state")
 		}
 		if mask&(1<<16) != 0 {
-			set = append(set, "failing_rounds")
+			set = append(set, "state_since")
 		}
 		if mask&(1<<17) != 0 {
-			set = append(set, "last_at")
+			set = append(set, "failing_rounds")
 		}
 		if mask&(1<<18) != 0 {
-			set = append(set, "last_ms")
+			set = append(set, "last_at")
 		}
 		if mask&(1<<19) != 0 {
-			set = append(set, "last_status")
+			set = append(set, "last_ms")
 		}
 		if mask&(1<<20) != 0 {
-			set = append(set, "last_detail")
+			set = append(set, "last_status")
 		}
 		if mask&(1<<21) != 0 {
-			set = append(set, "last_outcome")
+			set = append(set, "last_detail")
 		}
 		if mask&(1<<22) != 0 {
-			set = append(set, "cert_not_after")
+			set = append(set, "last_outcome")
 		}
 		if mask&(1<<23) != 0 {
-			set = append(set, "next_at")
+			set = append(set, "cert_not_after")
 		}
 		if mask&(1<<24) != 0 {
+			set = append(set, "next_at")
+		}
+		if mask&(1<<25) != 0 {
 			set = append(set, "lease_until")
 		}
 	}
@@ -3973,6 +4072,7 @@ var assignFor = map[string]string{
 	"confirm_from":    "\"confirm_from\" = EXCLUDED.\"confirm_from\"",
 	"paused":          "\"paused\" = EXCLUDED.\"paused\"",
 	"telegram":        "\"telegram\" = EXCLUDED.\"telegram\"",
+	"telegram_bot":    "\"telegram_bot\" = EXCLUDED.\"telegram_bot\"",
 	"telegram_chats":  "\"telegram_chats\" = EXCLUDED.\"telegram_chats\"",
 	"created_by":      "\"created_by\" = EXCLUDED.\"created_by\"",
 	"state":           "\"state\" = EXCLUDED.\"state\"",
@@ -4061,30 +4161,32 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 		case 11:
 			args = append(args, n.row.Telegram)
 		case 12:
-			args = append(args, n.row.TelegramChats)
+			args = append(args, n.row.TelegramBot)
 		case 13:
-			args = append(args, n.row.CreatedBy)
+			args = append(args, n.row.TelegramChats)
 		case 14:
-			args = append(args, n.row.State)
+			args = append(args, n.row.CreatedBy)
 		case 15:
-			args = append(args, n.row.StateSince.Arg())
+			args = append(args, n.row.State)
 		case 16:
-			args = append(args, n.row.FailingRounds)
+			args = append(args, n.row.StateSince.Arg())
 		case 17:
-			args = append(args, n.row.LastAt.Arg())
+			args = append(args, n.row.FailingRounds)
 		case 18:
-			args = append(args, n.row.LastMs.Arg())
+			args = append(args, n.row.LastAt.Arg())
 		case 19:
-			args = append(args, n.row.LastStatus.Arg())
+			args = append(args, n.row.LastMs.Arg())
 		case 20:
-			args = append(args, n.row.LastDetail)
+			args = append(args, n.row.LastStatus.Arg())
 		case 21:
-			args = append(args, n.row.LastOutcome)
+			args = append(args, n.row.LastDetail)
 		case 22:
-			args = append(args, n.row.CertNotAfter.Arg())
+			args = append(args, n.row.LastOutcome)
 		case 23:
-			args = append(args, n.row.NextAt)
+			args = append(args, n.row.CertNotAfter.Arg())
 		case 24:
+			args = append(args, n.row.NextAt)
+		case 25:
 			args = append(args, n.row.LeaseUntil.Arg())
 		}
 	}
@@ -4123,7 +4225,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 25)
+	args := make([]any, 0, 26)
 	args = append(args, r.ID)
 	args = append(args, r.CreatedAt)
 	args = append(args, r.UpdatedAt)
@@ -4136,6 +4238,7 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.ConfirmFrom)
 	args = append(args, r.Paused)
 	args = append(args, r.Telegram)
+	args = append(args, r.TelegramBot)
 	args = append(args, r.TelegramChats)
 	args = append(args, r.CreatedBy)
 	args = append(args, r.State)
@@ -4187,6 +4290,7 @@ var copyCols = []string{
 	"confirm_from",
 	"paused",
 	"telegram",
+	"telegram_bot",
 	"telegram_chats",
 	"created_by",
 	"state",
@@ -4206,7 +4310,7 @@ var copyCols = []string{
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [25]any
+	buf  [26]any
 }
 
 func (s *rowSource) Next() bool {
@@ -4236,19 +4340,20 @@ func (s *rowSource) Values() []any {
 	s.buf[9] = &r.ConfirmFrom
 	s.buf[10] = &r.Paused
 	s.buf[11] = &r.Telegram
-	s.buf[12] = &r.TelegramChats
-	s.buf[13] = &r.CreatedBy
-	s.buf[14] = &r.State
-	s.buf[15] = r.StateSince.Ptr()
-	s.buf[16] = &r.FailingRounds
-	s.buf[17] = r.LastAt.Ptr()
-	s.buf[18] = r.LastMs.Ptr()
-	s.buf[19] = r.LastStatus.Ptr()
-	s.buf[20] = &r.LastDetail
-	s.buf[21] = &r.LastOutcome
-	s.buf[22] = r.CertNotAfter.Ptr()
-	s.buf[23] = &r.NextAt
-	s.buf[24] = r.LeaseUntil.Ptr()
+	s.buf[12] = &r.TelegramBot
+	s.buf[13] = &r.TelegramChats
+	s.buf[14] = &r.CreatedBy
+	s.buf[15] = &r.State
+	s.buf[16] = r.StateSince.Ptr()
+	s.buf[17] = &r.FailingRounds
+	s.buf[18] = r.LastAt.Ptr()
+	s.buf[19] = r.LastMs.Ptr()
+	s.buf[20] = r.LastStatus.Ptr()
+	s.buf[21] = &r.LastDetail
+	s.buf[22] = &r.LastOutcome
+	s.buf[23] = r.CertNotAfter.Ptr()
+	s.buf[24] = &r.NextAt
+	s.buf[25] = r.LeaseUntil.Ptr()
 	return s.buf[:]
 }
 
@@ -4304,8 +4409,9 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 22
 	mask |= 1 << 23
 	mask |= 1 << 24
+	mask |= 1 << 25
 	st := stmtForInsertNoReturn(mask, 0, 0)
-	args := make([]any, 0, 25)
+	args := make([]any, 0, 26)
 	args = append(args, r.ID)
 	args = append(args, r.CreatedAt)
 	args = append(args, r.UpdatedAt)
@@ -4318,6 +4424,7 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.ConfirmFrom)
 	args = append(args, r.Paused)
 	args = append(args, r.Telegram)
+	args = append(args, r.TelegramBot)
 	args = append(args, r.TelegramChats)
 	args = append(args, r.CreatedBy)
 	args = append(args, r.State)
@@ -4389,30 +4496,32 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 		case 11:
 			args = append(args, n.row.Telegram)
 		case 12:
-			args = append(args, n.row.TelegramChats)
+			args = append(args, n.row.TelegramBot)
 		case 13:
-			args = append(args, n.row.CreatedBy)
+			args = append(args, n.row.TelegramChats)
 		case 14:
-			args = append(args, n.row.State)
+			args = append(args, n.row.CreatedBy)
 		case 15:
-			args = append(args, n.row.StateSince.Arg())
+			args = append(args, n.row.State)
 		case 16:
-			args = append(args, n.row.FailingRounds)
+			args = append(args, n.row.StateSince.Arg())
 		case 17:
-			args = append(args, n.row.LastAt.Arg())
+			args = append(args, n.row.FailingRounds)
 		case 18:
-			args = append(args, n.row.LastMs.Arg())
+			args = append(args, n.row.LastAt.Arg())
 		case 19:
-			args = append(args, n.row.LastStatus.Arg())
+			args = append(args, n.row.LastMs.Arg())
 		case 20:
-			args = append(args, n.row.LastDetail)
+			args = append(args, n.row.LastStatus.Arg())
 		case 21:
-			args = append(args, n.row.LastOutcome)
+			args = append(args, n.row.LastDetail)
 		case 22:
-			args = append(args, n.row.CertNotAfter.Arg())
+			args = append(args, n.row.LastOutcome)
 		case 23:
-			args = append(args, n.row.NextAt)
+			args = append(args, n.row.CertNotAfter.Arg())
 		case 24:
+			args = append(args, n.row.NextAt)
+		case 25:
 			args = append(args, n.row.LeaseUntil.Arg())
 		}
 	}
@@ -4490,30 +4599,32 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 		case 9:
 			args = append(args, m.row.Telegram)
 		case 10:
-			args = append(args, m.row.TelegramChats)
+			args = append(args, m.row.TelegramBot)
 		case 11:
-			args = append(args, m.row.CreatedBy)
+			args = append(args, m.row.TelegramChats)
 		case 12:
-			args = append(args, m.row.State)
+			args = append(args, m.row.CreatedBy)
 		case 13:
-			args = append(args, m.row.StateSince.Arg())
+			args = append(args, m.row.State)
 		case 14:
-			args = append(args, m.row.FailingRounds)
+			args = append(args, m.row.StateSince.Arg())
 		case 15:
-			args = append(args, m.row.LastAt.Arg())
+			args = append(args, m.row.FailingRounds)
 		case 16:
-			args = append(args, m.row.LastMs.Arg())
+			args = append(args, m.row.LastAt.Arg())
 		case 17:
-			args = append(args, m.row.LastStatus.Arg())
+			args = append(args, m.row.LastMs.Arg())
 		case 18:
-			args = append(args, m.row.LastDetail)
+			args = append(args, m.row.LastStatus.Arg())
 		case 19:
-			args = append(args, m.row.LastOutcome)
+			args = append(args, m.row.LastDetail)
 		case 20:
-			args = append(args, m.row.CertNotAfter.Arg())
+			args = append(args, m.row.LastOutcome)
 		case 21:
-			args = append(args, m.row.NextAt)
+			args = append(args, m.row.CertNotAfter.Arg())
 		case 22:
+			args = append(args, m.row.NextAt)
+		case 23:
 			args = append(args, m.row.LeaseUntil.Arg())
 		}
 	}
@@ -4618,30 +4729,32 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 		case 9:
 			args = append(args, m.row.Telegram)
 		case 10:
-			args = append(args, m.row.TelegramChats)
+			args = append(args, m.row.TelegramBot)
 		case 11:
-			args = append(args, m.row.CreatedBy)
+			args = append(args, m.row.TelegramChats)
 		case 12:
-			args = append(args, m.row.State)
+			args = append(args, m.row.CreatedBy)
 		case 13:
-			args = append(args, m.row.StateSince.Arg())
+			args = append(args, m.row.State)
 		case 14:
-			args = append(args, m.row.FailingRounds)
+			args = append(args, m.row.StateSince.Arg())
 		case 15:
-			args = append(args, m.row.LastAt.Arg())
+			args = append(args, m.row.FailingRounds)
 		case 16:
-			args = append(args, m.row.LastMs.Arg())
+			args = append(args, m.row.LastAt.Arg())
 		case 17:
-			args = append(args, m.row.LastStatus.Arg())
+			args = append(args, m.row.LastMs.Arg())
 		case 18:
-			args = append(args, m.row.LastDetail)
+			args = append(args, m.row.LastStatus.Arg())
 		case 19:
-			args = append(args, m.row.LastOutcome)
+			args = append(args, m.row.LastDetail)
 		case 20:
-			args = append(args, m.row.CertNotAfter.Arg())
+			args = append(args, m.row.LastOutcome)
 		case 21:
-			args = append(args, m.row.NextAt)
+			args = append(args, m.row.CertNotAfter.Arg())
 		case 22:
+			args = append(args, m.row.NextAt)
+		case 23:
 			args = append(args, m.row.LeaseUntil.Arg())
 		}
 	}
@@ -4812,30 +4925,32 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 		case 9:
 			args = append(args, m.row.Telegram)
 		case 10:
-			args = append(args, m.row.TelegramChats)
+			args = append(args, m.row.TelegramBot)
 		case 11:
-			args = append(args, m.row.CreatedBy)
+			args = append(args, m.row.TelegramChats)
 		case 12:
-			args = append(args, m.row.State)
+			args = append(args, m.row.CreatedBy)
 		case 13:
-			args = append(args, m.row.StateSince.Arg())
+			args = append(args, m.row.State)
 		case 14:
-			args = append(args, m.row.FailingRounds)
+			args = append(args, m.row.StateSince.Arg())
 		case 15:
-			args = append(args, m.row.LastAt.Arg())
+			args = append(args, m.row.FailingRounds)
 		case 16:
-			args = append(args, m.row.LastMs.Arg())
+			args = append(args, m.row.LastAt.Arg())
 		case 17:
-			args = append(args, m.row.LastStatus.Arg())
+			args = append(args, m.row.LastMs.Arg())
 		case 18:
-			args = append(args, m.row.LastDetail)
+			args = append(args, m.row.LastStatus.Arg())
 		case 19:
-			args = append(args, m.row.LastOutcome)
+			args = append(args, m.row.LastDetail)
 		case 20:
-			args = append(args, m.row.CertNotAfter.Arg())
+			args = append(args, m.row.LastOutcome)
 		case 21:
-			args = append(args, m.row.NextAt)
+			args = append(args, m.row.CertNotAfter.Arg())
 		case 22:
+			args = append(args, m.row.NextAt)
+		case 23:
 			args = append(args, m.row.LeaseUntil.Arg())
 		}
 	}

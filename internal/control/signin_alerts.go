@@ -96,7 +96,9 @@ func (a *API) announceSignIn(r *http.Request, sess auth.Session, how string) {
 
 	n := a.SignInAlerts
 	p := a.SignInPolicy
-	if n == nil || (!p.Admins && !p.Person) {
+	// With no email or platform bot configured, an organization's own
+	// Telegram bots still tell its administrators.
+	if (n == nil && !a.store.HasTelegramBots(ctx)) || (!p.Admins && !p.Person) {
 		return
 	}
 	important := isNew || method == notify.MethodRecoveryCode
@@ -127,7 +129,12 @@ func (a *API) announceSignIn(r *http.Request, sess auth.Session, how string) {
 			// An administrator signing in is told once, as the person.
 			admins = withoutFold(admins, sess.Email)
 		}
-		n.Admins(e, admins, tenantIDOf(ctx) == DefaultTenantID)
+		tg := a.routedTelegram(ctx, TelegramRouteSignIn, "sign-in of "+e.Email)
+		if n != nil {
+			n.Admins(e, admins, tenantIDOf(ctx) == DefaultTenantID, tg)
+		} else {
+			tg(notify.SignInAdminMessage(e, a.consoleURL))
+		}
 	}
 }
 
@@ -359,19 +366,25 @@ func (a *API) handleSignInReport(w http.ResponseWriter, r *http.Request) {
 	a.log.Warn("a sign-in was reported as not the account holder",
 		"email", rep.Account, "client", rep.ClientIP, "reporter", a.clientAddr(r), "signed_out", signedOut)
 
-	if n := a.SignInAlerts; n != nil {
+	if n := a.SignInAlerts; n != nil || a.store.HasTelegramBots(ctx) {
 		admins, err := a.store.AdministratorEmails(ctx)
 		if err != nil {
 			a.log.Error("could not list administrators for a reported sign-in", "error", err)
 		}
-		n.Reported(notify.SignInReport{
+		report := notify.SignInReport{
 			SignIn: notify.SignIn{
 				Email: rep.Account, Org: orgLabel(ctx), ClientIP: rep.ClientIP,
 				Device: rep.Device, Method: rep.Method, At: rep.At,
 			},
 			ReportedAt: time.Now().UTC(),
 			SignedOut:  signedOut,
-		}, withoutFold(admins, rep.Account), tenantIDOf(ctx) == DefaultTenantID)
+		}
+		tg := a.routedTelegram(ctx, TelegramRouteSignIn, "reported sign-in of "+rep.Account)
+		if n != nil {
+			n.Reported(report, withoutFold(admins, rep.Account), tenantIDOf(ctx) == DefaultTenantID, tg)
+		} else {
+			tg(notify.SignInReportedMessage(report, a.consoleURL))
+		}
 	}
 
 	body := "Argus recorded your report"

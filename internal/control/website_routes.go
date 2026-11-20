@@ -23,8 +23,9 @@ address.
 	DELETE /api/v1/websites/{id}       remove one, and its history
 	POST   /api/v1/websites/{id}/check check it now
 	POST   /api/v1/websites/{id}/test-alert  send a test alert to its Telegram chats now
-	GET    /api/v1/websites/settings   the feature's alert settings, and the chats there are
-	PUT    /api/v1/websites/settings   change them (audited)
+
+The Websites feature's own Telegram choice is the "website" route in
+telegram_routes.go.
 */
 
 func (a *API) websiteReader(w http.ResponseWriter, r *http.Request) bool {
@@ -168,7 +169,16 @@ func websiteSummary(c WebsiteCheck) string {
 	case TelegramOff:
 		parts = append(parts, "no Telegram")
 	case TelegramChats:
-		parts = append(parts, "Telegram to "+strings.Join(c.TelegramChats, ", "))
+		bot := c.TelegramBot
+		switch bot {
+		case BotDefault:
+			bot = "the default bot"
+		case BotPlatform:
+			bot = "the platform bot"
+		default:
+			bot = "bot " + bot
+		}
+		parts = append(parts, "Telegram through "+bot+" to "+strings.Join(c.TelegramChats, ", "))
 	}
 	return strings.Join(parts, ", ")
 }
@@ -270,72 +280,6 @@ func (a *API) postWebsiteTest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
-// websiteSettingsView is the feature's settings with what they choose from.
-type websiteSettingsView struct {
-	WebsiteAlertSettings
-	// Chats are the chats Telegram is set up for in Settings, Alerts.
-	Chats []string `json:"chats"`
-	// Unavailable says why Telegram cannot be used here; empty when it can.
-	Unavailable string `json:"unavailable,omitempty"`
-}
-
-func (a *API) websiteSettingsView(r *http.Request, v WebsiteAlertSettings) websiteSettingsView {
-	out := websiteSettingsView{WebsiteAlertSettings: v, Chats: a.SignInAlerts.TelegramChats()}
-	if out.Chats == nil {
-		out.Chats = []string{}
-	}
-	_, why := a.websiteTelegramChats(r.Context(), WebsiteCheck{Telegram: TelegramChats, TelegramChats: out.Chats})
-	out.Unavailable = why
-	return out
-}
-
-func (a *API) getWebsiteSettings(w http.ResponseWriter, r *http.Request) {
-	if !a.websiteReader(w, r) {
-		return
-	}
-	v, err := a.store.WebsiteAlertSettings(r.Context())
-	if err != nil {
-		a.fail(w, "website alert settings", err)
-		return
-	}
-	writeJSON(w, http.StatusOK, a.websiteSettingsView(r, v))
-}
-
-func (a *API) putWebsiteSettings(w http.ResponseWriter, r *http.Request) {
-	actor, ok := a.websiteAdmin(w, r)
-	if !ok {
-		return
-	}
-	var in struct {
-		Telegram      bool     `json:"telegram"`
-		TelegramChats []string `json:"telegramChats"`
-	}
-	if err := decode(r, &in); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	before, _ := a.store.WebsiteAlertSettings(r.Context())
-	v, err := a.store.SetWebsiteAlertSettings(r.Context(), WebsiteAlertSettings{Telegram: in.Telegram, TelegramChats: in.TelegramChats}, actor)
-	if err != nil {
-		a.websiteErr(w, "website alert settings", err)
-		return
-	}
-	say := func(s WebsiteAlertSettings) string {
-		if !s.Telegram {
-			return "off"
-		}
-		if len(s.TelegramChats) == 0 {
-			return "on, to every configured chat"
-		}
-		return "on, to " + strings.Join(s.TelegramChats, ", ")
-	}
-	if _, err := a.store.AppendAudit(r.Context(), AuditEvent{Action: "website.alerts", Severity: "notice", ActorEmail: actor,
-		Target: "websites", Detail: "Changed Telegram for website alerts from " + say(before) + " to " + say(v) + "."}); err != nil {
-		a.log.Error("audit append failed", "error", err, "action", "website.alerts")
-	}
-	writeJSON(w, http.StatusOK, a.websiteSettingsView(r, v))
-}
-
 // postWebsiteTestAlert sends a test message to the check's Telegram chats
 // now and says where it went, or why it went nowhere.
 func (a *API) postWebsiteTestAlert(w http.ResponseWriter, r *http.Request) {
@@ -348,17 +292,16 @@ func (a *API) postWebsiteTestAlert(w http.ResponseWriter, r *http.Request) {
 		a.websiteErr(w, "test website alert", err)
 		return
 	}
-	chats, why := a.websiteTelegramChats(r.Context(), c)
-	if len(chats) == 0 {
+	t, why := a.websiteTelegram(r.Context(), c)
+	if t.bot == nil {
 		writeErr(w, http.StatusConflict, why)
 		return
 	}
 	text := websiteTelegramText("🧪", "Test: "+c.Name+" alerts reach this chat",
 		"Sent by "+actor+" from Argus. When "+c.URL+" goes down, and when it is back, it is said here.")
-	if err := a.SignInAlerts.TelegramNow(r.Context(), chats, text, "Open in Argus",
-		a.websiteConsoleLink("/websites?check="+c.ID)); err != nil {
+	if err := a.sendTelegram(r.Context(), t, text, "Open in Argus", a.consoleLinkTo("/websites?check="+c.ID)); err != nil {
 		writeErr(w, http.StatusBadGateway, "Telegram did not take it: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"chats": chats})
+	writeJSON(w, http.StatusOK, map[string]any{"bot": t.name, "chats": t.chats})
 }

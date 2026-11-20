@@ -6,14 +6,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/gsoultan/argus/internal/notify"
 	"github.com/gsoultan/argus/internal/tunnel"
 )
 
@@ -387,103 +384,5 @@ func TestWebsiteRoutesAreAuditedAndGuarded(t *testing.T) {
 	}
 	if code, _ := h.call(t, op, "", http.MethodGet, "/api/v1/websites", ""); code != http.StatusForbidden {
 		t.Errorf("an operator reading checks = %d, want 403", code)
-	}
-}
-
-// fakeTelegram is a Bot API that records which chat got which text.
-type fakeTelegram struct {
-	mu   sync.Mutex
-	sent map[string][]string
-	srv  *httptest.Server
-}
-
-func newFakeTelegram(t *testing.T) *fakeTelegram {
-	f := &fakeTelegram{sent: map[string][]string{}}
-	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = r.ParseForm()
-		f.mu.Lock()
-		f.sent[r.Form.Get("chat_id")] = append(f.sent[r.Form.Get("chat_id")], r.Form.Get("text"))
-		f.mu.Unlock()
-		_, _ = w.Write([]byte(`{"ok":true}`))
-	}))
-	t.Cleanup(f.srv.Close)
-	return f
-}
-
-func (f *fakeTelegram) to(chat string) []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]string(nil), f.sent[chat]...)
-}
-
-// Telegram goes where the feature and the site say, and only ever to chats
-// that Settings set up.
-func TestWebsiteTelegramPerFeatureAndPerSite(t *testing.T) {
-	s := testStore(t)
-	ctx := context.Background() // the default organization, which owns the bot
-	api := NewAPI(s, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	f := newFakeTelegram(t)
-	tg, err := notify.NewTelegram(notify.TelegramConfig{BotToken: "123:abc", ChatIDs: []string{"-100ops", "-100web", "42"}}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	api.SignInAlerts = notify.NewSignInNotifier(nil, tg.WithAPI(f.srv.URL), "https://argus.example.com", nil)
-	t.Cleanup(func() { api.SignInAlerts.Close(context.Background()) })
-	_, _ = s.pool.Exec(ctx, `DELETE FROM website_alert_settings`)
-	t.Cleanup(func() { _, _ = s.pool.Exec(context.Background(), `DELETE FROM website_alert_settings`) })
-
-	mk := func(in WebsiteInput) WebsiteCheck {
-		in.URL = "https://" + unique("site") + ".example.com/"
-		c, err := s.CreateWebsiteCheck(ctx, in, "admin@northwind.id")
-		if err != nil {
-			t.Fatalf("CreateWebsiteCheck: %v", err)
-		}
-		t.Cleanup(func() { _, _ = s.DeleteWebsiteCheck(context.Background(), c.ID) })
-		return c
-	}
-	follows := mk(WebsiteInput{})
-	own := mk(WebsiteInput{Telegram: TelegramChats, TelegramChats: []string{"-100web", "-999notconfigured"}})
-	off := mk(WebsiteInput{Telegram: TelegramOff})
-
-	chats := func(c WebsiteCheck) string {
-		got, _ := api.websiteTelegramChats(ctx, c)
-		return strings.Join(got, ",")
-	}
-	if chats(follows) != "-100ops,-100web,42" || chats(own) != "-100web" || chats(off) != "" {
-		t.Fatalf("default: follows=%q own=%q off=%q", chats(follows), chats(own), chats(off))
-	}
-	// The feature narrowed to one chat; a site with its own chats keeps them.
-	if _, err := s.SetWebsiteAlertSettings(ctx, WebsiteAlertSettings{Telegram: true, TelegramChats: []string{"-100ops"}}, "admin@northwind.id"); err != nil {
-		t.Fatal(err)
-	}
-	if chats(follows) != "-100ops" || chats(own) != "-100web" {
-		t.Errorf("narrowed: follows=%q own=%q", chats(follows), chats(own))
-	}
-	// The feature off: only a site that chose its own chats still sends.
-	if _, err := s.SetWebsiteAlertSettings(ctx, WebsiteAlertSettings{Telegram: false}, "admin@northwind.id"); err != nil {
-		t.Fatal(err)
-	}
-	if chats(follows) != "" || chats(own) != "-100web" {
-		t.Errorf("feature off: follows=%q own=%q", chats(follows), chats(own))
-	}
-
-	// A real down alert reaches the site's chat, and no other.
-	api.announceWebsite(ctx, websiteTransition{WentDown: true, Check: own,
-		Outage: WebsiteOutage{StartedAt: time.Now().Add(-2 * time.Minute), Cause: "answered 502 Bad Gateway"}})
-	deadline := time.Now().Add(5 * time.Second)
-	for len(f.to("-100web")) == 0 && time.Now().Before(deadline) {
-		time.Sleep(20 * time.Millisecond)
-	}
-	if got := f.to("-100web"); len(got) != 1 || !strings.Contains(got[0], "is down") || !strings.Contains(got[0], "502") {
-		t.Fatalf("the site's chat got %q", got)
-	}
-	if len(f.to("-100ops")) != 0 || len(f.to("42")) != 0 || len(f.to("-999notconfigured")) != 0 {
-		t.Errorf("other chats were posted to: %v", f.sent)
-	}
-
-	// Another organization never uses the platform's bot.
-	tn, _, _ := newTenant(t, s)
-	if got, why := api.websiteTelegramChats(WithTenant(ctx, tn), WebsiteCheck{Telegram: TelegramDefault}); len(got) != 0 || why == "" {
-		t.Errorf("another organization would post to %v", got)
 	}
 }
