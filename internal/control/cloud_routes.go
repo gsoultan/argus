@@ -158,9 +158,13 @@ func (a *API) getCloudAccounts(w http.ResponseWriter, r *http.Request) {
 	for n := range out.Accounts {
 		c := &out.Accounts[n]
 		c.IdentityMissing = !slices.ContainsFunc(ids[c.Provider], func(i CloudIdentity) bool { return i.ID == c.Identity })
-		if c.Provider == "gcp" {
+		switch c.Provider {
+		case "gcp":
 			c.Actions = gcp.SupportedActions()
 			c.TagKinds = gcp.TaggableKinds
+		case "azure":
+			c.Actions = azure.SupportedActions()
+			c.TagKinds = azure.TaggableKinds
 		}
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -268,9 +272,6 @@ func (a *API) cloudPrepare(ctx context.Context, in cloudPrepareIn) (CloudPrepare
 	if err := checkCloudAccountID(provider, accountID); err != nil {
 		return CloudPrepared{}, http.StatusBadRequest, err
 	}
-	if provider == "azure" && in.Manage {
-		return CloudPrepared{}, http.StatusBadRequest, errors.New("Azure subscriptions are read only in Argus so far")
-	}
 	if in.Identity == "" {
 		// An account already connected keeps the identity it uses: its
 		// template, to allow changes or to update the roles, trusts that one.
@@ -320,14 +321,20 @@ func (a *API) cloudPrepare(ctx context.Context, in cloudPrepareIn) (CloudPrepare
 		return out, http.StatusOK, nil
 	}
 	if provider == "azure" {
-		// Nothing is made in the subscription but a role assignment: the
-		// "role" is Azure's own Reader, held there by argus-control.
-		return CloudPrepared{
+		// Reading makes nothing in the subscription but a role assignment:
+		// the "role" is Azure's own Reader, held there by argus-control.
+		// Allowing changes makes one custom role and assigns it too.
+		out := CloudPrepared{
 			Provider: provider, AccountID: accountID, ExternalID: ext, Principal: base.Principal, Source: base.Source,
 			Identity: ident.ID, IdentityName: ident.Name, Kept: kept,
 			RoleName: azure.ReadRoleName, ReadRoleARN: azure.RoleID(accountID, azure.ReaderRoleID),
-			Command: azure.SetupCommandFor(accountID, principals, ext),
-		}, http.StatusOK, nil
+			Command: azure.SetupCommandFor(accountID, principals, ext, in.Manage),
+		}
+		if in.Manage {
+			out.ManageRoleName = azure.ManageRoleName
+			out.ManageRoleARN = azure.RoleID(accountID, azure.ManageRoleID(accountID))
+		}
+		return out, http.StatusOK, nil
 	}
 	out := CloudPrepared{
 		Provider: provider, AccountID: accountID, ExternalID: ext, Principal: base.Principal, Source: base.Source,
@@ -481,9 +488,9 @@ func (in *cloudAccountIn) validateGCP() error {
 	return in.checkEnvironment()
 }
 
-// validateAzure checks a subscription: Reader there, and read only. The
-// role is not the person's to name: it is always Azure's own Reader at the
-// subscription.
+// validateAzure checks a subscription. The roles are not the person's to
+// name: reading is always Azure's own Reader at the subscription, and
+// changes always the subscription's Argus manage role.
 func (in *cloudAccountIn) validateAzure() error {
 	reader := azure.RoleID(in.AccountID, azure.ReaderRoleID)
 	if in.RoleARN == "" {
@@ -492,8 +499,11 @@ func (in *cloudAccountIn) validateAzure() error {
 	if in.RoleARN != reader {
 		return errors.New("Argus reads a subscription through Azure's Reader role at the subscription, and no other")
 	}
-	if in.Manage || in.ManageRoleARN != "" {
-		return errors.New("Azure subscriptions are read only in Argus so far")
+	if in.Manage && in.ManageRoleARN == "" {
+		in.ManageRoleARN = azure.RoleID(in.AccountID, azure.ManageRoleID(in.AccountID))
+	}
+	if err := checkAzureManage(in.ManageRoleARN, in.AccountID, in.RoleARN); err != nil {
+		return err
 	}
 	return in.checkEnvironment()
 }
@@ -572,7 +582,7 @@ func (a *API) postCloudAccount(w http.ResponseWriter, r *http.Request) {
 				Target: cloudTarget(in.Provider, in.AccountID, in.Name),
 				Detail: "Could not use the manage role " + in.ManageRoleARN + ": " + err.Error()})
 			next := ". Check the stack was made from the read-and-change template, or connect read only."
-			if in.Provider == "gcp" {
+			if in.Provider == "gcp" || in.Provider == "azure" {
 				next = ". Check the command from this page, with changes allowed, finished without an error, or connect read only."
 			}
 			writeErr(w, http.StatusUnprocessableEntity, "Argus could read the account but not use the manage role: "+err.Error()+next)
@@ -771,7 +781,7 @@ func cloudLeftBehind(provider string) string {
 	case "gcp":
 		return "The service accounts in the project are still there until someone deletes them."
 	case "azure":
-		return "argus-control's role assignment in the subscription is still there until someone removes it under Access control (IAM)."
+		return "argus-control's role assignments in the subscription, and the Argus manage role if it was made, are still there until someone removes them under Access control (IAM)."
 	}
 	return "The roles in the account are still there until someone deletes their stack."
 }
@@ -816,6 +826,18 @@ func checkGCPManage(email, project, read string) error {
 	return nil
 }
 
+// checkAzureManage checks a manage role beside Reader: the subscription's
+// own Argus manage role, and no other.
+func checkAzureManage(role, subscription, _ string) error {
+	if role == "" {
+		return nil
+	}
+	if role != azure.RoleID(subscription, azure.ManageRoleID(subscription)) {
+		return errors.New("Argus changes a subscription through its " + azure.ManageRoleName + " role, made by the command on the Cloud page, and no other")
+	}
+	return nil
+}
+
 // putCloudManage lets Argus change an account that was read only: the
 // person deployed the manage template over the stack and pastes the new
 // role, which Argus assumes as them before keeping it.
@@ -840,10 +862,6 @@ func (a *API) putCloudManage(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "cloud account", err)
 		return
 	}
-	if c.Provider == "azure" {
-		writeErr(w, http.StatusNotImplemented, "Azure subscriptions are read only in Argus so far")
-		return
-	}
 	in.RoleARN = strings.TrimSpace(in.RoleARN)
 	check := checkManageRole
 	if c.Provider == "gcp" {
@@ -851,6 +869,11 @@ func (a *API) putCloudManage(w http.ResponseWriter, r *http.Request) {
 			in.RoleARN = gcp.AccountEmail(c.AccountID, gcp.ManageAccountName)
 		}
 		check = checkGCPManage
+	} else if c.Provider == "azure" {
+		if in.RoleARN == "" {
+			in.RoleARN = azure.RoleID(c.AccountID, azure.ManageRoleID(c.AccountID))
+		}
+		check = checkAzureManage
 	} else if in.RoleARN == "" {
 		in.RoleARN = cloudRoleARN(c.AccountID, aws.ManageRoleName)
 	}
@@ -876,8 +899,11 @@ func (a *API) putCloudManage(w http.ResponseWriter, r *http.Request) {
 			Target: cloudTarget(c.Provider, c.AccountID, c.Name),
 			Detail: "Could not use the manage role " + in.RoleARN + ": " + err.Error()})
 		next := ". Check the stack update finished."
-		if c.Provider == "gcp" {
+		switch c.Provider {
+		case "gcp":
 			next = ". Check the command finished without an error."
+		case "azure":
+			next = ". Check the command finished without an error; Azure can take a few minutes to apply a new role."
 		}
 		writeErr(w, http.StatusUnprocessableEntity, "Argus could not use that role: "+err.Error()+next)
 		return

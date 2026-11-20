@@ -17,8 +17,9 @@ export const azureDescription = (externalId: string) =>
 
 /**
  * How to let Argus read an Azure subscription: paste one command into Cloud
- * Shell. It gives argus-control the Reader role at the subscription, so
- * nothing is copied back: Argus finds the assignment by itself. The same
+ * Shell. It gives argus-control the Reader role at the subscription, and
+ * the Argus manage role too when changes are allowed, so nothing is copied
+ * back: Argus finds the assignments by itself. The same
  * steps by hand in the portal are one click away.
  */
 export function AzureSetup({ prepared }: { prepared: CloudPrepared }) {
@@ -104,6 +105,12 @@ function ByHand({ prepared }: { prepared: CloudPrepared }) {
           </CopyButton>
         </Group>
       </List.Item>
+      {prepared.manageRoleName && (
+        <List.Item>
+          That lets Argus read. The role for changes, <b>{prepared.manageRoleName}</b>, cannot be made in the portal: Argus looks for it
+          under an id it works out from the subscription, and the portal picks its own. Run the command above for that part.
+        </List.Item>
+      )}
     </List>
   )
 }

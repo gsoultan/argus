@@ -28,8 +28,7 @@ import { FS, INK, SP } from '~/theme'
  * Argus watches for it and connects by itself; nothing is copied back. Where
  * argus-control's own AWS identity is in that account, Argus can make the
  * roles itself. Argus never asks for access keys; the access trusts only
- * this control plane and carries an external id only it can compute. An
- * Azure subscription is read only so far.
+ * this control plane and carries an external id only it can compute.
  */
 export const Route = createFileRoute('/cloud/connect')({
   beforeLoad: ({ context }) => guard(context.queryClient, 'admin'),
@@ -118,39 +117,26 @@ function Connect() {
                   <SegmentedControl value={env} onChange={(v) => setEnv(v as CloudEnvironment)}
                     data={ENVS.map((e) => ({ value: e, label: ENV_LABEL[e] }))} />
                 </Box>
-                {azure ? (
-                  <Box>
-                    <Text size="sm" fw={500}>What Argus may do</Text>
-                    <Group gap="sm" wrap="nowrap" align="flex-start" mt={6} p="sm"
-                      style={{ border: '1px solid var(--color-line)', borderRadius: 'var(--mantine-radius-md)' }}>
-                      <IconEye size={15} style={{ marginTop: 3, flexShrink: 0 }} />
-                      <Box>
-                        <Text fw={600} size={FS.body}>Read only</Text>
-                        <Text size={FS.meta} c="dimmed" lh={1.5} mt={2}>
-                          See VMs, disks, snapshots, images, network security groups, virtual networks and public addresses. Nothing in
-                          the subscription can be changed from Argus yet; changes from Argus come later for Azure.
-                        </Text>
-                      </Box>
-                    </Group>
-                  </Box>
-                ) : (
                 <Box>
                   <Text size="sm" fw={500}>What Argus may do</Text>
                   <Text size={FS.meta} c="dimmed" mb={6}>You can allow changes later, and take them back.</Text>
                   <Radio.Group value={manage ? 'manage' : 'read'} onChange={(v) => setManage(v === 'manage')}>
                     <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
                       <Choice value="read" icon={IconEye} title="Read only"
-                        text={gcp
+                        text={azure
+                          ? 'See VMs, disks, snapshots, images, network security groups, virtual networks and public addresses. Nothing in the subscription can be changed from Argus.'
+                          : gcp
                           ? 'See VMs, disks, firewalls, networks and addresses. Nothing in the project can be changed from Argus.'
                           : 'See instances, disks and firewalls. Nothing in the account can be changed from Argus.'} />
                       <Choice value="manage" icon={IconPencil} title="Read and change"
-                        text={gcp
+                        text={azure
+                          ? 'Also start, stop and restart VMs, change their size and their tags, with approvals and the audit log. More changes come later.'
+                          : gcp
                           ? 'Also start, stop and reset VMs, change their machine type, labels and deletion protection, make, grow, attach, detach, snapshot and delete disks, reserve and assign static addresses, launch and remove VMs, make and delete images, and make and change firewall rules, with approvals and the audit log. More changes come later.'
                           : 'Also launch, stop, resize and remove instances, with approvals and the audit log.'} />
                     </SimpleGrid>
                   </Radio.Group>
                 </Box>
-                )}
                 {choose && bases && <IdentityPicker bases={bases} value={identity} onChange={setPicked} />}
                 {prepare.error && <Alert color="amber" variant="light" title="Argus cannot make the role yet">{(prepare.error as Error).message}</Alert>}
                 <Group justify="space-between" mt="xs">
@@ -283,27 +269,31 @@ function GcpSummary({ prepared }: { prepared: CloudPrepared }) {
 /** What the Reader assignment is and lets Argus do in a subscription, with the details one click away. */
 function AzureSummary({ prepared }: { prepared: CloudPrepared }) {
   const [more, setMore] = useState(false)
+  const two = !!prepared.manageRoleName
   return (
     <Group gap="sm" wrap="nowrap" align="flex-start">
       <ThemeIcon variant="light" color="azure" size={34} radius="md"><IconShieldLock size={18} /></ThemeIcon>
       <Box style={{ minWidth: 0 }}>
-        <Text fw={600}>Argus needs the Reader role in {prepared.accountId}</Text>
+        <Text fw={600}>Argus needs {two ? 'two roles' : 'the Reader role'} in {prepared.accountId}</Text>
         <Text size={FS.meta} c="dimmed" lh={1.55}>
           One command gives argus-control Azure's own <Text span ff="monospace" size={FS.meta}>Reader</Text> role at the subscription. It can
-          list and describe resources, never read what is on a disk, a secret or a key, or change anything. Nothing is made in the
-          subscription but that assignment, and it costs nothing.{' '}
+          list and describe resources, never read what is on a disk, a secret or a key, or change anything.{' '}
+          {two
+            ? <>The same command makes a custom role, <Text span ff="monospace" size={FS.meta}>{prepared.manageRoleName}</Text>, that can start,
+              stop, restart, resize and tag VMs and nothing else: no access control, so it cannot grant itself more. Neither costs anything.{' '}</>
+            : 'Nothing is made in the subscription but that assignment, and it costs nothing. '}
           <Text span size={FS.meta} c="azure" style={{ cursor: 'pointer' }} onClick={() => setMore((m) => !m)}>
             {more ? 'Less' : 'How it is locked down'}
           </Text>
         </Text>
         {more && (
           <Text size={FS.meta} c="dimmed" lh={1.55} mt={4} style={{ overflowWrap: 'anywhere' }}>
-            The role is given to <Text span ff="monospace" size={FS.meta}>{prepared.principal}</Text>, argus-control's own application in
-            Microsoft Entra, and to nothing else. The assignment's description carries the external id{' '}
+            {two ? 'Both roles are' : 'The role is'} given to <Text span ff="monospace" size={FS.meta}>{prepared.principal}</Text>, argus-control's own application in
+            Microsoft Entra, and to nothing else. {two ? "Each assignment's" : "The assignment's"} description carries the external id{' '}
             <Text span ff="monospace" size={FS.meta}>{prepared.externalId}</Text>, made for this organization and subscription, and Argus
-            refuses to read the subscription without it. Azure's activity log names that application, not a person: Azure has no
-            field for one, so who asked for what is in Argus's own audit log. Remove the assignment under Access control (IAM) and
-            Argus is out at once.
+            refuses to {two ? 'read or change' : 'read'} the subscription without it.{two && ' Azure gives Argus one identity, not one per role as AWS and Google Cloud do, so what keeps reading and changing apart is which assignments exist, and Argus itself.'} Azure's activity log names that application, not a person: Azure has no
+            field for one, so who asked for what is in Argus's own audit log. Remove {two ? 'an assignment' : 'the assignment'} under Access control (IAM) and
+            Argus {two ? 'loses what it gave' : 'is out'} at once.
           </Text>
         )}
       </Box>

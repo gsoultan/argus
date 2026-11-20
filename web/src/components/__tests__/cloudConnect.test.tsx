@@ -185,5 +185,15 @@ describe('Connect an Azure subscription', () => {
     fireEvent.click(screen.getByText(/Rather click through the portal/))
     expect(screen.getByText(/argus-external-id=argus-0123/)).toBeInTheDocument()
     expect(screen.getByText(azure.principal)).toBeInTheDocument()
+    expect(screen.queryByText(/cannot be made in the portal/)).not.toBeInTheDocument()
+  })
+
+  it('says the role for changes is made by the command, not in the portal', async () => {
+    const both = { ...azure, manageRoleName: 'Argus manage', manageRoleArn: azure.readRoleArn.replace(/[^/]+$/, '5a1d0c3e-7b2f-4e6a-9c8d-1f2e3d4c5b6a') }
+    renderWithProviders(<AzureSetup prepared={both} />)
+    fireEvent.click(screen.getByText(/Rather click through the portal/))
+    expect(screen.getByText(/cannot be made in the portal/)).toBeInTheDocument()
+    renderWithProviders(<WatchForRoles prepared={both} manage connecting={false} failed={null} onReady={vi.fn()} />)
+    expect(await screen.findByText(`Waiting for the roles in ${azure.accountId}`)).toBeInTheDocument()
   })
 })

@@ -25,28 +25,44 @@ func AssignmentName(subscription, principal, role, externalID string) string {
 // principals (application ids) read a subscription, or brings that up to
 // date: the application is added to the subscription's directory when it is
 // not there, and given Reader at the subscription with this Argus's
-// external id in the assignment's description. Running it twice changes
-// nothing the second time.
+// external id in the assignment's description. With manage it also makes
+// the subscription's Argus manage role, or brings its actions up to date,
+// and assigns it the same way. Running it twice changes nothing the second
+// time.
 //
 // Every value in it is checked by the caller to be a GUID or a hex external
 // id, so nothing needs more quoting than the JSON's double quotes.
-func SetupCommandFor(subscription string, principals []string, externalID string) string {
+func SetupCommandFor(subscription string, principals []string, externalID string, manage bool) string {
 	var b strings.Builder
 	w := func(s string) { b.WriteString(s); b.WriteByte('\n') }
-	w("# Lets Argus read subscription " + subscription + ": Reader lists and describes, reads no data and changes nothing.")
+	if manage {
+		w("# Lets Argus read subscription " + subscription + " and change VMs in it: start, stop, restart, resize and tag, nothing else.")
+	} else {
+		w("# Lets Argus read subscription " + subscription + ": Reader lists and describes, reads no data and changes nothing.")
+	}
 	w("S=" + subscription + " R=" + ReaderRoleID)
-	w(`grant() { # application id, name for a new assignment`)
+	w(`A=https://management.azure.com/subscriptions/$S/providers/Microsoft.Authorization`)
+	w(`grant() { # application id, role id, name for a new assignment, description`)
 	w(`  O=$(az ad sp show --id "$1" --query id -o tsv 2>/dev/null || az ad sp create --id "$1" --query id -o tsv) || return 1`)
-	w(`  N=$(az role assignment list --assignee "$O" --role $R --scope /subscriptions/$S --query "[?scope=='/subscriptions/$S'].name | [0]" -o tsv 2>/dev/null)`)
+	w(`  N=$(az role assignment list --assignee "$O" --role $2 --scope /subscriptions/$S --query "[?scope=='/subscriptions/$S'].name | [0]" -o tsv 2>/dev/null)`)
 	w(`  for i in 1 2 3 4 5 6 7 8 9 10; do`)
-	w(`    az rest --method put --url "https://management.azure.com/subscriptions/$S/providers/Microsoft.Authorization/roleAssignments/${N:-$2}?api-version=2022-04-01" \`)
-	w(`      --body "{\"properties\":{\"roleDefinitionId\":\"/subscriptions/$S/providers/Microsoft.Authorization/roleDefinitions/$R\",\"principalId\":\"$O\",\"principalType\":\"ServicePrincipal\",\"description\":\"` +
-		Description(externalID) + `\"}}" >/dev/null && return 0`)
+	w(`    az rest --method put --url "$A/roleAssignments/${N:-$3}?api-version=2022-04-01" \`)
+	w(`      --body "{\"properties\":{\"roleDefinitionId\":\"/subscriptions/$S/providers/Microsoft.Authorization/roleDefinitions/$2\",\"principalId\":\"$O\",\"principalType\":\"ServicePrincipal\",\"description\":\"$4\"}}" >/dev/null && return 0`)
 	w(`    sleep 6`)
 	w(`  done; return 1; }`)
 	w(`az account set --subscription $S && \`)
 	for _, pr := range principals {
-		w(`grant ` + pr + ` ` + AssignmentName(subscription, pr, ReaderRoleID, externalID) + ` && \`)
+		w(`grant ` + pr + ` $R ` + AssignmentName(subscription, pr, ReaderRoleID, externalID) + ` "` + Description(externalID) + `" && \`)
+	}
+	if manage {
+		m := ManageRoleID(subscription)
+		w(`M=` + m + ` && \`)
+		w(`az rest --method put --url "$A/roleDefinitions/$M?api-version=2022-04-01" \`)
+		w(`  --body "{\"properties\":{\"roleName\":\"` + ManageRoleName + ` ($S)\",\"type\":\"CustomRole\",\"description\":\"What Argus may change in this subscription. It holds no right to grant access.\",` +
+			`\"assignableScopes\":[\"/subscriptions/$S\"],\"permissions\":[{\"actions\":[\"` + strings.Join(ManageActions, `\",\"`) + `\"],\"notActions\":[]}]}}" >/dev/null && \`)
+		for _, pr := range principals {
+			w(`grant ` + pr + ` $M ` + AssignmentName(subscription, pr, m, externalID) + ` "` + ManageDescription(externalID) + `" && \`)
+		}
 	}
 	w(`echo "Done. Argus connects by itself within a few minutes."`)
 	return b.String()

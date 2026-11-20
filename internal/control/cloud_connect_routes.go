@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/control/cloud"
+	"github.com/gsoultan/argus/internal/control/cloud/azure"
 )
 
 /*
@@ -87,8 +88,11 @@ func (a *API) postCloudCheck(w http.ResponseWriter, r *http.Request) {
 		acct.RoleARN = prep.ManageRoleARN
 		if _, err := p.Verify(vctx, acct, cloud.Actor(actor)); err != nil {
 			out.Detail = "The read role works; the manage role does not let Argus in yet: " + err.Error()
-			if in.Provider == "gcp" {
+			switch in.Provider {
+			case "gcp":
 				out.Detail = "argus-read works; " + prep.ManageRoleARN + " does not let Argus in yet: " + err.Error()
+			case "azure":
+				out.Detail = "Argus can read the subscription; the " + azure.ManageRoleName + " role does not let it make changes yet: " + err.Error()
 			}
 		} else {
 			out.Ready = true

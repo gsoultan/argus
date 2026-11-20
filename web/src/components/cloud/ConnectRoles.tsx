@@ -171,8 +171,8 @@ export function WatchForRoles({ prepared, manage, connecting, failed, onReady }:
           : waiting ? <Loader size={16} mt={2} /> : null}
         <Stack gap={2} style={{ flex: 1 }}>
           <Text size={FS.body} fw={500}>
-            {connecting || check.data?.ready ? `${azure ? 'The Reader role works' : gcp ? 'argus-read works' : `The ${manage ? 'roles work' : 'role works'}`}. Connecting…`
-              : waiting ? (azure ? `Waiting for the Reader role in ${prepared.accountId}` : gcp ? `Waiting for argus-read in ${prepared.accountId}` : `Waiting for the ${manage ? 'roles' : 'role'} in ${prepared.accountId}`)
+            {connecting || check.data?.ready ? `${azure ? (manage ? 'Both roles work' : 'The Reader role works') : gcp ? 'argus-read works' : `The ${manage ? 'roles work' : 'role works'}`}. Connecting…`
+              : waiting ? (azure ? `Waiting for the ${manage ? 'roles' : 'Reader role'} in ${prepared.accountId}` : gcp ? `Waiting for argus-read in ${prepared.accountId}` : `Waiting for the ${manage ? 'roles' : 'role'} in ${prepared.accountId}`)
                 : 'Argus stopped checking'}
           </Text>
           <Text size={FS.meta} c="dimmed">

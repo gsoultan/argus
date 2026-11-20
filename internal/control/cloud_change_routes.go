@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/control/cloud"
+	"github.com/gsoultan/argus/internal/control/cloud/azure"
 	"github.com/gsoultan/argus/internal/control/cloud/gcp"
 )
 
@@ -501,6 +502,9 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 		if m.acct.Provider == "gcp" && !slices.Contains(gcp.TaggableKinds, in.Kind) {
 			return ch, http.StatusNotImplemented, fmt.Errorf("Argus cannot label a %s in Google Cloud yet; do it in the Google Cloud console", in.Kind)
 		}
+		if m.acct.Provider == "azure" && !slices.Contains(azure.TaggableKinds, in.Kind) {
+			return ch, http.StatusNotImplemented, fmt.Errorf("Argus cannot tag a %s in Azure yet; do it in the Azure portal", in.Kind)
+		}
 		kind = in.Kind
 	}
 	inst, err := a.store.CloudResourceOf(r.Context(), m.acct.ID, in.Region, kind, in.ResourceID)
@@ -517,6 +521,11 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 		ch.Summary = "Start " + inst.Name
 	case cloud.ActionStop:
 		ch.Summary = "Stop " + inst.Name
+		if m.acct.Provider == "azure" {
+			// Azure charges for a VM that is only shut down, so a stop
+			// from Argus deallocates it, as the portal's Stop does.
+			ch.Summary = "Stop " + inst.Name + " (deallocate it: Azure stops charging for the VM, and gives up a public address that is not static)"
+		}
 	case cloud.ActionHibernate:
 		if inst.Details["hibernation"] != "yes" {
 			return ch, http.StatusConflict, errors.New(inst.Name + " was not launched with hibernation on, so it can only be stopped")
@@ -546,6 +555,24 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 	case cloud.ActionResize:
 		var s cloudResizeSpec
 		gcpSize := m.acct.Provider == "gcp"
+		if m.acct.Provider == "azure" {
+			if err := json.Unmarshal(in.Spec, &s); err != nil || !azure.ValidSize(s.Size) {
+				return ch, http.StatusBadRequest, errors.New("pick a VM size, like Standard_B2s")
+			}
+			if strings.EqualFold(s.Size, inst.Size) {
+				return ch, http.StatusBadRequest, errors.New(inst.Name + " is already " + inst.Size)
+			}
+			// Azure resizes a running VM by restarting it, when its host
+			// has the size at all. Argus asks for the stop to be its own
+			// step, so nobody restarts a server by changing a field.
+			if inst.State != "stopped" {
+				return ch, http.StatusConflict, errors.New("stop " + inst.Name + " first; Argus changes the size of a stopped VM only, since Azure would restart a running one")
+			}
+			s.From = inst.Size
+			ch.Spec, _ = json.Marshal(s)
+			ch.Summary = "Change " + inst.Name + " from " + inst.Size + " to " + s.Size
+			break
+		}
 		if err := json.Unmarshal(in.Spec, &s); err != nil || (!gcpSize && !cloud.ValidSize(s.Size)) || (gcpSize && !gcp.ValidMachineType(s.Size)) {
 			if gcpSize {
 				return ch, http.StatusBadRequest, errors.New("pick a machine type, like e2-medium")
@@ -582,6 +609,12 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 				}
 				continue
 			}
+			if m.acct.Provider == "azure" {
+				if why := azure.TagProblem(k, v); why != "" {
+					return ch, http.StatusBadRequest, fmt.Errorf("%q cannot be a tag: %s", k, why)
+				}
+				continue
+			}
 			if !cloud.ValidTagKey(k) || len(v) > 256 {
 				return ch, http.StatusBadRequest, fmt.Errorf("%q cannot be a tag here: keys are up to 128 characters and cannot start with aws:, values up to 256", k)
 			}
@@ -589,6 +622,12 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 		for _, k := range s.Remove {
 			if m.acct.Provider == "gcp" {
 				if gcp.LabelProblem(k, "") != "" {
+					return ch, http.StatusBadRequest, fmt.Errorf("%q cannot be removed from here", k)
+				}
+				continue
+			}
+			if m.acct.Provider == "azure" {
+				if azure.TagProblem(k, "") != "" {
 					return ch, http.StatusBadRequest, fmt.Errorf("%q cannot be removed from here", k)
 				}
 				continue

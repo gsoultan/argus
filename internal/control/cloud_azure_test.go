@@ -17,7 +17,8 @@ import (
 Connecting an Azure subscription the way an AWS account and a Google Cloud
 project are connected: prepare says which role argus-control must hold and
 gives one command, check waits for it, and connecting needs nothing copied
-back. Read only, for now.
+back. Read only unless changes are allowed, which makes one custom role in
+the subscription and assigns it the same way.
 */
 
 const azurePrincipal = "33333333-3333-4333-8333-333333333333"
@@ -33,6 +34,8 @@ func azureEnv(t *testing.T) (cloudEnv, *cloud.Fake, string) {
 	sub := fmt.Sprintf("%08x-%04x-4000-8000-%012x", uint32(n>>32), uint16(n>>16), uint64(n)&0xffffffffffff)
 	t.Cleanup(func() {
 		ctx := context.Background()
+		// Changes asked for here hold the account's row, so they go first.
+		_, _ = e.s.pool.Exec(ctx, `DELETE FROM cloud_changes WHERE account_id IN (SELECT id FROM cloud_accounts WHERE account_id = $1)`, sub)
 		_, _ = e.s.pool.Exec(ctx, `DELETE FROM cloud_resources WHERE account_id IN (SELECT id FROM cloud_accounts WHERE account_id = $1)`, sub)
 		_, _ = e.s.pool.Exec(ctx, `DELETE FROM cloud_accounts WHERE account_id = $1`, sub)
 	})
@@ -63,7 +66,6 @@ func TestCloudConnectAzureSubscription(t *testing.T) {
 	}
 
 	for body, why := range map[string]string{
-		`{"provider":"azure","accountId":"` + sub + `","manage":true}`:                   "changes in a subscription are not offered yet",
 		`{"provider":"azure","accountId":"412788931204"}`:                                "an AWS account id is not a subscription id",
 		`{"provider":"azure","accountId":"` + strings.ToUpper(sub) + `"}`:                "a subscription id is kept in lower case, so one subscription is one account",
 		`{"provider":"azure","accountId":"payments-prod-4182"}`:                          "a project id is not a subscription id",
@@ -115,9 +117,15 @@ func TestCloudConnectAzureSubscription(t *testing.T) {
 		`{"provider":"azure","name":"payments-azure","accountId":"`+sub+`","roleArn":"`+azure.RoleID(sub, "8e3af657-a8ff-443c-a75c-2fe8c4bcb635")+`"}`); w.Code != http.StatusBadRequest {
 		t.Fatalf("only Reader at the subscription may be the read role: %d %s", w.Code, w.Body)
 	}
+	// Changes are not allowed on the word of the request: the manage role
+	// has to be there, for this organization, or nothing is connected.
 	if w := do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts", "admin-token",
-		`{"provider":"azure","name":"payments-azure","accountId":"`+sub+`","manage":true}`); w.Code != http.StatusBadRequest {
-		t.Fatalf("connecting with changes must be refused: %d %s", w.Code, w.Body)
+		`{"provider":"azure","name":"payments-azure","accountId":"`+sub+`","manage":true}`); w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("connecting with changes and no manage role must be refused: %d %s", w.Code, w.Body)
+	}
+	if w := do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts", "admin-token",
+		`{"provider":"azure","name":"payments-azure","accountId":"`+sub+`","manageRoleArn":"`+azure.RoleID(sub, "b24988ac-6180-42a0-ab88-20f7382dd24c")+`"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("Contributor, or any role but the subscription's Argus manage, must not be the manage role: %d %s", w.Code, w.Body)
 	}
 
 	w = do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts", "admin-token",
@@ -140,8 +148,37 @@ func TestCloudConnectAzureSubscription(t *testing.T) {
 		`{"provider":"azure","name":"again","accountId":"`+sub+`"}`); w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "subscription "+sub) {
 		t.Fatalf("a subscription connects once: %d %s", w.Code, w.Body)
 	}
-	if w := do(t, e.h, http.MethodPut, "/api/v1/cloud/accounts/"+c.ID+"/manage", "admin-token", `{}`); w.Code != http.StatusNotImplemented {
-		t.Fatalf("allowing changes in a subscription must be refused: %d %s", w.Code, w.Body)
+	// Allowing changes later: refused until the manage role is there for
+	// this organization, refused for any other role, and audited both ways.
+	manage := azure.RoleID(sub, azure.ManageRoleID(sub))
+	if w := do(t, e.h, http.MethodPut, "/api/v1/cloud/accounts/"+c.ID+"/manage", "admin-token", `{}`); w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("allowing changes with no manage role must be refused: %d %s", w.Code, w.Body)
+	}
+	fake.Roles[manage] = "argus-someone-elses-id"
+	if w := do(t, e.h, http.MethodPut, "/api/v1/cloud/accounts/"+c.ID+"/manage", "admin-token", `{}`); w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("a manage role given for another organization must not count: %d %s", w.Code, w.Body)
+	}
+	if w := do(t, e.h, http.MethodPut, "/api/v1/cloud/accounts/"+c.ID+"/manage", "admin-token",
+		`{"roleArn":"`+azure.RoleID(sub, "b24988ac-6180-42a0-ab88-20f7382dd24c")+`"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("another role must not be named as the manage role: %d %s", w.Code, w.Body)
+	}
+	if w := do(t, e.h, http.MethodPut, "/api/v1/cloud/accounts/"+c.ID+"/manage", "operator-token", `{}`); w.Code == http.StatusOK {
+		t.Fatalf("only an administrator allows changes: %d", w.Code)
+	}
+	fake.Roles[manage] = p.ExternalID
+	w = do(t, e.h, http.MethodPut, "/api/v1/cloud/accounts/"+c.ID+"/manage", "admin-token", `{}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("allow changes: %d %s", w.Code, w.Body)
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &c)
+	if c.ManageRoleARN != manage || c.Access != "manage" {
+		t.Fatalf("changes allowed wrong: %+v", c)
+	}
+	if n := auditCount(t, e.s, "cloud.account.manage_allowed", cloudTarget("azure", sub, "payments-azure")); n != 1 {
+		t.Fatalf("allowing changes must be audited once, got %d", n)
+	}
+	if n := auditCount(t, e.s, "cloud.account.refused", cloudTarget("azure", sub, "payments-azure")); n < 3 {
+		t.Fatalf("each refusal must be audited, got %d", n)
 	}
 
 	w = do(t, e.h, http.MethodGet, "/api/v1/cloud/accounts", "admin-token", "")
@@ -157,6 +194,10 @@ func TestCloudConnectAzureSubscription(t *testing.T) {
 	for _, a := range view.Accounts {
 		if a.ID == c.ID && a.IdentityMissing {
 			t.Fatal("a subscription on Azure's Main identity must not read as having lost it to AWS's")
+		}
+		// The console offers only what Argus does in Azure so far.
+		if a.ID == c.ID && (!contains(actionNames(a.Actions), "stop") || contains(actionNames(a.Actions), "remove") || contains(actionNames(a.Actions), "launch")) {
+			t.Fatalf("a subscription must list the changes Argus makes there, and no others: %v", a.Actions)
 		}
 	}
 
@@ -214,7 +255,7 @@ func TestCloudAzureInventoryAndServerMatch(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &out)
 	var got *CloudItem
 	for i := range out.Items {
-		if out.Items[i].Resource.ID == vm {
+		if out.Items[i].Resource.ID == vm && out.Items[i].ProviderAccount == sub {
 			got = &out.Items[i]
 		}
 	}
@@ -226,5 +267,100 @@ func TestCloudAzureInventoryAndServerMatch(t *testing.T) {
 		map[string]HostCloud{"s1": {Provider: "azure", Account: sub, Region: "eastus", ID: vm}})
 	if items[0].Server == nil || items[0].Server.By != "agent" {
 		t.Fatalf("a server whose agent names the VM must be linked by that: %+v", items[0].Server)
+	}
+}
+
+func actionNames(as []cloud.Action) []string {
+	out := make([]string, len(as))
+	for i, a := range as {
+		out[i] = string(a)
+	}
+	return out
+}
+
+// Changes in a subscription: the prepared command makes the manage role,
+// a stop says it deallocates, a size changes on a stopped VM only, and tags
+// follow Azure's rules.
+func TestCloudAzureSubscriptionStopsResizesAndTags(t *testing.T) {
+	e, fake, sub := azureEnv(t)
+	w := do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts/prepare", "admin-token", `{"provider":"azure","accountId":"`+sub+`","manage":true}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("prepare with changes: %d %s", w.Code, w.Body)
+	}
+	var p CloudPrepared
+	_ = json.Unmarshal(w.Body.Bytes(), &p)
+	if p.ManageRoleARN != azure.RoleID(sub, azure.ManageRoleID(sub)) || p.ManageRoleName != azure.ManageRoleName {
+		t.Fatalf("prepare must name the subscription's manage role: %+v", p)
+	}
+	for _, want := range []string{"roleDefinitions/$M", "M=" + azure.ManageRoleID(sub), "Microsoft.Compute/virtualMachines/deallocate/action"} {
+		if !strings.Contains(p.Command, want) {
+			t.Fatalf("the command lacks %q:\n%s", want, p.Command)
+		}
+	}
+	for _, act := range azure.ManageActions {
+		if strings.HasPrefix(act, "Microsoft.Authorization/") || strings.Contains(act, "*") {
+			t.Fatalf("the manage role must hold no right to grant access and no wildcard: %s", act)
+		}
+	}
+	fake.Roles[p.ReadRoleARN] = p.ExternalID
+	fake.Roles[p.ManageRoleARN] = p.ExternalID
+	const vm = "aaaaaaaa-0000-4000-8000-000000000001"
+	fake.Resources["eastus"] = []cloud.Resource{
+		{Kind: cloud.KindInstance, ID: vm, Name: "web-1", Region: "eastus", Zone: "eastus-2", State: "running", Size: "Standard_B2s"},
+		{Kind: cloud.KindVolume, ID: "bbbbbbbb-0000-4000-8000-000000000001", Name: "web-1_OsDisk", Region: "eastus", State: "in-use"},
+	}
+	w = do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts", "admin-token",
+		`{"provider":"azure","name":"web-azure","accountId":"`+sub+`","environment":"development","manage":true}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("connect with changes: %d %s", w.Code, w.Body)
+	}
+	var c CloudAccount
+	_ = json.Unmarshal(w.Body.Bytes(), &c)
+	waitCloudSync(t, e, c)
+	ask := func(body string, want int) CloudChange {
+		t.Helper()
+		w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes", "admin-token", `{"accountId":"`+c.ID+`","region":"eastus",`+body+`}`)
+		if w.Code != want {
+			t.Fatalf("%s: %d %s, want %d", body, w.Code, w.Body, want)
+		}
+		var ch CloudChange
+		_ = json.Unmarshal(w.Body.Bytes(), &ch)
+		return ch
+	}
+
+	// A size is Azure's, and changes on a stopped VM only.
+	ask(`"action":"resize","resourceId":"`+vm+`","spec":{"size":"t3.medium"}`, http.StatusBadRequest)
+	ask(`"action":"resize","resourceId":"`+vm+`","spec":{"size":"Standard_B2s"}`, http.StatusBadRequest)
+	if w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes", "admin-token",
+		`{"accountId":"`+c.ID+`","region":"eastus","action":"resize","resourceId":"`+vm+`","spec":{"size":"Standard_D2s_v5"}}`); w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "stopped VM") {
+		t.Fatalf("a running VM: %d %s", w.Code, w.Body)
+	}
+	// A stop says what Azure does with it, and is asked as the person.
+	if ch := ask(`"action":"stop","resourceId":"`+vm+`"`, http.StatusOK); ch.State != "applied" || !strings.Contains(ch.Summary, "deallocate") {
+		t.Fatalf("stop: %+v", ch)
+	}
+	if !contains(fake.CallLog(), "stop "+vm+" "+e.admin) {
+		t.Fatalf("the stop must be made as the person who asked: %v", fake.CallLog())
+	}
+	fake.Resources["eastus"][0].State = "stopped"
+	deadline := time.Now().Add(5 * time.Second)
+	for !e.a.SyncCloudAccount(context.Background(), c) {
+		if time.Now().After(deadline) {
+			t.Fatal("the subscription was being read for too long")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if ch := ask(`"action":"resize","resourceId":"`+vm+`","spec":{"size":"Standard_D2s_v5"}`, http.StatusOK); ch.State != "applied" ||
+		ch.Summary != "Change web-1 from Standard_B2s to Standard_D2s_v5" {
+		t.Fatalf("resize: %+v", ch)
+	}
+
+	// Tags: Azure's rules, on VMs only for now.
+	ask(`"action":"tags","resourceId":"`+vm+`","spec":{"set":{"a/b":"x"}}`, http.StatusBadRequest)
+	ask(`"action":"tags","resourceId":"`+vm+`","spec":{"set":{"Microsoft-owner":"x"}}`, http.StatusBadRequest)
+	ask(`"action":"tags","resourceId":"bbbbbbbb-0000-4000-8000-000000000001","kind":"volume","spec":{"set":{"team":"payments"}}`, http.StatusNotImplemented)
+	if ch := ask(`"action":"tags","resourceId":"`+vm+`","spec":{"set":{"Team":"payments"}}`, http.StatusOK); ch.State != "applied" ||
+		ch.Summary != "Change tags on web-1: Team=payments" {
+		t.Fatalf("tags: %+v", ch)
 	}
 }

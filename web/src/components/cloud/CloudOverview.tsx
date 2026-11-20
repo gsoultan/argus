@@ -17,6 +17,7 @@ import { EnvBadge } from './common'
 import { dollars } from '~/lib/cloudCosts'
 import { findingCounts, type CloudFindingsView } from '~/lib/cloudFindings'
 import { ChangeIdentity } from './ChangeIdentity'
+import { AzureSetup } from './AzureSetup'
 import { GcpSetup } from './GcpSetup'
 import { RoleSetup } from './RoleSetup'
 import type { CloudTab } from './tabs'
@@ -148,8 +149,6 @@ function AccountRow({ a, admin, bases: all }: { a: CloudAccount; admin: boolean;
   // Only this cloud's identities: an AWS account cannot move to a Google one.
   const bases = all.filter((b) => (b.provider || 'aws') === a.provider)
   const aws = a.provider === 'aws'
-  // Argus only reads an Azure subscription so far, so changes are not offered there.
-  const azure = a.provider === 'azure'
   const sync = useSyncCloudAccount()
   const [confirm, setConfirm] = useState(false)
   const [moving, setMoving] = useState(false)
@@ -170,11 +169,7 @@ function AccountRow({ a, admin, bases: all }: { a: CloudAccount; admin: boolean;
             <EnvBadge env={a.environment} />
             {a.access === 'manage'
               ? <Badge variant="light" color="azure" radius="sm" tt="none" fw={500}>Can change</Badge>
-              : azure
-                ? <Tooltip label="Argus only reads Azure subscriptions so far. Changes from Argus come later for Azure." multiline w={280}>
-                    <Badge variant="default" radius="sm" tt="none" fw={500}>Read only</Badge>
-                  </Tooltip>
-                : <Badge variant="default" radius="sm" tt="none" fw={500}>Read only</Badge>}
+              : <Badge variant="default" radius="sm" tt="none" fw={500}>Read only</Badge>}
             {a.access === 'manage' && a.manageMissing?.length > 0 && (
               <Tooltip label={`The manage role lacks ${a.manageMissing.join(', ')}, so Argus cannot change disks, images or addresses here yet.`} multiline w={300}>
                 <Badge variant="light" color="amber" radius="sm" tt="none" fw={500}>Role needs an update</Badge>
@@ -211,7 +206,7 @@ function AccountRow({ a, admin, bases: all }: { a: CloudAccount; admin: boolean;
             )}
             {a.access === 'manage'
               ? <Button size="xs" variant="subtle" color="gray" onClick={() => setAccess(true)}>Make read only</Button>
-              : !azure && <Button size="xs" variant="subtle" leftSection={<IconPencil size={13} />} onClick={() => setAccess(true)}>Allow changes</Button>}
+              : <Button size="xs" variant="subtle" leftSection={<IconPencil size={13} />} onClick={() => setAccess(true)}>Allow changes</Button>}
             {aws && (a.identityMissing || bases.length > 1) && (
               <Button size="xs" variant={a.identityMissing ? 'light' : 'subtle'} color={a.identityMissing ? 'rose' : undefined}
                 onClick={() => setMoving(true)}>
@@ -238,6 +233,7 @@ function AccountRow({ a, admin, bases: all }: { a: CloudAccount; admin: boolean;
  */
 function AllowChanges({ a, update, onClose }: { a: CloudAccount; update?: boolean; onClose: () => void }) {
   const gcp = a.provider === 'gcp'
+  const azure = a.provider === 'azure'
   const prepared = useQuery({ queryKey: ['cloud', 'prepare-manage', a.provider, a.accountId],
     queryFn: () => prepareCloudAccount(a.accountId, true, '', '', a.provider), gcTime: 0 })
   const allow = useAllowCloudChanges()
@@ -247,7 +243,15 @@ function AllowChanges({ a, update, onClose }: { a: CloudAccount; update?: boolea
   return (
     <Modal opened onClose={onClose} size="xl" centered title={<Text fw={700}>{update ? `Update the manage role in ${a.name}` : `Allow changes in ${a.name}`}</Text>}>
       <Stack gap="md">
-        {gcp ? (
+        {azure ? (
+          <Text size={FS.body} lh={1.55}>
+            Argus gets a second role in the subscription, <Text span ff="monospace">Argus manage</Text>: a custom role that can start, stop,
+            restart, resize and tag VMs and nothing else. It holds no access control, so it cannot grant itself more. Azure gives Argus one
+            identity for reading and changing, so removing that role's assignment under Access control (IAM) is what takes changes back
+            outside Argus. Every change is made for the person who asked, waits for approval where the environment asks for it, and
+            goes in the audit log.
+          </Text>
+        ) : gcp ? (
           <Text size={FS.body} lh={1.55}>
             Argus gets a second service account, <Text span ff="monospace">argus-manage</Text>, that can change Compute Engine and
             nothing else: no IAM, so it cannot grant itself more. For now Argus starts, stops and resets VMs and grows disks with it.
@@ -267,9 +271,11 @@ function AllowChanges({ a, update, onClose }: { a: CloudAccount; update?: boolea
           </Text>
         )}
         {prepared.error && <Alert color="rose" variant="light">{(prepared.error as Error).message}</Alert>}
-        {prepared.data ? (gcp ? <GcpSetup prepared={prepared.data} /> : <RoleSetup prepared={prepared.data} update />)
-          : !prepared.error && <Text size={FS.meta} c="dimmed">{gcp ? 'Making the command…' : 'Making the template…'}</Text>}
-        <Text size={FS.meta} c="dimmed">{gcp
+        {prepared.data ? (azure ? <AzureSetup prepared={prepared.data} /> : gcp ? <GcpSetup prepared={prepared.data} /> : <RoleSetup prepared={prepared.data} update />)
+          : !prepared.error && <Text size={FS.meta} c="dimmed">{gcp || azure ? 'Making the command…' : 'Making the template…'}</Text>}
+        <Text size={FS.meta} c="dimmed">{azure
+          ? 'Once the command says Done, press the button. Azure can take a few minutes to apply a new role; if Argus cannot use it yet, try again shortly. There is nothing to paste.'
+          : gcp
           ? 'Once the command says Done, press the button. Argus finds argus-manage by its name; there is nothing to paste.'
           : 'Once the stack says UPDATE_COMPLETE, press the button. Argus finds the role by its name; there is nothing to paste.'}</Text>
         <Group justify="flex-end">
@@ -277,7 +283,7 @@ function AllowChanges({ a, update, onClose }: { a: CloudAccount; update?: boolea
           <Button loading={allow.isPending}
             onClick={() => void run(() => allow.mutateAsync({ id: a.id, roleArn: arn }), { failure: 'Argus could not use that role',
               success: update ? ['Checking the role', `Argus is reading what the role in ${a.name} may do now.`]
-                : ['Changes allowed', gcp ? `Admins can now start, stop and reset VMs, change their machine type, labels and deletion protection, make, grow, attach, detach, snapshot and delete disks, reserve and assign static addresses, launch and remove VMs, make and delete images, and make and change firewall rules in ${a.name}.`
+                : ['Changes allowed', azure ? `Admins can now start, stop, restart, resize and tag VMs in ${a.name}.` : gcp ? `Admins can now start, stop and reset VMs, change their machine type, labels and deletion protection, make, grow, attach, detach, snapshot and delete disks, reserve and assign static addresses, launch and remove VMs, make and delete images, and make and change firewall rules in ${a.name}.`
                   : `Admins can now launch and change instances, disks and addresses in ${a.name}.`] }).then((ok) => ok && onClose())}>
             {update ? 'Check again' : 'Check and allow'}
           </Button>
@@ -294,7 +300,9 @@ function ReadOnly({ a, onClose }: { a: CloudAccount; onClose: () => void }) {
       <Stack gap="md">
         <Text size={FS.body} lh={1.55}>
           Argus stops using the manage role, and nobody can change instances in this account from Argus. Changes waiting
-          for approval can no longer run. {a.provider === 'gcp'
+          for approval can no longer run. {a.provider === 'azure'
+            ? 'The Argus manage role and its assignment stay in the subscription until someone removes them under Access control (IAM); until then Azure would still let argus-control make those changes, and it is Argus that no longer asks.'
+            : a.provider === 'gcp'
             ? 'argus-manage stays in the project until someone deletes it under IAM › Service accounts.'
             : 'The role stays in AWS until the stack is updated without it.'}
         </Text>
@@ -326,7 +334,8 @@ function Disconnect({ a, opened, onClose }: { a: CloudAccount; opened: boolean; 
             <List fz={FS.meta} spacing={4} icon={<ThemeIcon size={16} radius="xl" variant="light" color="teal"><IconCheck size={11} /></ThemeIcon>}>
               <List.Item>Every VM, disk, snapshot and image, as they are now</List.Item>
               <List.Item>Network security groups and every rule</List.Item>
-              <List.Item>The Reader role Argus was given, until someone removes it under Access control (IAM)</List.Item>
+              <List.Item>The roles Argus was given, until someone removes them under Access control (IAM)</List.Item>
+              <List.Item>Tags Argus wrote, like {SCHEDULE_TAG}; nothing reads them once disconnected</List.Item>
               <List.Item>Argus agents on VMs, until you uninstall them</List.Item>
             </List>
           </Box>
@@ -334,6 +343,8 @@ function Disconnect({ a, opened, onClose }: { a: CloudAccount; opened: boolean; 
             <Text size={FS.meta} fw={700} mb={4}>Changes in Argus only</Text>
             <List fz={FS.meta} spacing={4} icon={<ThemeIcon size={16} radius="xl" variant="light" color="gray"><IconMinus size={11} /></ThemeIcon>}>
               <List.Item>Argus stops reading the subscription, and its resources leave these lists</List.Item>
+              <List.Item>Changes waiting for approval are cancelled</List.Item>
+              <List.Item>Schedules stop acting on its VMs</List.Item>
             </List>
             <Text size={FS.micro} c="dimmed" mt={6}>Reconnect it any time.</Text>
           </Box>

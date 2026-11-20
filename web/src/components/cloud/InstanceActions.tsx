@@ -51,6 +51,7 @@ export function InstanceActions({ it }: { it: CloudItem }) {
   const close = () => setOpen(null)
   const can = (a: CloudAction) => allows(account, a)
   const gcp = account.provider === 'gcp'
+  const azure = account.provider === 'azure'
   const more = !gone && (['launch', 'scale-group-create', 'settings', 'protect', 'unprotect', 'image-create', 'instance-firewalls', 'remove'] as CloudAction[]).some(can)
   const protectWord = gcp ? 'deletion protection' : 'termination protection'
   // Google's inventory says whether it is on, so only the way it can go is offered.
@@ -69,7 +70,7 @@ export function InstanceActions({ it }: { it: CloudItem }) {
         {running && can('hibernate') && it.resource.details?.hibernation === 'yes' && (
           <Button size="xs" variant="default" leftSection={<IconMoon size={14} />} disabled={!!waiting} onClick={() => setOpen('hibernate')}>Hibernate</Button>
         )}
-        {running && can('reboot') && <Button size="xs" variant="default" leftSection={<IconRefresh size={14} />} disabled={!!waiting} onClick={() => setOpen('reboot')}>{gcp ? 'Reset' : 'Reboot'}</Button>}
+        {running && can('reboot') && <Button size="xs" variant="default" leftSection={<IconRefresh size={14} />} disabled={!!waiting} onClick={() => setOpen('reboot')}>{gcp ? 'Reset' : azure ? 'Restart' : 'Reboot'}</Button>}
         {!gone && can('resize') && <Button size="xs" variant="default" leftSection={<IconResize size={14} />} disabled={!!waiting} onClick={() => setOpen('resize')}>{gcp ? 'Change machine type' : 'Change size'}</Button>}
         {!gone && can('tags') && <Button size="xs" variant="default" leftSection={<IconTag size={14} />} disabled={!!waiting} onClick={() => setOpen('tags')}>{gcp ? 'Labels' : 'Tags'}</Button>}
         {more && (
@@ -104,9 +105,9 @@ export function InstanceActions({ it }: { it: CloudItem }) {
         )}
       </Group>
       {(open === 'start' || open === 'stop' || open === 'hibernate' || open === 'reboot' || open === 'protect' || open === 'unprotect') && (
-        <SimpleChange it={it} env={env} action={open} gcp={gcp} onClose={close} />
+        <SimpleChange it={it} env={env} action={open} gcp={gcp} azure={azure} onClose={close} />
       )}
-      {open === 'resize' && <ResizeChange it={it} env={env} gcp={gcp} onClose={close} />}
+      {open === 'resize' && <ResizeChange it={it} env={env} gcp={gcp} azure={azure} onClose={close} />}
       {open === 'settings' && <SettingsChange it={it} env={env} onClose={close} />}
       {open === 'tags' && <TagsChange it={it} env={env} gcp={gcp} onClose={close} />}
       {open === 'remove' && <RemoveChange it={it} gcp={gcp} onClose={close} />}
@@ -203,8 +204,15 @@ const GCP_SIMPLE: Record<string, { title: string; verb: string; done: string; te
   unprotect: { title: 'Turn off deletion protection for', verb: 'Turn off', done: 'Protection off', color: 'amber', text: 'The VM can be deleted again by anyone allowed to in the project.' },
 }
 
-function SimpleChange({ it, env, action, gcp, onClose }: { it: CloudItem; env: CloudEnvironment; action: CloudAction; gcp?: boolean; onClose: () => void }) {
-  const s = (gcp && GCP_SIMPLE[action]) || SIMPLE[action]!
+/** What Azure does instead, where it differs from AWS. */
+const AZURE_SIMPLE: Record<string, { title: string; verb: string; done: string; text: string; color?: string }> = {
+  start: { title: 'Start', verb: 'Start', done: 'Starting', text: 'Azure starts the VM. It keeps its disks; a public address that is not static changes.' },
+  stop: { title: 'Stop', verb: 'Stop', done: 'Stopping', color: 'amber', text: 'Azure shuts the VM down and deallocates it, as Stop in the portal does, so the VM is no longer billed. Its disks stay and are still billed. Anything only in memory is lost, and a public address that is not static is given up.' },
+  reboot: { title: 'Restart', verb: 'Restart', done: 'Restarting', color: 'amber', text: 'Azure restarts the VM. Anyone signed in to it is disconnected.' },
+}
+
+function SimpleChange({ it, env, action, gcp, azure, onClose }: { it: CloudItem; env: CloudEnvironment; action: CloudAction; gcp?: boolean; azure?: boolean; onClose: () => void }) {
+  const s = (gcp && GCP_SIMPLE[action]) || (azure && AZURE_SIMPLE[action]) || SIMPLE[action]!
   const [reason, setReason] = useState('')
   const { submit, busy } = useSubmit(onClose)
   return (
@@ -277,13 +285,15 @@ export function SettingsChange({ it, env, onClose, preset }: {
 }
 
 /** Changing an instance's size; a suggestion opens it with the size it names. */
-export function ResizeChange({ it, env, initial, gcp, onClose }: { it: CloudItem; env: CloudEnvironment; initial?: string; gcp?: boolean; onClose: () => void }) {
+export function ResizeChange({ it, env, initial, gcp, azure, onClose }: { it: CloudItem; env: CloudEnvironment; initial?: string; gcp?: boolean; azure?: boolean; onClose: () => void }) {
   const r = it.resource
-  // Google's machine types depend on the VM's zone, so they are read for it.
-  const opts = useQuery({ ...cloudLaunchOptionsQuery(it.accountId, r.region), enabled: !gcp })
-  const zoneSizes = useQuery({ ...cloudInstanceSizesQuery(it), enabled: Boolean(gcp) })
-  const sizes = gcp ? zoneSizes.data?.sizes : opts.data?.sizes
-  const loading = gcp ? zoneSizes.isPending : opts.isPending
+  // Google's machine types depend on the VM's zone and Azure's sizes on
+  // where the VM runs, so they are read for the VM itself.
+  const own = Boolean(gcp || azure)
+  const opts = useQuery({ ...cloudLaunchOptionsQuery(it.accountId, r.region), enabled: !own })
+  const zoneSizes = useQuery({ ...cloudInstanceSizesQuery(it), enabled: own })
+  const sizes = own ? zoneSizes.data?.sizes : opts.data?.sizes
+  const loading = own ? zoneSizes.isPending : opts.isPending
   const [size, setSize] = useState<string | null>(initial ?? null)
   const [reason, setReason] = useState('')
   const { submit, busy } = useSubmit(onClose)
@@ -298,16 +308,17 @@ export function ResizeChange({ it, env, initial, gcp, onClose }: { it: CloudItem
         <Alert color="sky" variant="light" p="sm">
           <Text size={FS.meta}>
             {gcp ? 'Google changes the machine type of a stopped VM only. Stop it first, then come back here.'
+              : azure ? 'Argus changes the size of a stopped VM only: Azure would restart a running one to resize it. Stop it first, then come back here.'
               : 'AWS changes the size of a stopped instance only. Stop it first, then come back here.'}
           </Text>
         </Alert>
       )}
-      {gcp && zoneSizes.error && <Alert color="rose" variant="light" p="sm">{(zoneSizes.error as Error).message}</Alert>}
+      {own && zoneSizes.error && <Alert color="rose" variant="light" p="sm">{(zoneSizes.error as Error).message}</Alert>}
       <Group grow align="flex-end">
         <Field label="Now"><Text ff="monospace" size={FS.body} mt={6}>{r.size}</Text></Field>
         <Select label={gcp ? 'New machine type' : 'New size'} searchable placeholder={loading ? 'Loading…' : gcp ? 'Pick a machine type' : 'Pick a size'} value={size} onChange={setSize}
-          data={[...new Set([...(sizes ?? []), ...(initial ? [initial] : [])])].filter((x) => x !== r.size)} disabled={!stopped} nothingFoundMessage={gcp ? `No such machine type in ${r.zone ?? 'its zone'}` : 'No such size'}
-          limit={gcp ? 200 : undefined}
+          data={[...new Set([...(sizes ?? []), ...(initial ? [initial] : [])])].filter((x) => x !== r.size)} disabled={!stopped} nothingFoundMessage={gcp ? `No such machine type in ${r.zone ?? 'its zone'}` : azure ? 'Azure does not offer this VM that size where it is' : 'No such size'}
+          limit={own ? 200 : undefined}
           styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }} />
       </Group>
     </ChangeModal>

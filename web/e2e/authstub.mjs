@@ -476,7 +476,6 @@ const server = createServer(async (req, res) => {
     if (path === '/api/v1/cloud/accounts/prepare' && req.method === 'POST') {
       const body = /** @type {any} */ (await readBody(req))
       if (body.provider === 'azure') {
-        if (body.manage) return json(res, 400, { error: 'Azure subscriptions are read only in Argus so far' })
         const s = body.accountId
         const ext = 'argus-6f1c0e9a2b7d4c5e8f9a0b1c2d3e4f50'
         const role = `/subscriptions/${s}/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7`
@@ -488,7 +487,10 @@ const server = createServer(async (req, res) => {
             + '  az rest --method put --url "https://management.azure.com/subscriptions/$S/providers/Microsoft.Authorization/roleAssignments/$2?api-version=2022-04-01" \\\n'
             + `    --body "{\\"properties\\":{\\"principalId\\":\\"$O\\",\\"description\\":\\"Argus reads this subscription's inventory through this assignment. argus-external-id=${ext}\\"}}"\n}\n`
             + `grant ${AZURE_PRINCIPAL} 0d5c1f6e-2a3b-5c4d-8e9f-a1b2c3d4e5f6 && \\\n`
-            + 'echo "Done. Argus connects by itself within a few minutes."\n' })
+            + (body.manage ? 'M=5a1d0c3e-7b2f-4e6a-9c8d-1f2e3d4c5b6a && \\\naz rest --method put --url "$A/roleDefinitions/$M?api-version=2022-04-01" --body "{...Microsoft.Compute/virtualMachines/deallocate/action...}" && \\\n' : '')
+            + 'echo "Done. Argus connects by itself within a few minutes."\n',
+          ...(body.manage ? { manageRoleName: 'Argus manage',
+            manageRoleArn: `/subscriptions/${s}/providers/Microsoft.Authorization/roleDefinitions/5a1d0c3e-7b2f-4e6a-9c8d-1f2e3d4c5b6a` } : {}) })
       }
       if (body.provider !== 'gcp') return json(res, 400, { error: 'only Google Cloud and Azure are stubbed' })
       const p = body.accountId

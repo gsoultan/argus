@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,6 +27,7 @@ here has met a real subscription.
 
 const (
 	testSub     = "6b1f2c0e-8a44-4f0b-9d55-0c2a7e4d1a90"
+	otherSub    = "7c2a3d1f-9b55-4a1c-8e66-1d3b8f5e2ba1"
 	homeTenant  = "11111111-1111-4111-8111-111111111111"
 	otherTenant = "22222222-2222-4222-8222-222222222222"
 	clientID    = "33333333-3333-4333-8333-333333333333"
@@ -57,6 +59,17 @@ type fakeMicrosoft struct {
 	// points the next page at another host.
 	pageNICs, evilNext bool
 	url                string
+	// changes are the changing calls made, as "METHOD path body".
+	changes []string
+	// refuse answers every changing call as Azure does a caller without
+	// the right.
+	refuse bool
+}
+
+func (m *fakeMicrosoft) changed() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.changes...)
 }
 
 func (m *fakeMicrosoft) set(a ...assignment) {
@@ -190,6 +203,40 @@ func (m *fakeMicrosoft) handler() http.Handler {
 			 {"name":"out","properties":{"priority":200,"direction":"Outbound","access":"Allow","protocol":"Tcp","sourceAddressPrefix":"*","destinationAddressPrefix":"10.9.0.0/16","destinationPortRange":"443"}}]}},
 			{"id":"` + rg + `Microsoft.Network/networkSecurityGroups/unused","name":"unused","location":"westeurope","properties":{"resourceGuid":"ffffffff-0000-4000-8000-000000000003"}}]}`,
 	}
+	// Changes to web-1, recorded as made. Azure accepts and answers with
+	// the ids its Activity log files the operation under.
+	vmPath := rg + "Microsoft.Compute/virtualMachines/web-1"
+	change := func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		m.mu.Lock()
+		m.changes = append(m.changes, r.Method+" "+strings.TrimPrefix(r.URL.Path, vmPath)+" "+string(b))
+		refuse := m.refuse
+		m.mu.Unlock()
+		if r.URL.Query().Get("api-version") == "" {
+			http.Error(w, `{"error":{"code":"MissingApiVersionParameter","message":"api-version is required"}}`, http.StatusBadRequest)
+			return
+		}
+		if refuse {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":{"code":"AuthorizationFailed","message":"The client does not have authorization to perform action over scope."}}`))
+			return
+		}
+		w.Header().Set("x-ms-correlation-request-id", "corr-1234")
+		w.Header().Set("x-ms-request-id", "req-5678")
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		_, _ = w.Write([]byte(`{"properties":{}}`))
+	}
+	for _, verb := range []string{"start", "deallocate", "restart", "powerOff"} {
+		mux.HandleFunc("POST "+vmPath+"/"+verb, authed(change))
+	}
+	mux.HandleFunc("PATCH "+vmPath, authed(change))
+	mux.HandleFunc("PATCH "+vmPath+"/providers/Microsoft.Resources/tags/default", authed(change))
+	mux.HandleFunc("GET "+vmPath+"/vmSizes", authed(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"value":[{"name":"Standard_D2s_v5"},{"name":"Standard_B2s"},{"name":"Standard_B2s"},{"name":"not a size"}]}`))
+	}))
 	for path, body := range answers {
 		path, statusOnly := strings.CutSuffix(path, "?statusOnly")
 		if statusOnly {
@@ -504,7 +551,24 @@ func TestANextPageElsewhereIsNotFollowed(t *testing.T) {
 
 func TestSetupCommand(t *testing.T) {
 	const ext = "argus-0123abcd"
-	cmd := SetupCommandFor(testSub, []string{clientID, "66666666-6666-4666-8666-666666666666"}, ext)
+	cmd := SetupCommandFor(testSub, []string{clientID, "66666666-6666-4666-8666-666666666666"}, ext, false)
+	if strings.Contains(cmd, "roleDefinitions/$M") || strings.Contains(cmd, ManageRoleID(testSub)) {
+		t.Fatalf("a read only command must make no role:\n%s", cmd)
+	}
+	both := SetupCommandFor(testSub, []string{clientID}, ext, true)
+	for _, want := range []string{"M=" + ManageRoleID(testSub), `roleDefinitions/$M?api-version=2022-04-01`, `\"assignableScopes\":[\"/subscriptions/$S\"]`,
+		"grant " + clientID + " $R ", "grant " + clientID + " $M " + AssignmentName(testSub, clientID, ManageRoleID(testSub), ext),
+		ManageDescription(ext), `\"Microsoft.Compute/virtualMachines/restart/action\"`} {
+		if !strings.Contains(both, want) {
+			t.Errorf("the command with changes lacks %q:\n%s", want, both)
+		}
+	}
+	if !ValidGUID(ManageRoleID(testSub)) || ManageRoleID(testSub) == ManageRoleID(otherSub) || ManageRoleID(testSub) == ReaderRoleID {
+		t.Fatal("a manage role's id must be a GUID of its own per subscription")
+	}
+	if !hasMarker(ManageDescription(ext), ext) {
+		t.Fatal("the manage description the command writes must be the one a change looks for")
+	}
 	for _, want := range []string{"S=" + testSub, ReaderRoleID, ExternalIDMarker + ext, "grant " + clientID + " ", "grant 66666666-6666-4666-8666-666666666666 ",
 		"az ad sp create", "api-version=2022-04-01"} {
 		if !strings.Contains(cmd, want) {
