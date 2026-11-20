@@ -353,7 +353,7 @@ func (a *API) getCloudIdle(w http.ResponseWriter, r *http.Request) {
 	if _, ok := a.cloudViewer(w, r); !ok {
 		return
 	}
-	type acct struct{ name, env string }
+	type acct struct{ name, env, provider string }
 	byAccount := map[string][]cloud.Resource{}
 	accounts := map[string]acct{}
 	var order []string
@@ -365,7 +365,7 @@ func (a *API) getCloudIdle(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, it := range items {
 			if _, ok := accounts[it.AccountID]; !ok {
-				accounts[it.AccountID] = acct{it.AccountName, it.Environment}
+				accounts[it.AccountID] = acct{it.AccountName, it.Environment, it.Provider}
 				order = append(order, it.AccountID)
 			}
 			byAccount[it.AccountID] = append(byAccount[it.AccountID], it.Resource)
@@ -375,7 +375,7 @@ func (a *API) getCloudIdle(w http.ResponseWriter, r *http.Request) {
 	out := []cloudIdleItem{}
 	total := 0.0
 	for _, id := range order {
-		for _, f := range cloud.Idle(byAccount[id], now) {
+		for _, f := range cloud.IdleIn(accounts[id].provider, byAccount[id], now) {
 			out = append(out, cloudIdleItem{AccountID: id, AccountName: accounts[id].name, Environment: accounts[id].env, IdleFinding: f})
 			total += f.Monthly
 		}

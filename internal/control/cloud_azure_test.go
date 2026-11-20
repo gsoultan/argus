@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"testing"
@@ -864,5 +865,72 @@ func TestCloudAzureSubscriptionCostsAreRead(t *testing.T) {
 	w = do(t, e.h, http.MethodPost, "/api/v1/cloud/costs/"+c.ID+"/read", "admin-token", "")
 	if w.Code != http.StatusTooManyRequests || !strings.Contains(w.Body.String(), "Azure limits how often they are read") || strings.Contains(w.Body.String(), "AWS") {
 		t.Fatalf("asked twice: %d %s", w.Code, w.Body)
+	}
+}
+
+// What bills for nothing in a subscription is priced and named as Azure's,
+// in Risks & waste and in Costs alike.
+func TestCloudAzureSubscriptionWasteIsAzures(t *testing.T) {
+	e, fake, sub := azureEnv(t)
+	w := do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts/prepare", "admin-token", `{"provider":"azure","accountId":"`+sub+`"}`)
+	var p CloudPrepared
+	_ = json.Unmarshal(w.Body.Bytes(), &p)
+	fake.Roles[p.ReadRoleARN] = p.ExternalID
+	const vm = "aaaaaaaa-0000-4000-8000-000000000001"
+	fake.Resources["eastus"] = []cloud.Resource{
+		{Kind: cloud.KindInstance, ID: vm, Name: "web-1", Region: "eastus", State: "stopped", Size: "Standard_D2s_v5", Details: map[string]string{"allocated": "yes"}},
+		{Kind: cloud.KindVolume, ID: "bbbbbbbb-0000-4000-8000-000000000001", Name: "old-data", Region: "eastus", State: "available", Size: "128 GiB",
+			Details: map[string]string{"type": "Premium_LRS"}},
+		{Kind: cloud.KindAddress, ID: "cccccccc-0000-4000-8000-000000000001", Name: "old-ip", Region: "eastus", State: "unattached"},
+	}
+	w = do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts", "admin-token",
+		`{"provider":"azure","name":"waste-azure","accountId":"`+sub+`","environment":"development"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("connect: %d %s", w.Code, w.Body)
+	}
+	var c CloudAccount
+	_ = json.Unmarshal(w.Body.Bytes(), &c)
+	waitCloudSync(t, e, c)
+
+	var found struct {
+		Items []struct {
+			AccountID string `json:"accountId"`
+			cloud.Finding
+		} `json:"items"`
+		Monthly float64 `json:"monthly"`
+	}
+	w = do(t, e.h, http.MethodGet, "/api/v1/cloud/findings", "admin-token", "")
+	_ = json.Unmarshal(w.Body.Bytes(), &found)
+	by := map[string]cloud.Finding{}
+	for _, f := range found.Items {
+		if f.AccountID == c.ID {
+			by[f.Name] = f.Finding
+		}
+	}
+	if f := by["web-1"]; f.Title != "Stopped, but still billed in full" || f.Fix != cloud.ActionStop || f.Monthly != 70.08 {
+		t.Fatalf("a VM shut down from inside: %+v (%s)", f, w.Body)
+	}
+	if f := by["old-data"]; f.Monthly != 19.71 {
+		t.Fatalf("a premium disk: %+v", f)
+	}
+	if f := by["old-ip"]; f.Title != "Public address attached to nothing" {
+		t.Fatalf("an address: %+v", f)
+	}
+	var idle struct {
+		Items []struct {
+			AccountID string  `json:"accountId"`
+			Monthly   float64 `json:"monthly"`
+		} `json:"items"`
+	}
+	w = do(t, e.h, http.MethodGet, "/api/v1/cloud/idle", "admin-token", "")
+	_ = json.Unmarshal(w.Body.Bytes(), &idle)
+	total := 0.0
+	for _, it := range idle.Items {
+		if it.AccountID == c.ID {
+			total += it.Monthly
+		}
+	}
+	if want := 70.08 + 19.71 + 3.65; math.Abs(total-want) > 0.001 {
+		t.Fatalf("Costs says %v a month for the subscription, want %v: %s", total, want, w.Body)
 	}
 }

@@ -189,6 +189,42 @@ func VolumeMonthly(size string) (float64, bool) {
 	return round2(float64(gb) * per), true
 }
 
+// Azure bills a managed disk by the tier its size rounds up to, not by
+// the gigabyte. These are the tiers' sizes in GiB and their monthly list
+// prices in US dollars, East US, locally redundant.
+var (
+	azureDiskTiers = []int{4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32767}
+	azureDiskPrice = map[string][]float64{
+		"premium_lrs":     {0.60, 1.20, 2.40, 5.28, 10.21, 19.71, 38.02, 73.22, 135.17, 259.05, 495.57, 946.08, 1638.40, 3276.80},
+		"standardssd_lrs": {0.30, 0.60, 1.20, 2.40, 4.80, 9.60, 19.20, 38.40, 76.80, 153.60, 307.20, 614.40, 1228.80, 2457.60},
+		// A standard disk under 32 GiB bills as the 32 GiB tier.
+		"standard_lrs": {1.54, 1.54, 1.54, 1.54, 3.01, 5.89, 11.33, 21.76, 40.96, 77.83, 143.36, 262.14, 524.29, 1048.58},
+	}
+)
+
+// AzureDiskMonthly is an Azure managed disk's monthly list price from its
+// type (StandardSSD_LRS) and size, and whether Argus has a price for the
+// type. A zone-redundant disk is half as much again as a locally
+// redundant one. Ultra and Premium v2 disks bill by what is provisioned
+// on them, which the inventory does not read, so they have no estimate.
+func AzureDiskMonthly(sku string, gib int) (float64, bool) {
+	sku = strings.ToLower(sku)
+	times := 1.0
+	if base, zrs := strings.CutSuffix(sku, "_zrs"); zrs {
+		sku, times = base+"_lrs", 1.5
+	}
+	prices, ok := azureDiskPrice[sku]
+	if !ok || gib <= 0 {
+		return 0, false
+	}
+	for i, size := range azureDiskTiers {
+		if gib <= size {
+			return round2(prices[i] * times), true
+		}
+	}
+	return 0, false
+}
+
 // GiB is the number at the front of a Size ("100 GiB").
 func GiB(size string) int {
 	f := strings.Fields(size)
@@ -226,11 +262,29 @@ type IdleFinding struct {
 	// Fix is the change that ends the bill, "" when the fix needs a
 	// person's judgement (removing an instance, a load balancer).
 	Fix Action `json:"fix,omitempty"`
+	// Title is what Risks & waste calls it, when the kind's usual title
+	// would be wrong.
+	Title string `json:"title,omitempty"`
 }
 
 // Idle finds what bills for nothing in one account's inventory, biggest
-// bill first.
-func Idle(rs []Resource, now time.Time) []IdleFinding {
+// bill first, priced as AWS does.
+func Idle(rs []Resource, now time.Time) []IdleFinding { return IdleIn("", rs, now) }
+
+// IdleIn is Idle for an account of the provider named. An Azure
+// subscription's disks are priced by Azure's tiers, and a VM that was shut
+// down from inside it, which Azure keeps allocated and bills in full, is
+// idle too.
+func IdleIn(provider string, rs []Resource, now time.Time) []IdleFinding {
+	azure := provider == "azure"
+	volumeMonthly := func(r Resource) float64 {
+		if azure {
+			m, _ := AzureDiskMonthly(r.Details["type"], GiB(r.Size))
+			return m
+		}
+		m, _ := VolumeMonthly(r.Size)
+		return m
+	}
 	present := map[string]bool{}
 	usedSnap := map[string]bool{}
 	lbTargets := map[string]int{} // load balancer id → target groups with a target
@@ -267,8 +321,7 @@ func Idle(rs []Resource, now time.Time) []IdleFinding {
 		switch r.Kind {
 		case KindVolume:
 			if r.State == "available" {
-				m, _ := VolumeMonthly(r.Size)
-				add(r, "Attached to nothing", m, nil, ActionVolumeDelete)
+				add(r, "Attached to nothing", volumeMonthly(r), nil, ActionVolumeDelete)
 			}
 		case KindAddress:
 			if r.State == "unattached" {
@@ -278,6 +331,15 @@ func Idle(rs []Resource, now time.Time) []IdleFinding {
 			if r.State != "stopped" {
 				continue
 			}
+			if azure && r.Details["allocated"] == "yes" {
+				m := 0.0
+				if p, ok := HourlyPrice(r.Size); ok {
+					m = p * HoursPerMonth
+				}
+				add(r, "Shut down from inside the VM, so Azure keeps it allocated and bills it as if it were running", m, nil, ActionStop)
+				out[len(out)-1].Title = "Stopped, but still billed in full"
+				continue
+			}
 			at, err := time.Parse(time.RFC3339, r.Details["stoppedAt"])
 			if err != nil || now.Sub(at) < IdleStoppedFor {
 				continue
@@ -285,8 +347,7 @@ func Idle(rs []Resource, now time.Time) []IdleFinding {
 			var m float64
 			for _, l := range r.Links {
 				if v, ok := vols[l.ID]; ok && l.Kind == KindVolume {
-					p, _ := VolumeMonthly(v.Size)
-					m += p
+					m += volumeMonthly(v)
 				}
 			}
 			add(r, "Stopped for "+daysWords(now.Sub(at))+"; its disks still bill", m, &at, "")
