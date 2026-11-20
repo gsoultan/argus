@@ -343,7 +343,8 @@ func TestCloudAzureSubscriptionStopsResizesAndTags(t *testing.T) {
 	if !contains(fake.CallLog(), "stop "+vm+" "+e.admin) {
 		t.Fatalf("the stop must be made as the person who asked: %v", fake.CallLog())
 	}
-	fake.Resources["eastus"][0].State = "stopped"
+	// The read that follows the stop may still be going.
+	fake.Edit(func() { fake.Resources["eastus"][0].State = "stopped" })
 	deadline := time.Now().Add(5 * time.Second)
 	for !e.a.SyncCloudAccount(context.Background(), c) {
 		if time.Now().After(deadline) {
