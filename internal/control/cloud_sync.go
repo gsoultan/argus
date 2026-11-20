@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gsoultan/argus/internal/control/cloud"
@@ -84,8 +85,14 @@ func (a *API) syncCloudAccountSoon(ctx context.Context, c CloudAccount) {
 const cloudFollowReads = 5
 
 // cloudReadRetry is how long a read asked for after a change waits for the
-// one in flight, which may have read the region before the change.
-var cloudReadRetry, cloudReadTries = 2 * time.Second, 100
+// one in flight, which may have read the region before the change. It is
+// atomic because a test shortens it while reads other tests started are
+// still waiting on it.
+var cloudReadRetry atomic.Int64
+
+const cloudReadTries = 100
+
+func init() { cloudReadRetry.Store(int64(2 * time.Second)) }
 
 // syncCloudAfterChange brings a change into the inventory: the region it
 // was made in is read at once, on its own, so the console has it in a
@@ -109,7 +116,7 @@ func (a *API) syncCloudAfterChange(ctx context.Context, c CloudAccount, region s
 
 func (a *API) readWhenFree(read func() bool) {
 	for i := 0; i < cloudReadTries && !read(); i++ {
-		time.Sleep(cloudReadRetry)
+		time.Sleep(time.Duration(cloudReadRetry.Load()))
 	}
 }
 
