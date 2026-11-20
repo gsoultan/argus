@@ -85,6 +85,12 @@ type fakeMicrosoft struct {
 	groups    map[string]map[string]any
 	groupEtag int
 	raceGroup bool
+	// costs answers Cost Management's query and forecast calls, by which
+	// call and page; costAsked are the bodies sent, and costStatus, when
+	// set, is how every such call is refused.
+	costs      map[string]string
+	costAsked  []string
+	costStatus int
 }
 
 func (m *fakeMicrosoft) changed() []string {
@@ -357,6 +363,34 @@ func (m *fakeMicrosoft) handler() http.Handler {
 		w.Header().Set("x-ms-correlation-request-id", "corr-1234")
 		_, _ = w.Write(b)
 	}))
+	// Cost Management: a query and a forecast, each a POST that may say
+	// where its next page is.
+	for _, call := range []string{"query", "forecast"} {
+		mux.HandleFunc("POST "+sub+"/providers/Microsoft.CostManagement/"+call, authed(func(w http.ResponseWriter, r *http.Request) {
+			b, _ := io.ReadAll(r.Body)
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			m.costAsked = append(m.costAsked, call+" "+string(b))
+			if m.costStatus != 0 {
+				w.WriteHeader(m.costStatus)
+				if m.costStatus == http.StatusTooManyRequests {
+					_, _ = w.Write([]byte(`{"error":{"code":"429","message":"Too many requests. Please retry."}}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"error":{"code":"BadRequest","message":"Cost Management is not supported for this offer type."}}`))
+				return
+			}
+			key := call
+			if pg := r.URL.Query().Get("page"); pg != "" {
+				key += "?page=" + pg
+			}
+			out, ok := m.costs[key]
+			if !ok {
+				out = `{"properties":{"columns":[],"rows":[]}}`
+			}
+			_, _ = w.Write([]byte(strings.ReplaceAll(out, "NEXT/", m.url+sub+"/providers/Microsoft.CostManagement/")))
+		}))
+	}
 	// Network security groups are read whole and written back whole under
 	// their etag, as the interface is; a new one is made at its name.
 	groupPath := rg + "Microsoft.Network/networkSecurityGroups/{name}"

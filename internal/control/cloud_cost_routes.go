@@ -308,8 +308,12 @@ func (a *API) postCloudCostsRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !ok {
-		writeErr(w, http.StatusTooManyRequests, fmt.Sprintf("costs were read in the last %d minutes; AWS charges for each read, so try again later",
-			int(cloudCostAskEvery.Minutes())))
+		why := "AWS charges for each read"
+		if c.Provider != "aws" {
+			why = cloudProviderName(c.Provider) + " limits how often they are read"
+		}
+		writeErr(w, http.StatusTooManyRequests, fmt.Sprintf("costs were read in the last %d minutes; %s, so try again later",
+			int(cloudCostAskEvery.Minutes()), why))
 		return
 	}
 	now := time.Now().UTC()
