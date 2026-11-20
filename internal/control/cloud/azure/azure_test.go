@@ -64,6 +64,12 @@ type fakeMicrosoft struct {
 	// refuse answers every changing call as Azure does a caller without
 	// the right.
 	refuse bool
+	// made are the disks and snapshots put since the start, by path, with
+	// how many times each has been read: Azure is still making one the
+	// first time it is asked.
+	made map[string]int
+	// roleActions are the actions the subscription's manage role allows.
+	roleActions []string
 }
 
 func (m *fakeMicrosoft) changed() []string {
@@ -229,6 +235,67 @@ func (m *fakeMicrosoft) handler() http.Handler {
 		}
 		_, _ = w.Write([]byte(`{"properties":{}}`))
 	}
+	// Disks and snapshots: made at a name, read back while Azure makes
+	// them, grown, tagged, deleted, and attached through the VM.
+	held := func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		path := r.URL.Path
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if r.Method != http.MethodGet {
+			m.changes = append(m.changes, r.Method+" "+strings.TrimPrefix(path, rg)+" "+string(b))
+			if m.refuse {
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"error":{"code":"AuthorizationFailed","message":"The client does not have authorization to perform action over scope."}}`))
+				return
+			}
+			w.Header().Set("x-ms-correlation-request-id", "corr-1234")
+		}
+		switch r.Method {
+		case http.MethodGet:
+			n, ok := m.made[path]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"error":{"code":"ResourceNotFound","message":"The Resource was not found."}}`))
+				return
+			}
+			m.made[path] = n + 1
+			state := "Creating"
+			if n > 0 {
+				state = "Succeeded"
+			}
+			_, _ = w.Write([]byte(`{"properties":{"uniqueId":"BBBBBBBB-0000-4000-8000-000000000009","provisioningState":"` + state + `"}}`))
+		case http.MethodPut:
+			if m.made == nil {
+				m.made = map[string]int{}
+			}
+			m.made[path] = 0
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"properties":{"provisioningState":"Creating"}}`))
+		case http.MethodDelete:
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			_, _ = w.Write([]byte(`{"properties":{}}`))
+		}
+	}
+	for _, coll := range []string{"disks", "snapshots"} {
+		for _, method := range []string{"GET", "PUT", "PATCH", "DELETE"} {
+			mux.HandleFunc(method+" "+rg+"Microsoft.Compute/"+coll+"/{name}", authed(held))
+		}
+		mux.HandleFunc("PATCH "+rg+"Microsoft.Compute/"+coll+"/{name}/providers/Microsoft.Resources/tags/default", authed(held))
+	}
+	mux.HandleFunc("POST "+vmPath+"/attachDetachDataDisks", authed(change))
+	mux.HandleFunc("GET "+sub+"/providers/Microsoft.Authorization/roleDefinitions/{id}", authed(func(w http.ResponseWriter, r *http.Request) {
+		m.mu.Lock()
+		acts := m.roleActions
+		m.mu.Unlock()
+		if r.PathValue("id") != ManageRoleID(testSub) || acts == nil {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"code":"RoleDefinitionDoesNotExist","message":"The specified role definition does not exist."}}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"properties": map[string]any{"permissions": []map[string]any{{"actions": acts}}}})
+	}))
 	for _, verb := range []string{"start", "deallocate", "restart", "powerOff"} {
 		mux.HandleFunc("POST "+vmPath+"/"+verb, authed(change))
 	}

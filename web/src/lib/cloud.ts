@@ -37,6 +37,18 @@ export const GCP_DISK_TYPES = [
   { value: 'pd-ssd', label: 'SSD (pd-ssd)' },
   { value: 'pd-standard', label: 'Standard, HDD (pd-standard)' },
 ]
+/** A managed disk's or snapshot's name in Azure. */
+export const AZURE_DISK_NAME = /^[A-Za-z0-9]([A-Za-z0-9._-]{0,78}[A-Za-z0-9_])?$/
+/** The managed disk types Argus makes in Azure, the cheaper SSD first. */
+export const AZURE_DISK_TYPES = [
+  { value: 'StandardSSD_LRS', label: 'Standard SSD (StandardSSD_LRS)' },
+  { value: 'Premium_LRS', label: 'Premium SSD (Premium_LRS)' },
+  { value: 'Standard_LRS', label: 'Standard HDD (Standard_LRS)' },
+  { value: 'StandardSSD_ZRS', label: 'Standard SSD, zone-redundant (StandardSSD_ZRS)' },
+  { value: 'Premium_ZRS', label: 'Premium SSD, zone-redundant (Premium_ZRS)' },
+]
+/** The largest disk of those types, in GiB. */
+export const AZURE_DISK_MAX_GB = 32767
 /** Where a Google Cloud disk shows up on a Linux VM: Argus names its device after the disk. */
 export function gcpDevicePath(disk: string): string {
   return `/dev/disk/by-id/google-${disk}`
@@ -953,9 +965,19 @@ export const ACTION_NEEDS: Partial<Record<CloudAction, string[]>> = {
   'replica-remove': ['rds:ModifyDBInstance', 'rds:DeleteDBInstance'],
 }
 
+/** The same for an Azure subscription's Argus manage role, in Azure's actions. */
+export const AZURE_ACTION_NEEDS: Partial<Record<CloudAction, string[]>> = {
+  'volume-create': ['Microsoft.Compute/disks/write'], 'volume-grow': ['Microsoft.Compute/disks/write'],
+  'volume-attach': ['Microsoft.Compute/virtualMachines/attachDetachDataDisks/action'],
+  'volume-detach': ['Microsoft.Compute/virtualMachines/attachDetachDataDisks/action'],
+  'volume-delete': ['Microsoft.Compute/disks/delete'],
+  'snapshot-create': ['Microsoft.Compute/snapshots/write'], 'snapshot-delete': ['Microsoft.Compute/snapshots/delete'],
+}
+
 /** Whether an account's manage role lacks what an action takes. */
 export function roleLacks(a: CloudAccount | undefined, action: CloudAction): boolean {
-  return Boolean(a?.manageMissing?.length && ACTION_NEEDS[action]?.some((p) => a.manageMissing.includes(p)))
+  const needs = a?.provider === 'azure' ? AZURE_ACTION_NEEDS : ACTION_NEEDS
+  return Boolean(a?.manageMissing?.length && needs[action]?.some((p) => a.manageMissing.includes(p)))
 }
 
 export const VOLUME_TYPES: { value: string; label: string; perGb: number }[] = [

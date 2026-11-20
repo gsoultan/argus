@@ -175,7 +175,7 @@ func TestWhatArgusDoesInAzureSoFar(t *testing.T) {
 			t.Errorf("%s is listed but not supported", a)
 		}
 	}
-	for _, a := range []cloud.Action{cloud.ActionLaunch, cloud.ActionRemove, cloud.ActionProtect, cloud.ActionVolumeDelete, cloud.ActionFirewallRules, cloud.ActionHibernate} {
+	for _, a := range []cloud.Action{cloud.ActionLaunch, cloud.ActionRemove, cloud.ActionProtect, cloud.ActionImageCreate, cloud.ActionAddressAllocate, cloud.ActionFirewallRules, cloud.ActionHibernate} {
 		if p.Supports(a) {
 			t.Errorf("%s is not made in Azure yet", a)
 		}

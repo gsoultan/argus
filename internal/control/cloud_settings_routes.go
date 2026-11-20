@@ -141,6 +141,11 @@ func (a *API) missingFor(m cloudManaged, needs []string) error {
 	if len(lacks) == 0 {
 		return nil
 	}
+	if m.acct.Provider == "azure" {
+		return fmt.Errorf("the Argus manage role in %s was made before Argus could do this and lacks %s. "+
+			"Update the role from the subscription's row on the Cloud overview: run the command it shows again in Cloud Shell, and Argus sees the change at its next read",
+			m.acct.Name, strings.Join(lacks, ", "))
+	}
 	return fmt.Errorf("the manage role in %s was made before Argus could do this and lacks %s. "+
 		"Update the role from the account's row on the Cloud overview: deploy the template it shows over the argus-access stack, and Argus sees the change at its next read",
 		m.acct.Name, strings.Join(lacks, ", "))

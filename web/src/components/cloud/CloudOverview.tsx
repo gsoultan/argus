@@ -171,7 +171,9 @@ function AccountRow({ a, admin, bases: all }: { a: CloudAccount; admin: boolean;
               ? <Badge variant="light" color="azure" radius="sm" tt="none" fw={500}>Can change</Badge>
               : <Badge variant="default" radius="sm" tt="none" fw={500}>Read only</Badge>}
             {a.access === 'manage' && a.manageMissing?.length > 0 && (
-              <Tooltip label={`The manage role lacks ${a.manageMissing.join(', ')}, so Argus cannot change disks, images or addresses here yet.`} multiline w={300}>
+              <Tooltip label={a.provider === 'azure'
+                ? `The Argus manage role lacks ${a.manageMissing.join(', ')}, so some changes are held back here until the command is run again.`
+                : `The manage role lacks ${a.manageMissing.join(', ')}, so Argus cannot change disks, images or addresses here yet.`} multiline w={300}>
                 <Badge variant="light" color="amber" radius="sm" tt="none" fw={500}>Role needs an update</Badge>
               </Tooltip>
             )}
@@ -243,10 +245,16 @@ function AllowChanges({ a, update, onClose }: { a: CloudAccount; update?: boolea
   return (
     <Modal opened onClose={onClose} size="xl" centered title={<Text fw={700}>{update ? `Update the manage role in ${a.name}` : `Allow changes in ${a.name}`}</Text>}>
       <Stack gap="md">
-        {azure ? (
+        {azure && update ? (
+          <Text size={FS.body} lh={1.55}>
+            The <Text span ff="monospace">Argus manage</Text> role in this subscription was made before Argus could do everything it does
+            now. It lacks {a.manageMissing.join(', ')}. Run the command below again: it brings the role up to date and changes nothing
+            else. Argus also notices by itself at its next read.
+          </Text>
+        ) : azure ? (
           <Text size={FS.body} lh={1.55}>
             Argus gets a second role in the subscription, <Text span ff="monospace">Argus manage</Text>: a custom role that can start, stop,
-            restart, resize and tag VMs and nothing else. It holds no access control, so it cannot grant itself more. Azure gives Argus one
+            restart, resize and tag VMs, and grow, make, attach, detach, snapshot and delete disks, and nothing else. It holds no access control, so it cannot grant itself more. Azure gives Argus one
             identity for reading and changing, so removing that role's assignment under Access control (IAM) is what takes changes back
             outside Argus. Every change is made for the person who asked, waits for approval where the environment asks for it, and
             goes in the audit log.
@@ -283,7 +291,7 @@ function AllowChanges({ a, update, onClose }: { a: CloudAccount; update?: boolea
           <Button loading={allow.isPending}
             onClick={() => void run(() => allow.mutateAsync({ id: a.id, roleArn: arn }), { failure: 'Argus could not use that role',
               success: update ? ['Checking the role', `Argus is reading what the role in ${a.name} may do now.`]
-                : ['Changes allowed', azure ? `Admins can now start, stop, restart, resize and tag VMs in ${a.name}.` : gcp ? `Admins can now start, stop and reset VMs, change their machine type, labels and deletion protection, make, grow, attach, detach, snapshot and delete disks, reserve and assign static addresses, launch and remove VMs, make and delete images, and make and change firewall rules in ${a.name}.`
+                : ['Changes allowed', azure ? `Admins can now start, stop, restart, resize and tag VMs, and make, grow, attach, detach, snapshot and delete disks in ${a.name}.` : gcp ? `Admins can now start, stop and reset VMs, change their machine type, labels and deletion protection, make, grow, attach, detach, snapshot and delete disks, reserve and assign static addresses, launch and remove VMs, make and delete images, and make and change firewall rules in ${a.name}.`
                   : `Admins can now launch and change instances, disks and addresses in ${a.name}.`] }).then((ok) => ok && onClose())}>
             {update ? 'Check again' : 'Check and allow'}
           </Button>

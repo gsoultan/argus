@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/control/cloud"
+	"github.com/gsoultan/argus/internal/control/cloud/azure"
 	"github.com/gsoultan/argus/internal/control/cloud/gcp"
 )
 
@@ -128,6 +129,9 @@ func (a *API) planStorage(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 		if m.acct.Provider == "gcp" {
 			return a.planGCPVolumeCreate(ctx, m, in, ch)
 		}
+		if m.acct.Provider == "azure" {
+			return a.planAzureVolumeCreate(ctx, m, in, ch)
+		}
 		return a.planVolumeCreate(ctx, m, in, ch)
 	case cloud.ActionAddressAllocate:
 		var s cloudNameSpec
@@ -175,6 +179,7 @@ func (a *API) planStorage(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 	ch.Environment = cloudEnvOf(res.Tags, m.acct.Environment)
 	stack := res.Tags["aws:cloudformation:stack-name"]
 	gcpAcct := m.acct.Provider == "gcp"
+	azureAcct := m.acct.Provider == "azure"
 
 	switch in.Action {
 	case cloud.ActionVolumeGrow:
@@ -185,6 +190,9 @@ func (a *API) planStorage(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 		s.FromGB, s.FromType = volumeGB(res)
 		if m.acct.Provider == "gcp" {
 			return planGCPDiskGrow(res, s, ch)
+		}
+		if azureAcct {
+			return a.planAzureDiskGrow(ctx, m, in, res, s, ch)
 		}
 		if s.Type == s.FromType {
 			s.Type = ""
@@ -250,6 +258,19 @@ func (a *API) planStorage(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 		if !liveInstance(inst) {
 			return ch, http.StatusConflict, errors.New(inst.Name + " is being removed")
 		}
+		if azureAcct {
+			// Azure picks the LUN, and a disk without a zone goes only
+			// on a VM without one.
+			if inst.Zone != res.Zone && !azureZoneRedundant(res.Details["type"]) {
+				return ch, http.StatusBadRequest, fmt.Errorf("%s is in %s and %s in %s; a disk attaches only to a VM in its own zone",
+					res.Name, azureZoneWord(res.Zone), inst.Name, azureZoneWord(inst.Zone))
+			}
+			s.Device, s.InstanceName = "", inst.Name
+			ch.Environment = stricterEnv(ch.Environment, cloudEnvOf(inst.Tags, m.acct.Environment))
+			ch.Spec, _ = json.Marshal(s)
+			ch.Summary = "Attach " + res.Name + " to " + inst.Name + " as a data disk"
+			break
+		}
 		if inst.Zone != res.Zone {
 			return ch, http.StatusBadRequest, fmt.Errorf("%s is in %s and %s in %s; a disk attaches only in its own zone", res.Name, res.Zone, inst.Name, inst.Zone)
 		}
@@ -284,6 +305,19 @@ func (a *API) planStorage(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 		if !ok {
 			return ch, http.StatusConflict, errors.New(res.Name + " is not attached")
 		}
+		if azureAcct {
+			if res.Details["platform"] != "" {
+				return ch, http.StatusConflict, errors.New(res.Name + " is the disk " + at.Name + " starts from; Azure does not detach that one")
+			}
+			s := cloudAttachSpec{Instance: at.ID, InstanceName: at.Name}
+			if inst, err := a.store.CloudInstance(ctx, m.acct.ID, in.Region, at.ID); err == nil {
+				s.InstanceName = inst.Name
+				ch.Environment = stricterEnv(ch.Environment, cloudEnvOf(inst.Tags, m.acct.Environment))
+			}
+			ch.Spec, _ = json.Marshal(s)
+			ch.Summary = "Detach " + res.Name + " from " + s.InstanceName
+			break
+		}
 		s := cloudAttachSpec{Instance: at.ID, Device: at.Name}
 		if inst, err := a.store.CloudInstance(ctx, m.acct.ID, in.Region, at.ID); err == nil {
 			s.InstanceName = inst.Name
@@ -314,6 +348,9 @@ func (a *API) planStorage(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 		if s.FinalSnapshot && m.acct.Provider == "gcp" {
 			return ch, http.StatusBadRequest, errors.New("in Google Cloud a final snapshot is its own change: take a snapshot of " + res.Name + " first, then delete it")
 		}
+		if s.FinalSnapshot && azureAcct {
+			return ch, http.StatusBadRequest, errors.New("in Azure a final snapshot is its own change: take a snapshot of " + res.Name + " first, then delete it")
+		}
 		if stack != "" {
 			return ch, http.StatusConflict, errors.New("Argus will not delete " + res.Name + ": it belongs to CloudFormation stack " + stack)
 		}
@@ -337,6 +374,17 @@ func (a *API) planStorage(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 			}
 			if !gcp.ValidName(s.Name) {
 				return ch, http.StatusBadRequest, errors.New("a snapshot's name is lowercase letters, digits and -, up to 63, starting with a letter")
+			}
+		}
+		if azureAcct {
+			if s.Name == "" {
+				s.Name = azure.SnapshotName(res.Name, time.Now().UTC())
+			}
+			if !azure.ValidDiskName(s.Name) {
+				return ch, http.StatusBadRequest, errors.New("a snapshot's name is letters, digits, . _ and -, up to 80, starting with a letter or digit")
+			}
+			if g := res.Details["resourceGroup"]; a.azureNamed(ctx, m.acct.ID, cloud.KindSnapshot, g, s.Name) {
+				return ch, http.StatusConflict, errors.New("resource group " + g + " already has a snapshot named " + s.Name)
 			}
 		}
 		if s.Name == "" {
@@ -737,6 +785,10 @@ func (a *API) applyStorage(ctx context.Context, m cloudManaged, ch CloudChange) 
 		if err == nil && s.SizeGB > s.FromGB {
 			res.Detail = "AWS grows the disk in the background. The file system on it still has its old size until it is grown too: " +
 				"from the server's Disks tab when it has the Argus agent"
+			if m.acct.Provider == "azure" {
+				res.Detail = "Azure grows the disk in a few seconds. The file system on it still has its old size until it is grown too: " +
+					"from the server's Disks tab when it has the Argus agent"
+			}
 			if m.acct.Provider == "gcp" {
 				res.Detail = "Google grows the disk in a few seconds. The file system on it still has its old size until it is grown too: " +
 					"from the server's Disks tab when it has the Argus agent"

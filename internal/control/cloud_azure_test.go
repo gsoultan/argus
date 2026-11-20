@@ -355,12 +355,144 @@ func TestCloudAzureSubscriptionStopsResizesAndTags(t *testing.T) {
 		t.Fatalf("resize: %+v", ch)
 	}
 
-	// Tags: Azure's rules, on VMs only for now.
+	// Tags: Azure's rules, on VMs, disks and snapshots for now.
 	ask(`"action":"tags","resourceId":"`+vm+`","spec":{"set":{"a/b":"x"}}`, http.StatusBadRequest)
 	ask(`"action":"tags","resourceId":"`+vm+`","spec":{"set":{"Microsoft-owner":"x"}}`, http.StatusBadRequest)
-	ask(`"action":"tags","resourceId":"bbbbbbbb-0000-4000-8000-000000000001","kind":"volume","spec":{"set":{"team":"payments"}}`, http.StatusNotImplemented)
+	ask(`"action":"tags","resourceId":"bbbbbbbb-0000-4000-8000-000000000001","kind":"firewall","spec":{"set":{"team":"payments"}}`, http.StatusNotImplemented)
 	if ch := ask(`"action":"tags","resourceId":"`+vm+`","spec":{"set":{"Team":"payments"}}`, http.StatusOK); ch.State != "applied" ||
 		ch.Summary != "Change tags on web-1: Team=payments" {
 		t.Fatalf("tags: %+v", ch)
+	}
+}
+
+// Disks in a subscription: Azure's own rules are checked before anything
+// is asked of it, and each refusal says what to do instead.
+func TestCloudAzureSubscriptionDisksAndSnapshots(t *testing.T) {
+	e, fake, sub := azureEnv(t)
+	w := do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts/prepare", "admin-token", `{"provider":"azure","accountId":"`+sub+`","manage":true}`)
+	var p CloudPrepared
+	_ = json.Unmarshal(w.Body.Bytes(), &p)
+	for _, want := range []string{"Microsoft.Compute/disks/write", "Microsoft.Compute/snapshots/delete", "Microsoft.Compute/virtualMachines/attachDetachDataDisks/action"} {
+		if !strings.Contains(p.Command, want) {
+			t.Fatalf("the command lacks %q:\n%s", want, p.Command)
+		}
+	}
+	fake.Roles[p.ReadRoleARN] = p.ExternalID
+	fake.Roles[p.ManageRoleARN] = p.ExternalID
+	const (
+		vm      = "aaaaaaaa-0000-4000-8000-000000000001"
+		osDisk  = "bbbbbbbb-0000-4000-8000-000000000001"
+		data    = "bbbbbbbb-0000-4000-8000-000000000002"
+		left    = "bbbbbbbb-0000-4000-8000-000000000003"
+		spare   = "bbbbbbbb-0000-4000-8000-000000000004"
+		nightly = "cccccccc-0000-4000-8000-000000000001"
+	)
+	rg := map[string]string{"resourceGroup": "Web-RG"}
+	with := func(extra ...string) map[string]string {
+		out := map[string]string{"resourceGroup": "Web-RG"}
+		for i := 0; i+1 < len(extra); i += 2 {
+			out[extra[i]] = extra[i+1]
+		}
+		return out
+	}
+	onVM := []cloud.Ref{{Kind: cloud.KindInstance, ID: vm, Name: "web-1"}}
+	fake.Resources["eastus"] = []cloud.Resource{
+		{Kind: cloud.KindInstance, ID: vm, Name: "web-1", Region: "eastus", Zone: "eastus-2", State: "running", Size: "Standard_B2s",
+			Details: with("rootDeviceName", "web-1_OsDisk")},
+		{Kind: cloud.KindVolume, ID: osDisk, Name: "web-1_OsDisk", Region: "eastus", Zone: "eastus-2", State: "in-use", Size: "30 GiB", Links: onVM,
+			Details: with("type", "Premium_LRS", "platform", "linux")},
+		{Kind: cloud.KindVolume, ID: data, Name: "web-1-data", Region: "eastus", Zone: "eastus-2", State: "in-use", Size: "128 GiB", Links: onVM,
+			Details: with("type", "StandardSSD_LRS")},
+		{Kind: cloud.KindVolume, ID: left, Name: "left-over", Region: "eastus", State: "available", Size: "200 GiB", Details: with("type", "Standard_LRS")},
+		{Kind: cloud.KindVolume, ID: spare, Name: "spare", Region: "eastus", Zone: "eastus-2", State: "available", Size: "64 GiB", Details: with("type", "Premium_LRS")},
+		{Kind: cloud.KindSnapshot, ID: nightly, Name: "nightly", Region: "eastus", State: "completed", Size: "30 GiB", Details: rg},
+	}
+	w = do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts", "admin-token",
+		`{"provider":"azure","name":"disks-azure","accountId":"`+sub+`","environment":"development","manage":true}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("connect with changes: %d %s", w.Code, w.Body)
+	}
+	var c CloudAccount
+	_ = json.Unmarshal(w.Body.Bytes(), &c)
+	waitCloudSync(t, e, c)
+	ask := func(body string, want int, says string) CloudChange {
+		t.Helper()
+		w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes", "admin-token", `{"accountId":"`+c.ID+`","region":"eastus",`+body+`}`)
+		if w.Code != want || !strings.Contains(w.Body.String(), says) {
+			t.Fatalf("%s: %d %s, want %d saying %q", body, w.Code, w.Body, want, says)
+		}
+		var ch CloudChange
+		_ = json.Unmarshal(w.Body.Bytes(), &ch)
+		return ch
+	}
+	bad, conflict, ok := http.StatusBadRequest, http.StatusConflict, http.StatusOK
+
+	// Grow: size only, upwards, and the disk a VM starts from only while it is stopped.
+	ask(`"action":"volume-grow","resourceId":"`+data+`","spec":{"sizeGb":64}`, bad, "only grows")
+	ask(`"action":"volume-grow","resourceId":"`+data+`","spec":{"sizeGb":256,"type":"Premium_LRS"}`, bad, "size only")
+	ask(`"action":"volume-grow","resourceId":"`+data+`","spec":{"sizeGb":40000}`, bad, "at most 32767")
+	ask(`"action":"volume-grow","resourceId":"`+osDisk+`","spec":{"sizeGb":64}`, conflict, "Stop web-1 first")
+	if ch := ask(`"action":"volume-grow","resourceId":"`+data+`","spec":{"sizeGb":256}`, ok, ""); ch.State != "applied" || ch.Summary != "Grow web-1-data from 128 to 256 GiB" ||
+		!strings.Contains(string(ch.Result), "Azure grows the disk") {
+		t.Fatalf("grow: %+v", ch)
+	}
+
+	// Attach: a disk without a zone does not go on a VM in one, and Azure picks the LUN.
+	ask(`"action":"volume-attach","resourceId":"`+left+`","spec":{"instance":"`+vm+`"}`, bad, "left-over is in no zone and web-1 in eastus-2")
+	ask(`"action":"volume-attach","resourceId":"`+data+`","spec":{"instance":"`+vm+`"}`, conflict, "already attached")
+	if ch := ask(`"action":"volume-attach","resourceId":"`+spare+`","spec":{"instance":"`+vm+`","device":"/dev/sdf"}`, ok, ""); ch.Summary != "Attach spare to web-1 as a data disk" {
+		t.Fatalf("attach: %+v", ch)
+	}
+	// Detach: never the disk the VM starts from.
+	ask(`"action":"volume-detach","resourceId":"`+osDisk+`"`, conflict, "Azure does not detach that one")
+	ask(`"action":"volume-detach","resourceId":"`+left+`"`, conflict, "not attached")
+	if ch := ask(`"action":"volume-detach","resourceId":"`+data+`"`, ok, ""); ch.Summary != "Detach web-1-data from web-1" {
+		t.Fatalf("detach: %+v", ch)
+	}
+
+	// Snapshots get a name Azure takes, and never one in use.
+	ask(`"action":"snapshot-create","resourceId":"`+left+`","spec":{"name":"a/b"}`, bad, "snapshot's name")
+	ask(`"action":"snapshot-create","resourceId":"`+left+`","spec":{"name":"NIGHTLY"}`, conflict, "already has a snapshot named NIGHTLY")
+	if ch := ask(`"action":"snapshot-create","resourceId":"`+left+`"`, ok, ""); !strings.HasPrefix(ch.Summary, `Snapshot left-over as "left-over-20`) {
+		t.Fatalf("snapshot: %+v", ch)
+	}
+
+	// A new disk needs a resource group Argus has read, a type of Azure's and a free name.
+	ask(`"action":"volume-create","spec":{"name":"d1","sizeGb":8}`, bad, "pick the resource group")
+	ask(`"action":"volume-create","spec":{"name":"d1","group":"elsewhere","sizeGb":8}`, bad, "read nothing in a resource group named elsewhere")
+	ask(`"action":"volume-create","spec":{"name":"d1","group":"Web-RG","sizeGb":8,"type":"gp3"}`, bad, "pick a disk type")
+	ask(`"action":"volume-create","spec":{"name":"bad name","group":"Web-RG","sizeGb":8}`, bad, "name the disk")
+	ask(`"action":"volume-create","spec":{"name":"Left-Over","group":"web-rg","sizeGb":8}`, conflict, "already has a disk named Left-Over")
+	ask(`"action":"volume-create","spec":{"name":"d1","group":"Web-RG","sizeGb":8,"zone":"eastus-9"}`, bad, "eastus-1 to eastus-3")
+	ask(`"action":"volume-create","spec":{"name":"d1","group":"Web-RG","sizeGb":8,"type":"Premium_ZRS","zone":"eastus-1"}`, bad, "leave the zone out")
+	ask(`"action":"volume-create","spec":{"name":"d1","group":"Web-RG","sizeGb":8,"zone":"eastus-1","attachTo":"`+vm+`"}`, bad, "web-1 is in eastus-2")
+	ask(`"action":"volume-create","spec":{"name":"d1","group":"Web-RG","sizeGb":8,"snapshot":"`+nightly+`"}`, bad, "at least 30 GiB")
+	ask(`"action":"volume-create","spec":{"name":"d1","group":"Web-RG","sizeGb":0}`, bad, "1 to 32767 GiB")
+	if ch := ask(`"action":"volume-create","spec":{"name":"d1","group":"web-rg","snapshot":"`+nightly+`"}`, ok, ""); ch.Summary !=
+		"Make the disk d1: 30 GiB StandardSSD_LRS in eastus, resource group Web-RG, from nightly" {
+		t.Fatalf("new disk: %+v", ch)
+	}
+	// Attached, it goes where the VM is: its zone and its resource group.
+	if ch := ask(`"action":"volume-create","spec":{"name":"d2","sizeGb":16,"type":"Premium_LRS","attachTo":"`+vm+`"}`, ok, ""); ch.Summary !=
+		"Make the disk d2: 16 GiB Premium_LRS in eastus-2, resource group Web-RG, attached to web-1" {
+		t.Fatalf("new attached disk: %+v", ch)
+	}
+
+	// Delete: typed, of a disk nothing uses, and a final snapshot is its own change.
+	ask(`"action":"volume-delete","resourceId":"`+left+`","confirm":"left-over","spec":{"finalSnapshot":true}`, bad, "in Azure a final snapshot is its own change")
+	ask(`"action":"volume-delete","resourceId":"`+left+`","confirm":"nope"`, bad, "type the disk's name")
+	ask(`"action":"volume-delete","resourceId":"`+osDisk+`","confirm":"web-1_OsDisk"`, conflict, "detach it first")
+	if ch := ask(`"action":"volume-delete","resourceId":"`+left+`","confirm":"left-over"`, ok, ""); !strings.HasPrefix(ch.Summary, "Delete the disk left-over") {
+		t.Fatalf("delete: %+v", ch)
+	}
+	if ch := ask(`"action":"snapshot-delete","resourceId":"`+nightly+`","confirm":"nightly"`, ok, ""); !strings.HasPrefix(ch.Summary, "Delete the snapshot nightly") {
+		t.Fatalf("snapshot delete: %+v", ch)
+	}
+	// Images and addresses are refused by the real provider, whatever the console sends.
+	real := azure.New(azure.Options{})
+	for _, a := range []cloud.Action{cloud.ActionImageCreate, cloud.ActionAddressAllocate, cloud.ActionAddressRelease} {
+		if cloud.Supports(real, a) {
+			t.Fatalf("%s is not made in Azure yet", a)
+		}
 	}
 }

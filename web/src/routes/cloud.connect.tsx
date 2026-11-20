@@ -130,7 +130,7 @@ function Connect() {
                           : 'See instances, disks and firewalls. Nothing in the account can be changed from Argus.'} />
                       <Choice value="manage" icon={IconPencil} title="Read and change"
                         text={azure
-                          ? 'Also start, stop and restart VMs, change their size and their tags, with approvals and the audit log. More changes come later.'
+                          ? 'Also start, stop and restart VMs, change their size and their tags, and make, grow, attach, snapshot and delete disks, with approvals and the audit log. More changes come later.'
                           : gcp
                           ? 'Also start, stop and reset VMs, change their machine type, labels and deletion protection, make, grow, attach, detach, snapshot and delete disks, reserve and assign static addresses, launch and remove VMs, make and delete images, and make and change firewall rules, with approvals and the audit log. More changes come later.'
                           : 'Also launch, stop, resize and remove instances, with approvals and the audit log.'} />
@@ -280,7 +280,7 @@ function AzureSummary({ prepared }: { prepared: CloudPrepared }) {
           list and describe resources, never read what is on a disk, a secret or a key, or change anything.{' '}
           {two
             ? <>The same command makes a custom role, <Text span ff="monospace" size={FS.meta}>{prepared.manageRoleName}</Text>, that can start,
-              stop, restart, resize and tag VMs and nothing else: no access control, so it cannot grant itself more. Neither costs anything.{' '}</>
+              stop, restart, resize and tag VMs, change disks and snapshots, and nothing else: no access control, so it cannot grant itself more. Neither costs anything.{' '}</>
             : 'Nothing is made in the subscription but that assignment, and it costs nothing. '}
           <Text span size={FS.meta} c="azure" style={{ cursor: 'pointer' }} onClick={() => setMore((m) => !m)}>
             {more ? 'Less' : 'How it is locked down'}

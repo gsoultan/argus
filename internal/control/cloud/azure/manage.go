@@ -58,6 +58,19 @@ var ManageActions = []string{
 	"Microsoft.Resources/tags/read",
 	"Microsoft.Resources/tags/write",
 	"Microsoft.Resources/tags/delete",
+	// Disks and snapshots. Azure checks beginGetAccess on what a copy is
+	// made from: on the disk a snapshot is taken of, and on the snapshot a
+	// disk is made from. The same two actions also let their holder ask
+	// for a download link to that disk or snapshot, which Argus never does.
+	"Microsoft.Compute/virtualMachines/attachDetachDataDisks/action",
+	"Microsoft.Compute/disks/read",
+	"Microsoft.Compute/disks/write",
+	"Microsoft.Compute/disks/delete",
+	"Microsoft.Compute/disks/beginGetAccess/action",
+	"Microsoft.Compute/snapshots/read",
+	"Microsoft.Compute/snapshots/write",
+	"Microsoft.Compute/snapshots/delete",
+	"Microsoft.Compute/snapshots/beginGetAccess/action",
 }
 
 // ManageRoleID is the id of a subscription's manage role: a GUID, as Azure
@@ -81,17 +94,23 @@ var supported = map[cloud.Action]bool{
 	cloud.ActionReboot: true,
 	cloud.ActionResize: true,
 	cloud.ActionTags:   true,
+
+	cloud.ActionVolumeCreate: true, cloud.ActionVolumeGrow: true, cloud.ActionVolumeAttach: true,
+	cloud.ActionVolumeDetach: true, cloud.ActionVolumeDelete: true,
+	cloud.ActionSnapshotCreate: true, cloud.ActionSnapshotDelete: true,
 }
 
 // TaggableKinds are the kinds Argus tags in Azure so far.
-var TaggableKinds = []cloud.Kind{cloud.KindInstance}
+var TaggableKinds = []cloud.Kind{cloud.KindInstance, cloud.KindVolume, cloud.KindSnapshot}
 
 // Supports reports whether Argus can make change a in a subscription yet.
 func (p *Provider) Supports(a cloud.Action) bool { return supported[a] }
 
 // SupportedActions is every action Supports allows, for the console.
 func SupportedActions() []cloud.Action {
-	return []cloud.Action{cloud.ActionStart, cloud.ActionStop, cloud.ActionReboot, cloud.ActionResize, cloud.ActionTags}
+	return []cloud.Action{cloud.ActionStart, cloud.ActionStop, cloud.ActionReboot, cloud.ActionResize, cloud.ActionTags,
+		cloud.ActionVolumeCreate, cloud.ActionVolumeGrow, cloud.ActionVolumeAttach, cloud.ActionVolumeDetach, cloud.ActionVolumeDelete,
+		cloud.ActionSnapshotCreate, cloud.ActionSnapshotDelete}
 }
 
 // errNotYet refuses a change Argus does not make in Azure yet.
@@ -312,7 +331,7 @@ func (p *Provider) SetTags(ctx context.Context, a cloud.Account, actor cloud.Act
 // deletes tags by name on its side, so tags someone else is changing at
 // the same moment are not overwritten.
 func (p *Provider) SetTagsOf(ctx context.Context, a cloud.Account, actor cloud.Actor, region string, kind cloud.Kind, id string, set map[string]string, remove []string) (cloud.Result, error) {
-	if kind != cloud.KindInstance {
+	if !slices.Contains(TaggableKinds, kind) {
 		return cloud.Result{}, errNotYet("tag a " + string(kind))
 	}
 	for k, v := range set {
@@ -320,7 +339,19 @@ func (p *Provider) SetTagsOf(ctx context.Context, a cloud.Account, actor cloud.A
 			return cloud.Result{}, fmt.Errorf("%s=%s: %s", k, v, why)
 		}
 	}
-	t, m, err := p.manage(ctx, a, actor, region, id)
+	t, _, err := p.session(ctx, a, actor)
+	if err != nil {
+		return cloud.Result{}, err
+	}
+	var m vm
+	switch kind {
+	case cloud.KindInstance:
+		m, err = p.locateVM(ctx, t, actor, a.AccountID, region, id)
+	case cloud.KindVolume, cloud.KindSnapshot:
+		var h held
+		h, err = p.locateHeld(ctx, t, actor, a.AccountID, region, map[cloud.Kind]string{cloud.KindVolume: "disks", cloud.KindSnapshot: "snapshots"}[kind], id)
+		m = vm{Name: h.Name, Path: h.Path, Location: h.Location, Tags: h.Tags}
+	}
 	if err != nil {
 		return cloud.Result{}, err
 	}

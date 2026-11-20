@@ -36,7 +36,7 @@ func SetupCommandFor(subscription string, principals []string, externalID string
 	var b strings.Builder
 	w := func(s string) { b.WriteString(s); b.WriteByte('\n') }
 	if manage {
-		w("# Lets Argus read subscription " + subscription + " and change VMs in it: start, stop, restart, resize and tag, nothing else.")
+		w("# Lets Argus read subscription " + subscription + " and change VMs and their disks in it: start, stop, restart, resize and tag VMs; make, grow, attach, detach, snapshot and delete disks; nothing else.")
 	} else {
 		w("# Lets Argus read subscription " + subscription + ": Reader lists and describes, reads no data and changes nothing.")
 	}
