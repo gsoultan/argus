@@ -343,7 +343,9 @@ func HourlyPrice(size string) (float64, bool) {
 }
 
 // azureHourly is the pay-as-you-go Linux price per hour, in US dollars,
-// in East US, of the VM sizes Argus offers to launch in Azure.
+// in East US, of the VM sizes Argus offers to launch in Azure, as the
+// Azure Retail Prices API (prices.azure.com) gave them on 20 November
+// 2026.
 var azureHourly = map[string]float64{
 	"Standard_B1s": 0.0104, "Standard_B2s": 0.0416, "Standard_B2ms": 0.0832, "Standard_B4ms": 0.166,
 	"Standard_D2s_v5": 0.096, "Standard_D4s_v5": 0.192, "Standard_D8s_v5": 0.384,

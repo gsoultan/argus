@@ -20,6 +20,9 @@ func TestAzureDiskMonthlyIsTheTiersPrice(t *testing.T) {
 		{"Premium_ZRS", 64, 15.32, true},
 		{"Standard_LRS", 8, 1.54, true}, // the smallest standard tier is 32
 		{"StandardSSD_LRS", 32767, 2457.60, true},
+		{"Premium_LRS", 32767, 3604.11, true},
+		{"Standard_LRS", 32767, 953.55, true},
+		{"Standard_ZRS", 64, 0, false}, // no such disk
 		{"UltraSSD_LRS", 128, 0, false},
 		{"PremiumV2_LRS", 128, 0, false},
 		{"StandardSSD_LRS", 0, 0, false},

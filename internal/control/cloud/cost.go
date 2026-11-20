@@ -191,21 +191,22 @@ func VolumeMonthly(size string) (float64, bool) {
 
 // Azure bills a managed disk by the tier its size rounds up to, not by
 // the gigabyte. These are the tiers' sizes in GiB and their monthly list
-// prices in US dollars, East US, locally redundant.
+// prices in US dollars, East US, locally redundant, as the Azure Retail
+// Prices API (prices.azure.com) gave them on 20 November 2026.
 var (
 	azureDiskTiers = []int{4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32767}
 	azureDiskPrice = map[string][]float64{
-		"premium_lrs":     {0.60, 1.20, 2.40, 5.28, 10.21, 19.71, 38.02, 73.22, 135.17, 259.05, 495.57, 946.08, 1638.40, 3276.80},
+		"premium_lrs":     {0.60, 1.20, 2.40, 5.28, 10.21, 19.71, 38.01, 73.22, 135.17, 259.05, 495.57, 946.08, 1802.06, 3604.11},
 		"standardssd_lrs": {0.30, 0.60, 1.20, 2.40, 4.80, 9.60, 19.20, 38.40, 76.80, 153.60, 307.20, 614.40, 1228.80, 2457.60},
 		// A standard disk under 32 GiB bills as the 32 GiB tier.
-		"standard_lrs": {1.54, 1.54, 1.54, 1.54, 3.01, 5.89, 11.33, 21.76, 40.96, 77.83, 143.36, 262.14, 524.29, 1048.58},
+		"standard_lrs": {1.54, 1.54, 1.54, 1.54, 3.01, 5.89, 11.33, 21.76, 40.96, 77.82, 143.36, 262.14, 491.52, 953.55},
 	}
 )
 
 // AzureDiskMonthly is an Azure managed disk's monthly list price from its
 // type (StandardSSD_LRS) and size, and whether Argus has a price for the
-// type. A zone-redundant disk is half as much again as a locally
-// redundant one. Ultra and Premium v2 disks bill by what is provisioned
+// type. A zone-redundant SSD is half as much again as a locally redundant
+// one; there is no zone-redundant standard HDD. Ultra and Premium v2 disks bill by what is provisioned
 // on them, which the inventory does not read, so they have no estimate.
 func AzureDiskMonthly(sku string, gib int) (float64, bool) {
 	sku = strings.ToLower(sku)
@@ -214,7 +215,7 @@ func AzureDiskMonthly(sku string, gib int) (float64, bool) {
 		sku, times = base+"_lrs", 1.5
 	}
 	prices, ok := azureDiskPrice[sku]
-	if !ok || gib <= 0 {
+	if !ok || gib <= 0 || (times != 1 && sku == "standard_lrs") {
 		return 0, false
 	}
 	for i, size := range azureDiskTiers {
