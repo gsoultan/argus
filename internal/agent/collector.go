@@ -49,6 +49,14 @@ type Collector struct {
 	// hangups ends each session the agent opened itself through the tunnel,
 	// for the same reason: those have no shim connection to close.
 	hangups map[string]func()
+
+	// ended is when each session sealed lately ended, so a viewer who
+	// arrives just after is told it ended rather than that it is unknown;
+	// see watchable. Pruned as it grows.
+	ended map[string]time.Time
+	// startedAt is when this collector started: a session that began before
+	// it and is not running here was most likely cut by an agent restart.
+	startedAt time.Time
 	// tunnels is every session still open that is reported as running:
 	// through the tunnel, terminal or desktop, and direct logins.
 	tunnels map[string]liveRecording
@@ -327,7 +335,8 @@ func NewCollector(dir string, log *slog.Logger) *Collector {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Collector{dir: dir, log: log, active: map[string]*activeSession{}}
+	return &Collector{dir: dir, log: log, active: map[string]*activeSession{},
+		startedAt: time.Now().UTC()}
 }
 
 // Listen serves the unix socket at path until Close.
@@ -752,6 +761,7 @@ func (c *Collector) seal(sess *activeSession, exitCode int, conn net.Conn) {
 	delete(c.active, sess.id)
 	// A direct login's entry; a tunnel session's was taken by its Seal.
 	delete(c.tunnels, sess.id)
+	c.noteEnded(sess.id, time.Now())
 	c.mu.Unlock()
 
 	c.Exec.Detach(sess.id, sess.start.PID)

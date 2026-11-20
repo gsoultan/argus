@@ -5,7 +5,10 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/gsoultan/argus/internal/tunnel"
@@ -151,6 +154,94 @@ func (c *Collector) watching(id string) (*activeSession, bool) {
 	return s, ok && s.hub != nil
 }
 
+// endedKept bounds how long, and how many, ended sessions are remembered
+// for telling a late viewer that one ended.
+const (
+	endedKept    = 15 * time.Minute
+	endedKeptMax = 512
+)
+
+// noteEnded remembers that id ended at t. Called with c.mu held.
+func (c *Collector) noteEnded(id string, t time.Time) {
+	if c.ended == nil {
+		c.ended = map[string]time.Time{}
+	}
+	if len(c.ended) >= endedKeptMax {
+		for k, at := range c.ended {
+			if t.Sub(at) > endedKept {
+				delete(c.ended, k)
+			}
+		}
+		// Still full: forget an arbitrary one rather than grow.
+		for k := range c.ended {
+			if len(c.ended) < endedKeptMax {
+				break
+			}
+			delete(c.ended, k)
+		}
+	}
+	c.ended[id] = t
+}
+
+// continuesFrom is the ids m carries on from. A shim from before Continues
+// said so only in its origin reason, and a login that outlived an agent
+// update is running exactly that older shim.
+func continuesFrom(m SessionStart) []string {
+	if len(m.Continues) > 0 {
+		return m.Continues
+	}
+	const prefix = "continues session "
+	if rest, ok := strings.CutPrefix(m.OriginReason, prefix); ok {
+		if id, _, _ := strings.Cut(rest, " "); id != "" {
+			return []string{id}
+		}
+	}
+	return nil
+}
+
+// Why a watch finds nothing to show, as the viewer is told.
+const (
+	watchEnded = "the session has ended on this server"
+	// watchUnknown is a session id this agent has no record of. The one
+	// way that happens to a login that is still running is the agent
+	// restarting under it, which records the rest as a new session; a
+	// shim that could not reach the new agent in time is not recorded
+	// at all, and says so on the person's terminal.
+	watchUnknown = "the session is not running on this server and this agent has no " +
+		"record of it ending. The agent has been running since %s; if the session " +
+		"began before that, the agent restarted during it, and the rest of the " +
+		"login is recorded as a new session or, if it could not reconnect, not at all"
+	watchOtherAccount = "the session with this id on this server is not running as the " +
+		"account the console has on record for it"
+)
+
+// watchable finds what a viewer asking for id, as principal, is shown: the
+// session itself while it runs, or the session that carries it on after an
+// agent restart, which is the same login. why says what was found instead
+// when there is nothing to show.
+func (c *Collector) watchable(id, principal string) (s *activeSession, why string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if s, ok := c.active[id]; ok && s.hub != nil {
+		if s.start.Principal != principal {
+			return nil, watchOtherAccount
+		}
+		return s, ""
+	}
+	for _, s := range c.active {
+		if s.hub == nil || s.start.Principal != principal {
+			continue
+		}
+		if slices.Contains(continuesFrom(s.start), id) {
+			return s, ""
+		}
+	}
+	if at, ok := c.ended[id]; ok {
+		return nil, watchEnded + " (" + time.Since(at).Round(time.Second).String() + " ago)"
+	}
+	return nil, fmt.Sprintf(watchUnknown, c.startedAt.UTC().Format("2006-01-02 15:04 MST"))
+}
+
 // Watch returns the watch service.
 func Watch(cfg WatchConfig) TunnelService {
 	log := cfg.Log
@@ -174,16 +265,21 @@ func Watch(cfg WatchConfig) TunnelService {
 			call.Refuse(tunnel.ErrGrant{Reason: "it is not for watching a session"}.Error())
 			return
 		}
-		sess, ok := cfg.Collector.watching(g.Session)
-		if !ok || sess.start.Principal != g.Principal {
-			call.Refuse("the session is not running on this server; it may have just ended")
+		sess, why := cfg.Collector.watchable(g.Session, g.Principal)
+		if sess == nil {
+			log.Info("tunnel: nothing to watch", "session", g.Session, "viewer", g.Email, "why", why)
+			call.Refuse(why)
 			return
 		}
 		if call.Accept(g.Session) != nil {
 			_ = call.Stream.Close()
 			return
 		}
-		log.Info("tunnel: session watched", "session", g.Session, "viewer", g.Email)
+		if sess.id != g.Session {
+			log.Info("tunnel: session watched through the session that continues it",
+				"session", g.Session, "continued_as", sess.id, "viewer", g.Email)
+		}
+		log.Info("tunnel: session watched", "session", sess.id, "viewer", g.Email)
 		serveWatch(ctx, call.Stream, cfg.Collector, sess)
 		_ = call.Stream.Close()
 		log.Info("tunnel: stopped watching", "session", g.Session, "viewer", g.Email)

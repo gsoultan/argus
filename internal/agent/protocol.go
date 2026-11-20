@@ -75,6 +75,11 @@ type SessionStart struct {
 	// OriginReason explains how Origin was decided, so an operator reviewing a
 	// flagged session can see whether it rested on proof or on a fallback.
 	OriginReason string `json:"origin_reason,omitempty"`
+	// Continues names the sessions this one carries on from, oldest first:
+	// a login that outlived an agent restart is recorded from then on as a
+	// new session, and these are the ids it had before. A viewer asking to
+	// watch one of them is shown this one; see Collector.watchable.
+	Continues []string `json:"continues,omitempty"`
 	// Actor is the person a session opened through the tunnel is for, from
 	// the control plane's signed grant. Never set by a shim: a shim runs as
 	// the user being recorded, and could claim to be anyone.

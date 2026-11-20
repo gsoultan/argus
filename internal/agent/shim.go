@@ -291,7 +291,9 @@ type stream struct {
 	socket    string
 	start     SessionStart
 	sessionID string
-	resuming  bool
+	// earlier is every id this login was recorded under before sessionID.
+	earlier  []string
+	resuming bool
 	// pending holds what the session produced while no collector was
 	// listening, up to pendingMax.
 	pending     []Frame
@@ -345,6 +347,8 @@ func (s *stream) resume() {
 	start := s.start
 	s.mu.Lock()
 	prev := s.sessionID
+	s.earlier = append(s.earlier, prev)
+	start.Continues = append([]string(nil), s.earlier...)
 	s.mu.Unlock()
 	start.StartedAt = time.Now().UTC()
 	start.OriginReason = "continues session " + prev + " after the host agent restarted; " +
