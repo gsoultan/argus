@@ -26,8 +26,9 @@ there is in AWS and Google Cloud; what stands in for it is a custom role,
 "Argus manage", made in the subscription by the same setup command when the
 person allows changes, and assigned to argus-control with this Argus's
 external id in the assignment's description. The role lists only the
-actions Argus takes, and nothing under Microsoft.Authorization, so it
-cannot give itself more.
+actions Argus takes. Of Microsoft.Authorization it holds only the two
+that put a resource lock on and take one off (lock.go), and nothing that
+assigns or defines a role, so it cannot give itself more.
 
 Argus makes a change only when that assignment is there and carries the
 external id, checked the same way as the Reader one. Taking the assignment
@@ -102,6 +103,12 @@ var ManageActions = []string{
 	"Microsoft.Network/networkSecurityGroups/read",
 	"Microsoft.Network/networkSecurityGroups/write",
 	"Microsoft.Network/networkSecurityGroups/delete",
+	// The delete lock that protects a VM. These two are the only actions
+	// under Microsoft.Authorization, and neither grants access; Azure
+	// cannot narrow them to locks of one name, so they reach every lock
+	// in the subscription, and Argus takes off only its own.
+	"Microsoft.Authorization/locks/write",
+	"Microsoft.Authorization/locks/delete",
 }
 
 // ManageRoleID is the id of a subscription's manage role: a GUID, as Azure
@@ -126,6 +133,8 @@ var supported = map[cloud.Action]bool{
 	cloud.ActionResize: true,
 	cloud.ActionTags:   true,
 
+	cloud.ActionProtect: true, cloud.ActionUnprotect: true,
+
 	cloud.ActionVolumeCreate: true, cloud.ActionVolumeGrow: true, cloud.ActionVolumeAttach: true,
 	cloud.ActionVolumeDetach: true, cloud.ActionVolumeDelete: true,
 	cloud.ActionSnapshotCreate: true, cloud.ActionSnapshotDelete: true,
@@ -149,6 +158,7 @@ func (p *Provider) Supports(a cloud.Action) bool { return supported[a] }
 // SupportedActions is every action Supports allows, for the console.
 func SupportedActions() []cloud.Action {
 	return []cloud.Action{cloud.ActionStart, cloud.ActionStop, cloud.ActionReboot, cloud.ActionResize, cloud.ActionTags,
+		cloud.ActionProtect, cloud.ActionUnprotect,
 		cloud.ActionVolumeCreate, cloud.ActionVolumeGrow, cloud.ActionVolumeAttach, cloud.ActionVolumeDetach, cloud.ActionVolumeDelete,
 		cloud.ActionSnapshotCreate, cloud.ActionSnapshotDelete,
 		cloud.ActionAddressAllocate, cloud.ActionAddressAssociate, cloud.ActionAddressDisassociate, cloud.ActionAddressRelease,
@@ -474,13 +484,6 @@ const tagsAPI = "2021-04-01"
 
 func tagPatch(op string, tags map[string]string) map[string]any {
 	return map[string]any{"operation": op, "properties": map[string]any{"tags": tags}}
-}
-
-// The rest of what a Manager does comes to Azure later; Supports says so
-// before any of these is asked.
-
-func (p *Provider) Protect(context.Context, cloud.Account, cloud.Actor, string, string, bool) (cloud.Result, error) {
-	return cloud.Result{}, errNotYet("lock a VM against deletion")
 }
 
 var (

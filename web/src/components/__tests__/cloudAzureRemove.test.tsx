@@ -10,7 +10,7 @@ import { theme } from '~/theme'
 /**
  * Removing a VM in an Azure subscription: Azure deletes with a VM only
  * what was marked to go with it, so the dialog says what stays, and a
- * resource lock is Azure's to take off.
+ * resource lock comes off as its own change.
  */
 
 const vm = {
@@ -54,9 +54,9 @@ describe('Removing a VM in an Azure subscription', () => {
     expect(screen.getByRole('button', { name: 'Remove VM' })).toBeDisabled()
   })
 
-  it('leaves a lock to the Azure portal', () => {
-    show({ ...plan, plan: { ...plan.plan, protected: true }, refusal: 'it has a lock in Azure; take the lock off in the Azure portal first, which Argus cannot do' })
-    expect(screen.getByText(/take the lock off in the Azure portal first/)).toBeInTheDocument()
+  it('says how a lock comes off', () => {
+    show({ ...plan, plan: { ...plan.plan, protected: true }, refusal: 'it has a delete lock in Azure; turn its protection off first, which is its own change, or take off in the Azure portal a lock Argus did not put on' })
+    expect(screen.getByText(/turn its protection off first/)).toBeInTheDocument()
     expect(screen.queryByLabelText(/to confirm/)).toBeNull()
   })
 

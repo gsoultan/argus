@@ -558,6 +558,16 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 		if m.acct.Provider == "gcp" {
 			what = "deletion protection"
 		}
+		if m.acct.Provider == "azure" {
+			// Azure's is a resource lock on the VM, which Argus puts on
+			// under its own name and takes off again.
+			if in.Action == cloud.ActionProtect {
+				ch.Summary = "Put a delete lock on " + inst.Name + " (nobody can delete it, from Argus or Azure, until the lock is off)"
+			} else {
+				ch.Summary = "Take Argus's delete lock off " + inst.Name
+			}
+			break
+		}
 		if in.Action == cloud.ActionProtect {
 			ch.Summary = "Turn on " + what + " for " + inst.Name
 		} else {

@@ -292,7 +292,7 @@ func (p *Provider) Launch(ctx context.Context, a cloud.Account, actor cloud.Acto
 	case s.CapacityReservation != "":
 		return cloud.Result{}, errNotYet("launch into a reservation")
 	case s.Protect:
-		return cloud.Result{}, errNotYet("lock a VM against deletion")
+		return cloud.Result{}, errNotYet("lock a VM as it launches (turn protection on from the VM's menu once it is there)")
 	}
 	for k, v := range s.Tags {
 		if why := TagProblem(k, v); why != "" {

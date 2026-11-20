@@ -56,7 +56,8 @@ export function InstanceActions({ it }: { it: CloudItem }) {
   // in full until it is deallocated, which is what Argus's stop does.
   const allocated = azure && stopped && r.details?.allocated === 'yes'
   const more = !gone && (['launch', 'scale-group-create', 'settings', 'protect', 'unprotect', 'image-create', 'instance-firewalls', 'remove'] as CloudAction[]).some(can)
-  const protectWord = gcp ? 'deletion protection' : 'termination protection'
+  // Azure's is a resource lock on the VM, which Argus puts on and takes off.
+  const protectWord = gcp ? 'deletion protection' : azure ? 'the delete lock' : 'termination protection'
   // Google's inventory says whether it is on, so only the way it can go is offered.
   const protectedNow = gcp ? r.details?.deletionProtection === 'on' : undefined
 
@@ -217,6 +218,8 @@ const AZURE_SIMPLE: Record<string, { title: string; verb: string; done: string; 
   start: { title: 'Start', verb: 'Start', done: 'Starting', text: 'Azure starts the VM. It keeps its disks; a public address that is not static changes.' },
   stop: { title: 'Stop', verb: 'Stop', done: 'Stopping', color: 'amber', text: 'Azure shuts the VM down and deallocates it, as Stop in the portal does, so the VM is no longer billed. Its disks stay and are still billed. Anything only in memory is lost, and a public address that is not static is given up.' },
   reboot: { title: 'Restart', verb: 'Restart', done: 'Restarting', color: 'amber', text: 'Azure restarts the VM. Anyone signed in to it is disconnected.' },
+  protect: { title: 'Put a delete lock on', verb: 'Lock', done: 'Locked', text: 'Argus puts a resource lock on the VM in Azure. Nobody can delete the VM, from Argus or Azure, until the lock is off again. It can still be stopped, restarted, resized and tagged.' },
+  unprotect: { title: 'Take the delete lock off', verb: 'Unlock', done: 'Lock off', color: 'amber', text: 'Argus takes off the lock it put on, and the VM can be deleted again. A lock somebody put on in the Azure portal stays, and comes off there.' },
 }
 
 function SimpleChange({ it, env, action, gcp, azure, onClose }: { it: CloudItem; env: CloudEnvironment; action: CloudAction; gcp?: boolean; azure?: boolean; onClose: () => void }) {
