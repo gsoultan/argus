@@ -13,6 +13,7 @@ import (
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
+	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
@@ -89,15 +90,44 @@ func (p *Provider) AccountInventory(ctx context.Context, a cloud.Account, region
 // read picks it up.
 var errReportNotReady = errors.New("the credential report is being made")
 
-func credentialReport(ctx context.Context, c *iam.Client, accountID string) ([]cloud.Resource, error) {
-	if _, err := c.GenerateCredentialReport(ctx, &iam.GenerateCredentialReportInput{}); err != nil {
-		return nil, err
+// reportWait is how long a read waits for a credential report AWS is
+// making, and how often it asks. AWS takes a few seconds; without the wait
+// the first read of every account, and the first after a report expired
+// (four hours), had no people or keys until the read after it.
+var reportWait, reportPoll = 20 * time.Second, 2 * time.Second
+
+type reportAPI interface {
+	GenerateCredentialReport(context.Context, *iam.GenerateCredentialReportInput, ...func(*iam.Options)) (*iam.GenerateCredentialReportOutput, error)
+	GetCredentialReport(context.Context, *iam.GetCredentialReportInput, ...func(*iam.Options)) (*iam.GetCredentialReportOutput, error)
+}
+
+func credentialReport(ctx context.Context, c reportAPI, accountID string) ([]cloud.Resource, error) {
+	deadline := time.Now().Add(reportWait)
+	for {
+		gen, err := c.GenerateCredentialReport(ctx, &iam.GenerateCredentialReportInput{})
+		if err != nil {
+			return nil, err
+		}
+		if gen.State == iamtypes.ReportStateTypeComplete {
+			break
+		}
+		if !time.Now().Add(reportPoll).Before(deadline) {
+			return nil, errReportNotReady
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(reportPoll):
+		}
 	}
 	out, err := c.GetCredentialReport(ctx, &iam.GetCredentialReportInput{})
 	if err != nil {
 		var nr interface{ ErrorCode() string }
-		if errors.As(err, &nr) && strings.HasPrefix(nr.ErrorCode(), "ReportInProgress") {
-			return nil, errReportNotReady
+		if errors.As(err, &nr) {
+			switch code := nr.ErrorCode(); {
+			case strings.HasPrefix(code, "ReportInProgress"), strings.HasPrefix(code, "ReportNotPresent"), strings.HasPrefix(code, "ReportExpired"):
+				return nil, errReportNotReady
+			}
 		}
 		return nil, err
 	}

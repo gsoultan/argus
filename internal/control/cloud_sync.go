@@ -76,6 +76,57 @@ func (a *API) syncCloudAccountSoon(ctx context.Context, c CloudAccount) {
 	go a.SyncCloudAccount(context.WithoutCancel(ctx), c)
 }
 
+// cloudFollowReads is how many reads of a region follow a change made in
+// it: the one straight after, then one each settle for about two minutes.
+// What a change does is often not in the first read (AWS answers a
+// describe from a copy that lags the change by a second or two) and often
+// has no state of its own to watch (a grown disk, a group's new size).
+const cloudFollowReads = 5
+
+// cloudReadRetry is how long a read asked for after a change waits for the
+// one in flight, which may have read the region before the change.
+var cloudReadRetry, cloudReadTries = 2 * time.Second, 100
+
+// syncCloudAfterChange brings a change into the inventory: the region it
+// was made in is read at once, on its own, so the console has it in a
+// second or two however many regions the account has, and is read again
+// each settle for a while; then the whole account is read as usual, for
+// what belongs to no region. A read already in flight is waited for, never
+// taken as this one: it may have read the region before the change.
+func (a *API) syncCloudAfterChange(ctx context.Context, c CloudAccount, region string) {
+	ctx = context.WithoutCancel(ctx)
+	regional := slices.Contains(c.Regions, region)
+	if regional {
+		a.followRegion(tenantIDOf(ctx)+"/"+c.ID, region)
+	}
+	go func() {
+		if regional {
+			a.readWhenFree(func() bool { return a.syncCloudRegions(ctx, c, []string{region}) })
+		}
+		a.readWhenFree(func() bool { return a.SyncCloudAccount(ctx, c) })
+	}()
+}
+
+func (a *API) readWhenFree(read func() bool) {
+	for i := 0; i < cloudReadTries && !read(); i++ {
+		time.Sleep(cloudReadRetry)
+	}
+}
+
+// followRegion has a region read again for the next cloudFollowReads
+// reads, whatever they find.
+func (a *API) followRegion(key, region string) {
+	a.cloud.mu.Lock()
+	defer a.cloud.mu.Unlock()
+	if a.cloud.follow == nil {
+		a.cloud.follow = map[string]map[string]int{}
+	}
+	if a.cloud.follow[key] == nil {
+		a.cloud.follow[key] = map[string]int{}
+	}
+	a.cloud.follow[key][region] = cloudFollowReads
+}
+
 // SyncCloudAccount reads every region of one account and stores what it
 // found. A region that fails keeps its last inventory and records why; the
 // others are saved. It returns false when the account was already being
@@ -121,6 +172,9 @@ func (a *API) readCloudAccount(ctx context.Context, c CloudAccount, regions []st
 		return true
 	}
 	acct := cloud.Account{Provider: c.Provider, AccountID: c.AccountID, RoleARN: c.RoleARN, ExternalID: ext}
+	// The reads have three minutes; recording how they went does not share
+	// that, so a slow account still says when it was read and what failed.
+	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 
@@ -162,7 +216,7 @@ func (a *API) readCloudAccount(ctx context.Context, c CloudAccount, regions []st
 	if len(errs) > 0 {
 		a.log.Warn("cloud sync: some regions were not read", "account", c.AccountID, "failed", strconv.Itoa(len(errs)))
 	}
-	if err := a.store.SetCloudSynced(ctx, c.ID, time.Now().UTC(), errs); err != nil {
+	if err := a.store.SetCloudSynced(parent, c.ID, time.Now().UTC(), errs); err != nil {
 		a.log.Error("cloud sync: cannot record the sync", "account", c.AccountID, "error", err)
 	}
 	a.checkCloudManageRole(ctx, p, acct, c)
@@ -182,6 +236,15 @@ func (a *API) setSettling(key string, read []string, settling map[string]bool, f
 	for _, r := range read {
 		if _, bad := failed[r]; !bad {
 			keep[r] = settling[r]
+			// One of the reads that follow a change is done.
+			if n := a.cloud.follow[key][r]; n > 1 {
+				a.cloud.follow[key][r] = n - 1
+			} else if n == 1 {
+				delete(a.cloud.follow[key], r)
+				if len(a.cloud.follow[key]) == 0 {
+					delete(a.cloud.follow, key)
+				}
+			}
 		}
 	}
 	var out []string
@@ -202,11 +265,19 @@ func (a *API) setSettling(key string, read []string, settling map[string]bool, f
 }
 
 // settlingRegions is the regions of an account still worth reading again
-// soon, limited to the regions the account is connected in now.
+// soon (something in them is between two states, or a change was just made
+// there), limited to the regions the account is connected in now.
 func (a *API) settlingRegions(ctx context.Context, c CloudAccount) []string {
+	key := tenantIDOf(ctx) + "/" + c.ID
 	a.cloud.mu.Lock()
-	got := a.cloud.settling[tenantIDOf(ctx)+"/"+c.ID]
+	got := slices.Clone(a.cloud.settling[key])
+	for r := range a.cloud.follow[key] {
+		if !slices.Contains(got, r) {
+			got = append(got, r)
+		}
+	}
 	a.cloud.mu.Unlock()
+	sort.Strings(got)
 	var out []string
 	for _, r := range got {
 		if slices.Contains(c.Regions, r) {

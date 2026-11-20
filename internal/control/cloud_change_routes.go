@@ -1134,7 +1134,7 @@ func (a *API) applyCloudChange(r *http.Request, m cloudManaged, ch CloudChange) 
 		}
 		a.auditCloudChange(r, done, "applied", ch.RequestedBy, detail+".")
 	}
-	a.syncCloudAccountSoon(r.Context(), m.acct)
+	a.syncCloudAfterChange(r.Context(), m.acct, ch.Region)
 	return done
 }
 

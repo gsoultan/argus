@@ -145,13 +145,21 @@ type Resource struct {
 // being made, a Google snapshot uploading. Its region is read again sooner than the usual interval, so
 // the console does not show a finished snapshot at 0% for minutes. The
 // console's settling() in web/src/lib/cloud.ts mirrors this list.
+//
+// Some things change without their own state saying so: a disk being
+// detached is still "in-use", and a target group whose new target is being
+// checked is only "degraded". A provider marks those with DetailSettling.
 func (r Resource) Settling() bool {
 	switch r.State {
 	case "pending", "stopping", "shutting-down", "creating", "deleting", "provisioning", "modifying", "optimizing", "uploading":
 		return true
 	}
-	return false
+	return r.Details[DetailSettling] == "yes"
 }
+
+// DetailSettling is the detail a provider sets to "yes" on a resource that
+// is between two states its State does not name.
+const DetailSettling = "settling"
 
 // Snapshot is one region's inventory of the kinds asked for, read at one
 // time.

@@ -66,6 +66,12 @@ func balancing(ctx context.Context, cfg awssdk.Config, region string) (lbs, tgs 
 		arn := awssdk.ToString(g.TargetGroupArn)
 		h, err := c.DescribeTargetHealth(ctx, &elb.DescribeTargetHealthInput{TargetGroupArn: g.TargetGroupArn})
 		if err != nil {
+			// Deleted between the list and this call: it is gone, which is
+			// not a reason to fail the region's whole read.
+			var gone *elbtypes.TargetGroupNotFoundException
+			if errors.As(err, &gone) {
+				continue
+			}
 			return nil, nil, err
 		}
 		r := TargetGroup(g, region, tags[arn], h.TargetHealthDescriptions, lbName)
@@ -168,6 +174,11 @@ func TargetGroup(g elbtypes.TargetGroup, region string, tags map[string]string, 
 		}
 		if state == "healthy" {
 			healthy++
+		}
+		// A target being checked for the first time, or draining on its
+		// way out, is about to change the count.
+		if state == "initial" || state == "draining" {
+			r.Details[cloud.DetailSettling] = "yes"
 		}
 		if h.Target == nil {
 			continue

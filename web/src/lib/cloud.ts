@@ -5,7 +5,7 @@
  * acting on it, so against no control plane these queries do not run and
  * the page says it needs one. Its own file, so only Cloud pays for it.
  */
-import { queryOptions, useMutation, useQueryClient } from '@tanstack/react-query'
+import { queryOptions, useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { get, isConfigured, send } from '~/lib/live'
 
 export type CloudEnvironment = 'production' | 'staging' | 'development'
@@ -229,7 +229,35 @@ export const cloudAccountsQuery = () =>
  * regions sooner too, and once a minute otherwise.
  */
 export function itemsRefetchEvery(items: CloudItem[] | undefined): number {
-  return items?.some((it) => settling(it.resource.state)) ? ITEMS_SETTLING_EVERY : ITEMS_EVERY
+  return items?.some((it) => settling(it.resource.state) || it.resource.details?.settling === 'yes') ? ITEMS_SETTLING_EVERY : ITEMS_EVERY
+}
+
+/**
+ * When the lists are asked for again after a change or a read was asked
+ * for. The control plane reads the change's region at once, which takes a
+ * second or two, then again every half minute for two minutes, since what
+ * a change does is not always in the first read and often has no state of
+ * its own to wait on (a detached disk, a group's new size). One look five
+ * seconds later missed whatever came after it, for up to a minute.
+ */
+export const LOOK_AGAIN_AFTER = [3_000, 10_000, 35_000, 70_000, 130_000]
+
+/**
+ * What is asked for again each time: what the control plane has stored.
+ * The first look asks for everything under Cloud, as one look always did;
+ * the later ones leave alone what is read from the provider on the spot
+ * (an open quote, a removal plan, console output, which is audited at
+ * every read).
+ */
+const STORED = new Set(['accounts', 'items', 'changes', 'reservations', 'scale-groups', 'findings', 'suggestions', 'idle', 'schedules'])
+
+export function storedRead(key: readonly unknown[]): boolean {
+  return key[0] === 'cloud' && typeof key[1] === 'string' && STORED.has(key[1])
+}
+
+function lookAgain(qc: QueryClient) {
+  LOOK_AGAIN_AFTER.forEach((ms, i) => window.setTimeout(() => void qc.invalidateQueries(
+    i === 0 ? { queryKey: ['cloud'] } : { predicate: (q) => storedRead(q.queryKey) }), ms))
 }
 
 export const ITEMS_EVERY = 60_000
@@ -335,8 +363,9 @@ export function useSyncCloudAccount() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => send('POST', `/api/v1/cloud/accounts/${encodeURIComponent(id)}/sync`),
-    // The read runs in the background; look again shortly.
-    onSettled: () => window.setTimeout(() => void qc.invalidateQueries({ queryKey: ['cloud'] }), 4_000),
+    // The read runs in the background, and an account with many regions
+    // takes a while; look again shortly, and again.
+    onSettled: () => lookAgain(qc),
   })
 }
 
@@ -535,8 +564,7 @@ export function useAskCloudChange() {
     mutationFn: (in_: CloudChangeInput) => send<CloudChange>('POST', '/api/v1/cloud/changes', in_),
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: changesKey })
-      // The change is read back by the background sync a moment later.
-      window.setTimeout(() => void qc.invalidateQueries({ queryKey: ['cloud'] }), 5_000)
+      lookAgain(qc)
     },
   })
 }
@@ -548,7 +576,7 @@ export function useDecideCloudChange() {
       send<CloudChange>('POST', `/api/v1/cloud/changes/${encodeURIComponent(id)}/${verb}`, confirmSelf ? { confirmSelf } : undefined),
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: changesKey })
-      window.setTimeout(() => void qc.invalidateQueries({ queryKey: ['cloud'] }), 5_000)
+      lookAgain(qc)
     },
   })
 }
