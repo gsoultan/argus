@@ -35,6 +35,7 @@ export const Route = createFileRoute('/cloud/launch')({
 })
 
 const COMMON_SIZES = ['t3.micro', 't3.small', 't3.medium', 't3.large', 'm7i.large', 'c7i.large']
+const AZURE_COMMON_SIZES = ['Standard_B1s', 'Standard_B2s', 'Standard_B2ms', 'Standard_D2s_v5', 'Standard_D4s_v5', 'Standard_E2s_v5']
 const GCP_COMMON_SIZES = ['e2-small', 'e2-medium', 'e2-standard-2', 'e2-standard-4', 'n2-standard-2', 'n2-standard-4']
 const HOSTNAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
 const MAX_COUNT = 10
@@ -76,6 +77,10 @@ function Launch() {
   const [accountId, setAccountId] = useState<string | null>(null)
   const account = managed.find((a) => a.id === accountId)
   const gcp = account?.provider === 'gcp'
+  const azure = account?.provider === 'azure'
+  /** What the provider calls one: a VM in Google Cloud and Azure. */
+  const vm = gcp || azure
+  const cloudName = gcp ? 'Google' : azure ? 'Azure' : 'AWS'
   const regions = (account?.regions ?? []).filter((r) => r !== 'global')
   const [region, setRegion] = useState<string | null>(null)
   useEffect(() => {
@@ -94,6 +99,7 @@ function Launch() {
   const [disk, setDisk] = useState<number>(20)
   const [subnet, setSubnet] = useState<string | null>(null)
   const [zone, setZone] = useState<string | null>(null)
+  const [group, setGroup] = useState<string | null>(null)
   const [firewalls, setFirewalls] = useState<string[]>([])
   const [publicIp, setPublicIp] = useState(false)
   const [protect, setProtect] = useState(true)
@@ -119,18 +125,21 @@ function Launch() {
       const subnets = ln('subnet')
       setImage(o.images.find((i) => i.id === source.resource.details?.image)?.id ?? o.images[0]?.id ?? null)
       setSubnet(o.subnets.find((s) => subnets.includes(s.resource.id))?.resource.id ?? o.subnets[0]?.resource.id ?? null)
-      setFirewalls(ln('firewall').filter((f) => o.firewalls.some((g) => g.resource.id === f)).slice(0, 5))
+      setFirewalls(ln('firewall').filter((f) => o.firewalls.some((g) => g.resource.id === f)).slice(0, o.groups ? 1 : 5))
       if (source.resource.size) setSize(source.resource.size)
-      setZone(o.zones?.find((z) => z === source.resource.zone) ?? o.zones?.[0] ?? null)
+      setZone(o.zones?.find((z) => z === source.resource.zone) ?? (o.groups ? null : o.zones?.[0] ?? null))
+      setGroup(o.groups?.find((g) => g === source.resource.details?.resourceGroup) ?? o.groups?.[0] ?? null)
       setName(nextName(source.resource.name))
       return
     }
     setImage(o?.images[0]?.id ?? null)
     setSubnet(o?.subnets[0]?.resource.id ?? null)
-    setZone(o?.zones?.[0] ?? null)
+    // An Azure VM may have no zone; a Google one always has.
+    setZone(o?.groups ? null : o?.zones?.[0] ?? null)
+    setGroup(o?.groups?.[0] ?? null)
     setFirewalls([])
     // Each provider has its own machine types.
-    if (o && size && !o.sizes.includes(size)) setSize(o.sizes.includes('e2-medium') ? 'e2-medium' : o.sizes.includes('t3.small') ? 't3.small' : o.sizes[0] ?? null)
+    if (o && size && !o.sizes.includes(size)) setSize(o.sizes.includes('e2-medium') ? 'e2-medium' : o.sizes.includes('t3.small') ? 't3.small' : o.sizes.includes('Standard_B2s') ? 'Standard_B2s' : o.sizes[0] ?? null)
   }, [o])
   const img = o?.images.find((i) => i.id === image)
   useEffect(() => {
@@ -138,7 +147,7 @@ function Launch() {
     if (img?.minDiskGb) setDisk((d) => Math.max(d, img.minDiskGb ?? 0))
   }, [img?.id])
   const sub = o?.subnets.find((s) => s.resource.id === subnet)
-  const groups = useMemo(() => (o?.firewalls ?? []).filter((f) => !sub || f.resource.network === sub.resource.network), [o, sub])
+  const groups = useMemo(() => (o?.firewalls ?? []).filter((f) => !sub || azure || f.resource.network === sub.resource.network), [o, sub, azure])
   useEffect(() => { setFirewalls((fs) => fs.filter((f) => groups.some((g) => g.resource.id === f))) }, [groups])
   // Capacity reservations this launch fits in whole: same account, region,
   // zone and type, active, with room for every instance.
@@ -154,11 +163,12 @@ function Launch() {
   const names = launchNames(host, count)
   // A Google VM's name starts with a letter.
   const nameOk = HOSTNAME.test(host) && names.every((n) => HOSTNAME.test(n)) && (!gcp || /^[a-z]/.test(host))
-  const minDisk = Math.max(gcp ? 10 : 8, img?.minDiskGb ?? 0)
-  const disksOk = extraDisks.every((g) => g >= (gcp ? 10 : 1) && g <= (gcp ? 65536 : 16384))
+  const minDisk = Math.max(gcp ? 10 : azure ? 30 : 8, img?.minDiskGb ?? 0)
+  const maxExtra = gcp ? 65536 : azure ? 32767 : 16384
+  const disksOk = extraDisks.every((g) => g >= (gcp ? 10 : 1) && g <= maxExtra)
   const approval = o?.needsApproval ?? false
   const ready = account && region && nameOk && img && size && disk >= minDisk && disksOk && count >= 1 && count <= MAX_COUNT && sub &&
-    (gcp ? Boolean(zone) : firewalls.length > 0) &&
+    (gcp ? Boolean(zone) : azure ? Boolean(group) && img.linux : firewalls.length > 0) &&
     (!agent || !o?.agentProblem) && (!approval || reason.trim().length >= 5)
   const exposed = groups.filter((g) => firewalls.includes(g.resource.id) && openToInternet(g.resource).length > 0)
 
@@ -167,8 +177,8 @@ function Launch() {
       const c = await ask.mutateAsync({
         accountId: accountId!, region: region!, action: 'launch', reason,
         spec: {
-          name: host, image, size, diskGb: disk, subnet, firewalls, publicIp, protect: protect && !spot, agent, ...(gcp && zone ? { zone } : {}),
-          ...(count > 1 ? { count } : {}), ...(extraDisks.length ? { extraDisks } : {}), ...(spot ? { spot } : {}),
+          name: host, image, size, diskGb: disk, subnet, firewalls, publicIp, protect: protect && !spot && !azure, agent, ...(vm && zone ? { zone } : {}), ...(azure && group ? { group } : {}),
+          ...(count > 1 ? { count } : {}), ...(extraDisks.length ? { extraDisks } : {}), ...(spot && !azure ? { spot } : {}),
           ...(room ? { capacityReservation: room.resource.id } : {}),
           ...(schedule ? { tags: { [SCHEDULE_TAG]: schedule } } : {}),
         },
@@ -199,6 +209,7 @@ function Launch() {
       <PageHeader crumbs={[{ label: 'Cloud', to: '/cloud' }, { label: 'Launch an instance' }]} title="Launch an instance"
         description={gcp
           ? 'A new Compute Engine VM with no service account, made as you. With the agent on, it comes up as an Argus server by itself.'
+          : azure ? 'A new Azure Linux VM with no managed identity and no password, made as you. With the agent on, it comes up as an Argus server by itself.'
           : 'A new EC2 instance with an encrypted disk and instance metadata v2, made as you. With the agent on, it comes up as an Argus server by itself.'} />
       <PageBody>
         {like && (
@@ -222,6 +233,11 @@ function Launch() {
                 <Select label="Region" value={region} onChange={setRegion} allowDeselect={false} searchable
                   data={regions} />
               </SimpleGrid>
+              {azure && (
+                <Select mt="sm" label="Resource group" value={group} onChange={setGroup} allowDeselect={false} searchable
+                  placeholder={o?.groups?.length ? 'Pick a resource group' : 'Argus has read no resource group yet'} data={o?.groups ?? []}
+                  description="The VM, its disks, its network interface and its public address are made here. Argus offers the groups it has read something in; make a new one in the Azure portal." />
+              )}
               {o && <Group gap={6} mt="xs"><Text size={FS.meta} c="dimmed">Environment</Text><EnvBadge env={o.environment} /></Group>}
               {opts.error && <Alert color="rose" variant="light" mt="sm">{(opts.error as Error).message}</Alert>}
             </Section>
@@ -240,7 +256,7 @@ function Launch() {
                 </Text>
               )}
               <Text size="sm" fw={500} mt="md" mb={6}>Image</Text>
-              {opts.isPending && <Text size={FS.meta} c="dimmed">Asking {gcp ? 'Google' : 'AWS'} for the newest images…</Text>}
+              {opts.isPending && <Text size={FS.meta} c="dimmed">Asking {cloudName} for the newest images…</Text>}
               <Radio.Group value={image} onChange={setImage}>
                 <SimpleGrid cols={{ base: 1, xs: 2, md: 3 }} spacing="sm">
                   {o?.images.map((i) => {
@@ -260,31 +276,35 @@ function Launch() {
                   })}
                 </SimpleGrid>
               </Radio.Group>
+              {azure && img && !img.linux && (
+                <Text size={FS.meta} c={INK.denied} mt="xs">Argus launches Linux VMs in Azure for now. Launch {img.name} in the Azure portal.</Text>
+              )}
             </Section>
 
             <Section n={3} title="Size">
               <Group gap={6}>
-                {(gcp ? GCP_COMMON_SIZES : COMMON_SIZES).filter((s) => !o || o.sizes.includes(s)).map((s) => (
+                {(gcp ? GCP_COMMON_SIZES : azure ? AZURE_COMMON_SIZES : COMMON_SIZES).filter((s) => !o || o.sizes.includes(s)).map((s) => (
                   <Button key={s} size="compact-sm" radius="xl" ff="monospace" fw={500} fz={FS.meta}
                     variant={size === s ? 'light' : 'default'} onClick={() => setSize(s)}>{s}</Button>
                 ))}
               </Group>
               <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm" mt="sm">
-                <Select label={gcp ? 'Machine type' : 'Instance type'} searchable value={size} onChange={setSize} data={o?.sizes ?? COMMON_SIZES}
+                <Select label={gcp ? 'Machine type' : azure ? 'VM size' : 'Instance type'} searchable value={size} onChange={setSize} data={o?.sizes ?? COMMON_SIZES}
                   nothingFoundMessage="No such type" styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }} />
-                <NumberInput hideControls label="Disk" suffix=" GB" min={minDisk} max={gcp ? 65536 : 2048} value={disk} onChange={(v) => setDisk(Number(v) || 0)}
-                  description={gcp ? 'Balanced persistent disk, deleted with the VM' : 'gp3, encrypted, deleted with the instance'}
+                <NumberInput hideControls label="Disk" suffix=" GB" min={minDisk} max={gcp ? 65536 : azure ? 4095 : 2048} value={disk} onChange={(v) => setDisk(Number(v) || 0)}
+                  description={gcp ? 'Balanced persistent disk, deleted with the VM' : azure ? 'Standard SSD, deleted with the VM' : 'gp3, encrypted, deleted with the instance'}
                   error={disk < minDisk ? `At least ${minDisk} GB` : undefined} />
               </SimpleGrid>
               <Text size="sm" fw={500} mt="md">More disks</Text>
               <Text size={FS.meta} c="dimmed" mb={6}>{gcp
                 ? 'Each is a separate balanced persistent disk, deleted with the VM, seen as /dev/disk/by-id/google-<name>-data-1 onwards. Format and mount it on the server.'
+                : azure ? 'Each is a separate Standard SSD disk named <name>-data-1 onwards, deleted with the VM, seen under /dev/disk/azure/scsi1 by its LUN, from lun0. Format and mount it on the server.'
                 : 'Each is a separate encrypted gp3 disk, attached as /dev/sdf onwards and deleted with the instance. Format and mount it on the server.'}</Text>
               <Stack gap={6}>
                 {extraDisks.map((gb, i) => (
                   <Group key={i} gap="xs" wrap="nowrap">
-                    <Text size={FS.meta} ff="monospace" c="dimmed" w={72}>{gcp ? `data-${i + 1}` : `/dev/sd${String.fromCharCode(102 + i)}`}</Text>
-                    <NumberInput hideControls size="xs" w={140} suffix=" GB" min={gcp ? 10 : 1} max={gcp ? 65536 : 16384} value={gb} aria-label={`Disk ${i + 2} size`}
+                    <Text size={FS.meta} ff="monospace" c="dimmed" w={72}>{vm ? `data-${i + 1}` : `/dev/sd${String.fromCharCode(102 + i)}`}</Text>
+                    <NumberInput hideControls size="xs" w={140} suffix=" GB" min={gcp ? 10 : 1} max={maxExtra} value={gb} aria-label={`Disk ${i + 2} size`}
                       onChange={(v) => setExtraDisks((ds) => ds.map((d, j) => j === i ? Number(v) || 0 : d))} />
                     <ActionIcon variant="subtle" color="gray" aria-label="Remove this disk" onClick={() => setExtraDisks((ds) => ds.filter((_, j) => j !== i))}><IconX size={14} /></ActionIcon>
                   </Group>
@@ -293,11 +313,11 @@ function Launch() {
                   <Button size="xs" variant="default" w="fit-content" leftSection={<IconPlus size={14} />} onClick={() => setExtraDisks((ds) => [...ds, 100])}>Add a disk</Button>
                 )}
               </Stack>
-              <Switch mt="md" checked={spot} onChange={(e) => setSpot(e.currentTarget.checked)} label="Use Spot capacity"
+              {!azure && <Switch mt="md" checked={spot} onChange={(e) => setSpot(e.currentTarget.checked)} label="Use Spot capacity"
                 description={gcp
                   ? 'Google\'s spare capacity, often far cheaper, but Google can take it back with thirty seconds\' notice and the VM is then deleted. Suits work that can stop and start again; not a database.'
-                  : 'AWS\'s spare capacity, often far cheaper, but AWS can take it back with two minutes\' notice and the instance is then terminated. Suits work that can stop and start again; not a database.'} />
-              {!gcp && rooms.length > 0 && (
+                  : 'AWS\'s spare capacity, often far cheaper, but AWS can take it back with two minutes\' notice and the instance is then terminated. Suits work that can stop and start again; not a database.'} />}
+              {!vm && rooms.length > 0 && (
                 <Select mt="md" label="Capacity reservation" placeholder="None, wherever AWS has room" clearable disabled={spot}
                   value={room ? capacity : null} onChange={setCapacity} data-testid="launch-capacity"
                   description={spot ? 'Spot instances cannot use a capacity reservation.' : 'Room already reserved for this type in the subnet\'s zone. A reservation only for launches that name it is used only when picked here.'}
@@ -311,21 +331,26 @@ function Launch() {
                 <Select label="Zone" value={zone} onChange={setZone} allowDeselect={false} mb="sm" placeholder={o?.zones?.length ? 'Pick a zone' : 'No zones read yet'}
                   data={o?.zones ?? []} description="A Google subnet spans the region; the VM and its disks live in one zone." />
               )}
+              {azure && (
+                <Select label="Zone" value={zone} onChange={setZone} clearable mb="sm" placeholder="No zone" data={o?.zones ?? []}
+                  description="Optional. Azure refuses a zone the region or the size does not have. The VM's disks are made in the same zone." />
+              )}
               <Select label="Subnet" value={subnet} onChange={setSubnet} allowDeselect={false}
                 data={(o?.subnets ?? []).map((s) => ({
                   value: s.resource.id,
                   label: `${s.resource.name} · ${s.resource.size} · ${s.resource.zone ?? s.resource.region}${s.resource.details?.freeAddresses ? ` · ${s.resource.details.freeAddresses} free` : ''}`,
                 }))} />
-              <Text size="sm" fw={500} mt="md">{gcp ? 'Firewall rules' : 'Security groups'}</Text>
+              <Text size="sm" fw={500} mt="md">{gcp ? 'Firewall rules' : azure ? 'Network security group' : 'Security groups'}</Text>
               <Text size={FS.meta} c="dimmed" mb={6}>{gcp
                 ? 'Up to five, in the subnet\'s network. A rule reaches the VM through its network tags; rules with no target tags reach every VM already. With the agent, nothing needs inbound SSH or RDP.'
+                : azure ? 'One, or none: it goes on the VM\'s network interface, on top of the group the subnet has, if any. With the agent, nothing needs inbound SSH.'
                 : 'One to five, in the subnet\'s network. With the agent, nothing needs inbound SSH or RDP.'}</Text>
               <Stack gap={6}>
                 {groups.map((g) => {
                   const open = openToInternet(g.resource)
                   return (
                     <Checkbox.Card key={g.resource.id} radius="md" p="xs" checked={firewalls.includes(g.resource.id)}
-                      onClick={() => setFirewalls((fs) => fs.includes(g.resource.id) ? fs.filter((f) => f !== g.resource.id) : [...fs, g.resource.id].slice(0, 5))}>
+                      onClick={() => setFirewalls((fs) => fs.includes(g.resource.id) ? fs.filter((f) => f !== g.resource.id) : azure ? [g.resource.id] : [...fs, g.resource.id].slice(0, 5))}>
                       <Group wrap="nowrap" gap="sm">
                         <Checkbox.Indicator />
                         <Box style={{ flex: 1, minWidth: 0 }}>
@@ -337,7 +362,7 @@ function Launch() {
                     </Checkbox.Card>
                   )
                 })}
-                {o && groups.length === 0 && <Text size={FS.meta} c="dimmed">{gcp ? 'No firewall rules in this network.' : 'No security groups in this network.'}</Text>}
+                {o && groups.length === 0 && <Text size={FS.meta} c="dimmed">{gcp ? 'No firewall rules in this network.' : azure ? 'No network security groups in this region.' : 'No security groups in this network.'}</Text>}
               </Stack>
               <Switch mt="md" checked={publicIp} onChange={(e) => setPublicIp(e.currentTarget.checked)} label="Give it a public address"
                 description="Off keeps it reachable only inside the network. The agent needs only outbound access." />
@@ -347,16 +372,21 @@ function Launch() {
               <Switch checked={agent} onChange={(e) => setAgent(e.currentTarget.checked)} disabled={img && !img.linux}
                 label="Install the Argus agent" description={img && !img.linux
                   ? 'On Windows, add the server from Servers › Add a server once it is up.'
+                  : azure && !agent ? 'Without it nobody can sign in to the VM: Azure requires an administrator account, and Argus gives it a key that nobody holds and no password. Access is then reset in the Azure portal.'
                   : 'It enrolls itself with a one-hour token that only works for this hostname, so sessions on it are recorded from the first minute.'} />
               {agent && o?.agentProblem && (
                 <Alert color="amber" variant="light" mt="sm" icon={<IconAlertTriangle size={16} />}>
                   <Text size={FS.meta}>{o.agentProblem}</Text>
                 </Alert>
               )}
-              <Switch mt="md" checked={protect && !spot} disabled={spot} onChange={(e) => setProtect(e.currentTarget.checked)} label={gcp ? 'Deletion protection' : 'Termination protection'}
-                description={spot
-                  ? gcp ? 'Google deletes a Spot VM when it takes the capacity back, so protection is off.' : 'AWS does not allow it on Spot instances, so it is off.'
-                  : `Nobody can remove it, from Argus or ${gcp ? 'Google' : 'AWS'}, until this is turned off.`} />
+              {azure ? (
+                <Text size={FS.meta} c="dimmed" mt="md">Azure protects a VM from deletion with a resource lock, which Argus cannot set. Put one on in the Azure portal; Argus will not remove a VM that has one.</Text>
+              ) : (
+                <Switch mt="md" checked={protect && !spot} disabled={spot} onChange={(e) => setProtect(e.currentTarget.checked)} label={gcp ? 'Deletion protection' : 'Termination protection'}
+                  description={spot
+                    ? gcp ? 'Google deletes a Spot VM when it takes the capacity back, so protection is off.' : 'AWS does not allow it on Spot instances, so it is off.'
+                    : `Nobody can remove it, from Argus or ${gcp ? 'Google' : 'AWS'}, until this is turned off.`} />
+              )}
               {(schedules.data?.schedules.length ?? 0) > 0 && (
                 <Select mt="md" label="Schedule" placeholder="None: it runs until someone stops it" clearable value={schedule} onChange={setSchedule}
                   description={`Tags it ${SCHEDULE_TAG}=<name>, so the schedule starts and stops it.`}
@@ -369,22 +399,22 @@ function Launch() {
             <Group gap="sm" mb="md">
               <ThemeIcon variant="light" color="azure" size={32} radius="md"><IconCloud size={18} /></ThemeIcon>
               <Box>
-                <Text fw={700}>{!nameOk ? (gcp ? 'New VM' : 'New instance') : count > 1 ? `${count} ${gcp ? 'VMs' : 'instances'}, ${names[0]} to ${names[names.length - 1]}` : host}</Text>
-                <Text size={FS.micro} c="dimmed">{account?.name ?? '—'} · {region ?? '—'}</Text>
+                <Text fw={700}>{!nameOk ? (vm ? 'New VM' : 'New instance') : count > 1 ? `${count} ${vm ? 'VMs' : 'instances'}, ${names[0]} to ${names[names.length - 1]}` : host}</Text>
+                <Text size={FS.micro} c="dimmed">{account?.name ?? '—'} · {region ?? '—'}{azure && group ? ` · ${group}` : ''}</Text>
               </Box>
             </Group>
             <Stack gap={SP.snug}>
               <Row k="Image" v={img?.label} />
               <Row k="Type" v={size} mono />
-              <Row k="Disk" v={gcp ? `${disk} GB balanced` : `${disk} GB gp3, encrypted`} />
+              <Row k="Disk" v={gcp ? `${disk} GB balanced` : azure ? `${disk} GB Standard SSD` : `${disk} GB gp3, encrypted`} />
               {extraDisks.length > 0 && <Row k="More disks" v={extraDisks.map((g) => `${g} GB`).join(', ')} />}
-              {spot && <Row k="Capacity" v="Spot" />}
+              {spot && !azure && <Row k="Capacity" v="Spot" />}
               {room && <Row k="Capacity" v={`Reserved, ${room.resource.name}`} />}
-              <Row k="Subnet" v={sub ? `${sub.resource.name} (${gcp ? zone ?? '' : sub.resource.zone ?? ''})` : undefined} />
-              <Row k={gcp ? 'Firewall rules' : 'Security groups'} v={firewalls.length ? groups.filter((g) => firewalls.includes(g.resource.id)).map((g) => g.resource.name).join(', ') : undefined} />
+              <Row k="Subnet" v={sub ? `${sub.resource.name} (${azure ? zone ?? 'no zone' : gcp ? zone ?? '' : sub.resource.zone ?? ''})` : undefined} />
+              <Row k={gcp ? 'Firewall rules' : azure ? 'Security group' : 'Security groups'} v={azure && !firewalls.length ? 'The subnet\'s only' : firewalls.length ? groups.filter((g) => firewalls.includes(g.resource.id)).map((g) => g.resource.name).join(', ') : undefined} />
               <Row k="Public address" v={publicIp ? 'Yes' : 'No'} />
               <Row k="Argus agent" v={agent ? 'Installs and enrolls' : 'No'} />
-              <Row k="Protection" v={protect && !spot ? 'On' : 'Off'} />
+              {!azure && <Row k="Protection" v={protect && !spot ? 'On' : 'Off'} />}
               {schedule && <Row k="Schedule" v={schedule} mono />}
             </Stack>
             {exposed.length > 0 && (
@@ -401,7 +431,7 @@ function Launch() {
               disabled={!ready} loading={ask.isPending} onClick={() => void launch()}>
               {approval ? 'Ask for approval' : 'Launch'}
             </Button>
-            <Text size={FS.micro} c="dimmed" mt="xs" ta="center">{gcp ? 'Google' : 'AWS'} bills {count > 1 ? `each ${gcp ? 'VM' : 'instance'}` : `the ${gcp ? 'VM' : 'instance'}`} from the moment it starts.</Text>
+            <Text size={FS.micro} c="dimmed" mt="xs" ta="center">{cloudName} bills {count > 1 ? `each ${vm ? 'VM' : 'instance'}` : `the ${vm ? 'VM' : 'instance'}`} from the moment it starts.</Text>
           </Card>
         </Box>
       </PageBody>

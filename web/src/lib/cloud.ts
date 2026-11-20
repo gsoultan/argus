@@ -459,6 +459,8 @@ export interface CloudLaunchOptions {
   firewalls: CloudItem[]
   /** A Google Cloud region's zones: its subnets span the region, so the zone is picked on its own. */
   zones?: string[]
+  /** The resource groups an Azure VM can be made in. */
+  groups?: string[]
   environment: CloudEnvironment
   needsApproval: boolean
   agentProblem?: string
@@ -975,6 +977,7 @@ export const AZURE_ACTION_NEEDS: Partial<Record<CloudAction, string[]>> = {
   'address-allocate': ['Microsoft.Network/publicIPAddresses/write'], 'address-release': ['Microsoft.Network/publicIPAddresses/delete'],
   'address-associate': ['Microsoft.Network/networkInterfaces/write'], 'address-disassociate': ['Microsoft.Network/networkInterfaces/write'],
   remove: ['Microsoft.Compute/virtualMachines/delete'],
+  launch: ['Microsoft.Network/networkInterfaces/join/action', 'Microsoft.Compute/images/read'],
 }
 
 /** Whether an account's manage role lacks what an action takes. */

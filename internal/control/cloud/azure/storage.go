@@ -452,6 +452,10 @@ var needs = map[cloud.Action][]string{
 	cloud.ActionAddressDisassociate: {"Microsoft.Network/publicIPAddresses/read", "Microsoft.Network/networkInterfaces/read", "Microsoft.Network/networkInterfaces/write"},
 	cloud.ActionAddressRelease:      {"Microsoft.Network/publicIPAddresses/read", "Microsoft.Network/publicIPAddresses/delete"},
 
+	cloud.ActionLaunch: {"Microsoft.Compute/virtualMachines/write", "Microsoft.Compute/disks/write", "Microsoft.Compute/images/read",
+		"Microsoft.Network/networkInterfaces/write", "Microsoft.Network/networkInterfaces/join/action",
+		"Microsoft.Network/publicIPAddresses/write", "Microsoft.Network/publicIPAddresses/join/action",
+		"Microsoft.Network/virtualNetworks/subnets/join/action", "Microsoft.Network/networkSecurityGroups/join/action"},
 	cloud.ActionRemove: {"Microsoft.Compute/virtualMachines/delete", "Microsoft.Network/networkInterfaces/delete", "Microsoft.Compute/disks/delete",
 		"Microsoft.Network/publicIPAddresses/delete", "Microsoft.Compute/disks/beginGetAccess/action", "Microsoft.Compute/snapshots/write"},
 }

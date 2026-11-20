@@ -196,7 +196,7 @@ func TestCloudConnectAzureSubscription(t *testing.T) {
 			t.Fatal("a subscription on Azure's Main identity must not read as having lost it to AWS's")
 		}
 		// The console offers only what Argus does in Azure so far.
-		if a.ID == c.ID && (!contains(actionNames(a.Actions), "stop") || !contains(actionNames(a.Actions), "remove") || contains(actionNames(a.Actions), "launch")) {
+		if a.ID == c.ID && (!contains(actionNames(a.Actions), "stop") || !contains(actionNames(a.Actions), "remove") || !contains(actionNames(a.Actions), "launch") || contains(actionNames(a.Actions), "protect")) {
 			t.Fatalf("a subscription must list the changes Argus makes there, and no others: %v", a.Actions)
 		}
 	}
@@ -631,5 +631,84 @@ func TestCloudAzureSubscriptionRemovesAVM(t *testing.T) {
 	}
 	if !contains(fake.CallLog(), "remove "+web+" snapshots=true "+e.admin) {
 		t.Fatalf("the remove must be made as the person who asked: %v", fake.CallLog())
+	}
+}
+
+// Launching a VM in a subscription: into a resource group Argus has read,
+// under one network security group, and never with a lock.
+func TestCloudAzureSubscriptionLaunchesAVM(t *testing.T) {
+	e, fake, sub := azureEnv(t)
+	w := do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts/prepare", "admin-token", `{"provider":"azure","accountId":"`+sub+`","manage":true}`)
+	var p CloudPrepared
+	_ = json.Unmarshal(w.Body.Bytes(), &p)
+	for _, want := range []string{"Microsoft.Network/networkInterfaces/join/action", "Microsoft.Compute/images/read"} {
+		if !strings.Contains(p.Command, want) {
+			t.Fatalf("the command lacks %q:\n%s", want, p.Command)
+		}
+	}
+	fake.Roles[p.ReadRoleARN] = p.ExternalID
+	fake.Roles[p.ManageRoleARN] = p.ExternalID
+	const (
+		web  = "aaaaaaaa-0000-4000-8000-000000000001"
+		nsg  = "ffffffff-0000-4000-8000-000000000001"
+		nsg2 = "ffffffff-0000-4000-8000-000000000002"
+	)
+	rg := map[string]string{"resourceGroup": "Web-RG"}
+	fake.Resources["eastus"] = []cloud.Resource{
+		{Kind: cloud.KindInstance, ID: web, Name: "web-1", Region: "eastus", State: "running", Details: rg},
+		{Kind: cloud.KindSubnet, ID: "web-rg/main/web", Name: "web", Region: "eastus", Details: rg},
+		{Kind: cloud.KindFirewall, ID: nsg, Name: "web-nsg", Region: "eastus", Details: rg},
+		{Kind: cloud.KindFirewall, ID: nsg2, Name: "subnet-nsg", Region: "eastus", Details: rg},
+	}
+	w = do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts", "admin-token",
+		`{"provider":"azure","name":"launch-azure","accountId":"`+sub+`","environment":"development","manage":true}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("connect with changes: %d %s", w.Code, w.Body)
+	}
+	var c CloudAccount
+	_ = json.Unmarshal(w.Body.Bytes(), &c)
+	waitCloudSync(t, e, c)
+
+	// The form offers Azure's sizes, the region's zones and the groups read.
+	w = do(t, e.h, http.MethodGet, "/api/v1/cloud/launch-options?accountId="+c.ID+"&region=eastus", "admin-token", "")
+	var o CloudLaunchOptions
+	_ = json.Unmarshal(w.Body.Bytes(), &o)
+	if w.Code != http.StatusOK || !contains(o.Sizes, "Standard_B2s") || contains(o.Sizes, "t3.medium") || !contains(o.Zones, "eastus-2") ||
+		len(o.Groups) != 1 || o.Groups[0] != "Web-RG" || len(o.Subnets) != 1 || len(o.Firewalls) != 2 {
+		t.Fatalf("launch options: %d %s", w.Code, w.Body)
+	}
+	ask := func(spec string, want int, says string) CloudChange {
+		t.Helper()
+		w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes", "admin-token",
+			`{"accountId":"`+c.ID+`","region":"eastus","action":"launch","reason":"new api server","spec":{`+spec+`}}`)
+		if w.Code != want || !strings.Contains(w.Body.String(), says) {
+			t.Fatalf("%s: %d %s, want %d saying %q", spec, w.Code, w.Body, want, says)
+		}
+		var ch CloudChange
+		_ = json.Unmarshal(w.Body.Bytes(), &ch)
+		return ch
+	}
+	bad, conflict := http.StatusBadRequest, http.StatusConflict
+	base := `"image":"ami-ubuntu","size":"Standard_B2s","subnet":"web-rg/main/web","agent":false,`
+	ask(base+`"name":"api-1"`, bad, "pick the resource group")
+	ask(base+`"name":"api-1","group":"elsewhere"`, bad, "read nothing in a resource group named elsewhere")
+	ask(base+`"name":"WEB-1","group":"web-rg"`, conflict, "already has a VM named web-1")
+	ask(base+`"name":"api-1","group":"Web-RG","zone":"westeurope-1"`, bad, "pick a zone of eastus, or none")
+	ask(base+`"name":"api-1","group":"Web-RG","firewalls":["`+nsg+`","`+nsg2+`"]`, bad, "takes one network security group")
+	ask(base+`"name":"api-1","group":"Web-RG","diskGb":8`, bad, "the boot disk is 30 to")
+	ask(base+`"name":"api-1","group":"Web-RG","spot":true`, bad, "Spot")
+	ask(base+`"name":"api-1","group":"Web-RG","tags":{"Microsoft-x":"y"}`, bad, "cannot be a tag")
+	ask(`"image":"ami-ubuntu","size":"t3.medium","subnet":"web-rg/main/web","agent":false,"name":"api-1","group":"Web-RG"`, bad, "pick a VM size")
+	ask(`"image":"ami-ubuntu","size":"Standard_B2s","subnet":"nope","agent":false,"name":"api-1","group":"Web-RG"`, bad, "pick a subnet in eastus")
+
+	ch := ask(base+`"name":"api-1","group":"web-rg","zone":"eastus-2","firewalls":["`+nsg+`"],"publicIp":true`, http.StatusOK, "")
+	if ch.State != "applied" || ch.Summary != "Launch api-1: Ubuntu 24.04 LTS, Standard_B2s, 30 GB in eastus, eastus-2, resource group Web-RG, with a public address, "+
+		"without the agent: nobody can sign in until access is reset in the Azure portal" {
+		t.Fatalf("launch: %+v", ch)
+	}
+	// Asked for or not, a launch never asks Azure for a lock.
+	if fake.LastLaunch.Protect || fake.LastLaunch.Group != "Web-RG" || fake.LastLaunch.Zone != "eastus-2" || fake.LastLaunch.DiskGB != 30 ||
+		fake.LastLaunch.Tags["argus:launched-by"] != e.admin {
+		t.Fatalf("what was launched: %+v", fake.LastLaunch)
 	}
 }

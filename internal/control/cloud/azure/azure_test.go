@@ -363,11 +363,35 @@ func (m *fakeMicrosoft) handler() http.Handler {
 	}
 	mux.HandleFunc("PATCH "+vmPath, authed(change))
 	mux.HandleFunc("DELETE "+vmPath, authed(change))
+	// A new VM is made at its name; one not made yet is not there.
+	mux.HandleFunc("GET "+rg+"Microsoft.Compute/virtualMachines/{name}", authed(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":{"code":"ResourceNotFound","message":"The Resource was not found."}}`))
+	}))
+	mux.HandleFunc("PUT "+rg+"Microsoft.Compute/virtualMachines/{name}", authed(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		m.mu.Lock()
+		m.changes = append(m.changes, "PUT vm "+r.PathValue("name")+" "+string(b))
+		refuse := m.refuse
+		m.mu.Unlock()
+		if refuse {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":{"code":"AuthorizationFailed","message":"The client does not have authorization to perform action over scope."}}`))
+			return
+		}
+		w.Header().Set("x-ms-correlation-request-id", "corr-1234")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"properties":{"vmId":"AAAAAAAA-0000-4000-8000-0000000000FF","provisioningState":"Creating"}}`))
+	}))
 	mux.HandleFunc("GET "+vmPath, authed(func(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
 		body := m.vmBody
 		m.mu.Unlock()
-		if body == "" || r.URL.Query().Get("$expand") != "instanceView" {
+		if r.URL.Query().Get("$expand") == "" {
+			_, _ = w.Write([]byte(`{"name":"web-1"}`))
+			return
+		}
+		if body == "" {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"error":{"code":"ResourceNotFound","message":"The Resource was not found."}}`))
 			return

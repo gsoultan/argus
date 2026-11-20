@@ -91,6 +91,11 @@ var ManageActions = []string{
 	// addresses marked so, under the rights of whoever deletes the VM.
 	"Microsoft.Compute/virtualMachines/delete",
 	"Microsoft.Network/networkInterfaces/delete",
+	// Launching a VM: Azure makes its interface and address with it, and
+	// checks the right to put the interface on the VM and to start from
+	// one of the subscription's own images.
+	"Microsoft.Network/networkInterfaces/join/action",
+	"Microsoft.Compute/images/read",
 }
 
 // ManageRoleID is the id of a subscription's manage role: a GUID, as Azure
@@ -123,6 +128,7 @@ var supported = map[cloud.Action]bool{
 	cloud.ActionAddressDisassociate: true, cloud.ActionAddressRelease: true,
 
 	cloud.ActionRemove: true,
+	cloud.ActionLaunch: true,
 }
 
 // TaggableKinds are the kinds Argus tags in Azure so far.
@@ -137,7 +143,7 @@ func SupportedActions() []cloud.Action {
 		cloud.ActionVolumeCreate, cloud.ActionVolumeGrow, cloud.ActionVolumeAttach, cloud.ActionVolumeDetach, cloud.ActionVolumeDelete,
 		cloud.ActionSnapshotCreate, cloud.ActionSnapshotDelete,
 		cloud.ActionAddressAllocate, cloud.ActionAddressAssociate, cloud.ActionAddressDisassociate, cloud.ActionAddressRelease,
-		cloud.ActionRemove}
+		cloud.ActionRemove, cloud.ActionLaunch}
 }
 
 // errNotYet refuses a change Argus does not make in Azure yet.
@@ -460,14 +466,6 @@ func tagPatch(op string, tags map[string]string) map[string]any {
 
 // The rest of what a Manager does comes to Azure later; Supports says so
 // before any of these is asked.
-
-func (p *Provider) Images(context.Context, cloud.Account, cloud.Actor, string) ([]cloud.Image, error) {
-	return nil, errNotYet("launch a VM")
-}
-
-func (p *Provider) Launch(context.Context, cloud.Account, cloud.Actor, cloud.LaunchSpec) (cloud.Result, error) {
-	return cloud.Result{}, errNotYet("launch a VM")
-}
 
 func (p *Provider) Protect(context.Context, cloud.Account, cloud.Actor, string, string, bool) (cloud.Result, error) {
 	return cloud.Result{}, errNotYet("lock a VM against deletion")

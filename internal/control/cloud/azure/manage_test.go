@@ -175,7 +175,7 @@ func TestWhatArgusDoesInAzureSoFar(t *testing.T) {
 			t.Errorf("%s is listed but not supported", a)
 		}
 	}
-	for _, a := range []cloud.Action{cloud.ActionLaunch, cloud.ActionProtect, cloud.ActionImageCreate, cloud.ActionImageDelete, cloud.ActionFirewallRules, cloud.ActionHibernate} {
+	for _, a := range []cloud.Action{cloud.ActionProtect, cloud.ActionImageCreate, cloud.ActionImageDelete, cloud.ActionFirewallRules, cloud.ActionHibernate} {
 		if p.Supports(a) {
 			t.Errorf("%s is not made in Azure yet", a)
 		}
@@ -184,8 +184,8 @@ func TestWhatArgusDoesInAzureSoFar(t *testing.T) {
 	if _, err := p.Protect(ctx, cloud.Account{}, "x", "eastus", web1, true); !errors.Is(err, cloud.ErrUnsupported) {
 		t.Fatalf("protect: %v", err)
 	}
-	if _, err := p.Launch(ctx, cloud.Account{}, "x", cloud.LaunchSpec{}); !errors.Is(err, cloud.ErrUnsupported) {
-		t.Fatalf("launch: %v", err)
+	if _, err := p.CreateImage(ctx, cloud.Account{}, "x", "eastus", web1, "img", false); !errors.Is(err, cloud.ErrUnsupported) {
+		t.Fatalf("image: %v", err)
 	}
 	for k, why := range map[string]string{"": "empty", "a/b": "slash", "Windows-x": "reserved", strings.Repeat("k", 513): "long"} {
 		if TagProblem(k, "v") == "" {
