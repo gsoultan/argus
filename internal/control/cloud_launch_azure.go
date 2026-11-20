@@ -27,7 +27,7 @@ is a resource lock, which Argus holds no right to set.
 // Azure's own spelling.
 func (a *API) azureGroups(ctx context.Context, accountID string) []string {
 	seen := map[string]string{}
-	for _, k := range []cloud.Kind{cloud.KindInstance, cloud.KindVolume, cloud.KindSnapshot, cloud.KindNetwork, cloud.KindAddress} {
+	for _, k := range []cloud.Kind{cloud.KindInstance, cloud.KindVolume, cloud.KindSnapshot, cloud.KindNetwork, cloud.KindAddress, cloud.KindFirewall} {
 		items, err := a.store.CloudResources(ctx, k)
 		if err != nil {
 			continue

@@ -719,63 +719,14 @@ type groupUse struct {
 func securityGroup(r raw, ids map[string]cloud.Ref, users groupUse) cloud.Resource {
 	res := common(cloud.KindFirewall, r)
 	res.State = "enabled"
-	rules := slices.Clone(r.Properties.SecurityRules)
-	sort.SliceStable(rules, func(i, j int) bool { return rules[i].Properties.Priority < rules[j].Properties.Priority })
 	denies := 0
-	for n, rule := range rules {
-		pr := rule.Properties
-		if !strings.EqualFold(pr.Access, "Allow") {
+	for _, rule := range r.Properties.SecurityRules {
+		if !strings.EqualFold(rule.Properties.Access, "Allow") {
 			denies++
-			continue
 		}
-		inbound := !strings.EqualFold(pr.Direction, "Outbound")
-		shut := false
-		for _, d := range rules[:n] {
-			shut = shut || denyAll(d, inbound)
-		}
-		if shut {
-			continue
-		}
-		// The side a rule limits: where traffic comes from on the way in,
-		// where it goes on the way out.
-		prefixes, asgs := append(slices.Clone(pr.SourceAddressPrefixes), pr.SourceAddressPrefix), pr.SourceASGs
-		if !inbound {
-			prefixes, asgs = append(slices.Clone(pr.DestinationAddressPrefixes), pr.DestinationAddressPrefix), pr.DestinationASGs
-		}
-		var sources []string
-		for _, s := range prefixes {
-			if s = strings.TrimSpace(s); s != "" {
-				sources = append(sources, source(s))
-			}
-		}
-		for _, g := range asgs {
-			sources = append(sources, "group:"+last(g.ID))
-		}
-		proto := protocol(pr.Protocol)
-		spans := [][2]int32{{0, 65535}}
-		if proto == "icmp" {
-			spans = [][2]int32{{-1, -1}}
-		} else {
-			var named [][2]int32
-			for _, ps := range append(slices.Clone(pr.DestinationPortRanges), pr.DestinationPortRange) {
-				if from, to, ok := portSpan(strings.TrimSpace(ps)); ok {
-					named = append(named, [2]int32{from, to})
-				}
-			}
-			if len(named) > 0 {
-				spans = named
-			}
-		}
-		desc := rule.Name
-		if pr.Description != "" {
-			desc += ": " + pr.Description
-		}
-		for _, src := range sources {
-			for _, sp := range spans {
-				res.Rules = append(res.Rules, cloud.Rule{Inbound: inbound, Protocol: proto, FromPort: sp[0], ToPort: sp[1],
-					Source: src, Description: desc})
-			}
-		}
+	}
+	for _, l := range listed(r.Properties.SecurityRules) {
+		res.Rules = append(res.Rules, l.rules...)
 	}
 	if denies > 0 {
 		res.Details["denyRules"] = strconv.Itoa(denies)
@@ -787,6 +738,84 @@ func securityGroup(r raw, ids map[string]cloud.Ref, users groupUse) cloud.Resour
 	}
 	res.Details["interfaces"] = strconv.Itoa(users.interfaces + len(users.subnets))
 	return res
+}
+
+// listedRule is one of a group's allow rules with the neutral rules it
+// comes to.
+type listedRule struct {
+	name  string
+	rules []cloud.Rule
+}
+
+// listed is the allow rules of a group that are not shut by a deny-all
+// ahead of them, in priority order, each with what it lets through.
+func listed(all []rawRule) []listedRule {
+	rules := slices.Clone(all)
+	sort.SliceStable(rules, func(i, j int) bool { return rules[i].Properties.Priority < rules[j].Properties.Priority })
+	var out []listedRule
+	for n, rule := range rules {
+		if !strings.EqualFold(rule.Properties.Access, "Allow") {
+			continue
+		}
+		inbound := !strings.EqualFold(rule.Properties.Direction, "Outbound")
+		shut := false
+		for _, d := range rules[:n] {
+			shut = shut || denyAll(d, inbound)
+		}
+		if !shut {
+			out = append(out, listedRule{name: rule.Name, rules: allowed(rule)})
+		}
+	}
+	return out
+}
+
+// allowed is what one allow rule lets through: a neutral rule for each of
+// its sources and each of its spans of ports.
+func allowed(rule rawRule) []cloud.Rule {
+	pr := rule.Properties
+	inbound := !strings.EqualFold(pr.Direction, "Outbound")
+	// The side a rule limits: where traffic comes from on the way in,
+	// where it goes on the way out.
+	prefixes, asgs := append(slices.Clone(pr.SourceAddressPrefixes), pr.SourceAddressPrefix), pr.SourceASGs
+	if !inbound {
+		prefixes, asgs = append(slices.Clone(pr.DestinationAddressPrefixes), pr.DestinationAddressPrefix), pr.DestinationASGs
+	}
+	var sources []string
+	for _, s := range prefixes {
+		if s = strings.TrimSpace(s); s != "" {
+			sources = append(sources, source(s))
+		}
+	}
+	for _, g := range asgs {
+		sources = append(sources, "group:"+last(g.ID))
+	}
+	proto := protocol(pr.Protocol)
+	spans := [][2]int32{{0, 65535}}
+	if proto == "icmp" {
+		spans = [][2]int32{{-1, -1}}
+	} else {
+		var named [][2]int32
+		for _, ps := range append(slices.Clone(pr.DestinationPortRanges), pr.DestinationPortRange) {
+			if from, to, ok := portSpan(strings.TrimSpace(ps)); ok {
+				named = append(named, [2]int32{from, to})
+			}
+		}
+		if len(named) > 0 {
+			spans = named
+		}
+	}
+	desc := rule.Name
+	if pr.Description != "" {
+		desc += ": " + pr.Description
+	}
+	var out []cloud.Rule
+	for _, src := range sources {
+		for _, sp := range spans {
+			out = append(out, cloud.Rule{Inbound: inbound, Protocol: proto, FromPort: sp[0], ToPort: sp[1],
+				Source: src, Description: desc})
+		}
+	}
+	return out
 }
 
 // denyAll reports whether a rule denies everything in one direction.

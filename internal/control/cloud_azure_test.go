@@ -712,3 +712,120 @@ func TestCloudAzureSubscriptionLaunchesAVM(t *testing.T) {
 		t.Fatalf("what was launched: %+v", fake.LastLaunch)
 	}
 }
+
+func TestCloudAzureSubscriptionChangesSecurityGroups(t *testing.T) {
+	e, fake, sub := azureEnv(t)
+	// Many changes in a row: the read after each waits its turn briefly.
+	old := cloudReadRetry.Swap(int64(5 * time.Millisecond))
+	t.Cleanup(func() { cloudReadRetry.Store(old) })
+	w := do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts/prepare", "admin-token", `{"provider":"azure","accountId":"`+sub+`","manage":true}`)
+	var p CloudPrepared
+	_ = json.Unmarshal(w.Body.Bytes(), &p)
+	for _, want := range []string{"Microsoft.Network/networkSecurityGroups/write", "Microsoft.Network/networkSecurityGroups/delete"} {
+		if !strings.Contains(p.Command, want) {
+			t.Fatalf("the command lacks %q:\n%s", want, p.Command)
+		}
+	}
+	fake.Roles[p.ReadRoleARN] = p.ExternalID
+	fake.Roles[p.ManageRoleARN] = p.ExternalID
+	const (
+		web    = "aaaaaaaa-0000-4000-8000-000000000001"
+		nsg    = "ffffffff-0000-4000-8000-000000000001"
+		subnet = "ffffffff-0000-4000-8000-000000000002"
+		app    = "ffffffff-0000-4000-8000-000000000004"
+		spare  = "ffffffff-0000-4000-8000-000000000005"
+	)
+	rg := map[string]string{"resourceGroup": "Web-RG"}
+	in := func(port int32, from, desc string) cloud.Rule {
+		return cloud.Rule{Inbound: true, Protocol: "tcp", FromPort: port, ToPort: port, Source: from, Description: desc}
+	}
+	fake.Resources["eastus"] = []cloud.Resource{
+		{Kind: cloud.KindInstance, ID: web, Name: "web-1", Region: "eastus", State: "running", Details: rg, Tags: map[string]string{"env": "development"},
+			Links: []cloud.Ref{{Kind: cloud.KindSubnet, ID: "web-rg/main/web"}, {Kind: cloud.KindFirewall, ID: subnet}, {Kind: cloud.KindFirewall, ID: nsg}}},
+		{Kind: cloud.KindSubnet, ID: "web-rg/main/web", Name: "web", Region: "eastus", Details: rg, Links: []cloud.Ref{{Kind: cloud.KindFirewall, ID: subnet}}},
+		{Kind: cloud.KindFirewall, ID: nsg, Name: "web-nsg", Region: "eastus", Details: map[string]string{"resourceGroup": "Web-RG", "interfaces": "1"},
+			Rules: []cloud.Rule{in(443, "0.0.0.0/0", "https")}},
+		{Kind: cloud.KindFirewall, ID: subnet, Name: "subnet-nsg", Region: "eastus", Details: map[string]string{"resourceGroup": "Web-RG", "interfaces": "1"}},
+		{Kind: cloud.KindFirewall, ID: app, Name: "app-nsg", Region: "eastus", Details: map[string]string{"resourceGroup": "Web-RG", "interfaces": "0", "denyRules": "1"},
+			Rules: []cloud.Rule{in(80, "10.1.0.0/16", "web"), in(443, "10.1.0.0/16", "web"), in(80, "10.2.0.0/16", "web"), in(443, "10.2.0.0/16", "web"),
+				in(22, "tag:VirtualNetwork", "admin: the bastion")}},
+		{Kind: cloud.KindFirewall, ID: spare, Name: "spare-nsg", Region: "eastus", Details: map[string]string{"resourceGroup": "Web-RG", "interfaces": "2"}},
+	}
+	w = do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts", "admin-token",
+		`{"provider":"azure","name":"groups-azure","accountId":"`+sub+`","environment":"development","manage":true}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("connect with changes: %d %s", w.Code, w.Body)
+	}
+	var c CloudAccount
+	_ = json.Unmarshal(w.Body.Bytes(), &c)
+	waitCloudSync(t, e, c)
+
+	ask := func(action, id, rest string, want int, says string) CloudChange {
+		t.Helper()
+		w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes", "admin-token",
+			`{"accountId":"`+c.ID+`","region":"eastus","action":"`+action+`","resourceId":"`+id+`","reason":"tidy the groups",`+rest+`}`)
+		if w.Code != want || !strings.Contains(w.Body.String(), says) {
+			t.Fatalf("%s %s: %d %s, want %d saying %q", action, rest, w.Code, w.Body, want, says)
+		}
+		var ch CloudChange
+		_ = json.Unmarshal(w.Body.Bytes(), &ch)
+		return ch
+	}
+	bad, conflict, ok := http.StatusBadRequest, http.StatusConflict, http.StatusOK
+	rule := func(port int, from string) string {
+		return fmt.Sprintf(`{"inbound":true,"protocol":"tcp","fromPort":%d,"toPort":%d,"source":"%s"}`, port, port, from)
+	}
+
+	// Rules: what Azure cannot say is refused before anyone approves it.
+	ask("firewall-rules", app, `"spec":{"remove":[`+rule(80, "10.1.0.0/16")+`]}`, conflict, "Azure rule web lets several sources reach several ports together")
+	ask("firewall-rules", app, `"spec":{"remove":[`+rule(8080, "10.1.0.0/16")+`]}`, conflict, "has no rule tcp 8080")
+	ask("firewall-rules", app, `"spec":{"add":[`+rule(443, "sg-0123456789abcdef0")+`]}`, bad, "is not an address range")
+	ask("firewall-rules", app, `"spec":{"add":[`+rule(443, "tag:Storage")+`]}`, bad, "is not a tag Argus adds a rule for")
+	ask("firewall-rules", app, `"spec":{"add":[`+rule(80, "10.1.0.0/16")+`]}`, conflict, "already has tcp 80")
+	ch := ask("firewall-rules", app, `"spec":{"add":[`+rule(8443, "tag:virtualnetwork")+`],"remove":[`+rule(80, "10.1.0.0/16")+`,`+rule(80, "10.2.0.0/16")+`,`+rule(22, "tag:VirtualNetwork")+`]}`, ok, "")
+	if ch.State != "applied" || ch.Summary != "Change rules on app-nsg: add tcp 8443 from tag:VirtualNetwork; remove tcp 80 from 10.1.0.0/16; remove tcp 80 from 10.2.0.0/16; "+
+		"remove tcp 22 from tag:VirtualNetwork; the group has deny rules, and Azure is asked for nothing if one would still block what is added" {
+		t.Fatalf("rules: %+v", ch)
+	}
+	// Opening more than a web port to the internet says so, in front of a VM.
+	ch = ask("firewall-rules", nsg, `"spec":{"add":[`+rule(22, "0.0.0.0/0")+`]}`, ok, "")
+	if ch.Level != cloud.LevelRemove || !strings.Contains(ch.Summary, "opens SSH (22) to the whole internet (in front of 1 VM)") {
+		t.Fatalf("an exposure: %+v", ch)
+	}
+
+	// A VM's group: the subnet's stays, the interface takes one.
+	set := func(ids ...string) string { return `"spec":{"firewalls":["` + strings.Join(ids, `","`) + `"]}` }
+	ask("instance-firewalls", web, set(app), bad, "subnet-nsg is on web-1's subnet")
+	ask("instance-firewalls", web, set(subnet, nsg, app), bad, "takes one network security group")
+	ask("instance-firewalls", web, set(subnet, nsg), bad, "nothing to change")
+	ask("instance-firewalls", web, `"spec":{"firewalls":[]}`, bad, "at least one network security group")
+	ch = ask("instance-firewalls", web, set(subnet, app), ok, "")
+	if ch.State != "applied" || ch.Summary != "Set the network security groups of web-1 to subnet-nsg, app-nsg" {
+		t.Fatalf("a VM's groups: %+v", ch)
+	}
+	ch = ask("instance-firewalls", web, set(subnet), ok, "")
+	if !strings.HasSuffix(ch.Summary, "its network interface is left with none of its own") {
+		t.Fatalf("only the subnet's group: %+v", ch)
+	}
+
+	// Deleting: its name typed, and nothing behind it.
+	ask("firewall-delete", app, `"spec":{}`, bad, "type the")
+	ask("firewall-delete", spare, `"confirm":"spare-nsg","spec":{}`, conflict, "is on 2 network interfaces or subnets")
+	ask("firewall-delete", subnet, `"confirm":"subnet-nsg","spec":{}`, conflict, "is in front of web-1")
+	ch = ask("firewall-delete", app, `"confirm":"app-nsg","spec":{}`, ok, "")
+	if ch.State != "applied" || ch.Summary != "Delete network security group app-nsg (Web-RG)" {
+		t.Fatalf("delete: %+v", ch)
+	}
+
+	// Making one: in a resource group Argus has read, under a name Azure takes.
+	ask("firewall-create", "", `"spec":{"name":"api-nsg","group":"elsewhere"}`, bad, "pick a resource group")
+	ask("firewall-create", "", `"spec":{"name":"bad/name","group":"Web-RG"}`, bad, "a network security group's name")
+	ask("firewall-create", "", `"spec":{"name":"WEB-NSG","group":"web-rg"}`, conflict, "already has a network security group named web-nsg")
+	ask("firewall-create", "", `"spec":{"name":"api-nsg","group":"web-rg","tags":{"Microsoft-x":"y"}}`, bad, "Azure keeps tag names")
+	ch = ask("firewall-create", "", `"spec":{"name":"api-nsg","group":"web-rg","rules":[`+rule(443, "0.0.0.0/0")+`]}`, ok, "")
+	if ch.State != "applied" || ch.Summary != "Make network security group api-nsg in resource group Web-RG with 1 inbound rule" {
+		t.Fatalf("make: %+v", ch)
+	}
+	// Azure has no target groups for Argus to change yet.
+	ask("target-register", "x", `"spec":{"instance":"`+web+`"}`, http.StatusNotImplemented, "")
+}

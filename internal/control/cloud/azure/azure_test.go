@@ -80,6 +80,11 @@ type fakeMicrosoft struct {
 	// locks the resource locks on it.
 	vmBody string
 	locks  []string
+	// groups are the network security groups as last written, by name,
+	// and groupEtag their etag; raceGroup changes it after every read.
+	groups    map[string]map[string]any
+	groupEtag int
+	raceGroup bool
 }
 
 func (m *fakeMicrosoft) changed() []string {
@@ -222,7 +227,12 @@ func (m *fakeMicrosoft) handler() http.Handler {
 			 {"name":"shut","properties":{"priority":100,"direction":"Inbound","access":"Deny","protocol":"*","sourceAddressPrefix":"*","destinationAddressPrefix":"*","destinationPortRange":"*"}},
 			 {"name":"rdp","properties":{"priority":200,"direction":"Inbound","access":"Allow","protocol":"Tcp","sourceAddressPrefix":"Internet","destinationAddressPrefix":"*","destinationPortRange":"3389"}},
 			 {"name":"out","properties":{"priority":200,"direction":"Outbound","access":"Allow","protocol":"Tcp","sourceAddressPrefix":"*","destinationAddressPrefix":"10.9.0.0/16","destinationPortRange":"443"}}]}},
-			{"id":"` + rg + `Microsoft.Network/networkSecurityGroups/unused","name":"unused","location":"westeurope","properties":{"resourceGuid":"ffffffff-0000-4000-8000-000000000003"}}]}`,
+			{"id":"` + rg + `Microsoft.Network/networkSecurityGroups/unused","name":"unused","location":"westeurope","properties":{"resourceGuid":"ffffffff-0000-4000-8000-000000000003"}},
+			{"id":"` + rg + `Microsoft.Network/networkSecurityGroups/app-nsg","name":"app-nsg","location":"eastus","tags":{"keep":"me"},"properties":{"resourceGuid":"ffffffff-0000-4000-8000-000000000004","securityRules":[
+			 {"name":"web","properties":{"priority":200,"direction":"Inbound","access":"Allow","protocol":"Tcp","sourcePortRange":"*","sourceAddressPrefixes":["10.1.0.0/16","10.2.0.0/16"],"destinationAddressPrefix":"*","destinationPortRanges":["80","443"]}},
+			 {"name":"admin","properties":{"priority":210,"direction":"Inbound","access":"Allow","protocol":"Tcp","sourcePortRange":"*","sourceAddressPrefix":"203.0.113.7","destinationAddressPrefix":"*","destinationPortRange":"22","description":"the bastion"}},
+			 {"name":"no-telnet","properties":{"priority":150,"direction":"Inbound","access":"Deny","protocol":"Tcp","sourcePortRange":"*","sourceAddressPrefix":"Internet","destinationAddressPrefix":"*","destinationPortRange":"23"}},
+			 {"name":"deny-rest","properties":{"priority":4000,"direction":"Inbound","access":"Deny","protocol":"*","sourcePortRange":"*","sourceAddressPrefix":"*","destinationAddressPrefix":"*","destinationPortRange":"*"}}]}}]}`,
 	}
 	// Changes to web-1, recorded as made. Azure accepts and answers with
 	// the ids its Activity log files the operation under.
@@ -346,6 +356,83 @@ func (m *fakeMicrosoft) handler() http.Handler {
 		m.nicEtag++
 		w.Header().Set("x-ms-correlation-request-id", "corr-1234")
 		_, _ = w.Write(b)
+	}))
+	// Network security groups are read whole and written back whole under
+	// their etag, as the interface is; a new one is made at its name.
+	groupPath := rg + "Microsoft.Network/networkSecurityGroups/{name}"
+	groupEtag := func() string { return `W/"g` + string(rune('a'+m.groupEtag)) + `"` }
+	seed := func() {
+		if m.groups != nil {
+			return
+		}
+		m.groups = map[string]map[string]any{}
+		var list struct {
+			Value []map[string]any `json:"value"`
+		}
+		_ = json.Unmarshal([]byte(answers["Microsoft.Network/networkSecurityGroups"]), &list)
+		for _, g := range list.Value {
+			name := g["name"].(string)
+			props := g["properties"].(map[string]any)
+			switch name {
+			case "web-nsg":
+				props["networkInterfaces"] = []any{map[string]any{"id": rg + "Microsoft.Network/networkInterfaces/web-1-nic"}}
+			case "subnet-nsg":
+				props["subnets"] = []any{map[string]any{"id": rg + "Microsoft.Network/virtualNetworks/main/subnets/web"}}
+			}
+			props["provisioningState"] = "Succeeded"
+			m.groups[name] = g
+		}
+	}
+	mux.HandleFunc("GET "+groupPath, authed(func(w http.ResponseWriter, r *http.Request) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		seed()
+		g, ok := m.groups[r.PathValue("name")]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"code":"ResourceNotFound","message":"The Resource was not found."}}`))
+			return
+		}
+		g["etag"] = groupEtag()
+		_ = json.NewEncoder(w).Encode(g)
+		if m.raceGroup {
+			m.groupEtag++
+		}
+	}))
+	mux.HandleFunc("PUT "+groupPath, authed(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		seed()
+		name := r.PathValue("name")
+		if _, there := m.groups[name]; there && r.Header.Get("If-Match") != groupEtag() {
+			w.WriteHeader(http.StatusPreconditionFailed)
+			_, _ = w.Write([]byte(`{"error":{"code":"PreconditionFailed","message":"Precondition failed."}}`))
+			return
+		}
+		m.changes = append(m.changes, "PUT nsg "+name+" "+string(b))
+		if m.refuse {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":{"code":"AuthorizationFailed","message":"The client does not have authorization to perform action over scope."}}`))
+			return
+		}
+		var g map[string]any
+		_ = json.Unmarshal(b, &g)
+		if props, ok := g["properties"].(map[string]any); ok && props["resourceGuid"] == nil {
+			props["resourceGuid"] = "FFFFFFFF-0000-4000-8000-0000000000FF"
+		}
+		m.groups[name] = g
+		m.groupEtag++
+		w.Header().Set("x-ms-correlation-request-id", "corr-1234")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(g)
+	}))
+	mux.HandleFunc("DELETE "+groupPath, authed(func(w http.ResponseWriter, r *http.Request) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		m.changes = append(m.changes, "DELETE nsg "+r.PathValue("name"))
+		w.Header().Set("x-ms-correlation-request-id", "corr-1234")
+		w.WriteHeader(http.StatusAccepted)
 	}))
 	mux.HandleFunc("GET "+sub+"/providers/Microsoft.Authorization/roleDefinitions/{id}", authed(func(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
