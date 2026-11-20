@@ -235,6 +235,15 @@ type API struct {
 	InstanceName  string
 	outside       outsideState
 	outsideClient *http.Client
+
+	// WebsiteCanaries are what tells a website's failure from this control
+	// server's own network failing; empty is DefaultWebsiteCanaries. See
+	// websites.go.
+	WebsiteCanaries WebsiteCanaries
+	websites        websiteRunner
+	// websiteProbe and websiteAsk stand in for the network in tests.
+	websiteProbe func(ctx context.Context, g tunnel.GrantSite) tunnel.SiteResult
+	websiteAsk   func(ctx context.Context, host string, g tunnel.GrantSite) serverOpinion
 }
 
 // SetThrottles enables per-client rate limiting.
@@ -345,6 +354,17 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/databases", a.dbAdmin(a.postDatabase))
 	mux.HandleFunc("GET /api/v1/assets/{id}/databases/discover", a.dbAdmin(a.getDiscoverDatabases))
 	mux.HandleFunc("POST /api/v1/assets/{id}/reach-check", a.dbAdmin(a.postReachCheck))
+	// Website checks: is a site up, confirmed before it is called down.
+	mux.HandleFunc("GET /api/v1/websites", a.getWebsites)
+	mux.HandleFunc("POST /api/v1/websites", a.postWebsite)
+	mux.HandleFunc("POST /api/v1/websites/test", a.postWebsiteTest)
+	mux.HandleFunc("GET /api/v1/websites/{id}", a.getWebsite)
+	mux.HandleFunc("PUT /api/v1/websites/{id}", a.putWebsite)
+	mux.HandleFunc("DELETE /api/v1/websites/{id}", a.deleteWebsite)
+	mux.HandleFunc("POST /api/v1/websites/{id}/check", a.postWebsiteCheckNow)
+	mux.HandleFunc("POST /api/v1/websites/{id}/test-alert", a.postWebsiteTestAlert)
+	mux.HandleFunc("GET /api/v1/websites/settings", a.getWebsiteSettings)
+	mux.HandleFunc("PUT /api/v1/websites/settings", a.putWebsiteSettings)
 	mux.HandleFunc("GET /api/v1/assets/{id}/databases/create-options", a.dbAdmin(a.getCreateOptions))
 	mux.HandleFunc("POST /api/v1/assets/{id}/databases/create", a.dbAdmin(a.postCreateDatabase))
 	mux.HandleFunc("POST /api/v1/databases/{id}/owner", a.dbAdmin(a.postDatabaseOwner))

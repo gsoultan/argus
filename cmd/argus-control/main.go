@@ -685,6 +685,9 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	// This control server saying it is alive, the outage record, and the
 	// outside check-in; see control_liveness.go.
 	go api.RunLiveness(ctx)
+	// Website checks: every minute, confirmed before a site is called down;
+	// see websites.go.
+	go api.RunWebsiteChecks(ctx)
 	// Cookies must be Secure whenever the browser reaches Argus over HTTPS,
 	// which includes the case where a proxy terminates TLS and this process
 	// only ever sees plain HTTP.

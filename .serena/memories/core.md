@@ -56,6 +56,7 @@ enforces all of it and CI runs it by name.
 | [cloud-findings](cloud-findings.md) | Cloud › Risks & waste: the checks, how each says how it knows, the account-wide read, keeping a finding |
 | [asset-types](asset-types.md) | Servers, workstations and devices: the kind, the tabs each type gets, the plan for who is asked before a session |
 | [self-approval](self-approval.md) | Approvals: who decides, and when the person who asked may approve their own |
+| [website-checks](website-checks.md) | Websites: uptime checks, the four confirmations before "down", canaries, agent second opinions |
 
 ## Standing rules for this repo
 

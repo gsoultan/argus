@@ -456,7 +456,7 @@ func (m *ConsoleAlert) Schema(t *storm.Table) {
 	t.Col(&m.Subject).Default("''::text")
 	t.Col(&m.Closed).Default("''::text")
 	t.CheckNamed("console_alerts_kind_check",
-		"kind = ANY (ARRAY['approval'::text, 'signin'::text, 'session'::text, 'security'::text, 'server'::text, 'backup'::text, 'data'::text, 'updates'::text, 'resources'::text, 'cloud'::text])")
+		"kind = ANY (ARRAY['approval'::text, 'signin'::text, 'session'::text, 'security'::text, 'server'::text, 'backup'::text, 'data'::text, 'updates'::text, 'resources'::text, 'cloud'::text, 'website'::text])")
 	t.CheckNamed("console_alerts_severity_check", "severity = ANY (ARRAY['info'::text, 'warning'::text, 'critical'::text])")
 	t.CheckNamed("console_alerts_audience_check", "audience = ANY (ARRAY['deciders'::text, 'admins'::text, 'person'::text])")
 	t.CheckNamed("console_alerts_link_check", "(link = ''::text) OR (link ~~ '/%'::text)")
@@ -1470,6 +1470,10 @@ func All() []any {
 		&ConsoleAlert{},
 		&ConsoleAlertPref{},
 		&ConsoleAlertRead{},
+		&WebsiteCheck{},
+		&WebsiteRound{},
+		&WebsiteOutage{},
+		&WebsiteAlertSetting{},
 		&Team{},
 		&TeamMember{},
 		&UsageHistory{},
@@ -2499,4 +2503,122 @@ func (m *ApprovalPolicyChange) Schema(t *storm.Table) {
 	t.CheckNamed("approval_policy_changes_state_check",
 		"state = ANY (ARRAY['pending'::text, 'approved'::text, 'denied'::text, 'cancelled'::text])")
 	t.Index(&m.State).Unique().Where("(state = 'pending'::text)").Named("approval_policy_changes_one_pending")
+}
+
+// WebsiteCheck is table website_checks: an address checked for being up
+// (migration 099, websites.go).
+type WebsiteCheck struct {
+	storm.Model
+
+	Name           string
+	URL            string
+	ExpectStatus   int32
+	Keyword        string
+	EverySeconds   int32
+	TimeoutSeconds int32
+	ConfirmFrom    [][16]byte
+	Paused         bool
+	Telegram       string
+	TelegramChats  []string
+	CreatedBy      string
+	State          string
+	StateSince     *time.Time
+	FailingRounds  int32
+	LastAt         *time.Time
+	LastMs         *int32
+	LastStatus     *int32
+	LastDetail     string
+	LastOutcome    string
+	CertNotAfter   *time.Time
+	NextAt         time.Time
+	LeaseUntil     *time.Time
+}
+
+func (m *WebsiteCheck) Schema(t *storm.Table) {
+	t.Col(&m.ExpectStatus).Default("0")
+	t.Col(&m.Keyword).Default("''::text")
+	t.Col(&m.EverySeconds).Default("60")
+	t.Col(&m.TimeoutSeconds).Default("30")
+	t.Col(&m.ConfirmFrom).Default("'{}'::uuid[]")
+	t.Col(&m.Paused).Default("false")
+	t.Col(&m.Telegram).Default("'default'::text")
+	t.Col(&m.TelegramChats).Default("'{}'::text[]")
+	t.Col(&m.State).Default("'pending'::text")
+	t.Col(&m.FailingRounds).Default("0")
+	t.Col(&m.LastDetail).Default("''::text")
+	t.Col(&m.LastOutcome).Default("''::text")
+	t.Col(&m.NextAt).Default("now()")
+	t.CheckNamed("website_checks_confirm_from_check", "cardinality(confirm_from) <= 3")
+	t.CheckNamed("website_checks_every_seconds_check", "every_seconds = ANY (ARRAY[60, 300, 600])")
+	t.CheckNamed("website_checks_expect_status_check", "(expect_status = 0) OR ((expect_status >= 100) AND (expect_status <= 599))")
+	t.CheckNamed("website_checks_keyword_check", "length(keyword) <= 200")
+	t.CheckNamed("website_checks_name_check", "(length(name) >= 1) AND (length(name) <= 100)")
+	t.CheckNamed("website_checks_state_check", "state = ANY (ARRAY['pending'::text, 'up'::text, 'down'::text, 'unknown'::text])")
+	t.CheckNamed("website_checks_telegram_chats_check", "cardinality(telegram_chats) <= 20")
+	t.CheckNamed("website_checks_telegram_check", "telegram = ANY (ARRAY['default'::text, 'off'::text, 'chats'::text])")
+	t.CheckNamed("website_checks_timeout_seconds_check", "(timeout_seconds >= 5) AND (timeout_seconds <= 60)")
+	t.CheckNamed("website_checks_url_check", "(length(url) >= 1) AND (length(url) <= 2000)")
+	t.Index(&m.NextAt).Where("NOT paused").Named("website_checks_due")
+}
+
+// WebsiteRound is table website_rounds: one round of a check, for uptime.
+type WebsiteRound struct {
+	Check   WebsiteCheck
+	At      time.Time
+	Secs    int32
+	Outcome string
+	Ms      *int32
+	Status  *int32
+	Detail  string
+}
+
+func (m *WebsiteRound) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Check, &m.At)
+	t.Col(&m.Check).ConstraintName("website_rounds_check_id_fkey")
+	t.Col(&m.Check).OnDelete(storm.Cascade)
+	t.Col(&m.Detail).Default("''::text")
+	t.CheckNamed("website_rounds_outcome_check", "outcome = ANY (ARRAY['up'::text, 'partial'::text, 'pending'::text, 'down'::text, 'unknown'::text])")
+	t.Index(&m.At).Named("website_rounds_at")
+}
+
+// WebsiteOutage is table website_outages: a confirmed outage.
+type WebsiteOutage struct {
+	ID        int64
+	Check     WebsiteCheck
+	StartedAt time.Time
+	EndedAt   *time.Time
+	Cause     string
+	Confirmed string
+}
+
+func (m *WebsiteOutage) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Serial()
+	t.Col(&m.Check).ConstraintName("website_outages_check_id_fkey")
+	t.Col(&m.Check).OnDelete(storm.Cascade)
+	t.Col(&m.Cause).Default("''::text")
+	t.Col(&m.Confirmed).Default("''::text")
+	t.Index(&m.Check, storm.Desc(&m.StartedAt)).Named("website_outages_check")
+	t.Index(&m.Check).Unique().Where("ended_at IS NULL").Named("website_outages_open")
+}
+
+// WebsiteAlertSetting is table website_alert_settings: the Websites
+// feature's Telegram choice.
+type WebsiteAlertSetting struct {
+	ID            bool
+	Telegram      bool
+	TelegramChats []string
+	UpdatedBy     string
+	UpdatedAt     time.Time
+}
+
+func (m *WebsiteAlertSetting) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("true")
+	t.Col(&m.Telegram).Default("true")
+	t.Col(&m.TelegramChats).Default("'{}'::text[]")
+	t.Col(&m.UpdatedBy).Default("''::text")
+	t.Col(&m.UpdatedAt).Default("now()")
+	t.CheckNamed("website_alert_settings_id_check", "id")
+	t.CheckNamed("website_alert_settings_telegram_chats_check", "cardinality(telegram_chats) <= 20")
 }

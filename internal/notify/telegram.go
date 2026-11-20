@@ -53,6 +53,13 @@ func NewTelegram(cfg TelegramConfig, client *http.Client) (*Telegram, error) {
 	}, nil
 }
 
+// WithAPI points the sender at another Bot API address: a test server.
+func (t *Telegram) WithAPI(base string) *Telegram {
+	c := *t
+	c.api = strings.TrimRight(base, "/")
+	return &c
+}
+
 // Name implements Sender.
 func (t *Telegram) Name() string { return "telegram" }
 
@@ -96,6 +103,42 @@ func (t *Telegram) SendHTML(ctx context.Context, text, linkLabel, link string) e
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// ChatIDs are the chats this bot is set up to post to.
+func (t *Telegram) ChatIDs() []string { return append([]string(nil), t.chatIDs...) }
+
+// SendHTMLTo is SendHTML to some of the configured chats. A chat that is
+// not one of them is never posted to: which chats exist is the operator's
+// decision in Settings, and a feature or an item only narrows it. Empty
+// chats means all of them.
+func (t *Telegram) SendHTMLTo(ctx context.Context, chats []string, text, linkLabel, link string) error {
+	only := t.Allowed(chats)
+	if len(only) == 0 {
+		return errors.New("none of the chosen chats is one Telegram is set up for")
+	}
+	c := *t
+	c.chatIDs = only
+	return c.SendHTML(ctx, text, linkLabel, link)
+}
+
+// Allowed is chats narrowed to the configured ones, in their order; empty
+// chats is every configured chat.
+func (t *Telegram) Allowed(chats []string) []string {
+	if len(chats) == 0 {
+		return t.ChatIDs()
+	}
+	want := map[string]bool{}
+	for _, c := range chats {
+		want[strings.TrimSpace(c)] = true
+	}
+	var out []string
+	for _, c := range t.chatIDs {
+		if want[c] {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 func buttonRefused(err error) bool {
