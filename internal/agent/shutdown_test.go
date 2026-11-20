@@ -42,7 +42,11 @@ func testCollector(t *testing.T) (*Collector, string) {
 	go func() { _ = c.Listen(sock) }()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if _, err := os.Stat(sock); err == nil {
+		// The socket file appears when it is bound, a moment before it
+		// takes connections, so what is waited for is a connection: one
+		// that says nothing, which the collector drops.
+		if conn, err := net.Dial("unix", sock); err == nil {
+			_ = conn.Close()
 			return c, sock
 		}
 		time.Sleep(5 * time.Millisecond)
