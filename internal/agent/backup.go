@@ -273,6 +273,9 @@ func (j *backupJob) run(ctx context.Context) tunnel.BackupResult {
 			}
 		}
 	}()
+	if j.b.Engine == tunnel.EngineMSSQL {
+		return j.msRun(ctx, data)
+	}
 	switch j.b.Job {
 	case tunnel.BackupJobCatalog:
 		return j.catalog(ctx)

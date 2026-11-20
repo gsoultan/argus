@@ -195,14 +195,11 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
   /** The engines offered: brokers on the Brokers page, for one. */
   onlyEngines?: DBEngine[]
 }) {
-  const [chosenMode, setMode] = useState<'existing' | 'create'>(initialMode ?? 'existing')
+  const [mode, setMode] = useState<'existing' | 'create'>(initialMode ?? 'existing')
   const create = useCreateDatabase()
   const narrow = useMediaQuery('(max-width: 48em)')
   const [engine, setEngine] = useState<DBEngine>(initialEngine ?? 'postgres')
   const info = ENGINES[engine]
-  // Argus does not make SQL Server databases yet; one already there is added.
-  const canCreate = engine !== 'mssql'
-  const mode = canCreate ? chosenMode : 'existing'
   const [typed, setTyped] = useState('')
   const [manual, setManual] = useState(false)
   const [picked, setPicked] = useState<string[]>([])
@@ -312,10 +309,8 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
       <Stack gap="sm">
         <SegmentedControl value={engine} onChange={(v) => pick(v as DBEngine)} fullWidth
           data={(onlyEngines ?? (Object.keys(ENGINES) as DBEngine[])).map((e) => ({ label: ENGINES[e].label, value: e }))} />
-        {canCreate && (
-          <SegmentedControl value={mode} onChange={(v) => setMode(v as typeof mode)} size="xs"
-            data={[{ label: `Already on ${asset.hostname.split('.')[0]}`, value: 'existing' }, { label: 'Create new', value: 'create' }]} />
-        )}
+        <SegmentedControl value={mode} onChange={(v) => setMode(v as typeof mode)} size="xs"
+          data={[{ label: `Already on ${asset.hostname.split('.')[0]}`, value: 'existing' }, { label: 'Create new', value: 'create' }]} />
 
         {mode === 'create' ? (
           <Suspense fallback={<Loader size="sm" />}>

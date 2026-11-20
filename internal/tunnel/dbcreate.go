@@ -72,6 +72,15 @@ type GrantCreate struct {
 	Mongo    *MongoCreate  `json:"mongo,omitempty"`
 	Rabbit   *RabbitCreate `json:"rabbit,omitempty"`
 	Kafka    *KafkaCreate  `json:"kafka,omitempty"`
+	MSSQL    *MSSQLCreate  `json:"mssql,omitempty"`
+}
+
+// MSSQLCreate is a new SQL Server database's collation and recovery
+// model. Empty fields are the server's defaults (model's).
+type MSSQLCreate struct {
+	Collation string `json:"collation,omitempty"`
+	// Recovery is FULL, BULK_LOGGED or SIMPLE.
+	Recovery string `json:"recovery,omitempty"`
 }
 
 // PGCreate is a new Postgres database's settings. Empty fields are the
@@ -160,6 +169,10 @@ type CreateOptions struct {
 	DefaultCollation string              `json:"defaultCollation,omitempty"`
 	// Kafka.
 	Brokers int `json:"brokers,omitempty"`
+	// SQL Server: its collations (DefaultCollation is the server's) and
+	// the model database's recovery model, which a new one takes.
+	Collations      []string `json:"collations,omitempty"`
+	DefaultRecovery string   `json:"defaultRecovery,omitempty"`
 	// Taken are the names already on the server, so the dialog says so
 	// before anything runs.
 	Taken     []string `json:"taken,omitempty"`
@@ -174,6 +187,7 @@ var (
 	reMySQLName   = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
 	reMongoField  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,62}$`)
 	reSafePG      = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
+	reMSSQLColl   = regexp.MustCompile(`^[A-Za-z0-9_]{1,128}$`)
 )
 
 // MaxExtensions bounds the extensions one create enables.
@@ -299,6 +313,26 @@ func (c *GrantCreate) Validate() error {
 		}
 		if r.MaxConnections < 0 || r.MaxQueues < 0 || r.MaxConnections > 1_000_000 || r.MaxQueues > 1_000_000 {
 			return errors.New("a limit must be between 1 and 1,000,000, or empty for none")
+		}
+	case EngineMSSQL:
+		if !ValidMSSQLDB(c.Name) {
+			return errors.New("the database name must be 1 to 63 characters, not one of SQL Server's own, with no control characters or surrounding spaces")
+		}
+		if strings.HasPrefix(c.Name, TestDBPrefix) {
+			return errors.New(TestDBPrefix + " names are kept for Argus's restore tests")
+		}
+		if c.MSSQL == nil {
+			c.MSSQL = &MSSQLCreate{}
+		}
+		m := c.MSSQL
+		if m.Collation != "" && !reMSSQLColl.MatchString(m.Collation) {
+			return errors.New("the collation must be a name such as SQL_Latin1_General_CP1_CI_AS")
+		}
+		m.Recovery = strings.ToUpper(m.Recovery)
+		switch m.Recovery {
+		case "", "FULL", "BULK_LOGGED", "SIMPLE":
+		default:
+			return errors.New("the recovery model is FULL, BULK_LOGGED or SIMPLE")
 		}
 	case EngineKafka:
 		if !ValidKafkaTopic(c.Name) {
@@ -497,6 +531,20 @@ func CreatePlan(c GrantCreate) []string {
 			if m.Collation != "" {
 				s += " COLLATE " + m.Collation
 			}
+		}
+		return []string{s}
+	case EngineMSSQL:
+		s := "CREATE DATABASE " + MSSQLIdent(c.Name)
+		out := []string{}
+		if m := c.MSSQL; m != nil {
+			if m.Collation != "" {
+				s += " COLLATE " + m.Collation
+			}
+			out = append(out, s)
+			if m.Recovery != "" {
+				out = append(out, "ALTER DATABASE "+MSSQLIdent(c.Name)+" SET RECOVERY "+m.Recovery)
+			}
+			return out
 		}
 		return []string{s}
 	case EngineMongoDB:

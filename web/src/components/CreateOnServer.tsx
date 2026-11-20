@@ -64,6 +64,9 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
   // MySQL
   const [charset, setCharset] = useState<string | null>(null)
   const [collation, setCollation] = useState<string | null>(null)
+  // SQL Server
+  const [msCollation, setMSCollation] = useState<string | null>(null)
+  const [recovery, setRecovery] = useState<'' | 'FULL' | 'BULK_LOGGED' | 'SIMPLE'>('')
   // MongoDB
   const [collection, setCollection] = useState('')
   const [kind, setKind] = useState<'plain' | 'timeseries' | 'capped'>('plain')
@@ -112,6 +115,8 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
         return { postgres: { owner, extensions, encoding: encoding.trim() || undefined, locale: locale.trim() || undefined } }
       case 'mysql':
         return { mysql: { charset: cs ?? undefined, collation: co ?? undefined } }
+      case 'mssql':
+        return { mssql: { collation: msCollation ?? undefined, recovery: recovery || undefined } }
       case 'mongodb':
         return {
           mongo: {
@@ -289,6 +294,19 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
         </>
       )}
 
+      {engine === 'mssql' && (
+        <>
+          <SimpleGrid cols={2}>
+            <Select label="Collation" value={msCollation} onChange={setMSCollation} searchable clearable
+              data={o?.collations ?? []} placeholder={o?.defaultCollation ? `${o.defaultCollation} (server)` : 'server default'} />
+            <Select label="Recovery model" value={recovery} onChange={(v) => setRecovery((v ?? '') as typeof recovery)} allowDeselect={false}
+              data={[{ value: '', label: `As model${o?.defaultRecovery ? ` (${o.defaultRecovery})` : ''}` },
+                { value: 'FULL', label: 'Full' }, { value: 'BULK_LOGGED', label: 'Bulk-logged' }, { value: 'SIMPLE', label: 'Simple' }]} />
+          </SimpleGrid>
+          <Text size={FS.micro} c="dimmed">Full keeps the log until it is backed up, so the database can be restored to any moment. Simple keeps no log backups.</Text>
+        </>
+      )}
+
       {engine === 'mongodb' && (
         <>
           <TextInput label="First collection" value={collection} onChange={(e) => setCollection(e.currentTarget.value)}
@@ -373,7 +391,7 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
             {engine === 'postgres' && (
               <NumberInput label="PgBouncer port" placeholder="none" value={poolerPort} onChange={setPoolerPort} min={1} max={65535} />
             )}
-            {(engine === 'mysql' || engine === 'mongodb' || engine === 'kafka') && (
+            {(engine === 'mysql' || engine === 'mssql' || engine === 'mongodb' || engine === 'kafka') && (
               <TextInput label={engine === 'mysql' ? 'Option file' : 'Admin file'} placeholder={info.defaults.configPath ?? 'none'}
                 value={configPath} onChange={(e) => setConfigPath(e.currentTarget.value)} />
             )}

@@ -32,6 +32,11 @@ func TestCreatePlanPerEngine(t *testing.T) {
 		{GrantCreate{Op: "create", Engine: EngineKafka, Host: "127.0.0.1", Port: 9092, Name: "orders.refunds",
 			Kafka: &KafkaCreate{Partitions: 6, Replicas: 3, RetentionMS: 604800000, Cleanup: "delete"}},
 			[]string{"CreateTopics orders.refunds partitions=6 replication.factor=3 retention.ms=604800000 cleanup.policy=delete"}},
+		{GrantCreate{Op: "create", Engine: EngineMSSQL, Host: "127.0.0.1", Port: 1433, Name: "Sales]Ops",
+			MSSQL: &MSSQLCreate{Collation: "Latin1_General_100_CI_AS_SC_UTF8", Recovery: "simple"}},
+			[]string{"CREATE DATABASE [Sales]]Ops] COLLATE Latin1_General_100_CI_AS_SC_UTF8", "ALTER DATABASE [Sales]]Ops] SET RECOVERY SIMPLE"}},
+		{GrantCreate{Op: "create", Engine: EngineMSSQL, Host: "127.0.0.1", Port: 1433, Name: "crm"},
+			[]string{"CREATE DATABASE [crm]"}},
 	}
 	for _, tc := range cases {
 		if err := tc.c.Validate(); err != nil {
@@ -74,6 +79,11 @@ func TestCreateValidateRefuses(t *testing.T) {
 		{Op: "create", Engine: EngineKafka, Host: "127.0.0.1", Port: 9092, Name: "x", Kafka: &KafkaCreate{Partitions: 5000}},
 		{Op: "create", Engine: EngineKafka, Host: "127.0.0.1", Port: 9092, Name: "x", Kafka: &KafkaCreate{Cleanup: "compact,delete"}},
 		{Op: "create", Engine: EngineRedis, Host: "127.0.0.1", Port: 6379, Name: "3"},
+		{Op: "create", Engine: EngineMSSQL, Host: "127.0.0.1", Port: 1433, Name: "msdb"},
+		{Op: "create", Engine: EngineMSSQL, Host: "127.0.0.1", Port: 1433, Name: " x"},
+		{Op: "create", Engine: EngineMSSQL, Host: "127.0.0.1", Port: 1433, Name: "argus_test_x"},
+		{Op: "create", Engine: EngineMSSQL, Host: "127.0.0.1", Port: 1433, Name: "x", MSSQL: &MSSQLCreate{Collation: "Latin1_General_CI_AS; DROP DATABASE y"}},
+		{Op: "create", Engine: EngineMSSQL, Host: "127.0.0.1", Port: 1433, Name: "x", MSSQL: &MSSQLCreate{Recovery: "NONE"}},
 		{Op: "set-owner", Engine: EngineMySQL, Host: "127.0.0.1", Port: 3306, Name: "x", Postgres: &PGCreate{Owner: "app"}},
 		{Op: "set-owner", Engine: EnginePostgres, Host: "/var/run/postgresql", Port: 5432, Name: "x"},
 		{Op: "drop", Engine: EnginePostgres, Host: "/var/run/postgresql", Port: 5432, Name: "x"},

@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ReactNode } from 'react'
-import { BackupSettings, BackupsPanel, describeTests, dur } from '~/components/DatabaseBackups'
+import { BackupSettings, BackupsPanel, describeTests, dur, restoreNameOk, suggestName } from '~/components/DatabaseBackups'
 import { renderWithProviders } from '~/test/render'
 import type { BackupSchedule, BackupTest, BackupsView, Database, DatabaseBackup } from '~/types/domain'
 
@@ -125,5 +125,42 @@ describe('test restores', () => {
       testEvery: 'weekly', testWeekday: 0, testHour: 4,
       testChecks: [{ name: 'Paid orders', sql: "SELECT count(*) > 0 FROM orders WHERE state = 'paid'" }],
     })
+  })
+})
+
+describe('SQL Server backups', () => {
+  const ms: Database = { ...db, engine: 'mssql', port: 1433, dbname: 'Sales', adminUser: '', configPath: '' }
+
+  it('names a restored database as SQL Server allows', () => {
+    expect(restoreNameOk('Sales Copy', true)).toBe(true)
+    expect(restoreNameOk('Sales Copy', false)).toBe(false)
+    expect(restoreNameOk('msdb', true)).toBe(false)
+    expect(restoreNameOk(' padded', true)).toBe(false)
+    expect(restoreNameOk('x'.repeat(64), true)).toBe(false)
+    expect(suggestName('Sales DB', true)).toMatch(/^Sales DB_\d{4}_\d{2}_\d{2}$/)
+  })
+
+  it('has no test restores, and words the backup as SQL Server', async () => {
+    live.databaseBackups.mockResolvedValue(view({ schedule: schedule({ testEvery: 'off' }), tests: [], lastGood: null }))
+    renderWithProviders(<BackupsPanel database={ms} level="dba" narrow={false} onBack={() => {}} admin />)
+    expect(await screen.findAllByText('Restore')).toBeTruthy()
+    expect(screen.queryByText('never test-restored on a schedule')).toBeNull()
+    expect(screen.queryByText(/passed a test restore/)).toBeNull()
+    fireEvent.click(screen.getByText('Back up now'))
+    expect(await screen.findByText(/copy-only backup/)).toBeTruthy()
+  })
+
+  it('saves a schedule with test restores off and shows no test settings', async () => {
+    live.databaseBackups.mockResolvedValue(view({ schedule: schedule({ testEvery: 'weekly' }) }))
+    live.backupCatalog.mockResolvedValue({ keyId: 'k', catalog: { dumpVersion: 'SQL Server 16.0', restoreVersion: 'SQL Server 16.0',
+      serverVersion: '16.0.4135.4', freeBytes: 1 << 30, dir: '/var/lib/argus/backups', compression: 'sqlserver' } })
+    live.setBackupSchedule.mockImplementation(async (_id: string, s: Partial<BackupSchedule>) => ({ ...schedule(), ...s }))
+    renderWithProviders(<BackupSettings db={ms} />)
+    expect(await screen.findByText('16.0.4135.4 · compressed')).toBeTruthy()
+    expect(screen.queryByText('Test restores')).toBeNull()
+    fireEvent.click(screen.getByLabelText('Scheduled backups'))
+    fireEvent.click(screen.getByText('Save'))
+    await waitFor(() => expect(live.setBackupSchedule).toHaveBeenCalled())
+    expect(live.setBackupSchedule.mock.calls[0]?.[1]).toMatchObject({ testEvery: 'off' })
   })
 })

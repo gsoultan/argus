@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -89,6 +90,10 @@ func (a *API) backupKeyFor(ctx context.Context) (*ecdh.PrivateKey, error) {
 // backupGrant signs a grant for one job on db's server.
 func (a *API) backupGrant(ctx context.Context, email string, db Database, b tunnel.GrantBackup) (string, tunnel.Grant, error) {
 	b.DatabaseID, b.Name, b.Host, b.Port, b.AdminUser = db.ID, db.Name, db.Host, db.Port, db.AdminUser
+	if db.Engine == tunnel.EngineMSSQL {
+		// SQL Server signs in with its admin file, not as an OS account.
+		b.Engine, b.ConfigPath, b.AdminUser = tunnel.EngineMSSQL, db.ConfigPath, ""
+	}
 	b.Organization = tenantIDOf(ctx)
 	g := tunnel.NewGrant(email, db.agent(), "backup", "")
 	g.Service = tunnel.BackupService
@@ -503,7 +508,7 @@ func (a *API) RunRestore(ctx context.Context, db Database, b DatabaseBackup, r D
 	created := ""
 	if r.Mode == tunnel.RestoreNew {
 		nd := Database{AssetID: db.AssetID, Engine: db.Engine, Host: db.Host, Port: db.Port, Name: r.NewName,
-			AdminUser: db.AdminUser, Label: db.Label, Policy: db.Policy, PoolerHost: db.PoolerHost, PoolerPort: db.PoolerPort}
+			ConfigPath: db.ConfigPath, AdminUser: db.AdminUser, Label: db.Label, Policy: db.Policy, PoolerHost: db.PoolerHost, PoolerPort: db.PoolerPort}
 		if made, err := a.store.CreateDatabase(ctx, nd, r.RequestedBy); err == nil {
 			created = made.ID
 			a.applyRulesTo(ctx, made, r.RequestedBy)
@@ -625,7 +630,7 @@ func (a *API) BackupSweep(ctx context.Context) {
 	}
 	for _, s := range due {
 		db, err := a.store.Database(ctx, s.DatabaseID)
-		if err != nil || db.Engine != tunnel.EnginePostgres {
+		if err != nil || !slices.Contains(backupEngines, db.Engine) {
 			continue
 		}
 		by := "schedule:" + db.ID

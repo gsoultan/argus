@@ -1848,7 +1848,7 @@ function WorkspaceHeader({ database, narrow, level, status, version, viaPooler, 
     ? [{ key: 'query', label: 'Query', hint: 'Write and run statements' }]
     : database.engine === 'mssql'
       ? [{ key: 'query', label: 'Query', hint: 'Write and run statements' },
-        { key: 'manage', label: 'Manage', hint: 'Activity, waits, indexes, integrity, Agent jobs, settings, logins and access' }]
+        { key: 'manage', label: 'Manage', hint: 'Activity, waits, integrity, backups, indexes, Agent jobs, logins and access, settings' }]
     : [
       { key: 'query', label: 'Query', hint: 'Write and run statements' },
       { key: 'diagram', label: 'Diagram', hint: 'Tables and how they link' },
@@ -1936,6 +1936,7 @@ const MSSQL_MANAGE: typeof MANAGE = [
   { key: 'activity', label: 'Activity & blocking', icon: IconActivity, hint: 'Who is connected, what each runs and waits on, and who blocks whom', dba: true, group: 'care' },
   { key: 'performance', label: 'Waits & queries', icon: IconGauge, hint: 'What the server waits on, and this database’s costliest statements', dba: true, group: 'care' },
   { key: 'integrity', label: 'Integrity', icon: IconShieldCheck, hint: 'DBCC CHECKDB, and pages found damaged', dba: true, group: 'care' },
+  { key: 'backups', label: 'Backups', icon: IconArchive, hint: 'Backups of this database, and putting one back', group: 'care' },
   { key: 'indexes', label: 'Indexes & statistics', icon: IconListTree, hint: 'Fragmentation, use, rebuild and reorganize; statistics; missing indexes', dba: true, group: 'dba' },
   { key: 'jobs', label: 'Agent jobs', icon: IconClock, hint: 'SQL Server Agent jobs that work on this database', dba: true, group: 'dba' },
   { key: 'roles', label: 'Logins & access', icon: IconUsersGroup, hint: 'Users and roles, grant, revoke and deny, and what each can do', dba: true, group: 'dba' },

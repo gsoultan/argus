@@ -128,7 +128,7 @@ export function DatabaseSettings({ dbId, initialTab, section }: {
       <PageBody>
         <Stack gap="md">
           <SegmentedControl value={tab} onChange={(v) => setTab(v as Tab)}
-            data={[{ label: 'Who can connect', value: 'who' }, { label: 'Safety', value: 'safety' }, ...(db.engine === 'redis' ? [{ label: 'Permissions', value: 'permissions' }] : []), { label: 'Connection', value: 'connection' }, ...(db.engine === 'postgres' ? [{ label: 'Backups', value: 'backups' }] : [])]} w="fit-content" />
+            data={[{ label: 'Who can connect', value: 'who' }, { label: 'Safety', value: 'safety' }, ...(db.engine === 'redis' ? [{ label: 'Permissions', value: 'permissions' }] : []), { label: 'Connection', value: 'connection' }, ...(db.engine === 'postgres' || db.engine === 'mssql' ? [{ label: 'Backups', value: 'backups' }] : [])]} w="fit-content" />
 
           {tab === 'who' && (
             <Stack gap="md">
@@ -187,7 +187,7 @@ export function DatabaseSettings({ dbId, initialTab, section }: {
           {tab === 'safety' && <Safety db={db} assignments={assignments ?? []} onAccess={() => setTab('who')} />}
           {tab === 'permissions' && db.engine === 'redis' && <Suspense fallback={null}><RedisPermissions db={db} /></Suspense>}
           {tab === 'connection' && (db.engine === 'postgres' ? <Connection db={db} /> : <StoreConnection db={db} />)}
-          {tab === 'backups' && db.engine === 'postgres' && <BackupSettings db={db} />}
+          {tab === 'backups' && (db.engine === 'postgres' || db.engine === 'mssql') && <BackupSettings db={db} />}
 
           <SectionCard title="Remove from Argus" description={db.engine === 'postgres'
             ? 'Sessions and recordings are kept. Nothing is changed in Postgres; locked roles stay locked.'

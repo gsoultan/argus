@@ -29,8 +29,25 @@ func (a *API) dbLevelOf(ctx context.Context, email, role, dbID string) (string, 
 // withDatabase loads the database and the caller's level, refusing below
 // min. The handler gets both.
 func (a *API) withDatabase(min string, next func(w http.ResponseWriter, r *http.Request, email string, db Database, level string)) http.HandlerFunc {
-	return a.withPostgres("backups", min, next)
+	return a.withEngines("backups", min, backupEngines, next)
 }
+
+// engineProduct is the engine's product name, as in "Postgres databases".
+func engineProduct(engine string) string {
+	switch engine {
+	case tunnel.EnginePostgres, "":
+		return "Postgres"
+	case tunnel.EngineMSSQL:
+		return "SQL Server"
+	case tunnel.EngineMySQL:
+		return "MySQL"
+	}
+	return strings.TrimSuffix(engineName(engine), " database")
+}
+
+// backupEngines are the engines Argus backs up: Postgres with pg_dump, SQL
+// Server with BACKUP DATABASE. Test restores are Postgres's only.
+var backupEngines = []string{tunnel.EnginePostgres, tunnel.EngineMSSQL}
 
 // withPostgres is withDatabase for a feature named what, which only a
 // Postgres database has.
@@ -54,7 +71,7 @@ func (a *API) withEngines(what, min string, engines []string, next func(w http.R
 		if !slices.Contains(engines, db.Engine) {
 			names := make([]string, len(engines))
 			for i, e := range engines {
-				names[i] = engineName(e)
+				names[i] = engineProduct(e)
 			}
 			writeErr(w, http.StatusBadRequest, what+" are for "+strings.Join(names, " and ")+" databases; "+db.Name+" is "+engineName(db.Engine))
 			return
@@ -417,8 +434,8 @@ func (a *API) putBackupSchedule(w http.ResponseWriter, r *http.Request, actor st
 		a.dbErr(w, "database", err)
 		return
 	}
-	if db.Engine != tunnel.EnginePostgres {
-		writeErr(w, http.StatusBadRequest, "backups are for Postgres databases; "+db.Name+" is "+engineName(db.Engine))
+	if !slices.Contains(backupEngines, db.Engine) {
+		writeErr(w, http.StatusBadRequest, "backups are for Postgres and SQL Server databases; "+db.Name+" is "+engineName(db.Engine))
 		return
 	}
 	var in struct {
@@ -458,6 +475,15 @@ func (a *API) putBackupSchedule(w http.ResponseWriter, r *http.Request, actor st
 	}
 	if in.TestEvery != nil {
 		next.TestEvery = *in.TestEvery
+	}
+	if db.Engine != tunnel.EnginePostgres {
+		// Test restores are Postgres's: a SQL Server backup is checked with
+		// RESTORE VERIFYONLY and read back, not restored on a schedule.
+		if in.TestEvery != nil && *in.TestEvery != "off" {
+			writeErr(w, http.StatusBadRequest, "test restores are for Postgres databases; "+db.Name+" is "+engineName(db.Engine))
+			return
+		}
+		next.TestEvery, next.TestChecks = "off", nil
 	}
 	if in.TestHour != nil {
 		next.TestHour = *in.TestHour
@@ -554,8 +580,8 @@ func (a *API) postRestore(w http.ResponseWriter, r *http.Request, email string, 
 			return
 		}
 		in.NewName = strings.TrimSpace(in.NewName)
-		if !tunnel.ValidDBName.MatchString(in.NewName) {
-			writeErr(w, http.StatusBadRequest, "the new database's name must be lower-case letters, digits and underscores, up to 63")
+		if !tunnel.ValidBackupDBName(db.Engine, in.NewName) || strings.HasPrefix(in.NewName, tunnel.TestDBPrefix) {
+			writeErr(w, http.StatusBadRequest, restoreNameRule(db.Engine))
 			return
 		}
 		if in.NewName == db.Name {

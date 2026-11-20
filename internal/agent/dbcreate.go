@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -101,8 +102,110 @@ func createOn(ctx context.Context, cfg CreateDBConfig, c tunnel.GrantCreate, ema
 		return createRabbit(ctx, cfg.Ctl, c)
 	case tunnel.EngineKafka:
 		return createKafka(ctx, c)
+	case tunnel.EngineMSSQL:
+		return createMSSQL(ctx, c)
 	}
 	return tunnel.CreateResult{Error: "Argus cannot create on engine " + c.Engine}
+}
+
+// createMSSQL makes a SQL Server database as the admin login. The person's
+// logins and users are made when someone first opens it, like any entry.
+func createMSSQL(ctx context.Context, c tunnel.GrantCreate) tunnel.CreateResult {
+	admin, err := mssqlAdminConn(ctx, c.Host, c.Port, c.ConfigPath)
+	if err != nil {
+		return tunnel.CreateResult{Error: err.Error()}
+	}
+	defer admin.close()
+	res := tunnel.CreateResult{}
+	_ = admin.db.QueryRowContext(ctx, `SELECT CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(64))`).Scan(&res.Version)
+	if c.Op == tunnel.CreateOpOptions {
+		o, err := mssqlCreateOptions(ctx, admin.db)
+		if err != nil {
+			res.Error = "SQL Server did not answer: " + mssqlMessage(err)
+			return res
+		}
+		o.Version = res.Version
+		res.OK, res.Options = true, o
+		return res
+	}
+	var n int
+	if err := admin.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sys.databases WHERE name = @p1`, c.Name).Scan(&n); err != nil {
+		res.Error = "SQL Server did not answer: " + mssqlMessage(err)
+		return res
+	}
+	if n > 0 {
+		res.Exists, res.Error = true, "this server already has a database named "+c.Name
+		return res
+	}
+	res.Steps = append(res.Steps, tunnel.CreateStep{Text: "The name " + c.Name + " is free", OK: true})
+	if m := c.MSSQL; m != nil && m.Collation != "" {
+		if err := admin.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sys.fn_helpcollations() WHERE name = @p1`, m.Collation).Scan(&n); err != nil || n == 0 {
+			res.Error = "this server has no collation " + m.Collation
+			return res
+		}
+	}
+	plan := tunnel.CreatePlan(c)
+	if _, err := admin.db.ExecContext(ctx, plan[0]); err != nil {
+		res.Error = mssqlMessage(err)
+		res.Exists = strings.Contains(res.Error, "already exists")
+		return res
+	}
+	res.Steps = append(res.Steps, tunnel.CreateStep{Text: "Created the database " + c.Name, OK: true})
+	res.Statements = plan[:1]
+	if len(plan) > 1 {
+		if _, err := admin.db.ExecContext(ctx, plan[1]); err != nil {
+			// The database is there: a partial success, said as one.
+			res.Steps = append(res.Steps, tunnel.CreateStep{Text: "Set the recovery model", Error: mssqlMessage(err)})
+			res.Error = mssqlMessage(err)
+			return res
+		}
+		res.Steps = append(res.Steps, tunnel.CreateStep{Text: "Set the recovery model to " + c.MSSQL.Recovery, OK: true})
+		res.Statements = plan
+	}
+	res.OK = true
+	return res
+}
+
+func mssqlCreateOptions(ctx context.Context, db *sql.DB) (*tunnel.CreateOptions, error) {
+	o := &tunnel.CreateOptions{}
+	if err := db.QueryRowContext(ctx, `SELECT CAST(SERVERPROPERTY('Collation') AS nvarchar(128)),
+	  (SELECT recovery_model_desc FROM sys.databases WHERE name = 'model')`).Scan(&o.DefaultCollation, &o.DefaultRecovery); err != nil {
+		return nil, err
+	}
+	// The Windows collations of the current versions, case and accent
+	// sensitive or not, and the SQL_ ones: what people pick from, not all
+	// five thousand.
+	rows, err := db.QueryContext(ctx, `SELECT name FROM sys.fn_helpcollations()
+	  WHERE (name LIKE 'SQL[_]%' OR name LIKE '%[_]100[_]%' OR name LIKE '%[_]140[_]%' OR name LIKE 'Latin1_General_%')
+	    AND name NOT LIKE '%[_]KS%' AND name NOT LIKE '%[_]WS%' AND name NOT LIKE '%[_]VSS%'
+	  ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var n string
+		if rows.Scan(&n) == nil {
+			o.Collations = append(o.Collations, n)
+		}
+	}
+	_ = rows.Close()
+	rows, err = db.QueryContext(ctx, `SELECT name FROM sys.databases ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var n string
+		if rows.Scan(&n) != nil || tunnel.IsMSSQLSystemDB(n) {
+			continue
+		}
+		if len(o.Taken) == tunnel.MaxDiscovered {
+			o.Truncated = true
+			break
+		}
+		o.Taken = append(o.Taken, n)
+	}
+	return o, rows.Err()
 }
 
 func createPostgres(ctx context.Context, cfg CreateDBConfig, c tunnel.GrantCreate, email string) tunnel.CreateResult {

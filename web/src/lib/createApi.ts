@@ -14,6 +14,7 @@ export interface CreateStep { text: string; ok: boolean; error?: string }
 export interface CreateFields {
   postgres?: { owner?: string; encoding?: string; locale?: string; extensions?: string[] }
   mysql?: { charset?: string; collation?: string }
+  mssql?: { collation?: string; recovery?: '' | 'FULL' | 'BULK_LOGGED' | 'SIMPLE' }
   mongo?: { collection: string; kind?: 'plain' | 'timeseries' | 'capped'; timeField?: string; expireAfterS?: number; cappedBytes?: number }
   rabbit?: { description?: string; queueType?: '' | 'classic' | 'quorum' | 'stream'; maxConnections?: number; maxQueues?: number }
   kafka?: { partitions: number; replicas?: number; retentionMs?: number; cleanup?: '' | 'delete' | 'compact' }
@@ -44,6 +45,9 @@ export interface CreateOptions {
   charsets?: Record<string, string[]>
   defaultCharset?: string
   defaultCollation?: string
+  /** SQL Server: the server's collations, and the model database's recovery model. */
+  collations?: string[]
+  defaultRecovery?: string
   brokers?: number
   taken?: string[]
   truncated?: boolean
