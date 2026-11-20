@@ -117,7 +117,7 @@ func (a *API) getCloudFindings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		seen = append(seen, acc)
-		for _, f := range cloud.Findings(rs, facts, now) {
+		for _, f := range cloud.FindingsIn(c.Provider, rs, facts, now) {
 			it := cloudFindingItem{AccountID: c.ID, AccountName: c.Name, Environment: c.Environment, Finding: f}
 			if k, ok := keeps[c.ID+"/"+f.ID]; ok && k.holds(f.Basis, now) {
 				it.Kept = &k
@@ -440,7 +440,7 @@ func (a *API) cloudFindingNow(ctx context.Context, c CloudAccount, id string) (c
 	if err != nil {
 		return cloud.Finding{}, false, err
 	}
-	for _, f := range cloud.Findings(rs, facts, now) {
+	for _, f := range cloud.FindingsIn(c.Provider, rs, facts, now) {
 		if f.ID == id {
 			return f, true, nil
 		}

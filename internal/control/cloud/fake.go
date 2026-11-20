@@ -138,6 +138,14 @@ func (f *Fake) Inventory(_ context.Context, a Account, region string, kinds []Ki
 	return Snapshot{Region: region, Kinds: kinds, Resources: out, ReadAt: now}, nil
 }
 
+// Edit changes the fake's fields under its lock, for a test that changes
+// what the cloud holds while a read may still be going.
+func (f *Fake) Edit(change func()) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	change()
+}
+
 func (f *Fake) record(s string) {
 	f.mu.Lock()
 	f.Calls = append(f.Calls, s)

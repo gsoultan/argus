@@ -149,7 +149,13 @@ func (s ServerFacts) HasAgent() bool { return s.ServerID != "" && s.SeenAt != ni
 // inventory (every region, plus the account-wide kinds) and what agents
 // measured, keyed by instance id. Highest severity first, then biggest bill.
 func Findings(rs []Resource, facts map[string]ServerFacts, now time.Time) []Finding {
-	f := finder{now: now, facts: facts, byID: map[string]Resource{}, referenced: map[string]bool{}, imageUsed: map[string]bool{}}
+	return FindingsIn("", rs, facts, now)
+}
+
+// FindingsIn is Findings for an account of the provider named, so what is
+// found is priced and worded as that cloud's. "" is AWS.
+func FindingsIn(provider string, rs []Resource, facts map[string]ServerFacts, now time.Time) []Finding {
+	f := finder{provider: provider, now: now, facts: facts, byID: map[string]Resource{}, referenced: map[string]bool{}, imageUsed: map[string]bool{}}
 	for _, r := range rs {
 		f.byID[r.ID] = r
 		switch r.Kind {
@@ -170,7 +176,7 @@ func Findings(rs []Resource, facts map[string]ServerFacts, now time.Time) []Find
 			}
 		}
 	}
-	for _, x := range Idle(rs, now) {
+	for _, x := range IdleIn(provider, rs, now) {
 		f.idle(x)
 	}
 	f.reservations(rs)
@@ -227,6 +233,8 @@ func Findings(rs []Resource, facts map[string]ServerFacts, now time.Time) []Find
 }
 
 type finder struct {
+	// provider is the cloud the inventory is of; "" is AWS.
+	provider       string
 	now            time.Time
 	facts          map[string]ServerFacts
 	byID           map[string]Resource
@@ -234,6 +242,17 @@ type finder struct {
 	imageUsed      map[string]bool
 	groupInstances map[string][]Resource
 	out            []Finding
+}
+
+// cloudName is the provider as a sentence names it.
+func (f *finder) cloudName() string {
+	switch f.provider {
+	case "azure":
+		return "Azure"
+	case "gcp":
+		return "Google Cloud"
+	}
+	return "AWS"
 }
 
 func appendRef(m map[string][]Resource, k string, r Resource) map[string][]Resource {
@@ -269,8 +288,14 @@ func (f *finder) idle(x IdleFinding) {
 	if title == "" {
 		title = "Not in use"
 	}
+	if x.Kind == KindAddress && f.provider == "azure" {
+		title = "Public address attached to nothing"
+	}
 	if x.Kind == KindInstance && x.Since != nil {
 		title = "Stopped for " + daysWords(f.now.Sub(*x.Since))
+	}
+	if x.Title != "" {
+		title = x.Title
 	}
 	f.add(Finding{Check: "idle-" + string(x.Kind), Group: GroupWaste, Severity: SeverityLow, Source: SourceCloud, Title: title,
 		Why: x.Why + ".", Monthly: x.Monthly, AtMost: x.AtMost, Since: x.Since, Fix: x.Fix}, r, r.State)
@@ -283,8 +308,12 @@ func (f *finder) firewall(r Resource) {
 	unused := usersRead && users == "0" && len(insts) == 0
 
 	if unused && r.Details["default"] != "yes" && !f.referenced[r.ID] {
+		why := fmt.Sprintf("No instance, load balancer, database or other network interface uses %s, and no other group's rule names it.", r.Name)
+		if f.provider == "azure" {
+			why = fmt.Sprintf("No network interface and no subnet uses %s.", r.Name)
+		}
 		f.add(Finding{Check: "group-unused", Group: GroupRules, Severity: SeverityLow, Source: SourceCloud, Title: "Security group used by nothing",
-			Why:     fmt.Sprintf("No instance, load balancer, database or other network interface uses %s, and no other group's rule names it.", r.Name),
+			Why:     why,
 			Matters: "An unused group is easy to attach by mistake later, with whatever rules it still has.",
 			Fix:     ActionFirewallDelete}, r, "unused")
 	}
@@ -348,7 +377,7 @@ func (f *finder) firewall(r Resource) {
 				f.add(Finding{ID: "quiet:" + r.ID + ":" + key, Check: "rule-nothing-listens", Group: GroupRules, Severity: SeverityLow, Source: SourceAgent,
 					Title:   "Port open but nothing listens",
 					Why:     fmt.Sprintf("%s lets %s reach %s. The agent on %s sees nothing listening there.", r.Name, sourceWords(x.Source), x.PortText(), everyWord(len(insts))),
-					Matters: "It may be left over from an old service. AWS does not record whether a rule was ever used, so this is from what listens now. " + lines,
+					Matters: "It may be left over from an old service. " + f.cloudName() + " does not record whether a rule was ever used, so this is from what listens now. " + lines,
 					Fix:     ActionFirewallRules, Rule: &rule, Related: related}, r, key)
 			}
 		}

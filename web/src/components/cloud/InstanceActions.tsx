@@ -52,6 +52,9 @@ export function InstanceActions({ it }: { it: CloudItem }) {
   const can = (a: CloudAction) => allows(account, a)
   const gcp = account.provider === 'gcp'
   const azure = account.provider === 'azure'
+  // A VM shut down from inside it: Azure keeps it allocated and bills it
+  // in full until it is deallocated, which is what Argus's stop does.
+  const allocated = azure && stopped && r.details?.allocated === 'yes'
   const more = !gone && (['launch', 'scale-group-create', 'settings', 'protect', 'unprotect', 'image-create', 'instance-firewalls', 'remove'] as CloudAction[]).some(can)
   const protectWord = gcp ? 'deletion protection' : 'termination protection'
   // Google's inventory says whether it is on, so only the way it can go is offered.
@@ -64,8 +67,13 @@ export function InstanceActions({ it }: { it: CloudItem }) {
           <Text size={FS.meta}><b>{waiting.summary}</b> is waiting for approval, asked by {waiting.requestedBy} {relTime(waiting.requestedAt)}.</Text>
         </Alert>
       )}
+      {allocated && (
+        <Alert color="amber" variant="light" p="xs" icon={<IconPlayerStop size={16} />}>
+          <Text size={FS.meta}>{r.name} was shut down from inside the VM, so Azure keeps it allocated and still bills it in full.{can('stop') ? ' Deallocate it to stop the bill for the VM.' : ''}</Text>
+        </Alert>
+      )}
       <Group gap="xs">
-        {running && can('stop') && <Button size="xs" variant="default" leftSection={<IconPlayerStop size={14} />} disabled={!!waiting} onClick={() => setOpen('stop')}>Stop</Button>}
+        {(running || allocated) && can('stop') && <Button size="xs" variant="default" leftSection={<IconPlayerStop size={14} />} disabled={!!waiting} onClick={() => setOpen('stop')}>{allocated ? 'Deallocate' : 'Stop'}</Button>}
         {stopped && can('start') && <Button size="xs" variant="default" leftSection={<IconPlayerPlay size={14} />} disabled={!!waiting} onClick={() => setOpen('start')}>Start</Button>}
         {running && can('hibernate') && it.resource.details?.hibernation === 'yes' && (
           <Button size="xs" variant="default" leftSection={<IconMoon size={14} />} disabled={!!waiting} onClick={() => setOpen('hibernate')}>Hibernate</Button>
