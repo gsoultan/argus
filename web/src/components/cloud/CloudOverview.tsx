@@ -254,7 +254,7 @@ function AllowChanges({ a, update, onClose }: { a: CloudAccount; update?: boolea
         ) : azure ? (
           <Text size={FS.body} lh={1.55}>
             Argus gets a second role in the subscription, <Text span ff="monospace">Argus manage</Text>: a custom role that can start, stop,
-            restart, resize and tag VMs, grow, make, attach, detach, snapshot and delete disks, and make, attach and delete public addresses, and nothing else. It holds no access control, so it cannot grant itself more. Azure gives Argus one
+            restart, resize, tag and remove VMs, grow, make, attach, detach, snapshot and delete disks, and make, attach and delete public addresses, and nothing else. It holds no access control, so it cannot grant itself more. Azure gives Argus one
             identity for reading and changing, so removing that role's assignment under Access control (IAM) is what takes changes back
             outside Argus. Every change is made for the person who asked, waits for approval where the environment asks for it, and
             goes in the audit log.
@@ -291,7 +291,7 @@ function AllowChanges({ a, update, onClose }: { a: CloudAccount; update?: boolea
           <Button loading={allow.isPending}
             onClick={() => void run(() => allow.mutateAsync({ id: a.id, roleArn: arn }), { failure: 'Argus could not use that role',
               success: update ? ['Checking the role', `Argus is reading what the role in ${a.name} may do now.`]
-                : ['Changes allowed', azure ? `Admins can now start, stop, restart, resize and tag VMs, make, grow, attach, detach, snapshot and delete disks, and make, attach and delete public addresses in ${a.name}.` : gcp ? `Admins can now start, stop and reset VMs, change their machine type, labels and deletion protection, make, grow, attach, detach, snapshot and delete disks, reserve and assign static addresses, launch and remove VMs, make and delete images, and make and change firewall rules in ${a.name}.`
+                : ['Changes allowed', azure ? `Admins can now start, stop, restart, resize and tag VMs, make, grow, attach, detach, snapshot and delete disks, and make, attach and delete public addresses, and remove VMs in ${a.name}.` : gcp ? `Admins can now start, stop and reset VMs, change their machine type, labels and deletion protection, make, grow, attach, detach, snapshot and delete disks, reserve and assign static addresses, launch and remove VMs, make and delete images, and make and change firewall rules in ${a.name}.`
                   : `Admins can now launch and change instances, disks and addresses in ${a.name}.`] }).then((ok) => ok && onClose())}>
             {update ? 'Check again' : 'Check and allow'}
           </Button>

@@ -196,7 +196,7 @@ func TestCloudConnectAzureSubscription(t *testing.T) {
 			t.Fatal("a subscription on Azure's Main identity must not read as having lost it to AWS's")
 		}
 		// The console offers only what Argus does in Azure so far.
-		if a.ID == c.ID && (!contains(actionNames(a.Actions), "stop") || contains(actionNames(a.Actions), "remove") || contains(actionNames(a.Actions), "launch")) {
+		if a.ID == c.ID && (!contains(actionNames(a.Actions), "stop") || !contains(actionNames(a.Actions), "remove") || contains(actionNames(a.Actions), "launch")) {
 			t.Fatalf("a subscription must list the changes Argus makes there, and no others: %v", a.Actions)
 		}
 	}
@@ -573,4 +573,63 @@ func TestCloudAzureSubscriptionPublicAddresses(t *testing.T) {
 	// Deleting takes the address typed, and one nothing uses.
 	ask("eastus", `"action":"address-release","resourceId":"`+lb+`","confirm":"20.6.6.6"`, conflict, "take it off first")
 	ask("eastus", `"action":"address-release","resourceId":"`+lb+`","confirm":"nope"`, bad, "type the address")
+}
+
+// Removing a VM in a subscription: the name typed, a lock respected in
+// Azure's words, and the plan the person saw.
+func TestCloudAzureSubscriptionRemovesAVM(t *testing.T) {
+	e, fake, sub := azureEnv(t)
+	w := do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts/prepare", "admin-token", `{"provider":"azure","accountId":"`+sub+`","manage":true}`)
+	var p CloudPrepared
+	_ = json.Unmarshal(w.Body.Bytes(), &p)
+	for _, want := range []string{"Microsoft.Compute/virtualMachines/delete", "Microsoft.Network/networkInterfaces/delete"} {
+		if !strings.Contains(p.Command, want) {
+			t.Fatalf("the command lacks %q:\n%s", want, p.Command)
+		}
+	}
+	fake.Roles[p.ReadRoleARN] = p.ExternalID
+	fake.Roles[p.ManageRoleARN] = p.ExternalID
+	const (
+		web  = "aaaaaaaa-0000-4000-8000-000000000001"
+		api  = "aaaaaaaa-0000-4000-8000-000000000002"
+		disk = "bbbbbbbb-0000-4000-8000-000000000001"
+	)
+	fake.Resources["eastus"] = []cloud.Resource{
+		{Kind: cloud.KindInstance, ID: web, Name: "web-1", Region: "eastus", State: "running", Size: "Standard_B2s",
+			Links: []cloud.Ref{{Kind: cloud.KindVolume, ID: disk, Name: "os"}}},
+		{Kind: cloud.KindInstance, ID: api, Name: "api-1", Region: "eastus", State: "running", Size: "Standard_B2s"},
+	}
+	fake.Protected = map[string]bool{api: true}
+	w = do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts", "admin-token",
+		`{"provider":"azure","name":"rm-azure","accountId":"`+sub+`","environment":"development","manage":true}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("connect with changes: %d %s", w.Code, w.Body)
+	}
+	var c CloudAccount
+	_ = json.Unmarshal(w.Body.Bytes(), &c)
+	waitCloudSync(t, e, c)
+	ask := func(body string, want int, says string) CloudChange {
+		t.Helper()
+		w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes", "admin-token", `{"accountId":"`+c.ID+`","region":"eastus",`+body+`}`)
+		if w.Code != want || !strings.Contains(w.Body.String(), says) {
+			t.Fatalf("%s: %d %s, want %d saying %q", body, w.Code, w.Body, want, says)
+		}
+		var ch CloudChange
+		_ = json.Unmarshal(w.Body.Bytes(), &ch)
+		return ch
+	}
+	// A lock is Azure's, and Argus says where it comes off.
+	w = do(t, e.h, http.MethodGet, "/api/v1/cloud/remove-plan?accountId="+c.ID+"&region=eastus&resourceId="+api, "admin-token", "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "take the lock off in the Azure portal") || strings.Contains(w.Body.String(), "termination protection") {
+		t.Fatalf("the plan for a locked VM: %d %s", w.Code, w.Body)
+	}
+	ask(`"action":"remove","resourceId":"`+api+`","confirm":"api-1","reason":"retired"`, http.StatusConflict, "it has a lock in Azure")
+	ask(`"action":"remove","resourceId":"`+web+`","confirm":"web","reason":"retired"`, http.StatusBadRequest, "type the instance's name")
+	if ch := ask(`"action":"remove","resourceId":"`+web+`","confirm":"web-1","reason":"retired","spec":{"finalSnapshots":true}`, http.StatusOK, ""); ch.State != "applied" ||
+		!strings.HasPrefix(ch.Summary, "Remove web-1 ("+web+") and 1 disk") {
+		t.Fatalf("remove: %+v", ch)
+	}
+	if !contains(fake.CallLog(), "remove "+web+" snapshots=true "+e.admin) {
+		t.Fatalf("the remove must be made as the person who asked: %v", fake.CallLog())
+	}
 }

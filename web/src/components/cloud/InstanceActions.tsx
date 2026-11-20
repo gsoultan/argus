@@ -97,7 +97,7 @@ export function InstanceActions({ it }: { it: CloudItem }) {
               {can('remove') && (
                 <>
                   <Menu.Divider />
-                  <Menu.Item color="rose" leftSection={<IconTrash size={14} />} onClick={() => setOpen('remove')}>{gcp ? 'Remove VM…' : 'Remove instance…'}</Menu.Item>
+                  <Menu.Item color="rose" leftSection={<IconTrash size={14} />} onClick={() => setOpen('remove')}>{gcp || azure ? 'Remove VM…' : 'Remove instance…'}</Menu.Item>
                 </>
               )}
             </Menu.Dropdown>
@@ -110,7 +110,7 @@ export function InstanceActions({ it }: { it: CloudItem }) {
       {open === 'resize' && <ResizeChange it={it} env={env} gcp={gcp} azure={azure} onClose={close} />}
       {open === 'settings' && <SettingsChange it={it} env={env} onClose={close} />}
       {open === 'tags' && <TagsChange it={it} env={env} gcp={gcp} onClose={close} />}
-      {open === 'remove' && <RemoveChange it={it} gcp={gcp} onClose={close} />}
+      {open === 'remove' && <RemoveChange it={it} gcp={gcp} azure={azure} onClose={close} />}
       {open === 'image-create' && <ImageCreate it={it} env={env} onClose={close} />}
       {open === 'instance-firewalls' && <InstanceFirewalls it={it} env={env} onClose={close} />}
     </Stack>
@@ -330,7 +330,7 @@ export function ResizeChange({ it, env, initial, gcp, azure, onClose }: { it: Cl
  * typed. The plan shown is the plan approved; if AWS has changed by the time
  * someone approves, the control plane sends it back for another look.
  */
-function RemoveChange({ it, gcp, onClose }: { it: CloudItem; gcp: boolean; onClose: () => void }) {
+export function RemoveChange({ it, gcp, azure, onClose }: { it: CloudItem; gcp: boolean; azure?: boolean; onClose: () => void }) {
   const r = it.resource
   const plan = useQuery(cloudRemovePlanQuery(it))
   const [typed, setTyped] = useState('')
@@ -344,10 +344,10 @@ function RemoveChange({ it, gcp, onClose }: { it: CloudItem; gcp: boolean; onClo
   const stays = v?.plan.volumes.filter((x) => !x.deleted) ?? []
   return (
     <ChangeModal title={`Remove ${r.name}?`} env={env} level="remove" reason={reason} setReason={setReason}
-      onClose={onClose} busy={busy} submit={gcp ? 'Remove VM' : 'Remove instance'} color="rose" disabled={!v || Boolean(v.refusal) || typed.trim() !== r.name}
+      onClose={onClose} busy={busy} submit={gcp || azure ? 'Remove VM' : 'Remove instance'} color="rose" disabled={!v || Boolean(v.refusal) || typed.trim() !== r.name}
       onSubmit={() => void submit({ accountId: it.accountId, region: r.region, action: 'remove', resourceId: r.id,
         spec: { finalSnapshots: finalSnaps }, reason, confirm: typed.trim() }, 'Removing')}>
-      {plan.isPending && <Text size={FS.meta} c="dimmed">Asking {gcp ? 'Google' : 'AWS'} what goes with it…</Text>}
+      {plan.isPending && <Text size={FS.meta} c="dimmed">Asking {gcp ? 'Google' : azure ? 'Azure' : 'AWS'} what goes with it…</Text>}
       {plan.error && <Alert color="rose" variant="light">{(plan.error as Error).message}</Alert>}
       {v?.refusal && (
         <Alert color="rose" variant="light" title="Argus will not remove it">
@@ -359,6 +359,7 @@ function RemoveChange({ it, gcp, onClose }: { it: CloudItem; gcp: boolean; onClo
           <Text size={FS.body} lh={1.55}>
             {gcp
               ? 'Google deletes the VM. This cannot be undone: the VM and the disks below that go with it are gone for good.'
+              : azure ? 'Azure deletes the VM. This cannot be undone: the VM and the disks below that go with it are gone for good. Azure deletes with a VM only what was marked to go with it when it was made; the rest stays, as listed.'
               : 'AWS terminates the instance. This cannot be undone: the instance and the disks below that go with it are gone for good.'}
           </Text>
           <Table withTableBorder verticalSpacing={6}>
@@ -368,7 +369,7 @@ function RemoveChange({ it, gcp, onClose }: { it: CloudItem; gcp: boolean; onClo
             <Table.Tbody>
               {[...goes, ...stays].map((x) => (
                 <Table.Tr key={x.id}>
-                  <Table.Td><Text size={FS.meta} ff="monospace">{x.id}</Text><Text size={FS.micro} c="dimmed">{gcp && x.description ? x.description : x.device}</Text></Table.Td>
+                  <Table.Td><Text size={FS.meta} ff="monospace">{x.id}</Text><Text size={FS.micro} c="dimmed">{(gcp || azure) && x.description ? x.description : x.device}</Text></Table.Td>
                   <Table.Td><Text size={FS.meta}>{x.sizeGb} GB</Text></Table.Td>
                   <Table.Td><Text size={FS.meta} c={x.lastSnapshotAt ? undefined : INK.pending}>{x.lastSnapshotAt ? relTime(x.lastSnapshotAt) : 'None'}</Text></Table.Td>
                   <Table.Td>{x.deleted
@@ -381,9 +382,12 @@ function RemoveChange({ it, gcp, onClose }: { it: CloudItem; gcp: boolean; onClo
           {(v.plan.publicIp || v.plan.elasticIp) && (
             <Text size={FS.meta} c="dimmed">
               {v.plan.elasticIp
-                ? gcp ? `Static address ${v.plan.elasticIp} is let go and stays reserved, still billed.` : `Elastic IP ${v.plan.elasticIp} is released from it and kept, still billed.`
+                ? gcp ? `Static address ${v.plan.elasticIp} is let go and stays reserved, still billed.` : azure ? `Public address ${v.plan.elasticIp} is taken off it and stays in the subscription, still billed.` : `Elastic IP ${v.plan.elasticIp} is released from it and kept, still billed.`
                 : `Public address ${v.plan.publicIp} goes with it.`}
             </Text>
+          )}
+          {(v.plan.stays?.length ?? 0) > 0 && (
+            <Text size={FS.meta} c="dimmed">Also left behind, at no charge: {v.plan.stays!.join(', ')}.</Text>
           )}
           {v.server && (
             <Text size={FS.meta} c="dimmed">Argus launched it as <b>{v.server}</b>. That server is archived; its sessions and recordings stay.</Text>
@@ -391,7 +395,7 @@ function RemoveChange({ it, gcp, onClose }: { it: CloudItem; gcp: boolean; onClo
           {goes.length > 0 && (
             <Checkbox checked={finalSnaps} onChange={(e) => setSnaps(e.currentTarget.checked)}
               label="Take a final snapshot of each disk first"
-              description={gcp
+              description={gcp || azure
                 ? 'Argus waits for each snapshot to finish before deleting anything, which can take a few minutes. They are kept and billed until someone deletes them. On by default in production.'
                 : 'Snapshots are kept and billed until someone deletes them in AWS. On by default in production.'} />
           )}

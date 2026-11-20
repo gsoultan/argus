@@ -451,6 +451,9 @@ var needs = map[cloud.Action][]string{
 	cloud.ActionAddressAssociate:    {"Microsoft.Network/publicIPAddresses/read", "Microsoft.Network/publicIPAddresses/join/action", "Microsoft.Network/networkInterfaces/read", "Microsoft.Network/networkInterfaces/write"},
 	cloud.ActionAddressDisassociate: {"Microsoft.Network/publicIPAddresses/read", "Microsoft.Network/networkInterfaces/read", "Microsoft.Network/networkInterfaces/write"},
 	cloud.ActionAddressRelease:      {"Microsoft.Network/publicIPAddresses/read", "Microsoft.Network/publicIPAddresses/delete"},
+
+	cloud.ActionRemove: {"Microsoft.Compute/virtualMachines/delete", "Microsoft.Network/networkInterfaces/delete", "Microsoft.Compute/disks/delete",
+		"Microsoft.Network/publicIPAddresses/delete", "Microsoft.Compute/disks/beginGetAccess/action", "Microsoft.Compute/snapshots/write"},
 }
 
 // Needs is the manage role's actions a change takes.

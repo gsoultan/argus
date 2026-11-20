@@ -159,6 +159,9 @@ type RemovePlan struct {
 	// PublicIP is released with it; ElasticIP stays allocated to the account.
 	PublicIP  string `json:"publicIp,omitempty"`
 	ElasticIP string `json:"elasticIp,omitempty"`
+	// Stays names what else the provider leaves behind at no charge: in
+	// Azure, a network interface not marked to be deleted with its VM.
+	Stays []string `json:"stays,omitempty"`
 }
 
 // managers are the tags AWS puts on an instance something else owns, and

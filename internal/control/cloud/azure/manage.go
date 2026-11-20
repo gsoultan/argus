@@ -87,6 +87,10 @@ var ManageActions = []string{
 	"Microsoft.Network/networkInterfaces/write",
 	"Microsoft.Network/virtualNetworks/subnets/join/action",
 	"Microsoft.Network/networkSecurityGroups/join/action",
+	// Removing a VM. Azure deletes with it the disks, interfaces and
+	// addresses marked so, under the rights of whoever deletes the VM.
+	"Microsoft.Compute/virtualMachines/delete",
+	"Microsoft.Network/networkInterfaces/delete",
 }
 
 // ManageRoleID is the id of a subscription's manage role: a GUID, as Azure
@@ -117,6 +121,8 @@ var supported = map[cloud.Action]bool{
 
 	cloud.ActionAddressAllocate: true, cloud.ActionAddressAssociate: true,
 	cloud.ActionAddressDisassociate: true, cloud.ActionAddressRelease: true,
+
+	cloud.ActionRemove: true,
 }
 
 // TaggableKinds are the kinds Argus tags in Azure so far.
@@ -130,7 +136,8 @@ func SupportedActions() []cloud.Action {
 	return []cloud.Action{cloud.ActionStart, cloud.ActionStop, cloud.ActionReboot, cloud.ActionResize, cloud.ActionTags,
 		cloud.ActionVolumeCreate, cloud.ActionVolumeGrow, cloud.ActionVolumeAttach, cloud.ActionVolumeDetach, cloud.ActionVolumeDelete,
 		cloud.ActionSnapshotCreate, cloud.ActionSnapshotDelete,
-		cloud.ActionAddressAllocate, cloud.ActionAddressAssociate, cloud.ActionAddressDisassociate, cloud.ActionAddressRelease}
+		cloud.ActionAddressAllocate, cloud.ActionAddressAssociate, cloud.ActionAddressDisassociate, cloud.ActionAddressRelease,
+		cloud.ActionRemove}
 }
 
 // errNotYet refuses a change Argus does not make in Azure yet.
@@ -464,14 +471,6 @@ func (p *Provider) Launch(context.Context, cloud.Account, cloud.Actor, cloud.Lau
 
 func (p *Provider) Protect(context.Context, cloud.Account, cloud.Actor, string, string, bool) (cloud.Result, error) {
 	return cloud.Result{}, errNotYet("lock a VM against deletion")
-}
-
-func (p *Provider) PlanRemove(context.Context, cloud.Account, cloud.Actor, string, string) (cloud.RemovePlan, error) {
-	return cloud.RemovePlan{}, errNotYet("remove a VM")
-}
-
-func (p *Provider) Remove(context.Context, cloud.Account, cloud.Actor, string, string, bool) (cloud.Result, error) {
-	return cloud.Result{}, errNotYet("remove a VM")
 }
 
 var (

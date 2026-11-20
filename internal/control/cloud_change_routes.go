@@ -372,6 +372,8 @@ func (a *API) removePlan(ctx context.Context, m cloudManaged, actor, region stri
 	// where the environment needs it, and never while protected or owned
 	// by a stack.
 	switch {
+	case plan.Protected && m.acct.Provider == "azure":
+		v.Refusal = azure.ErrLocked.Error()
 	case plan.Protected:
 		v.Refusal = cloud.ErrProtected.Error()
 	case plan.ManagedBy != "":

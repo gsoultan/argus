@@ -76,6 +76,10 @@ type fakeMicrosoft struct {
 	nic     map[string]any
 	nicEtag int
 	raceNIC bool
+	// vmBody is web-1 as a GET of it answers, when a test sets one, and
+	// locks the resource locks on it.
+	vmBody string
+	locks  []string
 }
 
 func (m *fakeMicrosoft) changed() []string {
@@ -358,6 +362,27 @@ func (m *fakeMicrosoft) handler() http.Handler {
 		mux.HandleFunc("POST "+vmPath+"/"+verb, authed(change))
 	}
 	mux.HandleFunc("PATCH "+vmPath, authed(change))
+	mux.HandleFunc("DELETE "+vmPath, authed(change))
+	mux.HandleFunc("GET "+vmPath, authed(func(w http.ResponseWriter, r *http.Request) {
+		m.mu.Lock()
+		body := m.vmBody
+		m.mu.Unlock()
+		if body == "" || r.URL.Query().Get("$expand") != "instanceView" {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"code":"ResourceNotFound","message":"The Resource was not found."}}`))
+			return
+		}
+		_, _ = w.Write([]byte(strings.ReplaceAll(body, "RG/", rg)))
+	}))
+	mux.HandleFunc("GET "+vmPath+"/providers/Microsoft.Authorization/locks", authed(func(w http.ResponseWriter, r *http.Request) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		out := []map[string]any{}
+		for _, l := range m.locks {
+			out = append(out, map[string]any{"name": l, "properties": map[string]string{"level": "CanNotDelete"}})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"value": out})
+	}))
 	mux.HandleFunc("PATCH "+vmPath+"/providers/Microsoft.Resources/tags/default", authed(change))
 	mux.HandleFunc("GET "+vmPath+"/vmSizes", authed(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"value":[{"name":"Standard_D2s_v5"},{"name":"Standard_B2s"},{"name":"Standard_B2s"},{"name":"not a size"}]}`))

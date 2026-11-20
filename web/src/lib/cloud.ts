@@ -478,7 +478,7 @@ export interface CloudVolume {
 export interface CloudRemovePlanView {
   plan: {
     id: string; name: string; state: string; size: string; protected: boolean; managedBy?: string
-    volumes: CloudVolume[]; publicIp?: string; elasticIp?: string
+    volumes: CloudVolume[]; publicIp?: string; elasticIp?: string; stays?: string[]
   }
   hash: string
   environment: CloudEnvironment
@@ -974,6 +974,7 @@ export const AZURE_ACTION_NEEDS: Partial<Record<CloudAction, string[]>> = {
   'snapshot-create': ['Microsoft.Compute/snapshots/write'], 'snapshot-delete': ['Microsoft.Compute/snapshots/delete'],
   'address-allocate': ['Microsoft.Network/publicIPAddresses/write'], 'address-release': ['Microsoft.Network/publicIPAddresses/delete'],
   'address-associate': ['Microsoft.Network/networkInterfaces/write'], 'address-disassociate': ['Microsoft.Network/networkInterfaces/write'],
+  remove: ['Microsoft.Compute/virtualMachines/delete'],
 }
 
 /** Whether an account's manage role lacks what an action takes. */
