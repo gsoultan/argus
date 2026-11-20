@@ -69,6 +69,7 @@ const MSSQL_PANELS = {
   integrity: lazy(() => msDBA().then((m) => ({ default: m.MSSQLIntegrity }))),
   jobs: lazy(() => msDBA().then((m) => ({ default: m.MSSQLJobs }))),
   dbsettings: lazy(() => msDBA().then((m) => ({ default: m.MSSQLSettings }))),
+  replication: lazy(() => import('~/components/DatabaseMSSQLRepl').then((m) => ({ default: m.MSSQLReplication }))),
 }
 
 /*
@@ -1458,7 +1459,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
           : <NeedsDBA what="Logins & access" onAskForAccess={onAskForAccess} />)}
         {view === 'query' && panel === 'roles' && dialect !== 'mssql' && (level === 'dba' ? <RolesManager {...adminProps} /> : <RolesPanel {...adminProps} />)}
         {view === 'query' && panel === 'extensions' && <ExtensionsPanel {...adminProps} />}
-        {view === 'query' && panel === 'replication' && <ReplicationPanel {...adminProps} database={database} />}
+        {view === 'query' && panel === 'replication' && dialect !== 'mssql' && <ReplicationPanel {...adminProps} database={database} />}
         {view === 'query' && panel === 'network' && <NetworkPanel {...adminProps} assetId={database.assetId} engine={dialect === 'mysql' ? 'mysql' : 'postgres'} />}
         {view === 'query' && panel === 'trash' && <TrashPanel collect={collect} level={level} narrow={narrow} />}
         {view === 'query' && panel === 'changes' && <ChangesPanel databaseId={database.id} narrow={Boolean(narrow)} />}
@@ -1939,6 +1940,7 @@ const MSSQL_MANAGE: typeof MANAGE = [
   { key: 'backups', label: 'Backups', icon: IconArchive, hint: 'Backups of this database, and putting one back', group: 'care' },
   { key: 'indexes', label: 'Indexes & statistics', icon: IconListTree, hint: 'Fragmentation, use, rebuild and reorganize; statistics; missing indexes', dba: true, group: 'dba' },
   { key: 'jobs', label: 'Agent jobs', icon: IconClock, hint: 'SQL Server Agent jobs that work on this database', dba: true, group: 'dba' },
+  { key: 'replication', label: 'Replication', icon: IconArrowsExchange, hint: 'Availability group replicas and lag, publications and subscribers, log shipping', dba: true, group: 'dba' },
   { key: 'roles', label: 'Logins & access', icon: IconUsersGroup, hint: 'Users and roles, grant, revoke and deny, and what each can do', dba: true, group: 'dba' },
   { key: 'dbsettings', label: 'Settings', icon: IconSettings, hint: 'Recovery model, compatibility and other options; files; server options', dba: true, group: 'dba' },
 ]

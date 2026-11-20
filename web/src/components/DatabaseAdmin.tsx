@@ -99,6 +99,12 @@ export interface AdminOp {
     session?: number; schema?: string; table?: string; index?: string; online?: boolean; fullScan?: boolean; sample?: number
     physicalOnly?: boolean; job?: string; enabled?: boolean; sort?: string; setting?: string; value?: string
   }
+  /** SQL Server replication (see DatabaseMSSQLRepl and internal/tunnel/mssqlrepl.go). */
+  msrepl?: {
+    group?: string; force?: boolean; enabled?: boolean; publication?: string; kind?: 'transactional' | 'snapshot'
+    schema?: string; table?: string; article?: string; subscriber?: string; subscriberDb?: string
+    login?: string; password?: string; workingDir?: string
+  }
 }
 export interface AdminFailure { error?: string; code?: string; detail?: string; hint?: string }
 export interface AdminResult<T = unknown> { data?: T; tag?: string; ms?: number; error?: AdminFailure }

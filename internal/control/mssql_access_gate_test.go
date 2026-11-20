@@ -125,6 +125,29 @@ func TestMSSQLAccessChangeWaits(t *testing.T) {
 		t.Fatalf("asking for simple recovery on staging: %d", code)
 	}
 
+	// Replication that ends what others depend on, or changes the server,
+	// waits on staging too; adding an article does not.
+	for _, c := range []struct {
+		op   tunnel.PGAdminOp
+		want string
+	}{
+		{tunnel.PGAdminOp{Kind: tunnel.AdminMSAGRemove, MSRepl: &tunnel.MSSQLReplSpec{Group: "ag1"}}, "ends its copies"},
+		{tunnel.PGAdminOp{Kind: tunnel.AdminMSAGFailover, MSRepl: &tunnel.MSSQLReplSpec{Group: "ag1", Force: true}}, "moves the primary"},
+		{tunnel.PGAdminOp{Kind: tunnel.AdminMSReplDistributor, MSRepl: &tunnel.MSSQLReplSpec{WorkingDir: "/var/opt/mssql/ReplData"}}, "whole server"},
+		{tunnel.PGAdminOp{Kind: tunnel.AdminMSReplPubDrop, MSRepl: &tunnel.MSSQLReplSpec{Publication: "orders"}}, "stops its subscribers"},
+	} {
+		no := gate(c.op, "")
+		if no == nil || !strings.Contains(no.Error, c.want) || no.Approve == "" || strings.Contains(no.Approve, "s3cret") {
+			t.Fatalf("%s on staging: %+v", c.op.Kind, no)
+		}
+		if code, _ := ask(no.Approve, "planned maintenance window tonight"); code != http.StatusCreated {
+			t.Fatalf("asking for %s on staging: %d", c.op.Kind, code)
+		}
+	}
+	if no := gate(tunnel.PGAdminOp{Kind: tunnel.AdminMSReplArticleAdd, MSRepl: &tunnel.MSSQLReplSpec{Publication: "orders", Schema: "dbo", Table: "t"}}, ""); no != nil {
+		t.Fatalf("adding an article on staging waited: %+v", no)
+	}
+
 	// Not SQL Server: refused rather than passed on.
 	db.Engine = tunnel.EnginePostgres
 	if no := gate(grant, ""); no == nil || !strings.Contains(no.Error, "SQL Server administration") {

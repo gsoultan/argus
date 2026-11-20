@@ -53,7 +53,7 @@ interface Settings {
 }
 
 /** Loads one read, refreshes it, and keeps its failure. */
-function useRead<T>(admin: Admin, op: AdminOp, every?: number) {
+export function useRead<T>(admin: Admin, op: AdminOp, every?: number) {
   const [data, setData] = useState<T | null>(null)
   const [failure, setFailure] = useState<AdminFailure | null>(null)
   const [busy, setBusy] = useState(false)
@@ -86,12 +86,12 @@ const ms = (n?: number) => {
   const m = Math.floor(s / 60)
   return m < 60 ? `${m} min ${Math.round(s % 60)} s` : `${Math.floor(m / 60)} h ${m % 60} min`
 }
-const when = (iso?: string) => (iso ? new Date(iso).toLocaleString() : '—')
+export const when = (iso?: string) => (iso ? new Date(iso).toLocaleString() : '—')
 const count = (n: number) => n.toLocaleString()
 const mono = { fontFamily: 'var(--font-mono)' }
-const stickyHead = { position: 'sticky' as const, top: 0, background: 'var(--color-raised)', zIndex: 1 }
+export const stickyHead = { position: 'sticky' as const, top: 0, background: 'var(--color-raised)', zIndex: 1 }
 
-function RefreshButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
+export function RefreshButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
   return <ActionIcon variant="subtle" onClick={onClick} loading={busy} aria-label="Refresh"><IconRefresh size={16} /></ActionIcon>
 }
 
@@ -131,7 +131,7 @@ export function ConfirmOp({ admin, pending, onClose, onDone }: {
   )
 }
 
-function Failed({ failure }: { failure: AdminFailure }) {
+export function Failed({ failure }: { failure: AdminFailure }) {
   return <Box p="md"><AdminRefused error={failure} who="SQL Server" /></Box>
 }
 
