@@ -92,8 +92,8 @@ func (a *API) planAzureLaunch(r *http.Request, m cloudManaged, actor string, in 
 	if len(s.Firewalls) > 1 {
 		return ch, bad, errors.New("a VM's network interface takes one network security group; pick one, or none to rely on the subnet's")
 	}
-	if s.Spot {
-		return ch, bad, errors.New("Argus does not launch Spot VMs in Azure yet")
+	if s.Spot && !azure.SpotSize(s.Size) {
+		return ch, bad, errors.New("Azure has no Spot capacity for B-series sizes like " + s.Size + "; pick another size, or turn Spot off")
 	}
 	if s.CapacityReservation != "" {
 		return ch, bad, errors.New("Argus does not launch into Azure reservations yet")
@@ -184,6 +184,9 @@ func (a *API) planAzureLaunch(r *http.Request, m cloudManaged, actor string, in 
 	}
 	if s.PublicIP {
 		ch.Summary += ", with a public address"
+	}
+	if s.Spot {
+		ch.Summary += ", as Spot: Azure stops it when it takes the capacity back"
 	}
 	if s.Agent {
 		ch.Summary += ", with the Argus agent"

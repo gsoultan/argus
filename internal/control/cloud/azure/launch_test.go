@@ -162,22 +162,22 @@ func TestLaunchWithoutAnAddressAZoneOrAScriptAsksForNone(t *testing.T) {
 func TestLaunchRefusesWhatItWouldGetWrong(t *testing.T) {
 	ctx := context.Background()
 	for why, change := range map[string]func(*cloud.LaunchSpec){
-		"a name in use":               func(s *cloud.LaunchSpec) { s.Name = "web-1" },
-		"a name Azure cannot take":    func(s *cloud.LaunchSpec) { s.Name = "Bad_Name" },
-		"no resource group":           func(s *cloud.LaunchSpec) { s.Group = "" },
-		"a group that is a path":      func(s *cloud.LaunchSpec) { s.Group = "a/b" },
-		"an image not offered":        func(s *cloud.LaunchSpec) { s.Image = "Evil:offer:sku" },
-		"an own image that is a path": func(s *cloud.LaunchSpec) { s.Image = "image/Web-RG/../x" },
-		"a size that is not one":      func(s *cloud.LaunchSpec) { s.Size = "t3.medium" },
-		"another region's zone":       func(s *cloud.LaunchSpec) { s.Zone = "westeurope-1" },
-		"a boot disk too small":       func(s *cloud.LaunchSpec) { s.DiskGB = 8 },
-		"a subnet it has not read":    func(s *cloud.LaunchSpec) { s.Subnet = "web-rg/main/nope" },
-		"a subnet in another region":  func(s *cloud.LaunchSpec) { s.Region, s.Zone = "westeurope", "" },
-		"a group in another region":   func(s *cloud.LaunchSpec) { s.Firewalls = []string{"ffffffff-0000-4000-8000-000000000003"} },
-		"two security groups":         func(s *cloud.LaunchSpec) { s.Firewalls = append(s.Firewalls, "ffffffff-0000-4000-8000-000000000002") },
-		"a Spot VM":                   func(s *cloud.LaunchSpec) { s.Spot = true },
-		"a lock":                      func(s *cloud.LaunchSpec) { s.Protect = true },
-		"a tag Azure keeps":           func(s *cloud.LaunchSpec) { s.Tags = map[string]string{"microsoft-x": "y"} },
+		"a name in use":                func(s *cloud.LaunchSpec) { s.Name = "web-1" },
+		"a name Azure cannot take":     func(s *cloud.LaunchSpec) { s.Name = "Bad_Name" },
+		"no resource group":            func(s *cloud.LaunchSpec) { s.Group = "" },
+		"a group that is a path":       func(s *cloud.LaunchSpec) { s.Group = "a/b" },
+		"an image not offered":         func(s *cloud.LaunchSpec) { s.Image = "Evil:offer:sku" },
+		"an own image that is a path":  func(s *cloud.LaunchSpec) { s.Image = "image/Web-RG/../x" },
+		"a size that is not one":       func(s *cloud.LaunchSpec) { s.Size = "t3.medium" },
+		"another region's zone":        func(s *cloud.LaunchSpec) { s.Zone = "westeurope-1" },
+		"a boot disk too small":        func(s *cloud.LaunchSpec) { s.DiskGB = 8 },
+		"a subnet it has not read":     func(s *cloud.LaunchSpec) { s.Subnet = "web-rg/main/nope" },
+		"a subnet in another region":   func(s *cloud.LaunchSpec) { s.Region, s.Zone = "westeurope", "" },
+		"a group in another region":    func(s *cloud.LaunchSpec) { s.Firewalls = []string{"ffffffff-0000-4000-8000-000000000003"} },
+		"two security groups":          func(s *cloud.LaunchSpec) { s.Firewalls = append(s.Firewalls, "ffffffff-0000-4000-8000-000000000002") },
+		"a Spot VM of a B-series size": func(s *cloud.LaunchSpec) { s.Spot = true },
+		"a lock":                       func(s *cloud.LaunchSpec) { s.Protect = true },
+		"a tag Azure keeps":            func(s *cloud.LaunchSpec) { s.Tags = map[string]string{"microsoft-x": "y"} },
 	} {
 		p, m, a, s := launchable(t)
 		change(&s)
@@ -189,9 +189,47 @@ func TestLaunchRefusesWhatItWouldGetWrong(t *testing.T) {
 		}
 	}
 	p, _, a, s := launchable(t)
-	s.Spot = true
+	s.Protect = true
 	if _, err := p.Launch(ctx, a, "ada@example.com", s); !errors.Is(err, cloud.ErrUnsupported) {
-		t.Errorf("a Spot VM: %v", err)
+		t.Errorf("a lock: %v", err)
+	}
+}
+
+// A Spot VM is asked for with no price cap, and is deallocated, not
+// deleted, when Azure takes the capacity back; an ordinary launch says
+// nothing of either.
+func TestLaunchAsSpotKeepsTheVMWhenAzureTakesTheCapacityBack(t *testing.T) {
+	p, m, a, s := launchable(t)
+	if _, err := p.Launch(context.Background(), a, "ada@example.com", s); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.changed()[0]; strings.Contains(got, "priority") || strings.Contains(got, "evictionPolicy") || strings.Contains(got, "billingProfile") {
+		t.Fatalf("an ordinary launch asked for Spot: %s", got)
+	}
+	p, m, a, s = launchable(t)
+	s.Spot, s.Size = true, "Standard_D2s_v5"
+	if _, err := p.Launch(context.Background(), a, "ada@example.com", s); err != nil {
+		t.Fatal(err)
+	}
+	var body struct {
+		Properties struct {
+			Priority string `json:"priority"`
+			Eviction string `json:"evictionPolicy"`
+			Billing  struct {
+				MaxPrice float64 `json:"maxPrice"`
+			} `json:"billingProfile"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(m.changed()[0], "PUT vm api-1 ")), &body); err != nil {
+		t.Fatal(err)
+	}
+	if pr := body.Properties; pr.Priority != "Spot" || pr.Eviction != "Deallocate" || pr.Billing.MaxPrice != -1 {
+		t.Errorf("spot: %+v", pr)
+	}
+	for size, want := range map[string]bool{"Standard_B2s": false, "standard_b4ms": false, "Standard_D2s_v5": true, "Standard_F2s_v2": true} {
+		if SpotSize(size) != want {
+			t.Errorf("SpotSize(%s) = %v", size, !want)
+		}
 	}
 }
 

@@ -138,7 +138,12 @@ test('an Azure VM is launched into a resource group, with one security group and
   // Azure's own words, and nothing of the other clouds'.
   await expect(page.getByText('Network security group', { exact: true })).toBeVisible()
   await expect(page.getByText(/a resource lock, which Argus cannot set/)).toBeVisible()
-  await expect(page.getByText('Use Spot capacity')).toHaveCount(0)
+  // Spot is Azure's own: the VM is stopped, not deleted, and no B-series.
+  await page.getByRole('switch', { name: 'Use Spot capacity' }).click({ force: true })
+  await expect(page.getByText(/The VM is then stopped, not deleted/)).toBeVisible()
+  await expect(page.getByText(/Azure has no Spot capacity for B-series sizes like Standard_B2s/)).toBeVisible()
+  await page.getByRole('switch', { name: 'Use Spot capacity' }).click({ force: true })
+  await expect(page.getByText(/Azure has no Spot capacity for B-series/)).toHaveCount(0)
   await expect(page.getByText('Termination protection')).toHaveCount(0)
   // One security group: picking a second replaces the first.
   await page.getByRole('checkbox', { name: /db-nsg/ }).click()
@@ -157,4 +162,5 @@ test('an Azure VM is launched into a resource group, with one security group and
   expect(asked[0]).toMatchObject({ accountId: 'ca3', region: 'southeastasia', action: 'launch',
     spec: { name: 'api-1', group: 'Web-RG', size: 'Standard_B2s', zone: 'southeastasia-2', subnet: 'web-rg/main/web', firewalls: ['nsg-1'],
       image: 'Canonical:ubuntu-24_04-lts:server', protect: false, agent: true } })
+  expect((asked[0]?.spec as Record<string, unknown>).spot).toBeUndefined()
 })

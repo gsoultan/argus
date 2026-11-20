@@ -35,6 +35,14 @@ portal.
 
 The VM gets no managed identity, so it holds no Azure credentials, and
 Argus needs no right to hand one out.
+
+A Spot VM runs on Azure's spare capacity at the Spot price, with no price
+cap of Argus's (maxPrice -1: it is never taken back over price, and never
+costs more than the ordinary price). When Azure takes the capacity back it
+deallocates the VM: the VM, its disks and its address stay, so nothing on
+them is lost and the VM starts again from Argus once there is room, and
+the disks and the address go on being billed meanwhile. Azure has no Spot
+capacity for B-series sizes.
 */
 
 // AdminUser is the administrator's account Azure requires on a new VM.
@@ -44,6 +52,12 @@ const AdminUser = "azureuser"
 var LaunchSizes = []string{"Standard_B1s", "Standard_B2s", "Standard_B2ms", "Standard_B4ms",
 	"Standard_D2s_v5", "Standard_D4s_v5", "Standard_D8s_v5", "Standard_D2as_v5", "Standard_D4as_v5",
 	"Standard_E2s_v5", "Standard_E4s_v5", "Standard_F2s_v2", "Standard_F4s_v2"}
+
+// SpotSize reports whether Azure offers size as a Spot VM: every size but
+// the burstable B-series.
+func SpotSize(size string) bool {
+	return !strings.HasPrefix(strings.ToLower(size), "standard_b")
+}
 
 // OSDiskType is the type of the disks a launch makes.
 const OSDiskType = "StandardSSD_LRS"
@@ -273,8 +287,8 @@ func (p *Provider) Launch(ctx context.Context, a cloud.Account, actor cloud.Acto
 		return cloud.Result{}, errors.New("a network interface takes one network security group")
 	}
 	switch {
-	case s.Spot:
-		return cloud.Result{}, errNotYet("launch a Spot VM")
+	case s.Spot && !SpotSize(s.Size):
+		return cloud.Result{}, errors.New("Azure has no Spot capacity for B-series sizes; pick another size")
 	case s.CapacityReservation != "":
 		return cloud.Result{}, errNotYet("launch into a reservation")
 	case s.Protect:
@@ -347,6 +361,12 @@ func (p *Provider) Launch(ctx context.Context, a cloud.Account, actor cloud.Acto
 			"networkProfile": map[string]any{"networkApiVersion": launchNetworkAPI,
 				"networkInterfaceConfigurations": []map[string]any{{"name": s.Name + "-nic", "properties": nicProps}}},
 		},
+	}
+	if s.Spot {
+		props := body["properties"].(map[string]any)
+		props["priority"] = "Spot"
+		props["evictionPolicy"] = "Deallocate"
+		props["billingProfile"] = map[string]any{"maxPrice": -1}
 	}
 	if len(s.Tags) > 0 {
 		body["tags"] = s.Tags
