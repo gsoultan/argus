@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestReadAWSInstanceUsesIMDSv2(t *testing.T) {
@@ -76,10 +77,88 @@ func TestReadGCPInstance(t *testing.T) {
 func TestDiscoverCloudOnlyOnACloud(t *testing.T) {
 	// Off a cloud nothing is asked: a server in a rack must not wait on a
 	// link-local address.
+	// A Hyper-V guest whose firmware does not carry Azure's tag is in
+	// someone's own rack.
+	stubAzure(t, "http://127.0.0.1:1", false, true)
 	for _, hv := range []string{"", "KVM", "VMware", "Hyper-V"} {
 		if c := discoverCloud(hv); c != nil {
 			t.Fatalf("%q: got %+v", hv, c)
 		}
+	}
+}
+
+// stubAzure points the Azure reader at base and says what the firmware
+// says, and forgets what an earlier test learned.
+func stubAzure(t *testing.T, base string, azure, known bool) {
+	t.Helper()
+	oldBase, oldHW := azureMetadataBase, azureHardware
+	azureMetadataBase = base
+	azureHardware = func() (bool, bool) { return azure, known }
+	cloudMu.Lock()
+	cloudCached, azureAskedAt = nil, time.Time{}
+	cloudMu.Unlock()
+	t.Cleanup(func() {
+		azureMetadataBase, azureHardware = oldBase, oldHW
+		cloudMu.Lock()
+		cloudCached, azureAskedAt = nil, time.Time{}
+		cloudMu.Unlock()
+	})
+}
+
+func azureMetadata(t *testing.T, asked *int) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*asked++
+		if r.Header.Get("Metadata") != "true" || r.URL.Path != "/metadata/instance/compute" || r.URL.Query().Get("api-version") == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(`{"subscriptionId":"6B1F2C0E-8A44-4F0B-9D55-0C2A7E4D1A90","location":"eastus","zone":"2",
+			"vmId":"AAAAAAAA-0000-4000-8000-000000000001","vmSize":"Standard_B2s","resourceGroupName":"Web-RG","name":"web-1"}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestDiscoverAzureInstance(t *testing.T) {
+	asked := 0
+	srv := azureMetadata(t, &asked)
+	stubAzure(t, srv.URL, true, true)
+	c := discoverCloud("Hyper-V")
+	want := CloudInstance{Provider: "azure", Account: "6b1f2c0e-8a44-4f0b-9d55-0c2a7e4d1a90", Region: "eastus", Zone: "eastus-2",
+		ID: "aaaaaaaa-0000-4000-8000-000000000001", Type: "Standard_B2s"}
+	if c == nil || *c != want {
+		t.Fatalf("got %+v, want %+v", c, want)
+	}
+	if discoverCloud("Hyper-V") == nil || asked != 1 {
+		t.Fatalf("an answer is kept: asked %d times", asked)
+	}
+}
+
+// Where the firmware cannot be read, a Hyper-V guest asks once; with no
+// answer it must not ask on every report.
+func TestAHyperVGuestThatIsNotAzureAsksOnce(t *testing.T) {
+	asked := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked++
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	stubAzure(t, srv.URL, false, false)
+	for range 3 {
+		if c := discoverCloud("Hyper-V"); c != nil {
+			t.Fatalf("got %+v", c)
+		}
+	}
+	if asked != 1 {
+		t.Fatalf("asked %d times, want once", asked)
+	}
+	// And where it can be read and says Azure, it does ask.
+	asked = 0
+	good := azureMetadata(t, &asked)
+	stubAzure(t, good.URL, false, false)
+	if discoverCloud("Hyper-V") == nil {
+		t.Fatal("unknown firmware and an answer must be believed")
 	}
 }
 

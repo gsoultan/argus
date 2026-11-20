@@ -130,9 +130,8 @@ func TestCloudReadAfterAChangeWaitsForTheReadInFlight(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	old := cloudReadRetry
-	cloudReadRetry = 5 * time.Millisecond
-	t.Cleanup(func() { cloudReadRetry = old })
+	old := cloudReadRetry.Swap(int64(5 * time.Millisecond))
+	t.Cleanup(func() { cloudReadRetry.Store(old) })
 
 	// A read is in flight.
 	key := tenantIDOf(ctx) + "/" + acct.ID

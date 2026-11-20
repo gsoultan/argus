@@ -27,6 +27,9 @@ const SECURE = process.env.STUB_SECURE_COOKIE === '1'
 
 const SESSION = 'stub-session-token'
 const GCP_PRINCIPAL = 'argus-control@northwind-ops.iam.gserviceaccount.com'
+// argus-control's application in Microsoft Entra, by its client id.
+const AZURE_PRINCIPAL = '3f8a1c52-7b0e-4d19-a6c4-91d2e0b57f36'
+const AZURE_SUBSCRIPTION = '6b1f2c0e-8a44-4f0b-9d55-0c2a7e4d1a90'
 const PASSWORD = 'stub-password'
 /** @type {Record<string, string>} */
 const TYPES = {
@@ -443,6 +446,8 @@ const server = createServer(async (req, res) => {
         { provider: 'aws', identity: 'main', name: 'Main', default: false, error: NO_IMDS },
         { provider: 'gcp', identity: 'main', name: 'Main', default: true, principal: GCP_PRINCIPAL,
           source: 'the service account of the VM argus-control runs on' },
+        { provider: 'azure', identity: 'main', name: 'Main', default: true, principal: AZURE_PRINCIPAL,
+          source: 'the app registration in cloud.azure' },
       ]
       if (!orgOf(req).default) return json(res, 200, { accounts: [], bases })
       return json(res, 200, { accounts: [{
@@ -456,13 +461,38 @@ const server = createServer(async (req, res) => {
         identityArn: 'argus-read@analytics-prod-4182.iam.gserviceaccount.com', regions: ['europe-west1', 'us-central1', 'global'],
         connectedBy: 'dev@northwind.id', connectedAt: '2026-11-14T08:00:00Z', syncedAt: new Date(Date.now() - 60_000).toISOString(),
         syncErrors: {}, counts: { instance: 6, volume: 7, firewall: 4 }, manageMissing: [], manageCheckedAt: null,
+      }, {
+        id: 'ca3', provider: 'azure', accountId: AZURE_SUBSCRIPTION, name: 'billing-azure', access: 'read', environment: 'production',
+        identity: 'main', identityMissing: false,
+        roleArn: `/subscriptions/${AZURE_SUBSCRIPTION}/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7`,
+        identityArn: `/subscriptions/${AZURE_SUBSCRIPTION}/providers/Microsoft.Authorization/roleAssignments/0d5c1f6e-2a3b-5c4d-8e9f-a1b2c3d4e5f6`,
+        regions: ['southeastasia', 'westeurope'],
+        connectedBy: 'dev@northwind.id', connectedAt: '2026-11-18T08:00:00Z', syncedAt: new Date(Date.now() - 90_000).toISOString(),
+        syncErrors: {}, counts: { instance: 4, volume: 5, firewall: 3 }, manageMissing: [], manageCheckedAt: null,
       }], bases })
     }
     // A Google Cloud project: argus-read is where it will be, and is not
     // there yet, which is what the page waits on.
     if (path === '/api/v1/cloud/accounts/prepare' && req.method === 'POST') {
       const body = /** @type {any} */ (await readBody(req))
-      if (body.provider !== 'gcp') return json(res, 400, { error: 'only Google Cloud is stubbed' })
+      if (body.provider === 'azure') {
+        const s = body.accountId
+        const ext = 'argus-6f1c0e9a2b7d4c5e8f9a0b1c2d3e4f50'
+        const role = `/subscriptions/${s}/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7`
+        return json(res, 200, { provider: 'azure', accountId: s, externalId: ext, principal: AZURE_PRINCIPAL,
+          source: 'the app registration in cloud.azure', identity: 'main', identityName: 'Main', roleName: 'Reader',
+          readRoleArn: role, template: '', canDeploy: false,
+          command: `# Gives argus-control the Reader role in ${s}: it may list and describe, nothing else.\nS=${s} R=acdd72a7-3385-48ef-bd42-f606fba81ae7\n`
+            + 'grant() {\n  O=$(az ad sp show --id $1 --query id -o tsv 2>/dev/null || az ad sp create --id $1 --query id -o tsv) || return 1\n'
+            + '  az rest --method put --url "https://management.azure.com/subscriptions/$S/providers/Microsoft.Authorization/roleAssignments/$2?api-version=2022-04-01" \\\n'
+            + `    --body "{\\"properties\\":{\\"principalId\\":\\"$O\\",\\"description\\":\\"Argus reads this subscription's inventory through this assignment. argus-external-id=${ext}\\"}}"\n}\n`
+            + `grant ${AZURE_PRINCIPAL} 0d5c1f6e-2a3b-5c4d-8e9f-a1b2c3d4e5f6 && \\\n`
+            + (body.manage ? 'M=5a1d0c3e-7b2f-4e6a-9c8d-1f2e3d4c5b6a && \\\naz rest --method put --url "$A/roleDefinitions/$M?api-version=2022-04-01" --body "{...Microsoft.Compute/virtualMachines/deallocate/action...}" && \\\n' : '')
+            + 'echo "Done. Argus connects by itself within a few minutes."\n',
+          ...(body.manage ? { manageRoleName: 'Argus manage',
+            manageRoleArn: `/subscriptions/${s}/providers/Microsoft.Authorization/roleDefinitions/5a1d0c3e-7b2f-4e6a-9c8d-1f2e3d4c5b6a` } : {}) })
+      }
+      if (body.provider !== 'gcp') return json(res, 400, { error: 'only Google Cloud and Azure are stubbed' })
       const p = body.accountId
       const sa = `argus-read@${p}.iam.gserviceaccount.com`
       const ext = 'argus-6f1c0e9a2b7d4c5e8f9a0b1c2d3e4f50'
@@ -485,6 +515,9 @@ const server = createServer(async (req, res) => {
     }
     if (path === '/api/v1/cloud/accounts/check' && req.method === 'POST') {
       const body = /** @type {any} */ (await readBody(req))
+      if (body.provider === 'azure') {
+        return json(res, 200, { ready: false, detail: 'The subscription does not let Argus in yet: argus-control has no Reader role there' })
+      }
       return json(res, 200, { ready: false, detail: `argus-read@${body.accountId}.iam.gserviceaccount.com does not let Argus in yet: Permission 'iam.serviceAccounts.getAccessToken' denied` })
     }
     // A server whose agent read its instance from EC2's metadata service, and

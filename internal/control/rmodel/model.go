@@ -2079,7 +2079,7 @@ func (m *CloudAccount) Schema(t *storm.Table) {
 	t.Col(&m.Identity).Default("'main'::text")
 	t.CheckNamed("cloud_accounts_access_check", "access = ANY (ARRAY['read'::text, 'manage'::text])")
 	t.CheckNamed("cloud_accounts_environment_check", "environment = ANY (ARRAY['production'::text, 'staging'::text, 'development'::text])")
-	t.CheckNamed("cloud_accounts_provider_check", "provider = ANY (ARRAY['aws'::text, 'gcp'::text])")
+	t.CheckNamed("cloud_accounts_provider_check", "provider = ANY (ARRAY['aws'::text, 'gcp'::text, 'azure'::text])")
 	t.Index(&m.Provider, &m.AccountID).Unique().Where("archived_at IS NULL").Named("cloud_accounts_one_active")
 }
 

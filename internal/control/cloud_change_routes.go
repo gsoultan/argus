@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/control/cloud"
+	"github.com/gsoultan/argus/internal/control/cloud/azure"
 	"github.com/gsoultan/argus/internal/control/cloud/gcp"
 )
 
@@ -145,7 +146,9 @@ type CloudLaunchOptions struct {
 	Firewalls []CloudItem   `json:"firewalls"`
 	// Zones are the zones to launch in, where a subnet does not say: a
 	// Google Cloud subnet spans its region.
-	Zones         []string `json:"zones,omitempty"`
+	Zones []string `json:"zones,omitempty"`
+	// Groups are the resource groups an Azure VM can be made in.
+	Groups        []string `json:"groups,omitempty"`
 	Environment   string   `json:"environment"`
 	NeedsApproval bool     `json:"needsApproval"`
 	// AgentProblem says why the agent cannot enroll by itself, when it
@@ -193,6 +196,11 @@ func (a *API) getCloudLaunchOptions(w http.ResponseWriter, r *http.Request) {
 			}
 			out.Zones = zones
 		}
+	}
+	if m.acct.Provider == "azure" {
+		out.Sizes = azure.LaunchSizes
+		out.Zones = azureZones(region)
+		out.Groups = a.azureGroups(r.Context(), m.acct.ID)
 	}
 	for _, kind := range []cloud.Kind{cloud.KindSubnet, cloud.KindFirewall} {
 		items, err := a.store.CloudResources(r.Context(), kind)
@@ -273,18 +281,20 @@ type cloudChangeIn struct {
 
 // cloudLaunchSpec is what a launch asks for, as stored.
 type cloudLaunchSpec struct {
-	Name       string            `json:"name"`
-	Image      string            `json:"image"`
-	ImageLabel string            `json:"imageLabel"`
-	Size       string            `json:"size"`
-	DiskGB     int32             `json:"diskGb"`
-	Subnet     string            `json:"subnet"`
-	Zone       string            `json:"zone,omitempty"`
-	Firewalls  []string          `json:"firewalls"`
-	Protect    bool              `json:"protect"`
-	PublicIP   bool              `json:"publicIp"`
-	Agent      bool              `json:"agent"`
-	Tags       map[string]string `json:"tags,omitempty"`
+	Name       string `json:"name"`
+	Image      string `json:"image"`
+	ImageLabel string `json:"imageLabel"`
+	Size       string `json:"size"`
+	DiskGB     int32  `json:"diskGb"`
+	Subnet     string `json:"subnet"`
+	Zone       string `json:"zone,omitempty"`
+	// Group is the resource group an Azure VM is made in.
+	Group     string            `json:"group,omitempty"`
+	Firewalls []string          `json:"firewalls"`
+	Protect   bool              `json:"protect"`
+	PublicIP  bool              `json:"publicIp"`
+	Agent     bool              `json:"agent"`
+	Tags      map[string]string `json:"tags,omitempty"`
 	// Count launches several alike, named from Name onwards (launchNames).
 	Count      int     `json:"count,omitempty"`
 	ExtraDisks []int32 `json:"extraDisks,omitempty"`
@@ -371,6 +381,8 @@ func (a *API) removePlan(ctx context.Context, m cloudManaged, actor, region stri
 	// where the environment needs it, and never while protected or owned
 	// by a stack.
 	switch {
+	case plan.Protected && m.acct.Provider == "azure":
+		v.Refusal = azure.ErrLocked.Error()
 	case plan.Protected:
 		v.Refusal = cloud.ErrProtected.Error()
 	case plan.ManagedBy != "":
@@ -501,6 +513,9 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 		if m.acct.Provider == "gcp" && !slices.Contains(gcp.TaggableKinds, in.Kind) {
 			return ch, http.StatusNotImplemented, fmt.Errorf("Argus cannot label a %s in Google Cloud yet; do it in the Google Cloud console", in.Kind)
 		}
+		if m.acct.Provider == "azure" && !slices.Contains(azure.TaggableKinds, in.Kind) {
+			return ch, http.StatusNotImplemented, fmt.Errorf("Argus cannot tag a %s in Azure yet; do it in the Azure portal", in.Kind)
+		}
 		kind = in.Kind
 	}
 	inst, err := a.store.CloudResourceOf(r.Context(), m.acct.ID, in.Region, kind, in.ResourceID)
@@ -517,6 +532,11 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 		ch.Summary = "Start " + inst.Name
 	case cloud.ActionStop:
 		ch.Summary = "Stop " + inst.Name
+		if m.acct.Provider == "azure" {
+			// Azure charges for a VM that is only shut down, so a stop
+			// from Argus deallocates it, as the portal's Stop does.
+			ch.Summary = "Stop " + inst.Name + " (deallocate it: Azure stops charging for the VM, and gives up a public address that is not static)"
+		}
 	case cloud.ActionHibernate:
 		if inst.Details["hibernation"] != "yes" {
 			return ch, http.StatusConflict, errors.New(inst.Name + " was not launched with hibernation on, so it can only be stopped")
@@ -546,6 +566,24 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 	case cloud.ActionResize:
 		var s cloudResizeSpec
 		gcpSize := m.acct.Provider == "gcp"
+		if m.acct.Provider == "azure" {
+			if err := json.Unmarshal(in.Spec, &s); err != nil || !azure.ValidSize(s.Size) {
+				return ch, http.StatusBadRequest, errors.New("pick a VM size, like Standard_B2s")
+			}
+			if strings.EqualFold(s.Size, inst.Size) {
+				return ch, http.StatusBadRequest, errors.New(inst.Name + " is already " + inst.Size)
+			}
+			// Azure resizes a running VM by restarting it, when its host
+			// has the size at all. Argus asks for the stop to be its own
+			// step, so nobody restarts a server by changing a field.
+			if inst.State != "stopped" {
+				return ch, http.StatusConflict, errors.New("stop " + inst.Name + " first; Argus changes the size of a stopped VM only, since Azure would restart a running one")
+			}
+			s.From = inst.Size
+			ch.Spec, _ = json.Marshal(s)
+			ch.Summary = "Change " + inst.Name + " from " + inst.Size + " to " + s.Size
+			break
+		}
 		if err := json.Unmarshal(in.Spec, &s); err != nil || (!gcpSize && !cloud.ValidSize(s.Size)) || (gcpSize && !gcp.ValidMachineType(s.Size)) {
 			if gcpSize {
 				return ch, http.StatusBadRequest, errors.New("pick a machine type, like e2-medium")
@@ -582,6 +620,12 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 				}
 				continue
 			}
+			if m.acct.Provider == "azure" {
+				if why := azure.TagProblem(k, v); why != "" {
+					return ch, http.StatusBadRequest, fmt.Errorf("%q cannot be a tag: %s", k, why)
+				}
+				continue
+			}
 			if !cloud.ValidTagKey(k) || len(v) > 256 {
 				return ch, http.StatusBadRequest, fmt.Errorf("%q cannot be a tag here: keys are up to 128 characters and cannot start with aws:, values up to 256", k)
 			}
@@ -589,6 +633,12 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 		for _, k := range s.Remove {
 			if m.acct.Provider == "gcp" {
 				if gcp.LabelProblem(k, "") != "" {
+					return ch, http.StatusBadRequest, fmt.Errorf("%q cannot be removed from here", k)
+				}
+				continue
+			}
+			if m.acct.Provider == "azure" {
+				if azure.TagProblem(k, "") != "" {
 					return ch, http.StatusBadRequest, fmt.Errorf("%q cannot be removed from here", k)
 				}
 				continue
@@ -642,6 +692,9 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 func (a *API) planLaunch(r *http.Request, m cloudManaged, actor string, in *cloudChangeIn, ch CloudChange) (CloudChange, int, error) {
 	if m.acct.Provider == "gcp" {
 		return a.planGCPLaunch(r, m, actor, in, ch)
+	}
+	if m.acct.Provider == "azure" {
+		return a.planAzureLaunch(r, m, actor, in, ch)
 	}
 	var s cloudLaunchSpec
 	if err := json.Unmarshal(in.Spec, &s); err != nil {
@@ -1227,7 +1280,7 @@ func (a *API) applyLaunch(ctx context.Context, r *http.Request, m cloudManaged, 
 // single-use enrollment token when the agent goes on it.
 func (a *API) launchOne(ctx context.Context, r *http.Request, m cloudManaged, ch CloudChange, s cloudLaunchSpec, name string) (cloud.Result, error) {
 	spec := cloud.LaunchSpec{Region: ch.Region, Name: name, Image: s.Image, Size: s.Size, DiskGB: s.DiskGB,
-		Subnet: s.Subnet, Zone: s.Zone, Firewalls: s.Firewalls, Protect: s.Protect && !s.Spot, PublicIP: s.PublicIP,
+		Subnet: s.Subnet, Zone: s.Zone, Group: s.Group, Firewalls: s.Firewalls, Protect: s.Protect && !s.Spot, PublicIP: s.PublicIP,
 		ExtraDisks: s.ExtraDisks, Spot: s.Spot, CapacityReservation: s.CapacityReservation,
 		Tags: map[string]string{"argus:launched-by": ch.RequestedBy, "argus:change": ch.ID}}
 	for k, v := range s.Tags {

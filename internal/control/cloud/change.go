@@ -96,7 +96,9 @@ type LaunchSpec struct {
 	Subnet string `json:"subnet"`
 	// Zone is where the instance goes, where the subnet does not say: a
 	// Google Cloud subnet spans its region.
-	Zone      string            `json:"zone,omitempty"`
+	Zone string `json:"zone,omitempty"`
+	// Group is the resource group an Azure VM is made in.
+	Group     string            `json:"group,omitempty"`
 	Firewalls []string          `json:"firewalls"`
 	Protect   bool              `json:"protect"`
 	PublicIP  bool              `json:"publicIp"`
@@ -159,6 +161,9 @@ type RemovePlan struct {
 	// PublicIP is released with it; ElasticIP stays allocated to the account.
 	PublicIP  string `json:"publicIp,omitempty"`
 	ElasticIP string `json:"elasticIp,omitempty"`
+	// Stays names what else the provider leaves behind at no charge: in
+	// Azure, a network interface not marked to be deleted with its VM.
+	Stays []string `json:"stays,omitempty"`
 }
 
 // managers are the tags AWS puts on an instance something else owns, and

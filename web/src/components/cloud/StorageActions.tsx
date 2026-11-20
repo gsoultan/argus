@@ -6,7 +6,7 @@ import {
 import { useState } from 'react'
 import { Field, relTime } from '~/components/primitives'
 import {
-  ACTION_LEVEL, GCP_DISK_TYPES, GCP_NAME, PRICE, VOLUME_TYPES, allows, allowsTags, attachment, cloudAccountsQuery, cloudChangesQuery, cloudItemsQuery, envOf, freeDevice, gcpDevicePath, money,
+  ACTION_LEVEL, AZURE_DISK_MAX_GB, AZURE_DISK_NAME, AZURE_DISK_TYPES, GCP_DISK_TYPES, GCP_NAME, PRICE, VOLUME_TYPES, allows, allowsTags, attachment, cloudAccountsQuery, cloudChangesQuery, cloudItemsQuery, envOf, freeDevice, gcpDevicePath, money,
   roleLacks, volumeMonthly, volumeOf, type CloudAccount, type CloudAction, type CloudEnvironment, type CloudItem,
 } from '~/lib/cloud'
 import { meQuery } from '~/lib/queries'
@@ -72,6 +72,7 @@ export function StorageActions({ it }: { it: CloudItem }) {
   const attached = attachment(r)
   const can = (a: CloudAction) => allows(account, a)
   const gcp = account?.provider === 'gcp'
+  const azure = account?.provider === 'azure'
 
   const buttons = (() => {
     switch (r.kind) {
@@ -80,7 +81,7 @@ export function StorageActions({ it }: { it: CloudItem }) {
           <>
             {can('volume-grow') && (
               <Button size="xs" variant="default" leftSection={<IconResize size={14} />} disabled={busy} onClick={() => setOpen('volume-grow')}>
-                {gcp ? 'Grow' : 'Grow or change'}
+                {gcp || azure ? 'Grow' : 'Grow or change'}
               </Button>
             )}
             {r.state === 'available'
@@ -93,7 +94,8 @@ export function StorageActions({ it }: { it: CloudItem }) {
         return can('volume-create') && <Button size="xs" variant="default" leftSection={<IconPlus size={14} />} disabled={r.state !== (gcp ? 'ready' : 'completed')} onClick={() => setOpen('new-disk')}>New disk from it</Button>
       case 'address':
         return r.state === 'attached'
-          ? can('address-disassociate') && <Button size="xs" variant="default" leftSection={<IconLinkOff size={14} />} disabled={busy} onClick={() => setOpen('address-disassociate')}>Take it off</Button>
+          // In Azure an address may be on a load balancer or a gateway, which is not Argus's to take it off.
+          ? can('address-disassociate') && !(azure && !attached) && <Button size="xs" variant="default" leftSection={<IconLinkOff size={14} />} disabled={busy} onClick={() => setOpen('address-disassociate')}>Take it off</Button>
           : can('address-associate') && !(gcp && (!r.publicIp || r.region === 'global')) && <Button size="xs" variant="default" leftSection={<IconLink size={14} />} disabled={busy} onClick={() => setOpen('address-associate')}>Attach to an instance</Button>
       default:
         return null
@@ -103,7 +105,7 @@ export function StorageActions({ it }: { it: CloudItem }) {
     volume: { action: 'volume-delete', label: 'Delete disk…' },
     snapshot: { action: 'snapshot-delete', label: 'Delete snapshot…' },
     image: { action: 'image-delete', label: 'Delete image…' },
-    address: { action: 'address-release', label: 'Release address…' },
+    address: { action: 'address-release', label: azure ? 'Delete address…' : 'Release address…' },
   }
   const rm = remove[r.kind] && can(remove[r.kind]!.action) ? remove[r.kind] : undefined
 
@@ -130,8 +132,8 @@ export function StorageActions({ it }: { it: CloudItem }) {
           )}
         </Group>
         {open === 'tags' && <TagsChange it={it} env={env} gcp={gcp} onClose={close} />}
-        {open === 'volume-grow' && (gcp
-          ? <GcpDiskGrow it={it} env={env} onClose={close} />
+        {open === 'volume-grow' && (gcp || azure
+          ? <SizeOnlyGrow it={it} env={env} account={account} onClose={close} />
           : <VolumeGrow it={it} env={env} account={account} onClose={close} />)}
         {(open === 'volume-attach' || open === 'address-associate') && <AttachTo it={it} env={env} account={account} action={open} onClose={close} />}
         {(open === 'volume-detach' || open === 'address-disassociate') && <Detach it={it} env={env} account={account} action={open} onClose={close} />}
@@ -143,35 +145,49 @@ export function StorageActions({ it }: { it: CloudItem }) {
   )
 }
 
-/** Instances in the same account and region (and zone, for a disk) that are not being removed. */
+/** Whether an Azure disk type is kept in every zone of its region, and so attaches to a VM in any of them. */
+const zoneRedundant = (type?: string) => Boolean(type?.endsWith('_ZRS'))
+
+/**
+ * Instances in the same account and region (and zone, for a disk) that are not being removed. An Azure disk may
+ * have no zone, and then goes only on a VM without one.
+ */
 function useTargets(it: CloudItem, sameZone: boolean) {
   const instances = useQuery(cloudItemsQuery('instance'))
+  const anyZone = zoneRedundant(it.resource.details?.type)
   return (instances.data ?? []).filter((x) => x.accountId === it.accountId && x.resource.region === it.resource.region &&
-    x.resource.state !== 'terminated' && x.resource.state !== 'shutting-down' && (!sameZone || x.resource.zone === it.resource.zone))
+    x.resource.state !== 'terminated' && x.resource.state !== 'shutting-down' &&
+    (!sameZone || anyZone || (x.resource.zone ?? '') === (it.resource.zone ?? '')))
 }
 
 /**
- * Growing a Google Cloud disk: its size, and nothing else. Google changes
- * neither a disk's type nor its performance by resizing it.
+ * Growing a Google Cloud or Azure disk: its size, and nothing else. Neither
+ * changes a disk's type or its performance by resizing it.
  */
-function GcpDiskGrow({ it, env, onClose }: { it: CloudItem; env: CloudEnvironment; onClose: () => void }) {
+function SizeOnlyGrow({ it, env, account, onClose }: { it: CloudItem; env: CloudEnvironment; account?: CloudAccount; onClose: () => void }) {
   const r = it.resource
   const now = volumeOf(r)
   const [gb, setGb] = useState<number>(now.gb)
   const [reason, setReason] = useState('')
   const { submit, busy } = useSubmit(onClose)
   const shrink = gb < now.gb
+  const azure = account?.provider === 'azure'
+  const unit = azure ? 'GiB' : 'GB'
+  // The disk a VM starts from carries the system it holds.
+  const boots = azure && Boolean(r.details?.platform) && r.state === 'in-use'
   return (
     <ChangeModal title={`Grow ${r.name}`} env={env} level="change" reason={reason} setReason={setReason} onClose={onClose}
-      busy={busy} submit="Grow disk" disabled={gb <= now.gb}
+      busy={busy} submit="Grow disk" disabled={gb <= now.gb || roleLacks(account, 'volume-grow')}
       onSubmit={() => void submit({ accountId: it.accountId, region: r.region, action: 'volume-grow', resourceId: r.id,
         spec: { sizeGb: gb }, reason }, 'Disk growing')}>
+      <RoleNeedsUpdate account={account} action="volume-grow" />
       <Text size={FS.body} lh={1.55}>
-        Google grows the disk in a few seconds while it stays in use. A disk can only grow, never shrink. Its type and performance
-        stay as they are.
+        {azure
+          ? `Azure grows a data disk in a few seconds while it stays in use. A disk can only grow, never shrink. Its type and performance stay as they are.${boots ? ' This is the disk its VM starts from, and Azure grows that one only while the VM is stopped.' : ''}`
+          : 'Google grows the disk in a few seconds while it stays in use. A disk can only grow, never shrink. Its type and performance stay as they are.'}
       </Text>
-      <NumberInput label="Size, GB" value={gb} onChange={(v) => setGb(Number(v) || 0)} min={now.gb} max={65536} w={200}
-        error={shrink ? `A disk cannot shrink below ${now.gb} GB` : undefined} />
+      <NumberInput label={`Size, ${unit}`} value={gb} onChange={(v) => setGb(Number(v) || 0)} min={now.gb} max={azure ? AZURE_DISK_MAX_GB : 65536} w={200}
+        error={shrink ? `A disk cannot shrink below ${now.gb} ${unit}` : undefined} />
       {gb > now.gb && (
         <Text size={FS.meta} c="dimmed">
           The file system on it keeps its old size until it is grown too, from the server's Disks tab when it has the Argus agent.
@@ -228,20 +244,25 @@ function AttachTo({ it, env, account, action, onClose }: {
   const { submit, busy } = useSubmit(onClose)
   const target = targets.find((x) => x.resource.id === instance)
   const gcp = account?.provider === 'gcp'
-  const device = !target ? '' : gcp ? gcpDevicePath(r.name) : freeDevice(target.resource)
+  const azure = account?.provider === 'azure'
+  const device = !target || azure ? '' : gcp ? gcpDevicePath(r.name) : freeDevice(target.resource)
   const stricter = target ? envOf(target.resource.tags, target.environment) : env
   const shown = stricter === 'production' || (stricter === 'staging' && env !== 'production') ? stricter : env
   return (
-    <ChangeModal title={disk ? `Attach ${r.name}` : `Attach ${r.publicIp}`} env={shown} level="change" reason={reason} setReason={setReason}
+    <ChangeModal title={disk ? `Attach ${r.name}` : `Attach ${r.publicIp ?? r.name}`} env={shown} level="change" reason={reason} setReason={setReason}
       onClose={onClose} busy={busy} submit="Attach" disabled={!instance || roleLacks(account, action)}
       onSubmit={() => void submit({ accountId: it.accountId, region: r.region, action, resourceId: r.id, spec: { instance }, reason }, 'Attached')}>
       <RoleNeedsUpdate account={account} action={action} />
-      <Select label="Instance" placeholder={targets.length ? 'Pick an instance' : disk ? `No instances in ${r.zone}` : 'No instances here'}
+      <Select label="Instance" placeholder={targets.length ? 'Pick an instance' : disk ? (r.zone ? `No instances in ${r.zone}` : 'No instances without a zone here') : 'No instances here'}
         searchable value={instance} onChange={setInstance}
         data={targets.map((x) => ({ value: x.resource.id, label: `${x.resource.name} · ${x.resource.state}` }))} />
       <Text size={FS.meta} c="dimmed" lh={1.5}>
-        {disk
+        {disk && azure
+          ? `${zoneRedundant(r.details?.type) ? 'This disk is kept in every zone, so it attaches to any VM in its region.' : r.zone ? `A disk attaches only to a VM in its own zone, ${r.zone}.` : 'A disk without a zone attaches only to a VM without one.'} Azure picks the LUN it is attached at; mount it on the server to use it.`
+          : disk
           ? `A disk attaches only to an instance in its own zone, ${r.zone}.${device ? ` It appears as ${device}; mount it on the server to use it.` : ''}`
+          : azure
+          ? `The VM answers on ${r.publicIp ?? r.name} from then on. Azure puts it on the VM's primary network interface; a VM that already has a public address keeps that one, and Argus refuses.`
           : `The instance answers on ${r.publicIp} from then on${target?.resource.publicIp ? `, instead of ${target.resource.publicIp}` : ''}.`}
       </Text>
     </ChangeModal>
@@ -259,18 +280,23 @@ function Detach({ it, env, account, action, onClose }: {
   const { submit, busy } = useSubmit(onClose)
   const disk = action === 'volume-detach'
   const gcp = account?.provider === 'gcp'
+  const azure = account?.provider === 'azure'
   return (
-    <ChangeModal title={disk ? `Detach ${r.name} from ${name}?` : `Take ${r.publicIp} off ${name}?`} env={env} level="change"
+    <ChangeModal title={disk ? `Detach ${r.name} from ${name}?` : `Take ${r.publicIp ?? r.name} off ${name}?`} env={env} level="change"
       reason={reason} setReason={setReason} onClose={onClose} busy={busy} submit={disk ? 'Detach' : 'Take it off'} color="amber"
       disabled={roleLacks(account, action)}
       onSubmit={() => void submit({ accountId: it.accountId, region: r.region, action, resourceId: r.id, reason }, disk ? 'Detaching' : 'Taken off')}>
       <RoleNeedsUpdate account={account} action={action} />
       <Text size={FS.body} lh={1.55}>
         {disk
-          ? gcp
+          ? azure
+            ? 'Unmount it on the server first. Azure detaches the disk at once, whether or not the server is still using it, and files being written can be lost.'
+            : gcp
             ? 'Unmount it on the server first. Google detaches the disk at once, whether or not the server is still using it, and files being written can be lost.'
             : 'Unmount it on the server first. Argus never forces a detach, so AWS waits for the server to let go of it; a disk still in use stays attached.'
-          : gcp
+          : azure
+            ? `${name} loses this address and has no public address until it is given one. The address stays yours and is billed while it is kept.`
+            : gcp
             ? `${name} loses this address and has no public address until it is given one. The static address stays yours and is billed while nothing uses it.`
             : `${name} loses this address. A running instance gets a new public address from Amazon only when it next starts; the Elastic IP stays yours and is billed while it is not attached.`}
       </Text>
@@ -285,7 +311,9 @@ function SnapshotCreate({ it, env, account, onClose }: { it: CloudItem; env: Clo
   const { submit, busy } = useSubmit(onClose)
   const gb = volumeOf(r).gb
   const gcp = account?.provider === 'gcp'
-  const badName = gcp && name.trim() !== '' && !GCP_NAME.test(name.trim())
+  const azure = account?.provider === 'azure'
+  const badName = name.trim() !== '' && ((gcp && !GCP_NAME.test(name.trim())) || (azure && !AZURE_DISK_NAME.test(name.trim())))
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-')
   return (
     <ChangeModal title={`Snapshot ${r.name}`} env={env} level={ACTION_LEVEL['snapshot-create']} reason={reason} setReason={setReason}
       onClose={onClose} busy={busy} submit="Take snapshot" disabled={badName || roleLacks(account, 'snapshot-create')}
@@ -293,11 +321,14 @@ function SnapshotCreate({ it, env, account, onClose }: { it: CloudItem; env: Clo
         spec: { name: name.trim() }, reason }, 'Snapshot started')}>
       <RoleNeedsUpdate account={account} action="snapshot-create" />
       <Text size={FS.body} lh={1.55}>
-        {gcp ? 'Google' : 'AWS'} copies the disk as it is now, while it stays in use, and finishes in the background. For a consistent copy of
+        {azure ? 'Azure' : gcp ? 'Google' : 'AWS'} copies the disk as it is now, while it stays in use, and finishes in the background. For a consistent copy of
         a busy database, pause its writes first.
       </Text>
-      {gcp ? (
-        <TextInput label="Name" placeholder={`${r.name}-${new Date().toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-')}`}
+      {azure ? (
+        <TextInput label="Name" placeholder={`${r.name}-${stamp}`} value={name} onChange={(e) => setName(e.currentTarget.value)} maxLength={80}
+          error={badName ? 'Letters, digits, . _ and -, starting with a letter or digit, up to 80' : undefined} />
+      ) : gcp ? (
+        <TextInput label="Name" placeholder={`${r.name}-${stamp}`}
           value={name} onChange={(e) => setName(e.currentTarget.value)} maxLength={63}
           error={badName ? 'Lowercase letters, digits and -, starting with a letter, up to 63' : undefined} />
       ) : (
@@ -305,7 +336,9 @@ function SnapshotCreate({ it, env, account, onClose }: { it: CloudItem; env: Clo
           onChange={(e) => setName(e.currentTarget.value)} maxLength={128} />
       )}
       <Text size={FS.meta} c="dimmed">
-        {gcp
+        {azure
+          ? `Azure keeps it in the disk's resource group${r.details?.resourceGroup ? `, ${r.details.resourceGroup},` : ''} and bills it while it is kept; later snapshots of the same disk are billed only for what changed.`
+          : gcp
           ? 'Google keeps it for the whole project and bills it while it is kept; later snapshots of the same disk store only what changed.'
           : `Up to about ${money(gb * PRICE.snapshotPerGb)} a month while it is kept; later snapshots of the same disk store only what changed.`}
       </Text>
@@ -320,7 +353,11 @@ function Delete({ it, env, account, action, onClose }: { it: CloudItem; env: Clo
   const [typed, setTyped] = useState('')
   const [reason, setReason] = useState('')
   const gcp = account?.provider === 'gcp'
-  const [extra, setExtra] = useState<boolean>(action === 'volume-delete' ? env === 'production' && !gcp : action === 'image-delete' && !gcp)
+  const azure = account?.provider === 'azure'
+  // A final snapshot, and an image's own snapshots, are AWS's; elsewhere each is its own change.
+  const aws = !gcp && !azure
+  const maker = azure ? 'Azure' : gcp ? 'Google' : 'AWS'
+  const [extra, setExtra] = useState<boolean>(action === 'volume-delete' ? env === 'production' && aws : action === 'image-delete' && aws)
   const { submit, busy } = useSubmit(onClose)
   const word = r.kind === 'address' ? r.publicIp || r.name : r.name
   const usedBy = r.kind === 'snapshot'
@@ -330,10 +367,10 @@ function Delete({ it, env, account, action, onClose }: { it: CloudItem; env: Clo
     : action === 'address-release' && r.state === 'attached' ? 'it is attached; take it off first'
       : usedBy ? `the image ${usedBy.resource.name} is made from it; delete the image, with its snapshots, instead`
         : r.tags?.['aws:cloudformation:stack-name'] && action === 'volume-delete' ? `it belongs to CloudFormation stack ${r.tags['aws:cloudformation:stack-name']}` : ''
-  const verb = action === 'address-release' ? 'Release' : 'Delete'
+  const verb = action === 'address-release' && !azure ? 'Release' : 'Delete'
   return (
     <ChangeModal title={`${verb} ${word}?`} env={env} level="remove" reason={reason} setReason={setReason} onClose={onClose} busy={busy}
-      submit={`${verb} ${gcp && r.kind === 'address' ? 'static address' : KIND_WORD[r.kind]}`} color="rose" disabled={Boolean(refusal) || (typed.trim() !== word && typed.trim() !== r.id) || roleLacks(account, action)}
+      submit={`${verb} ${r.kind === 'address' && azure ? 'public address' : gcp && r.kind === 'address' ? 'static address' : KIND_WORD[r.kind]}`} color="rose" disabled={Boolean(refusal) || (typed.trim() !== word && typed.trim() !== r.id) || roleLacks(account, action)}
       onSubmit={() => void submit({ accountId: it.accountId, region: r.region, action, resourceId: r.id, confirm: typed.trim(), reason,
         spec: action === 'volume-delete' ? { finalSnapshot: extra } : action === 'image-delete' ? { withSnapshots: extra } : undefined }, verb === 'Release' ? 'Released' : 'Deleting')}>
       <RoleNeedsUpdate account={account} action={action} />
@@ -342,17 +379,17 @@ function Delete({ it, env, account, action, onClose }: { it: CloudItem; env: Clo
       ) : (
         <>
           <Text size={FS.body} lh={1.55}>
-            {action === 'volume-delete' && `${gcp ? 'Google' : 'AWS'} deletes the disk and everything on it (${r.size}). This cannot be undone.`}
-            {action === 'volume-delete' && gcp && ' To keep a copy, take a snapshot of it first and delete it once that is ready.'}
-            {action === 'snapshot-delete' && `${gcp ? 'Google' : 'AWS'} deletes the snapshot (${r.size}). Disks already made from it are not touched. This cannot be undone.`}
+            {action === 'volume-delete' && `${maker} deletes the disk and everything on it (${r.size}). This cannot be undone.`}
+            {action === 'volume-delete' && !aws && ' To keep a copy, take a snapshot of it first and delete it once that is ready.'}
+            {action === 'snapshot-delete' && `${maker} deletes the snapshot (${r.size}). Disks already made from it are not touched. This cannot be undone.`}
             {action === 'image-delete' && `Nobody can launch from this image afterwards. ${gcp ? 'VMs' : 'Instances'} already launched from it keep running.`}
-            {action === 'address-release' && `${r.publicIp ?? r.addresses?.[0] ?? r.name} goes back to ${gcp ? 'Google' : 'Amazon'} and is gone for good; anything that points at it (DNS, allow lists) stops reaching you.`}
+            {action === 'address-release' && `${r.publicIp ?? r.addresses?.[0] ?? r.name} goes back to ${azure ? 'Azure' : gcp ? 'Google' : 'Amazon'} and is gone for good; anything that points at it (DNS, allow lists) stops reaching you.`}
           </Text>
-          {action === 'volume-delete' && !gcp && (
+          {action === 'volume-delete' && aws && (
             <Checkbox checked={extra} onChange={(e) => setExtra(e.currentTarget.checked)} label="Take a final snapshot first"
               description="It is kept and billed until someone deletes it. On by default in production." />
           )}
-          {action === 'image-delete' && !gcp && (
+          {action === 'image-delete' && aws && (
             <Checkbox checked={extra} onChange={(e) => setExtra(e.currentTarget.checked)} label="Delete the snapshots it was made of too"
               description="Otherwise they stay, and are billed, after the image is gone." />
           )}
@@ -421,6 +458,7 @@ export function NewDisk({ accountId, region, snapshot, onClose }: { accountId?: 
   const [acct, setAcct] = useState<string | null>(accountId ?? (manageable.length === 1 ? manageable[0]!.id : null))
   const account = manageable.find((a) => a.id === acct)
   const gcp = account?.provider === 'gcp'
+  const azure = account?.provider === 'azure'
   // A Google Cloud snapshot belongs to the whole project, so its disk can be made in any region.
   const regions = (account?.regions ?? []).filter((x) => x !== 'global')
   const [reg, setReg] = useState<string | null>(region && region !== 'global' ? region : regions.length === 1 ? regions[0]! : null)
@@ -430,31 +468,46 @@ export function NewDisk({ accountId, region, snapshot, onClose }: { accountId?: 
   const [type, setType] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [attachTo, setAttachTo] = useState<string | null>(null)
+  const [group, setGroup] = useState<string | null>(snapshot?.resource.details?.resourceGroup ?? null)
   const [reason, setReason] = useState('')
   const { submit, busy } = useSubmit(onClose)
-  const kind = type ?? (gcp ? 'pd-balanced' : 'gp3')
+  const kind = type ?? (azure ? AZURE_DISK_TYPES[0]!.value : gcp ? 'pd-balanced' : 'gp3')
   // Google subnets span a region; its zones are read off the VMs and disks already there.
   const zoned = gcp ? [...(instances.data ?? []), ...(volumes.data ?? [])] : subnets.data ?? []
-  const zones = [...new Set(zoned.filter((s) => s.accountId === acct && s.resource.region === reg && s.resource.zone)
-    .map((s) => s.resource.zone!))].sort()
-  const targets = (instances.data ?? []).filter((x) => x.accountId === acct && x.resource.zone === zone &&
+  // Azure numbers a region's zones 1 to 3, and a disk may have none; a zone-redundant disk never has one.
+  const zrs = azure && zoneRedundant(kind)
+  const zones = azure ? (reg && !zrs ? [1, 2, 3].map((n) => `${reg}-${n}`) : [])
+    : [...new Set(zoned.filter((s) => s.accountId === acct && s.resource.region === reg && s.resource.zone)
+      .map((s) => s.resource.zone!))].sort()
+  const targets = (instances.data ?? []).filter((x) => x.accountId === acct &&
+    (azure ? x.resource.region === reg && (zrs || (x.resource.zone ?? '') === (zone ?? '')) : x.resource.zone === zone) &&
     x.resource.state !== 'terminated' && x.resource.state !== 'shutting-down')
+  // A new Azure disk goes into a resource group Argus has read something in.
+  const groups = azure ? [...new Set([...(instances.data ?? []), ...(volumes.data ?? [])]
+    .filter((x) => x.accountId === acct && x.resource.details?.resourceGroup).map((x) => x.resource.details!.resourceGroup!))].sort() : []
   const target = targets.find((x) => x.resource.id === attachTo)
   const env: CloudEnvironment = target ? envOf(target.resource.tags, target.environment) : account?.environment ?? 'production'
   const hdd = kind === 'st1' || kind === 'sc1'
   const least = gcp ? Math.max(10, snapGb) : hdd ? 125 : Math.max(1, snapGb)
   const tooSmall = gb < least
-  const taken = gcp && zone !== null && (volumes.data ?? []).some((v) => v.accountId === acct && v.resource.zone === zone && v.resource.name === name.trim())
-  const nameProblem = !gcp || name.trim() === '' ? undefined
-    : !GCP_NAME.test(name.trim()) ? 'Lowercase letters, digits and -, starting with a letter, up to 63'
-      : taken ? `There is already a disk ${name.trim()} in ${zone}` : undefined
+  // The VM's resource group, unless another is picked.
+  const inGroup = group ?? target?.resource.details?.resourceGroup ?? null
+  const taken = gcp ? zone !== null && (volumes.data ?? []).some((v) => v.accountId === acct && v.resource.zone === zone && v.resource.name === name.trim())
+    : azure && inGroup !== null && (volumes.data ?? []).some((v) => v.accountId === acct && v.resource.name.toLowerCase() === name.trim().toLowerCase() &&
+      v.resource.details?.resourceGroup?.toLowerCase() === inGroup.toLowerCase())
+  const nameProblem = !(gcp || azure) || name.trim() === '' ? undefined
+    : azure ? (!AZURE_DISK_NAME.test(name.trim()) ? 'Letters, digits, . _ and -, starting with a letter or digit, up to 80'
+      : taken ? `There is already a disk ${name.trim()} in ${inGroup}` : undefined)
+      : !GCP_NAME.test(name.trim()) ? 'Lowercase letters, digits and -, starting with a letter, up to 63'
+        : taken ? `There is already a disk ${name.trim()} in ${zone}` : undefined
   const unit = gcp ? 'GB' : 'GiB'
   return (
     <ChangeModal title={snapshot ? `New disk from ${snapshot.resource.name}` : 'New disk'} env={env} level="change" reason={reason}
       setReason={setReason} onClose={onClose} busy={busy} submit="Make disk"
-      disabled={!acct || !reg || !zone || tooSmall || (gcp && (name.trim() === '' || Boolean(nameProblem))) || roleLacks(account, 'volume-create')}
+      disabled={!acct || !reg || (!zone && !azure) || (azure && !inGroup) || tooSmall || ((gcp || azure) && (name.trim() === '' || Boolean(nameProblem))) || roleLacks(account, 'volume-create')}
       onSubmit={() => void submit({ accountId: acct!, region: reg!, action: 'volume-create', spec: {
-        name: name.trim(), zone, sizeGb: gb, type: kind, snapshot: snapshot?.resource.id, attachTo: attachTo ?? undefined }, reason }, 'Making the disk')}>
+        name: name.trim(), zone: zone ?? undefined, group: azure ? inGroup ?? undefined : undefined, sizeGb: gb, type: kind,
+        snapshot: snapshot?.resource.id, attachTo: attachTo ?? undefined }, reason }, 'Making the disk')}>
       <RoleNeedsUpdate account={account} action="volume-create" />
       {!snapshot && manageable.length > 1 && (
         <Select label="Account" placeholder="Pick an account" value={acct} onChange={(v) => { setAcct(v); setReg(null); setZone(null); setType(null) }}
@@ -465,9 +518,17 @@ export function NewDisk({ accountId, region, snapshot, onClose }: { accountId?: 
           data={regions} allowDeselect={false} />
       )}
       <Group grow align="flex-start">
-        <Select label="Zone" placeholder={zones.length ? 'Pick a zone' : 'No zones read yet'} value={zone}
-          onChange={(v) => { setZone(v); setAttachTo(null) }} data={zones} allowDeselect={false} />
-        {gcp ? (
+        {azure ? (
+          <Select label="Zone" placeholder={zrs ? 'Kept in every zone' : 'No zone'} value={zrs ? null : zone} clearable disabled={zrs || !reg}
+            onChange={(v) => { setZone(v); setAttachTo(null) }} data={zones} />
+        ) : (
+          <Select label="Zone" placeholder={zones.length ? 'Pick a zone' : 'No zones read yet'} value={zone}
+            onChange={(v) => { setZone(v); setAttachTo(null) }} data={zones} allowDeselect={false} />
+        )}
+        {azure ? (
+          <TextInput label="Name" placeholder="Required, like logs-1" value={name} onChange={(e) => setName(e.currentTarget.value)} maxLength={80}
+            error={nameProblem} />
+        ) : gcp ? (
           <TextInput label="Name" placeholder="Required, like logs-1" value={name} onChange={(e) => setName(e.currentTarget.value)} maxLength={63}
             error={nameProblem} />
         ) : (
@@ -475,19 +536,28 @@ export function NewDisk({ accountId, region, snapshot, onClose }: { accountId?: 
         )}
       </Group>
       <Group grow align="flex-start">
-        <NumberInput label={`Size, ${unit}`} value={gb} onChange={(v) => setGb(Number(v) || 0)} min={least} max={gcp ? 65536 : 16384}
+        <NumberInput label={`Size, ${unit}`} value={gb} onChange={(v) => setGb(Number(v) || 0)} min={least} max={azure ? AZURE_DISK_MAX_GB : gcp ? 65536 : 16384}
           error={tooSmall ? (snapGb > 0 && least === snapGb ? `At least ${snapGb} ${unit}, the snapshot's size` : `${hdd ? 'HDD disks are' : 'Disks are'} ${least} ${unit} and up`) : undefined} />
-        <Select label="Type" value={kind} onChange={(v) => v && setType(v)}
-          data={(gcp ? GCP_DISK_TYPES : VOLUME_TYPES).map((t) => ({ value: t.value, label: t.label }))} allowDeselect={false} />
+        <Select label="Type" value={kind} onChange={(v) => { if (v) { setType(v); setAttachTo(null); if (azure && zoneRedundant(v)) setZone(null) } }}
+          data={(azure ? AZURE_DISK_TYPES : gcp ? GCP_DISK_TYPES : VOLUME_TYPES).map((t) => ({ value: t.value, label: t.label }))} allowDeselect={false} />
       </Group>
-      <Select label="Attach to" placeholder={zone ? (targets.length ? 'Leave unattached' : `No instances in ${zone}`) : 'Pick a zone first'}
-        clearable value={attachTo} onChange={setAttachTo} disabled={!zone || targets.length === 0}
-        data={targets.map((x) => ({ value: x.resource.id, label: gcp
+      {azure && (
+        <Select label="Resource group" searchable clearable value={group} onChange={setGroup} data={groups}
+          placeholder={target?.resource.details?.resourceGroup ? `${target.resource.details.resourceGroup}, the VM's` : groups.length ? 'Pick a resource group' : 'No resource groups read yet'}
+          description="Where the disk is kept and billed. Argus lists the groups it has read a VM or a disk in." />
+      )}
+      <Select label="Attach to"
+        placeholder={azure ? (targets.length ? 'Leave unattached' : zone ? `No VMs in ${zone}` : zrs ? 'No VMs here' : 'No VMs without a zone here')
+          : zone ? (targets.length ? 'Leave unattached' : `No instances in ${zone}`) : 'Pick a zone first'}
+        clearable value={attachTo} onChange={setAttachTo} disabled={(!zone && !azure) || targets.length === 0}
+        data={targets.map((x) => ({ value: x.resource.id, label: azure ? `${x.resource.name} · ${x.resource.state}` : gcp
           ? `${x.resource.name} · as ${name.trim() ? gcpDevicePath(name.trim()) : 'its name'}`
           : `${x.resource.name} · as ${freeDevice(x.resource) || 'no free device'}` }))} />
       <Field label="Cost">
         <Text size={FS.meta} c="dimmed">
-          {gcp
+          {azure
+            ? 'Azure bills it by size and type from when it is made until it is deleted, attached or not. Encrypted with a key Azure manages.'
+            : gcp
             ? 'Google bills it by size and type from when it is made until it is deleted, attached or not. Encrypted with a key Google manages.'
             : <>About {money(volumeMonthly(kind, gb))} a month at us-east-1 list prices, from when it is made until it is deleted,
               attached or not. Encrypted with the account's default key.</>}
@@ -505,40 +575,62 @@ export function NewAddress({ onClose }: { onClose: () => void }) {
   const [acct, setAcct] = useState<string | null>(manageable.length === 1 ? manageable[0]!.id : null)
   const account = manageable.find((a) => a.id === acct)
   const gcp = account?.provider === 'gcp'
+  const azure = account?.provider === 'azure'
+  const instances = useQuery(cloudItemsQuery('instance'))
   const regions = (account?.regions ?? []).filter((x) => x !== 'global')
   const [reg, setReg] = useState<string | null>(regions.length === 1 ? regions[0]! : null)
   const [name, setName] = useState('')
+  const [group, setGroup] = useState<string | null>(null)
   const [reason, setReason] = useState('')
   const { submit, busy } = useSubmit(onClose)
   const n = name.trim()
-  const taken = gcp && reg !== null && (addresses.data ?? []).some((x) => x.accountId === acct && x.resource.region === reg && x.resource.name === n)
-  const nameProblem = !gcp || n === '' ? undefined
-    : !GCP_NAME.test(n) ? 'Lowercase letters, digits and -, starting with a letter, up to 63'
-      : taken ? `There is already an address ${n} in ${reg}` : undefined
+  // An Azure address is kept in a resource group, and named apart inside it whatever the case.
+  const groups = azure ? [...new Set([...(instances.data ?? []), ...(addresses.data ?? [])]
+    .filter((x) => x.accountId === acct && x.resource.details?.resourceGroup).map((x) => x.resource.details!.resourceGroup!))].sort() : []
+  const taken = gcp ? reg !== null && (addresses.data ?? []).some((x) => x.accountId === acct && x.resource.region === reg && x.resource.name === n)
+    : azure && group !== null && (addresses.data ?? []).some((x) => x.accountId === acct && x.resource.name.toLowerCase() === n.toLowerCase() &&
+      x.resource.details?.resourceGroup?.toLowerCase() === group.toLowerCase())
+  const nameProblem = !(gcp || azure) || n === '' ? undefined
+    : azure ? (!AZURE_DISK_NAME.test(n) ? 'Letters, digits, . _ and -, starting with a letter or digit, up to 80'
+      : taken ? `There is already an address ${n} in ${group}` : undefined)
+      : !GCP_NAME.test(n) ? 'Lowercase letters, digits and -, starting with a letter, up to 63'
+        : taken ? `There is already an address ${n} in ${reg}` : undefined
   return (
-    <ChangeModal title={gcp ? 'Reserve a static address' : 'Allocate an Elastic IP'} env={account?.environment ?? 'production'} level="change"
-      reason={reason} setReason={setReason} onClose={onClose} busy={busy} submit={gcp ? 'Reserve' : 'Allocate'}
-      disabled={!acct || !reg || (gcp && (n === '' || Boolean(nameProblem))) || roleLacks(account, 'address-allocate')}
-      onSubmit={() => void submit({ accountId: acct!, region: reg!, action: 'address-allocate', spec: { name: n }, reason }, gcp ? 'Reserved' : 'Allocated')}>
+    <ChangeModal title={azure ? 'New public address' : gcp ? 'Reserve a static address' : 'Allocate an Elastic IP'} env={account?.environment ?? 'production'} level="change"
+      reason={reason} setReason={setReason} onClose={onClose} busy={busy} submit={azure ? 'Make address' : gcp ? 'Reserve' : 'Allocate'}
+      disabled={!acct || !reg || ((gcp || azure) && (n === '' || Boolean(nameProblem))) || (azure && !group) || roleLacks(account, 'address-allocate')}
+      onSubmit={() => void submit({ accountId: acct!, region: reg!, action: 'address-allocate',
+        spec: { name: n, group: azure ? group ?? undefined : undefined }, reason }, azure ? 'Making the address' : gcp ? 'Reserved' : 'Allocated')}>
       <RoleNeedsUpdate account={account} action="address-allocate" />
       <Text size={FS.body} lh={1.55}>
-        {gcp
+        {azure
+          ? 'A Standard, static IPv4 address that stays yours until it is deleted, to put on a VM in the same region so it keeps the same address across stops and starts.'
+          : gcp
           ? 'An external address that stays yours until it is released, to give a VM in the same region so it keeps the same address across stops and starts.'
           : 'A public address that stays yours until it is released, to attach to an instance so it keeps the same address across stops and starts.'}
       </Text>
       {manageable.length > 1 && (
-        <Select label="Account" placeholder="Pick an account" value={acct} onChange={(v) => { setAcct(v); setReg(null) }} data={manageable.map((a) => ({ value: a.id, label: a.name }))} allowDeselect={false} />
+        <Select label="Account" placeholder="Pick an account" value={acct} onChange={(v) => { setAcct(v); setReg(null); setGroup(null) }} data={manageable.map((a) => ({ value: a.id, label: a.name }))} allowDeselect={false} />
       )}
       {account && regions.length > 1 && (
         <Select label="Region" placeholder="Pick a region" value={reg} onChange={setReg} data={regions} allowDeselect={false} />
       )}
-      {gcp ? (
+      {azure && (
+        <Select label="Resource group" searchable value={group} onChange={setGroup} data={groups}
+          placeholder={groups.length ? 'Pick a resource group' : 'No resource groups read yet'}
+          description="Where the address is kept and billed. Argus lists the groups it has read a VM or an address in." />
+      )}
+      {azure ? (
+        <TextInput label="Name" placeholder="Required, like web-ip" value={name} onChange={(e) => setName(e.currentTarget.value)} maxLength={80} error={nameProblem} />
+      ) : gcp ? (
         <TextInput label="Name" placeholder="Required, like web-ip" value={name} onChange={(e) => setName(e.currentTarget.value)} maxLength={63} error={nameProblem} />
       ) : (
         <TextInput label="Name" placeholder="Optional" value={name} onChange={(e) => setName(e.currentTarget.value)} maxLength={128} />
       )}
       <Text size={FS.meta} c="dimmed">
-        {gcp
+        {azure
+          ? 'Azure bills a Standard static address for as long as it is kept, on a VM or not.'
+          : gcp
           ? 'Google bills a static address while it is reserved, and more while no VM uses it.'
           : `About ${money(PRICE.elasticIp)} a month, attached or not, as AWS bills every public IPv4 address.`}
       </Text>

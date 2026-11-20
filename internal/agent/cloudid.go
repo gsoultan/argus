@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -18,14 +19,20 @@ instead of guessing from addresses.
 
 Asked only when the firmware already names the cloud (the hypervisor read
 from DMI is "Amazon EC2" or "Google Compute Engine"), so a laptop or a
-server in a rack never waits on a link-local address that is not there. The
+server in a rack never waits on a link-local address that is not there.
+An Azure VM's firmware says only Hyper-V, as a guest in anyone's own rack
+does; what tells them apart is the chassis asset tag every Azure VM
+carries. Where that tag can be read, it decides. Where it cannot (Windows),
+a Hyper-V guest asks once, and one that gets no answer does not ask again
+for an hour. The
 metadata service is on the machine's own link (169.254.169.254), never
 reached through a proxy, and answers in milliseconds; two seconds is the
 whole budget.
 
 Read-only, and nothing a local user could not read: the instance identity
 document on AWS (IMDSv2, a session token first, as every hardened instance
-requires) and four plain values on Google Cloud. No credentials, no user
+requires), four plain values on Google Cloud, and the compute part of the
+instance document on Azure. No credentials, no user
 data, no tags. A successful answer is kept for the life of the process: an
 instance's id, account and region do not change while it runs, and a resize
 needs a stop, which restarts the agent.
@@ -33,13 +40,15 @@ needs a stop, which restarts the agent.
 
 // CloudInstance is the instance this machine runs as.
 type CloudInstance struct {
-	// Provider is "aws" or "gcp".
+	// Provider is "aws", "gcp" or "azure".
 	Provider string `json:"provider"`
-	// Account is the AWS account number, or the Google Cloud project id.
+	// Account is the AWS account number, the Google Cloud project id, or
+	// the Azure subscription id.
 	Account string `json:"account"`
 	Region  string `json:"region"`
 	Zone    string `json:"zone,omitempty"`
-	// ID is the instance id: i-0123… on AWS, a number on Google Cloud.
+	// ID is the instance id: i-0123… on AWS, a number on Google Cloud, the
+	// VM's vmId on Azure.
 	ID   string `json:"id"`
 	Type string `json:"type,omitempty"`
 }
@@ -53,9 +62,30 @@ var (
 
 // metadataBase is where the services answer; a test points it elsewhere.
 var (
-	awsMetadataBase = "http://169.254.169.254"
-	gcpMetadataBase = "http://169.254.169.254"
+	awsMetadataBase   = "http://169.254.169.254"
+	gcpMetadataBase   = "http://169.254.169.254"
+	azureMetadataBase = "http://169.254.169.254"
 )
+
+// azureAssetTag is the chassis asset tag every Azure VM's firmware carries.
+const azureAssetTag = "7783-7084-3265-9085-8269-3286-77"
+
+// azureRetry is how long a Hyper-V guest that got no answer from Azure's
+// metadata service waits before asking again.
+const azureRetry = time.Hour
+
+// azureHardware reports whether the firmware says this is an Azure VM, and
+// whether it could be read at all. A test replaces it.
+var azureHardware = func() (azure, known bool) {
+	b, err := os.ReadFile("/sys/class/dmi/id/chassis_asset_tag")
+	if err != nil {
+		return false, false
+	}
+	return strings.TrimSpace(string(b)) == azureAssetTag, true
+}
+
+// azureAskedAt is when a Hyper-V guest last asked Azure and got nothing.
+var azureAskedAt time.Time
 
 // discoverCloud returns the instance for a machine whose firmware names a
 // cloud, or nil. A failure is not kept, so the next report asks again.
@@ -66,6 +96,8 @@ func discoverCloud(hypervisor string) *CloudInstance {
 		read = readAWSInstance
 	case "Google Compute Engine":
 		read = readGCPInstance
+	case "Hyper-V":
+		read = readAzureInstance
 	default:
 		return nil
 	}
@@ -74,6 +106,18 @@ func discoverCloud(hypervisor string) *CloudInstance {
 	if cloudCached != nil {
 		c := *cloudCached
 		return &c
+	}
+	if hypervisor == "Hyper-V" {
+		azure, known := azureHardware()
+		if known && !azure {
+			return nil
+		}
+		if !known {
+			if !azureAskedAt.IsZero() && time.Since(azureAskedAt) < azureRetry {
+				return nil
+			}
+			azureAskedAt = time.Now()
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), cloudMetadataBudget)
 	defer cancel()
@@ -155,6 +199,37 @@ func readGCPInstance(ctx context.Context, hc *http.Client) *CloudInstance {
 		Zone: zone, ID: id, Type: lastPart(get("instance/machine-type"))}
 }
 
+// readAzureInstance reads the compute part of Azure's instance document.
+// A zone is numbered inside its region, so zone 2 of eastus is eastus-2.
+func readAzureInstance(ctx context.Context, hc *http.Client) *CloudInstance {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, azureMetadataBase+"/metadata/instance/compute?api-version=2021-02-01", nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("Metadata", "true")
+	body, ok := metadataGet(hc, req)
+	if !ok {
+		return nil
+	}
+	var doc struct {
+		SubscriptionID string `json:"subscriptionId"`
+		Location       string `json:"location"`
+		Zone           string `json:"zone"`
+		VMID           string `json:"vmId"`
+		VMSize         string `json:"vmSize"`
+	}
+	if json.Unmarshal([]byte(body), &doc) != nil || doc.VMID == "" {
+		return nil
+	}
+	region := strings.ToLower(strings.ReplaceAll(doc.Location, " ", ""))
+	zone := ""
+	if doc.Zone != "" {
+		zone = region + "-" + doc.Zone
+	}
+	return &CloudInstance{Provider: "azure", Account: strings.ToLower(doc.SubscriptionID), Region: region,
+		Zone: zone, ID: strings.ToLower(doc.VMID), Type: doc.VMSize}
+}
+
 // metadataGet reads a small answer; anything but 200 is no answer.
 func metadataGet(hc *http.Client, req *http.Request) (string, bool) {
 	resp, err := hc.Do(req)
@@ -185,7 +260,8 @@ var (
 	gcpInstanceRE = regexp.MustCompile(`^[0-9]{1,20}$`)
 	gcpProjectRE  = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]$`)
 	cloudPlaceRE  = regexp.MustCompile(`^[a-z0-9-]{2,40}$`)
-	cloudTypeRE   = regexp.MustCompile(`^[a-z0-9.-]{1,60}$`)
+	cloudTypeRE   = regexp.MustCompile(`^[A-Za-z0-9._-]{1,60}$`) // Azure writes Standard_B2s
+	azureGUIDRE   = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 )
 
 // valid is what the control plane will also check: an answer that does not
@@ -200,6 +276,8 @@ func (c *CloudInstance) valid() bool {
 		return awsInstanceRE.MatchString(c.ID) && awsAccountRE.MatchString(c.Account)
 	case "gcp":
 		return gcpInstanceRE.MatchString(c.ID) && gcpProjectRE.MatchString(c.Account)
+	case "azure":
+		return azureGUIDRE.MatchString(c.ID) && azureGUIDRE.MatchString(c.Account)
 	}
 	return false
 }

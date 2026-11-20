@@ -129,6 +129,9 @@ export function WatchForRoles({ prepared, manage, connecting, failed, onReady }:
   const [asked, setAsked] = useState(0)
   useEffect(() => { if (check.dataUpdatedAt) setAsked((n) => n + 1) }, [check.dataUpdatedAt])
   const gcp = prepared.provider === 'gcp'
+  const azure = prepared.provider === 'azure'
+  // A command, not a stack, makes the access in Google Cloud and Azure.
+  const byCommand = gcp || azure
   const stack = check.data?.stack
   // The stack is finished, so a role that still does not work is not
   // waiting on CloudFormation, and AWS's answer is the reason to show.
@@ -139,7 +142,7 @@ export function WatchForRoles({ prepared, manage, connecting, failed, onReady }:
 
   if (failed) {
     return (
-      <Alert color="rose" variant="light" title={gcp ? 'argus-read is there, but Argus could not connect' : 'The roles are there, but Argus could not connect'}>
+      <Alert color="rose" variant="light" title={azure ? 'Argus can read the subscription, but could not connect' : gcp ? 'argus-read is there, but Argus could not connect' : 'The roles are there, but Argus could not connect'}>
         <Stack gap="xs">
           <Text size={FS.meta}>{failed.message}</Text>
           <Group><Button size="xs" variant="default" onClick={onReady}>Try again</Button></Group>
@@ -168,21 +171,22 @@ export function WatchForRoles({ prepared, manage, connecting, failed, onReady }:
           : waiting ? <Loader size={16} mt={2} /> : null}
         <Stack gap={2} style={{ flex: 1 }}>
           <Text size={FS.body} fw={500}>
-            {connecting || check.data?.ready ? `${gcp ? 'argus-read works' : `The ${manage ? 'roles work' : 'role works'}`}. Connecting…`
-              : waiting ? (gcp ? `Waiting for argus-read in ${prepared.accountId}` : `Waiting for the ${manage ? 'roles' : 'role'} in ${prepared.accountId}`)
+            {connecting || check.data?.ready ? `${azure ? (manage ? 'Both roles work' : 'The Reader role works') : gcp ? 'argus-read works' : `The ${manage ? 'roles work' : 'role works'}`}. Connecting…`
+              : waiting ? (azure ? `Waiting for the ${manage ? 'roles' : 'Reader role'} in ${prepared.accountId}` : gcp ? `Waiting for argus-read in ${prepared.accountId}` : `Waiting for the ${manage ? 'roles' : 'role'} in ${prepared.accountId}`)
                 : 'Argus stopped checking'}
           </Text>
           <Text size={FS.meta} c="dimmed">
             {check.error ? (check.error as Error).message
-              : gcp ? (stale ? 'It checked for half an hour. Look again once the command has run.'
-                : 'Argus checks every few seconds and connects by itself as soon as the command has run. Leave this page open.')
+              : byCommand ? (stale ? 'It checked for half an hour. Look again once the command has run.'
+                : azure ? 'Argus checks every few seconds and connects by itself once the command has run and Azure has applied the role, which can take a few minutes. Leave this page open.'
+                  : 'Argus checks every few seconds and connects by itself as soon as the command has run. Leave this page open.')
               : stale ? 'It checked for half an hour. Look again once the stack is made.'
                 : made && check.data?.detail ? `CloudFormation: ${stack?.status}, but AWS does not let Argus use the ${manage ? 'roles' : 'role'} yet. ${check.data.detail}`
                 : stack?.status ? `CloudFormation: ${stack.status}. Argus connects as soon as it is done.`
                   : 'Argus checks every few seconds and connects by itself as soon as the stack is made. Leave this page open.'}
           </Text>
-          {gcp && asked >= 12 && check.data?.detail && !check.data.ready && (
-            <Text size={FS.micro} c="dimmed" style={{ overflowWrap: 'anywhere' }}>Google's last answer: {check.data.detail}</Text>
+          {byCommand && asked >= 12 && check.data?.detail && !check.data.ready && (
+            <Text size={FS.micro} c="dimmed" style={{ overflowWrap: 'anywhere' }}>{azure ? "Azure's" : "Google's"} last answer: {check.data.detail}</Text>
           )}
         </Stack>
         {(!waiting) && <Button size="xs" variant="default" onClick={again}>Check again</Button>}

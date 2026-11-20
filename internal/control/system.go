@@ -75,7 +75,8 @@ var (
 	hostGCPInstanceRE = regexp.MustCompile(`^[0-9]{1,20}$`)
 	hostGCPProjectRE  = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]$`)
 	hostCloudPlaceRE  = regexp.MustCompile(`^[a-z0-9-]{2,40}$`)
-	hostCloudTypeRE   = regexp.MustCompile(`^[a-z0-9.-]{1,60}$`)
+	hostCloudTypeRE   = regexp.MustCompile(`^[A-Za-z0-9._-]{1,60}$`) // Azure writes Standard_B2s
+	hostAzureGUIDRE   = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 )
 
 // bounded keeps a cloud identity only when every part looks like one: it is
@@ -96,6 +97,10 @@ func (c *HostCloud) bounded() *HostCloud {
 		}
 	case "gcp":
 		if !hostGCPInstanceRE.MatchString(c.ID) || !hostGCPProjectRE.MatchString(c.Account) {
+			return nil
+		}
+	case "azure":
+		if !hostAzureGUIDRE.MatchString(c.ID) || !hostAzureGUIDRE.MatchString(c.Account) {
 			return nil
 		}
 	default:

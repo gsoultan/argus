@@ -1,7 +1,7 @@
 import { Alert, Badge, Box, Button, Group, Select, SimpleGrid, Stack, Tabs, Text, TextInput } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { IconBrandAws, IconBrandGoogle, IconCalendarTime, IconCirclePlus, IconCloudPlus, IconInfoCircle, IconSearch, IconShieldPlus } from '@tabler/icons-react'
+import { IconBrandAws, IconBrandAzure, IconBrandGoogle, IconCalendarTime, IconCirclePlus, IconCloudPlus, IconInfoCircle, IconSearch, IconShieldPlus } from '@tabler/icons-react'
 import { useMemo, useState } from 'react'
 import { AccessPanel } from '~/components/cloud/Access'
 import { CloudOverview } from '~/components/cloud/CloudOverview'
@@ -99,7 +99,7 @@ function Cloud() {
   const list = accounts.data?.accounts ?? []
   const newest = list.map((a) => a.syncedAt).filter(Boolean).sort().at(-1) ?? null
 
-  const description = 'Every instance, disk, image, firewall and load balancer in your AWS accounts and Google Cloud projects, and which instances have an Argus server. Launch, stop and resize instances, manage disks, firewall rules and load balancer targets, with approval where the environment asks for it, and see what it all costs.'
+  const description = 'Every instance, disk, image, firewall and load balancer in your AWS accounts, Google Cloud projects and Azure subscriptions, and which instances have an Argus server. Launch, stop and resize instances, manage disks, firewall rules and load balancer targets, with approval where the environment asks for it, and see what it all costs.'
   if (!isConfigured()) {
     return (
       <Box>
@@ -121,7 +121,7 @@ function Cloud() {
   const allocators = new Set(list.filter((a) => a.access === 'manage' && allows(a, 'address-allocate')).map((a) => a.provider))
   const firewallMakers = new Set(list.filter((a) => a.access === 'manage' && allows(a, 'firewall-create')).map((a) => a.provider))
   const firewallButton = firewallMakers.size > 1 ? 'New firewall' : firewallMakers.has('gcp') ? 'New firewall rule' : 'New security group'
-  const addressButton = allocators.size > 1 ? 'New public address' : allocators.has('gcp') ? 'Reserve a static address' : 'Allocate an Elastic IP'
+  const addressButton = allocators.size > 1 || allocators.has('azure') ? 'New public address' : allocators.has('gcp') ? 'Reserve a static address' : 'Allocate an Elastic IP'
 
   return (
     <Box>
@@ -130,6 +130,7 @@ function Cloud() {
         status={<Group gap={6}>
           {(list.length === 0 || list.some((a) => a.provider === 'aws')) && <Badge variant="light" color="slate" radius="sm" leftSection={<IconBrandAws size={12} />}>AWS</Badge>}
           {list.some((a) => a.provider === 'gcp') && <Badge variant="light" color="slate" radius="sm" tt="none" leftSection={<IconBrandGoogle size={11} />}>Google Cloud</Badge>}
+          {list.some((a) => a.provider === 'azure') && <Badge variant="light" color="slate" radius="sm" tt="none" leftSection={<IconBrandAzure size={11} />}>Azure</Badge>}
         </Group>}
         description={description}
         actions={admin && hasAccounts ? (

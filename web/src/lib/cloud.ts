@@ -9,13 +9,18 @@ import { queryOptions, useMutation, useQueryClient, type QueryClient } from '@ta
 import { get, isConfigured, send } from '~/lib/live'
 
 export type CloudEnvironment = 'production' | 'staging' | 'development'
-/** A cloud an account can be connected in. A Google Cloud project is an account here. */
-export type CloudProvider = 'aws' | 'gcp'
+/** A cloud an account can be connected in. A Google Cloud project and an Azure subscription are accounts here. */
+export type CloudProvider = 'aws' | 'gcp' | 'azure'
 
-export const PROVIDER_LABEL: Record<CloudProvider, string> = { aws: 'AWS', gcp: 'Google Cloud' }
+export const CLOUD_PROVIDERS: CloudProvider[] = ['aws', 'gcp', 'azure']
+
+export const PROVIDER_LABEL: Record<CloudProvider, string> = { aws: 'AWS', gcp: 'Google Cloud', azure: 'Azure' }
 
 /** What one account is called in a provider. */
-export const ACCOUNT_WORD: Record<CloudProvider, string> = { aws: 'account', gcp: 'project' }
+export const ACCOUNT_WORD: Record<CloudProvider, string> = { aws: 'account', gcp: 'project', azure: 'subscription' }
+
+/** An Azure subscription id: a GUID, kept in lower case. */
+export const AZURE_SUBSCRIPTION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 /** An account's id as people read it: AWS's twelve digits in groups of four, a project id as it is. */
 export function accountIdText(provider: CloudProvider, id: string): string {
@@ -32,6 +37,18 @@ export const GCP_DISK_TYPES = [
   { value: 'pd-ssd', label: 'SSD (pd-ssd)' },
   { value: 'pd-standard', label: 'Standard, HDD (pd-standard)' },
 ]
+/** A managed disk's or snapshot's name in Azure. */
+export const AZURE_DISK_NAME = /^[A-Za-z0-9]([A-Za-z0-9._-]{0,78}[A-Za-z0-9_])?$/
+/** The managed disk types Argus makes in Azure, the cheaper SSD first. */
+export const AZURE_DISK_TYPES = [
+  { value: 'StandardSSD_LRS', label: 'Standard SSD (StandardSSD_LRS)' },
+  { value: 'Premium_LRS', label: 'Premium SSD (Premium_LRS)' },
+  { value: 'Standard_LRS', label: 'Standard HDD (Standard_LRS)' },
+  { value: 'StandardSSD_ZRS', label: 'Standard SSD, zone-redundant (StandardSSD_ZRS)' },
+  { value: 'Premium_ZRS', label: 'Premium SSD, zone-redundant (Premium_ZRS)' },
+]
+/** The largest disk of those types, in GiB. */
+export const AZURE_DISK_MAX_GB = 32767
 /** Where a Google Cloud disk shows up on a Linux VM: Argus names its device after the disk. */
 export function gcpDevicePath(disk: string): string {
   return `/dev/disk/by-id/google-${disk}`
@@ -442,6 +459,8 @@ export interface CloudLaunchOptions {
   firewalls: CloudItem[]
   /** A Google Cloud region's zones: its subnets span the region, so the zone is picked on its own. */
   zones?: string[]
+  /** The resource groups an Azure VM can be made in. */
+  groups?: string[]
   environment: CloudEnvironment
   needsApproval: boolean
   agentProblem?: string
@@ -461,7 +480,7 @@ export interface CloudVolume {
 export interface CloudRemovePlanView {
   plan: {
     id: string; name: string; state: string; size: string; protected: boolean; managedBy?: string
-    volumes: CloudVolume[]; publicIp?: string; elasticIp?: string
+    volumes: CloudVolume[]; publicIp?: string; elasticIp?: string; stays?: string[]
   }
   hash: string
   environment: CloudEnvironment
@@ -948,9 +967,23 @@ export const ACTION_NEEDS: Partial<Record<CloudAction, string[]>> = {
   'replica-remove': ['rds:ModifyDBInstance', 'rds:DeleteDBInstance'],
 }
 
+/** The same for an Azure subscription's Argus manage role, in Azure's actions. */
+export const AZURE_ACTION_NEEDS: Partial<Record<CloudAction, string[]>> = {
+  'volume-create': ['Microsoft.Compute/disks/write'], 'volume-grow': ['Microsoft.Compute/disks/write'],
+  'volume-attach': ['Microsoft.Compute/virtualMachines/attachDetachDataDisks/action'],
+  'volume-detach': ['Microsoft.Compute/virtualMachines/attachDetachDataDisks/action'],
+  'volume-delete': ['Microsoft.Compute/disks/delete'],
+  'snapshot-create': ['Microsoft.Compute/snapshots/write'], 'snapshot-delete': ['Microsoft.Compute/snapshots/delete'],
+  'address-allocate': ['Microsoft.Network/publicIPAddresses/write'], 'address-release': ['Microsoft.Network/publicIPAddresses/delete'],
+  'address-associate': ['Microsoft.Network/networkInterfaces/write'], 'address-disassociate': ['Microsoft.Network/networkInterfaces/write'],
+  remove: ['Microsoft.Compute/virtualMachines/delete'],
+  launch: ['Microsoft.Network/networkInterfaces/join/action', 'Microsoft.Compute/images/read'],
+}
+
 /** Whether an account's manage role lacks what an action takes. */
 export function roleLacks(a: CloudAccount | undefined, action: CloudAction): boolean {
-  return Boolean(a?.manageMissing?.length && ACTION_NEEDS[action]?.some((p) => a.manageMissing.includes(p)))
+  const needs = a?.provider === 'azure' ? AZURE_ACTION_NEEDS : ACTION_NEEDS
+  return Boolean(a?.manageMissing?.length && needs[action]?.some((p) => a.manageMissing.includes(p)))
 }
 
 export const VOLUME_TYPES: { value: string; label: string; perGb: number }[] = [

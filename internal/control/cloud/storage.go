@@ -108,6 +108,9 @@ type VolumeSpec struct {
 	Throughput int32  `json:"throughput,omitempty"`
 	Snapshot   string `json:"snapshot,omitempty"`
 	Name       string `json:"name"`
+	// Group is the resource group an Azure disk is made in; other clouds
+	// have none.
+	Group string `json:"group,omitempty"`
 	// AttachTo, with Device, attaches it to an instance once it is ready.
 	AttachTo string            `json:"attachTo,omitempty"`
 	Device   string            `json:"device,omitempty"`
