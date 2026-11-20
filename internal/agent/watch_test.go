@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bufio"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -185,5 +186,128 @@ func TestParseEvent(t *testing.T) {
 		if ok != tc.ok || stream != tc.stream || string(data) != tc.data {
 			t.Errorf("%s: got %q %q %v", tc.line, stream, data, ok)
 		}
+	}
+}
+
+// startWith opens a login on the collector with m as its start.
+func startWith(t *testing.T, sock string, m SessionStart) (net.Conn, *json.Decoder) {
+	t.Helper()
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	m.Type, m.Hostname, m.Origin = "start", "db-01", Direct
+	m.ClientAddr, m.StartedAt, m.Cols, m.Rows = "10.0.0.9", time.Now().UTC(), 80, 24
+	if err := json.NewEncoder(conn).Encode(m); err != nil {
+		t.Fatal(err)
+	}
+	return conn, json.NewDecoder(bufio.NewReader(conn))
+}
+
+// A login that outlived an agent restart is recorded from then on under a
+// new id. The console still holds the old one, and watching it shows the
+// login: the session that carries it on, as the same account.
+func TestWatchingASessionCutByARestartShowsWhatContinuesIt(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		start func(prev string) SessionStart
+	}{
+		{"continues", func(prev string) SessionStart {
+			return SessionStart{Principal: "ops", Continues: []string{"older", prev}}
+		}},
+		// A shim from before Continues, as a login that outlived the
+		// agent's update is running, says so only in its reason.
+		{"older shim", func(prev string) SessionStart {
+			return SessionStart{Principal: "ops", OriginReason: "continues session " + prev +
+				" after the host agent restarted; the session before that is in that recording"}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, sock := testCollector(t)
+			defer c.CloseWithin(time.Second)
+			c.SetDirectSSH(DirectSSHAllow)
+			_, key, _ := ed25519.GenerateKey(rand.Reader)
+
+			// Another account's session naming the same id is not shown.
+			other := tc.start("cut-short")
+			other.Principal = "root"
+			stranger, sdec := startWith(t, sock, other)
+			if r := readReply(t, stranger, sdec); !r.Record {
+				t.Fatalf("not recorded: %+v", r)
+			}
+			if _, ans := watchCall(t, c, key, watchGrant("cut-short", "ops")); ans.OK {
+				t.Fatal("another account's session was shown")
+			}
+
+			conn, dec := startWith(t, sock, tc.start("cut-short"))
+			if r := readReply(t, conn, dec); !r.Record {
+				t.Fatalf("not recorded: %+v", r)
+			}
+			_ = json.NewEncoder(stranger).Encode(Frame{Type: "o", Data: "not-this-one\r\n"})
+
+			v, ans := watchCall(t, c, key, watchGrant("cut-short", "ops"))
+			if !ans.OK || ans.Session != "cut-short" {
+				t.Fatalf("watch refused: %+v", ans)
+			}
+			_ = json.NewEncoder(conn).Encode(Frame{Type: "o", Data: "still-here\r\n"})
+			fr := tunnel.NewFrameReader(v)
+			var out strings.Builder
+			for !strings.Contains(out.String(), "still-here") {
+				if strings.Contains(out.String(), "not-this-one") {
+					t.Fatal("the viewer was shown another account's session")
+				}
+				typ, p, err := fr.Next()
+				if err != nil {
+					t.Fatalf("stream ended: %v (saw %q)", err, out.String())
+				}
+				if typ == tunnel.FrameOutput {
+					out.Write(p)
+				}
+			}
+		})
+	}
+}
+
+// A viewer who finds nothing is told what was found instead, not the same
+// "it may have just ended" whatever the reason.
+func TestAWatchThatFindsNothingSaysWhy(t *testing.T) {
+	c, sock := testCollector(t)
+	defer c.CloseWithin(time.Second)
+	c.SetDirectSSH(DirectSSHAllow)
+	_, key, _ := ed25519.GenerateKey(rand.Reader)
+
+	_, ans := watchCall(t, c, key, watchGrant("never-here", "ops"))
+	if ans.OK || !strings.Contains(ans.Error, "no record of it") ||
+		!strings.Contains(ans.Error, "restarted") {
+		t.Errorf("unknown session: %+v", ans)
+	}
+
+	conn, dec := startAs(t, sock, Direct)
+	r := readReply(t, conn, dec)
+	if _, ans := watchCall(t, c, key, watchGrant(r.SessionID, "root")); ans.OK ||
+		!strings.Contains(ans.Error, "not running as the account") {
+		t.Errorf("another account: %+v", ans)
+	}
+
+	_ = json.NewEncoder(conn).Encode(SessionEnd{Type: "end"})
+	deadline := time.Now().Add(3 * time.Second)
+	for c.ActiveCount() != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, ans := watchCall(t, c, key, watchGrant(r.SessionID, "ops")); ans.OK ||
+		!strings.HasPrefix(ans.Error, watchEnded) {
+		t.Errorf("ended session: %+v", ans)
+	}
+}
+
+func TestEndedSessionsAreRememberedWithinBounds(t *testing.T) {
+	c := &Collector{}
+	now := time.Now()
+	for i := range endedKeptMax + 50 {
+		c.noteEnded(string(rune('a'+i%26))+time.Duration(i).String(), now)
+	}
+	if len(c.ended) > endedKeptMax {
+		t.Errorf("kept %d, want at most %d", len(c.ended), endedKeptMax)
 	}
 }

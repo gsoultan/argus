@@ -259,7 +259,7 @@ func (a *API) watchThroughAgent(ctx context.Context, conn *websocket.Conn,
 				"live; update the agent from the server's page"
 		}
 		a.log.Warn("watch: the agent refused", "session", id, "host", host, "error", err)
-		refuseWatch(ctx, conn, "the agent on "+host+" refused: "+why)
+		refuseWatch(ctx, conn, watchRefusal(host, why, subject))
 		return
 	case err != nil:
 		refuseWatch(ctx, conn, "could not reach the agent on "+host+": "+err.Error())
@@ -330,6 +330,21 @@ func (a *API) watchThroughAgent(ctx context.Context, conn *websocket.Conn,
 			return
 		}
 	}
+}
+
+// watchRefusal is what a viewer is told when the agent would not show a
+// session. A session nothing has reported for minutes is the usual case, and
+// the agent alone cannot say so: it only knows it has no such session.
+func watchRefusal(host, why string, subject *Session) string {
+	msg := "the agent on " + host + " refused: " + why
+	if subject == nil || !subject.Silent {
+		return msg
+	}
+	return msg + ". Nothing has reported this session since " +
+		subject.LastReportedAt.UTC().Format("2006-01-02 15:04 MST") +
+		", so it has most likely ended without the end reaching Argus, or it carried on " +
+		"under a new id after the agent restarted; look under Activity for a newer live " +
+		"session on " + host + " as " + subject.Principal
 }
 
 // closedWatch tells the viewer the session is over.
