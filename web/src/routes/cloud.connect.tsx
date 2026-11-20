@@ -124,7 +124,7 @@ function Connect() {
                     <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
                       <Choice value="read" icon={IconEye} title="Read only"
                         text={azure
-                          ? 'See VMs, disks, snapshots, images, network security groups, virtual networks and public addresses. Nothing in the subscription can be changed from Argus.'
+                          ? 'See VMs, disks, snapshots, images, network security groups, virtual networks and public addresses, and what the subscription costs. Nothing in the subscription can be changed from Argus.'
                           : gcp
                           ? 'See VMs, disks, firewalls, networks and addresses. Nothing in the project can be changed from Argus.'
                           : 'See instances, disks and firewalls. Nothing in the account can be changed from Argus.'} />

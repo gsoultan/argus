@@ -829,3 +829,34 @@ func TestCloudAzureSubscriptionChangesSecurityGroups(t *testing.T) {
 	// Azure has no target groups for Argus to change yet.
 	ask("target-register", "x", `"spec":{"instance":"`+web+`"}`, http.StatusNotImplemented, "")
 }
+
+func TestCloudAzureSubscriptionCostsAreRead(t *testing.T) {
+	e, fake, sub := azureEnv(t)
+	w := do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts/prepare", "admin-token", `{"provider":"azure","accountId":"`+sub+`"}`)
+	var p CloudPrepared
+	_ = json.Unmarshal(w.Body.Bytes(), &p)
+	fake.Roles[p.ReadRoleARN] = p.ExternalID
+	today := time.Now().UTC().Format(time.DateOnly)
+	fake.CostRows = []cloud.CostRow{{Date: today, Service: "Virtual Machines", Amount: 12.5}, {Date: today, Service: "Storage", Amount: 2}}
+	w = do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts", "admin-token",
+		`{"provider":"azure","name":"costs-azure","accountId":"`+sub+`","environment":"development"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("connect: %d %s", w.Code, w.Body)
+	}
+	var c CloudAccount
+	_ = json.Unmarshal(w.Body.Bytes(), &c)
+	waitCloudSync(t, e, c)
+
+	w = do(t, e.h, http.MethodPost, "/api/v1/cloud/costs/"+c.ID+"/read", "admin-token", "")
+	var read CloudCostRead
+	_ = json.Unmarshal(w.Body.Bytes(), &read)
+	if w.Code != http.StatusOK || read.Costs == nil || read.Costs.MonthToDate != 14.5 || read.Error != "" ||
+		len(read.Costs.Services) != 2 || read.Costs.Services[0].Service != "Virtual Machines" {
+		t.Fatalf("an Azure subscription's costs: %d %s", w.Code, w.Body)
+	}
+	// Asked again at once, it says whose limit it is: Azure does not charge.
+	w = do(t, e.h, http.MethodPost, "/api/v1/cloud/costs/"+c.ID+"/read", "admin-token", "")
+	if w.Code != http.StatusTooManyRequests || !strings.Contains(w.Body.String(), "Azure limits how often they are read") || strings.Contains(w.Body.String(), "AWS") {
+		t.Fatalf("asked twice: %d %s", w.Code, w.Body)
+	}
+}

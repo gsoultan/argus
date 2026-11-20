@@ -20,9 +20,9 @@ import type { CloudTab } from './tabs'
 
 /*
  * What the connected accounts cost, what in them bills for nothing, and
- * monthly budgets that alert. Spend is AWS's own bill, read from Cost
- * Explorer every few hours; idle resources come from the inventory, priced
- * at list price.
+ * monthly budgets that alert. Spend is the provider's own bill, read every
+ * few hours from AWS Cost Explorer or Azure Cost Management; idle resources
+ * come from the inventory, priced at list price.
  */
 
 export function CostsPanel({ accounts, onTab }: {
@@ -38,6 +38,12 @@ export function CostsPanel({ accounts, onTab }: {
   const t = totals(reads)
   const vs = change(t.monthToDate, t.lastMonthToDate)
   const never = reads.length > 0 && reads.every((r) => !r.costs)
+  const providerOf = new Map(accounts.map((a) => [a.id, a.provider]))
+  // Who the bill and the forecast are from, in words.
+  const billed = new Set(reads.filter((r) => r.costs).map((r) => providerOf.get(r.accountId) ?? 'aws'))
+  const who = billed.size > 1 ? 'the provider' : billed.has('azure') ? 'Azure' : 'AWS'
+  const Who = who === 'the provider' ? 'The provider' : who
+  const azure = accounts.some((a) => a.provider === 'azure')
 
   return (
     <Stack gap="lg">
@@ -46,9 +52,9 @@ export function CostsPanel({ accounts, onTab }: {
         <Stat label="Spent this month" value={q.data ? (t.read ? dollars(t.monthToDate) : '—') : undefined} icon={IconCoin}
           sub={t.read ? (vs === null ? 'Nothing last month to compare with' : `${vs > 0 ? '+' : ''}${vs}% on last month to this day`) : 'Not read yet'} />
         <Stat label="Forecast for the month" value={q.data ? (t.forecast !== null ? dollars(t.forecast) : '—') : undefined}
-          sub={t.forecast === null ? 'AWS gives one after a few weeks of data'
-            : t.forecastRest == null || !t.month ? 'AWS\'s own forecast'
-              : `${dollars(Math.max(0, t.forecast - t.forecastRest))} to yesterday + ${dollars(t.forecastRest)} AWS predicts for ${daysLeft(t.month)} days left`} />
+          sub={t.forecast === null ? `${Who} gives one after a few weeks of data`
+            : t.forecastRest == null || !t.month ? `${Who}'s own forecast`
+              : `${dollars(Math.max(0, t.forecast - t.forecastRest))} to yesterday + ${dollars(t.forecastRest)} ${who} predicts for ${daysLeft(t.month)} days left`} />
         <Stat label="Last month" value={q.data ? (t.read ? dollars(t.lastMonth) : '—') : undefined} />
         <Stat label="Idle, a month" value={idle.data ? dollars(idle.data.monthly) : undefined} icon={IconZzz}
           tone={idle.data && idle.data.monthly > 0 ? 'warn' : 'ok'} color="amber"
@@ -57,7 +63,7 @@ export function CostsPanel({ accounts, onTab }: {
 
       {never && (
         <Alert color="sky" variant="light">
-          Argus reads each account's bill from AWS Cost Explorer every {q.data?.intervalHours ?? 8} hours. The first read is on its way.
+          Argus reads each account's bill from {azure ? "its provider's billing API" : 'AWS Cost Explorer'} every {q.data?.intervalHours ?? 8} hours. The first read is on its way.
         </Alert>
       )}
 
@@ -68,11 +74,12 @@ export function CostsPanel({ accounts, onTab }: {
       )}
 
       <SectionCard title="By account" flush
-        description={`Read from AWS Cost Explorer every ${q.data?.intervalHours ?? 8} hours, as unblended cost. The forecast is AWS's own forecast for the whole month, the figure the Billing and Cost Management home page shows as Total forecasted cost for current month. AWS charges $0.01 a request and a read is two, about $1.80 a month an account.`}>
+        description={`Read from AWS Cost Explorer every ${q.data?.intervalHours ?? 8} hours, as unblended cost. The forecast is AWS's own forecast for the whole month, the figure the Billing and Cost Management home page shows as Total forecasted cost for current month. AWS charges $0.01 a request and a read is two, about $1.80 a month an account.${azure
+          ? ' An Azure subscription is read from Azure Cost Management, which does not charge, in US dollars as Azure converts them: a subscription invoiced in another currency will not match its invoice to the cent, and has no forecast here.' : ''}`}>
         <DataTable minWidth={760} loading={q.isPending} isEmpty={reads.length === 0}
-          empty={<EmptyState icon={IconCoin} title="No accounts" description="Connect an AWS account to see what it costs." />}
+          empty={<EmptyState icon={IconCoin} title="No accounts" description="Connect an AWS account or an Azure subscription to see what it costs." />}
           columns={['Account', 'This month', 'Last month, same day', 'Forecast', 'Last month', 'Read', '']}>
-          {reads.map((r) => <AccountRow key={r.accountId} r={r} admin={admin} />)}
+          {reads.map((r) => <AccountRow key={r.accountId} r={r} admin={admin} provider={providerOf.get(r.accountId)} />)}
         </DataTable>
       </SectionCard>
 
@@ -107,14 +114,15 @@ export function CostsPanel({ accounts, onTab }: {
   )
 }
 
-function AccountRow({ r, admin }: { r: CloudCostRead; admin: boolean }) {
+function AccountRow({ r, admin, provider }: { r: CloudCostRead; admin: boolean; provider?: string }) {
+  const azure = provider === 'azure'
   const read = useReadCosts()
   const c = r.costs
   const vs = c ? change(c.monthToDate, c.lastMonthToDate) : null
   const go = async () => {
     try {
       const out = await read.mutateAsync(r.accountId)
-      if (out.error) notifyError('AWS did not answer', new Error(out.error))
+      if (out.error) notifyError(azure ? 'Azure did not answer' : provider === 'gcp' ? 'No costs for Google Cloud yet' : 'AWS did not answer', new Error(out.error))
       else notifyOk('Costs read', `${r.accountName}: ${dollars(out.costs?.monthToDate ?? 0)} so far this month.`)
     } catch (err) {
       notifyError('Could not read costs', err)
@@ -137,7 +145,7 @@ function AccountRow({ r, admin }: { r: CloudCostRead; admin: boolean }) {
       <Table.Td><Text size={FS.meta} c="dimmed">{r.readAt ? relTime(r.readAt) : 'Not yet'}</Text></Table.Td>
       <Table.Td ta="right">
         {admin && (
-          <Tooltip label="Read now. AWS charges $0.01 a request." withArrow>
+          <Tooltip label={azure ? 'Read now. Azure does not charge for it.' : 'Read now. AWS charges $0.01 a request.'} withArrow>
             <Button size="compact-xs" variant="default" leftSection={<IconRefresh size={12} />} loading={read.isPending} onClick={go}>Read</Button>
           </Tooltip>
         )}
@@ -191,7 +199,7 @@ function Budgets({ budgets, accounts, admin, loading }: { budgets?: CloudBudget[
   const list = budgets ?? []
   return (
     <SectionCard title="Budgets" icon={IconTarget} flush
-      description="Monthly, for one account or all of them. Administrators and owners are alerted once a month for each threshold passed, and when AWS forecasts the month running over."
+      description="Monthly, for one account or all of them. Administrators and owners are alerted once a month for each threshold passed, and when the provider forecasts the month running over."
       action={admin ? <Button size="xs" leftSection={<IconPlus size={14} />} onClick={() => setEdit('new')}>New budget</Button> : undefined}>
       <DataTable minWidth={760} loading={loading} isEmpty={list.length === 0}
         empty={<EmptyState icon={IconTarget} title="No budgets" description="Set a monthly amount and Argus tells you when spend reaches 80% and 100% of it." />}
@@ -265,11 +273,11 @@ function BudgetForm({ b, accounts, onClose }: { b: CloudBudget | null; accounts:
         <Select label="For" value={account} onChange={(v) => setAccount(v ?? '')} allowDeselect={false}
           data={[{ value: '', label: 'Every account' }, ...accounts.map((a) => ({ value: a.id, label: `${a.name} · ${a.accountId}` }))]} />
         <TextInput label="Name" placeholder="Payments production" value={name} onChange={(e) => setName(e.currentTarget.value)} maxLength={80} data-autofocus />
-        <NumberInput label="Amount a month" description="US dollars, as AWS bills them." prefix="$" thousandSeparator="," decimalScale={2}
+        <NumberInput label="Amount a month" description="US dollars, as the provider reports them." prefix="$" thousandSeparator="," decimalScale={2}
           min={0} value={amount} onChange={setAmount} />
         <TextInput label="Alert at" description="Percentages of the amount, up to five." value={th} onChange={(e) => setTh(e.currentTarget.value)}
           error={thresholds === null ? 'Whole percentages from 1 to 200, such as 80, 100' : undefined} rightSection={<Text size={FS.meta} c="dimmed">%</Text>} />
-        <Checkbox label="Also alert when AWS forecasts the month going over" checked={forecast} onChange={(e) => setForecast(e.currentTarget.checked)} />
+        <Checkbox label="Also alert when the provider forecasts the month going over" checked={forecast} onChange={(e) => setForecast(e.currentTarget.checked)} />
         {b && <Text size={FS.meta} c="dimmed">Saving a change starts this month's alerts afresh.</Text>}
         <Group justify="flex-end">
           <Button variant="default" onClick={onClose}>Cancel</Button>
