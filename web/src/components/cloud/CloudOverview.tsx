@@ -254,7 +254,7 @@ function AllowChanges({ a, update, onClose }: { a: CloudAccount; update?: boolea
         ) : azure ? (
           <Text size={FS.body} lh={1.55}>
             Argus gets a second role in the subscription, <Text span ff="monospace">Argus manage</Text>: a custom role that can launch, start, stop,
-            restart, resize, tag and remove VMs, grow, make, attach, detach, snapshot and delete disks, and make, attach and delete public addresses, and nothing else. It holds no access control, so it cannot grant itself more. Azure gives Argus one
+            restart, resize, tag and remove VMs, grow, make, attach, detach, snapshot and delete disks, make, attach and delete public addresses, and make, change and delete network security groups, and nothing else. It holds no access control, so it cannot grant itself more. Azure gives Argus one
             identity for reading and changing, so removing that role's assignment under Access control (IAM) is what takes changes back
             outside Argus. Every change is made for the person who asked, waits for approval where the environment asks for it, and
             goes in the audit log.

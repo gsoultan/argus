@@ -82,7 +82,7 @@ test('a subscription sits beside the other clouds and can be allowed changes', a
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/05-overview.png`, fullPage: true })
   await expect(page.getByRole('button', { name: 'Allow changes' })).toHaveCount(3)
   await page.getByRole('button', { name: 'Allow changes' }).nth(2).click()
-  await expect(page.getByText(/a custom role that can launch, start, stop,\s+restart, resize, tag and remove VMs, grow, make, attach, detach, snapshot and delete disks, and make, attach and delete public\s+addresses, and nothing else/)).toBeVisible()
+  await expect(page.getByText(/a custom role that can launch, start, stop,\s+restart, resize, tag and remove VMs, grow, make, attach, detach, snapshot and delete disks, make, attach and delete public\s+addresses, and make, change and delete network security groups, and nothing else/)).toBeVisible()
   await expect(page.getByRole('button', { name: /Copy the command/ })).toBeVisible()
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/09-allow-changes.png` })
   await page.getByRole('button', { name: 'Cancel' }).click()

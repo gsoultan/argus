@@ -978,6 +978,8 @@ export const AZURE_ACTION_NEEDS: Partial<Record<CloudAction, string[]>> = {
   'address-associate': ['Microsoft.Network/networkInterfaces/write'], 'address-disassociate': ['Microsoft.Network/networkInterfaces/write'],
   remove: ['Microsoft.Compute/virtualMachines/delete'],
   launch: ['Microsoft.Network/networkInterfaces/join/action', 'Microsoft.Compute/images/read'],
+  'firewall-create': ['Microsoft.Network/networkSecurityGroups/write'], 'firewall-rules': ['Microsoft.Network/networkSecurityGroups/write'],
+  'firewall-delete': ['Microsoft.Network/networkSecurityGroups/delete'], 'instance-firewalls': ['Microsoft.Network/networkInterfaces/write'],
 }
 
 /** Whether an account's manage role lacks what an action takes. */
@@ -1070,11 +1072,42 @@ export function normalSource(s: string): string {
 }
 
 /** Whether a source is a range, an address, a security group or a prefix list; in Google Cloud, a range, an address or tag:NAME. */
-export function validSource(s: string, gcp = false): boolean {
+export function validSource(s: string, gcp = false, azure = false): boolean {
   const t = s.trim()
+  if (azure) {
+    return AZURE_SOURCE_TAGS.some((x) => x.toLowerCase() === t.toLowerCase()) ||
+      /^\d{1,3}(\.\d{1,3}){3}(\/\d{1,2})?$/.test(t) || /^[0-9a-f:]+:[0-9a-f:]*(\/\d{1,3})?$/i.test(t)
+  }
   if (gcp && /^tag:[a-z]([-a-z0-9]{0,61}[a-z0-9])?$/.test(t)) return true
   return (!gcp && (/^sg-[0-9a-f]{8,17}$/.test(t) || /^pl-[0-9a-f]{8,17}$/.test(t))) ||
     /^\d{1,3}(\.\d{1,3}){3}(\/\d{1,2})?$/.test(t) || /^[0-9a-f:]+:[0-9a-f:]*(\/\d{1,3})?$/i.test(t)
+}
+
+/** The service tags a new Azure rule can name, beyond a range of addresses. */
+export const AZURE_SOURCE_TAGS = ['tag:VirtualNetwork', 'tag:AzureLoadBalancer']
+
+/** The name of the Azure rule a listed rule came from: the start of its description. */
+export function azureRuleName(r: CloudRule): string {
+  return (r.description ?? '').split(': ')[0] ?? ''
+}
+
+/**
+ * Why rules cannot be taken out of an Azure network security group, or
+ * undefined. One Azure rule lets every source it names reach every port it
+ * names, so what is left of it has to be sources and ports again.
+ */
+export function azureRemovalProblem(rules: CloudRule[], removed: Set<number>): string | undefined {
+  const names = [...new Set(rules.map(azureRuleName))]
+  for (const name of names) {
+    const keep = rules.filter((r, i) => azureRuleName(r) === name && !removed.has(i) && !rules.some((x, j) => removed.has(j) && sameRule(x, r)))
+    const sources = new Set(keep.map((r) => r.source.toLowerCase()))
+    const spans = new Set(keep.map((r) => `${r.fromPort}-${r.toPort}`))
+    const distinct = new Set(keep.map((r) => `${r.source.toLowerCase()} ${r.fromPort}-${r.toPort}`))
+    if (distinct.size !== sources.size * spans.size) {
+      return `Azure rule ${name} lets several sources reach several ports together. Take away all of a source or all of a port, or change it in the Azure portal.`
+    }
+  }
+  return undefined
 }
 
 /** Every live instance and load balancer that uses a security group. */

@@ -73,6 +73,8 @@ type FirewallSpec struct {
 	Description string            `json:"description"`
 	Rules       []Rule            `json:"rules,omitempty"`
 	Tags        map[string]string `json:"tags,omitempty"`
+	// Group is the Azure resource group a new group goes in.
+	Group string `json:"group,omitempty"`
 }
 
 // Network is a provider that changes firewalls and load balancer targets.

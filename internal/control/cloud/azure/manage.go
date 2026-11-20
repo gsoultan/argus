@@ -96,6 +96,12 @@ var ManageActions = []string{
 	// one of the subscription's own images.
 	"Microsoft.Network/networkInterfaces/join/action",
 	"Microsoft.Compute/images/read",
+	// Network security groups: made, deleted, and their rules changed by
+	// writing the group back whole under its etag. A VM's group is set on
+	// its network interface, with the rights above.
+	"Microsoft.Network/networkSecurityGroups/read",
+	"Microsoft.Network/networkSecurityGroups/write",
+	"Microsoft.Network/networkSecurityGroups/delete",
 }
 
 // ManageRoleID is the id of a subscription's manage role: a GUID, as Azure
@@ -129,6 +135,9 @@ var supported = map[cloud.Action]bool{
 
 	cloud.ActionRemove: true,
 	cloud.ActionLaunch: true,
+
+	cloud.ActionFirewallCreate: true, cloud.ActionFirewallRules: true, cloud.ActionFirewallDelete: true,
+	cloud.ActionInstanceFirewalls: true,
 }
 
 // TaggableKinds are the kinds Argus tags in Azure so far.
@@ -143,7 +152,8 @@ func SupportedActions() []cloud.Action {
 		cloud.ActionVolumeCreate, cloud.ActionVolumeGrow, cloud.ActionVolumeAttach, cloud.ActionVolumeDetach, cloud.ActionVolumeDelete,
 		cloud.ActionSnapshotCreate, cloud.ActionSnapshotDelete,
 		cloud.ActionAddressAllocate, cloud.ActionAddressAssociate, cloud.ActionAddressDisassociate, cloud.ActionAddressRelease,
-		cloud.ActionRemove, cloud.ActionLaunch}
+		cloud.ActionRemove, cloud.ActionLaunch,
+		cloud.ActionFirewallCreate, cloud.ActionFirewallRules, cloud.ActionFirewallDelete, cloud.ActionInstanceFirewalls}
 }
 
 // errNotYet refuses a change Argus does not make in Azure yet.
@@ -194,6 +204,8 @@ type vm struct {
 	// NIC is the path of its primary network interface as Azure gave it,
 	// or of its only one; empty when Argus cannot tell which that is.
 	NIC string
+	// NICs is how many network interfaces it has.
+	NICs int
 }
 
 // locateVM finds the VM with vmId id in the region the console named. The
@@ -240,7 +252,7 @@ func (p *Provider) locateVM(ctx context.Context, t token, actor cloud.Actor, sub
 			}
 		}
 	}
-	return vm{Name: found.Name, Location: region, Tags: found.Tags, NIC: primary,
+	return vm{Name: found.Name, Location: region, Tags: found.Tags, NIC: primary, NICs: len(found.Properties.NetworkProfile.NetworkInterfaces),
 		Path: SubscriptionScope(subscription) + "/resourceGroups/" + url.PathEscape(rg) + "/providers/Microsoft.Compute/virtualMachines/" + url.PathEscape(found.Name)}, nil
 }
 
