@@ -2,7 +2,7 @@ import { MantineProvider } from '@mantine/core'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import { NewDisk, StorageActions } from '~/components/cloud/StorageActions'
+import { NewAddress, NewDisk, StorageActions } from '~/components/cloud/StorageActions'
 import {
   AZURE_DISK_NAME, cloudAccountsQuery, cloudChangesQuery, cloudItemsQuery, roleLacks, type CloudAccount, type CloudItem,
 } from '~/lib/cloud'
@@ -18,7 +18,7 @@ const account = {
   id: 'ca3', provider: 'azure', accountId: '6b1f2c0e-8a44-4f0b-9d55-0c2a7e4d1a90', name: 'billing-azure', access: 'manage',
   environment: 'development', regions: ['eastus'], manageMissing: [], manageCheckedAt: null,
   actions: ['start', 'stop', 'reboot', 'resize', 'tags', 'volume-create', 'volume-grow', 'volume-attach', 'volume-detach', 'volume-delete',
-    'snapshot-create', 'snapshot-delete'],
+    'snapshot-create', 'snapshot-delete', 'address-allocate', 'address-associate', 'address-disassociate', 'address-release'],
   tagKinds: ['instance', 'volume', 'snapshot'],
 } as unknown as CloudAccount
 
@@ -33,6 +33,8 @@ const osDisk = item({ kind: 'volume', id: 'd-1', name: 'web-1_OsDisk', zone: 'ea
 const leftOver = item({ kind: 'volume', id: 'd-3', name: 'left-over', state: 'available', size: '200 GiB',
   details: { resourceGroup: 'Web-RG', type: 'Standard_LRS' } })
 
+const lbAddress = item({ kind: 'address', id: 'ip-4', name: 'lb-ip', state: 'attached', publicIp: '20.6.6.6' })
+
 function show(node: React.ReactNode, acct: CloudAccount = account) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } })
   client.setQueryData(meQuery().queryKey, { role: 'owner', email: 'dev@northwind.id' } as never)
@@ -42,6 +44,7 @@ function show(node: React.ReactNode, acct: CloudAccount = account) {
   client.setQueryData(cloudItemsQuery('volume').queryKey, [osDisk, leftOver])
   client.setQueryData(cloudItemsQuery('subnet').queryKey, [])
   client.setQueryData(cloudItemsQuery('image').queryKey, [])
+  client.setQueryData(cloudItemsQuery('address').queryKey, [lbAddress])
   return render(
     <MantineProvider theme={theme} defaultColorScheme="light" forceColorScheme="light">
       <QueryClientProvider client={client}>{node}</QueryClientProvider>
@@ -96,6 +99,21 @@ describe('Disks in an Azure subscription', () => {
     expect(roleLacks(older, 'snapshot-create')).toBe(true)
     expect(roleLacks(older, 'volume-grow')).toBe(false)
     expect(roleLacks(account, 'volume-delete')).toBe(false)
+  })
+
+  it('makes a public address in a resource group, under a name', () => {
+    show(<NewAddress onClose={() => {}} />)
+    expect(screen.getByText('New public address')).toBeInTheDocument()
+    expect(screen.getByText('Resource group')).toBeInTheDocument()
+    expect(screen.getByText(/Azure bills a Standard static address/)).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'api-ip' } })
+    expect(screen.getByRole('button', { name: 'Make address' })).toBeDisabled()
+  })
+
+  it('does not offer to take an address off a load balancer', () => {
+    show(<StorageActions it={lbAddress} />)
+    expect(screen.queryByRole('button', { name: 'Take it off' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Attach to an instance' })).toBeNull()
   })
 
   it('knows what Azure takes as a disk name', () => {

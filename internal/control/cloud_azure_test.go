@@ -488,11 +488,89 @@ func TestCloudAzureSubscriptionDisksAndSnapshots(t *testing.T) {
 	if ch := ask(`"action":"snapshot-delete","resourceId":"`+nightly+`","confirm":"nightly"`, ok, ""); !strings.HasPrefix(ch.Summary, "Delete the snapshot nightly") {
 		t.Fatalf("snapshot delete: %+v", ch)
 	}
-	// Images and addresses are refused by the real provider, whatever the console sends.
+	// Images are refused by the real provider, whatever the console sends.
 	real := azure.New(azure.Options{})
-	for _, a := range []cloud.Action{cloud.ActionImageCreate, cloud.ActionAddressAllocate, cloud.ActionAddressRelease} {
+	for _, a := range []cloud.Action{cloud.ActionImageCreate, cloud.ActionImageDelete} {
 		if cloud.Supports(real, a) {
 			t.Fatalf("%s is not made in Azure yet", a)
 		}
 	}
+}
+
+// Public addresses in a subscription: named, in a resource group, on a VM
+// through its network interface, and never taken off a load balancer.
+func TestCloudAzureSubscriptionPublicAddresses(t *testing.T) {
+	e, fake, sub := azureEnv(t)
+	w := do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts/prepare", "admin-token", `{"provider":"azure","accountId":"`+sub+`","manage":true}`)
+	var p CloudPrepared
+	_ = json.Unmarshal(w.Body.Bytes(), &p)
+	for _, want := range []string{"Microsoft.Network/publicIPAddresses/write", "Microsoft.Network/networkInterfaces/write"} {
+		if !strings.Contains(p.Command, want) {
+			t.Fatalf("the command lacks %q:\n%s", want, p.Command)
+		}
+	}
+	fake.Roles[p.ReadRoleARN] = p.ExternalID
+	fake.Roles[p.ManageRoleARN] = p.ExternalID
+	const (
+		web  = "aaaaaaaa-0000-4000-8000-000000000001"
+		api  = "aaaaaaaa-0000-4000-8000-000000000002"
+		ip1  = "dddddddd-0000-4000-8000-000000000001"
+		free = "dddddddd-0000-4000-8000-000000000003"
+		lb   = "dddddddd-0000-4000-8000-000000000004"
+	)
+	rg := map[string]string{"resourceGroup": "Web-RG"}
+	fake.Resources["eastus"] = []cloud.Resource{
+		{Kind: cloud.KindInstance, ID: web, Name: "web-1", Region: "eastus", State: "running", PublicIP: "20.1.2.3", Details: rg},
+		{Kind: cloud.KindInstance, ID: api, Name: "api-1", Region: "eastus", State: "running", Details: rg},
+		{Kind: cloud.KindAddress, ID: ip1, Name: "web-1-ip", Region: "eastus", State: "attached", PublicIP: "20.1.2.3", Details: rg,
+			Links: []cloud.Ref{{Kind: cloud.KindInstance, ID: web, Name: "web-1"}}},
+		{Kind: cloud.KindAddress, ID: free, Name: "free-east", Region: "eastus", State: "unattached", PublicIP: "20.5.5.5", Details: rg},
+		{Kind: cloud.KindAddress, ID: lb, Name: "lb-ip", Region: "eastus", State: "attached", PublicIP: "20.6.6.6", Details: rg},
+	}
+	w = do(t, e.h, http.MethodPost, "/api/v1/cloud/accounts", "admin-token",
+		`{"provider":"azure","name":"net-azure","accountId":"`+sub+`","environment":"development","manage":true}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("connect with changes: %d %s", w.Code, w.Body)
+	}
+	var c CloudAccount
+	_ = json.Unmarshal(w.Body.Bytes(), &c)
+	waitCloudSync(t, e, c)
+	ask := func(region, body string, want int, says string) CloudChange {
+		t.Helper()
+		w := do(t, e.h, http.MethodPost, "/api/v1/cloud/changes", "admin-token", `{"accountId":"`+c.ID+`","region":"`+region+`",`+body+`}`)
+		if w.Code != want || !strings.Contains(w.Body.String(), says) {
+			t.Fatalf("%s: %d %s, want %d saying %q", body, w.Code, w.Body, want, says)
+		}
+		var ch CloudChange
+		_ = json.Unmarshal(w.Body.Bytes(), &ch)
+		return ch
+	}
+	bad, conflict, ok := http.StatusBadRequest, http.StatusConflict, http.StatusOK
+
+	// A new address is named and goes into a resource group Argus has read.
+	ask("eastus", `"action":"address-allocate","spec":{"name":"api-ip"}`, bad, "pick the resource group")
+	ask("eastus", `"action":"address-allocate","spec":{"name":"bad name","group":"Web-RG"}`, bad, "name the address")
+	ask("eastus", `"action":"address-allocate","spec":{"name":"api-ip","group":"elsewhere"}`, bad, "read nothing in a resource group named elsewhere")
+	ask("eastus", `"action":"address-allocate","spec":{"name":"FREE-EAST","group":"web-rg"}`, conflict, "already has a public address named FREE-EAST")
+	ask("mars", `"action":"address-allocate","spec":{"name":"api-ip","group":"Web-RG"}`, bad, "")
+	if ch := ask("eastus", `"action":"address-allocate","spec":{"name":"api-ip","group":"web-rg"}`, ok, ""); ch.State != "applied" ||
+		ch.Summary != "Make the public address api-ip in eastus, resource group Web-RG" {
+		t.Fatalf("make: %+v", ch)
+	}
+
+	// On a VM: one address each, and only an address nothing has.
+	ask("eastus", `"action":"address-associate","resourceId":"`+free+`","spec":{"instance":"`+web+`"}`, conflict, "web-1 already has the public address 20.1.2.3")
+	ask("eastus", `"action":"address-associate","resourceId":"`+ip1+`","spec":{"instance":"`+api+`"}`, conflict, "20.1.2.3 is attached to something")
+	if ch := ask("eastus", `"action":"address-associate","resourceId":"`+free+`","spec":{"instance":"`+api+`"}`, ok, ""); ch.Summary != "Put the public address 20.5.5.5 on api-1" {
+		t.Fatalf("attach: %+v", ch)
+	}
+	// Off a VM, never off a load balancer.
+	ask("eastus", `"action":"address-disassociate","resourceId":"`+lb+`"`, conflict, "on a load balancer or a gateway, not a VM")
+	if ch := ask("eastus", `"action":"address-disassociate","resourceId":"`+ip1+`"`, ok, ""); ch.Summary !=
+		"Take the public address 20.1.2.3 off web-1; it has no public address until it is given one" {
+		t.Fatalf("take off: %+v", ch)
+	}
+	// Deleting takes the address typed, and one nothing uses.
+	ask("eastus", `"action":"address-release","resourceId":"`+lb+`","confirm":"20.6.6.6"`, conflict, "take it off first")
+	ask("eastus", `"action":"address-release","resourceId":"`+lb+`","confirm":"nope"`, bad, "type the address")
 }

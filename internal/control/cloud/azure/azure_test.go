@@ -70,6 +70,12 @@ type fakeMicrosoft struct {
 	made map[string]int
 	// roleActions are the actions the subscription's manage role allows.
 	roleActions []string
+	// nic is web-1's network interface as last written, and nicEtag its
+	// etag; raceNIC changes the etag after every read, as someone else's
+	// change in between would.
+	nic     map[string]any
+	nicEtag int
+	raceNIC bool
 }
 
 func (m *fakeMicrosoft) changed() []string {
@@ -191,7 +197,12 @@ func (m *fakeMicrosoft) handler() http.Handler {
 			 "properties":{"ipAddress":"20.1.2.3","publicIPAllocationMethod":"Static","resourceGuid":"dddddddd-0000-4000-8000-000000000001",
 			  "ipConfiguration":{"id":"` + rg + `Microsoft.Network/networkInterfaces/web-1-nic/ipConfigurations/ipconfig1"}}},
 			{"id":"` + rg + `Microsoft.Network/publicIPAddresses/spare","name":"spare","location":"westeurope","sku":{"name":"Standard"},
-			 "properties":{"ipAddress":"20.9.9.9","publicIPAllocationMethod":"Static","resourceGuid":"dddddddd-0000-4000-8000-000000000002"}}]}`,
+			 "properties":{"ipAddress":"20.9.9.9","publicIPAllocationMethod":"Static","resourceGuid":"dddddddd-0000-4000-8000-000000000002"}},
+			{"id":"` + rg + `Microsoft.Network/publicIPAddresses/free-east","name":"free-east","location":"eastus","sku":{"name":"Standard"},"tags":{"team":"payments"},
+			 "properties":{"ipAddress":"20.5.5.5","publicIPAllocationMethod":"Static","resourceGuid":"dddddddd-0000-4000-8000-000000000003"}},
+			{"id":"` + rg + `Microsoft.Network/publicIPAddresses/lb-ip","name":"lb-ip","location":"eastus","sku":{"name":"Standard"},
+			 "properties":{"ipAddress":"20.6.6.6","resourceGuid":"dddddddd-0000-4000-8000-000000000004",
+			  "ipConfiguration":{"id":"` + rg + `Microsoft.Network/loadBalancers/web-lb/frontendIPConfigurations/front"}}}]}`,
 		"Microsoft.Network/virtualNetworks": `{"value":[{"id":"` + rg + `Microsoft.Network/virtualNetworks/main","name":"main","location":"eastus",
 			"properties":{"resourceGuid":"eeeeeeee-0000-4000-8000-000000000001","addressSpace":{"addressPrefixes":["10.0.0.0/16"]},
 			 "subnets":[{"id":"` + rg + `Microsoft.Network/virtualNetworks/main/subnets/web","name":"web","properties":{"addressPrefix":"10.0.1.0/24",
@@ -285,6 +296,53 @@ func (m *fakeMicrosoft) handler() http.Handler {
 		mux.HandleFunc("PATCH "+rg+"Microsoft.Compute/"+coll+"/{name}/providers/Microsoft.Resources/tags/default", authed(held))
 	}
 	mux.HandleFunc("POST "+vmPath+"/attachDetachDataDisks", authed(change))
+	// Public addresses are made and deleted like disks. web-1's network
+	// interface is read whole and written back whole, under its etag.
+	for _, method := range []string{"GET", "PUT", "DELETE"} {
+		mux.HandleFunc(method+" "+rg+"Microsoft.Network/publicIPAddresses/{name}", authed(held))
+	}
+	mux.HandleFunc("PATCH "+rg+"Microsoft.Network/publicIPAddresses/{name}/providers/Microsoft.Resources/tags/default", authed(held))
+	nicPath := rg + "Microsoft.Network/networkInterfaces/web-1-nic"
+	etag := func() string { return `W/"` + string(rune('a'+m.nicEtag)) + `"` }
+	mux.HandleFunc("GET "+nicPath, authed(func(w http.ResponseWriter, r *http.Request) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if m.nic == nil {
+			_ = json.Unmarshal([]byte(`{"id":"`+nicPath+`","name":"web-1-nic","location":"eastus","tags":{"keep":"me"},
+				"properties":{"provisioningState":"Succeeded","macAddress":"00-0D-3A-00-00-01","enableAcceleratedNetworking":true,
+				 "networkSecurityGroup":{"id":"`+rg+`Microsoft.Network/networkSecurityGroups/web-nsg"},
+				 "ipConfigurations":[{"name":"ipconfig1","id":"`+nicPath+`/ipConfigurations/ipconfig1",
+				  "properties":{"privateIPAddress":"10.0.1.5","privateIPAllocationMethod":"Dynamic","primary":true,
+				   "subnet":{"id":"`+rg+`Microsoft.Network/virtualNetworks/main/subnets/web"},
+				   "publicIPAddress":{"id":"`+rg+`Microsoft.Network/publicIPAddresses/web-1-ip"}}}]}}`), &m.nic)
+		}
+		m.nic["etag"] = etag()
+		_ = json.NewEncoder(w).Encode(m.nic)
+		if m.raceNIC {
+			m.nicEtag++
+		}
+	}))
+	mux.HandleFunc("PUT "+nicPath, authed(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if r.Header.Get("If-Match") != etag() {
+			w.WriteHeader(http.StatusPreconditionFailed)
+			_, _ = w.Write([]byte(`{"error":{"code":"PreconditionFailed","message":"Precondition failed."}}`))
+			return
+		}
+		m.changes = append(m.changes, "PUT nic "+string(b))
+		if m.refuse {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":{"code":"AuthorizationFailed","message":"The client does not have authorization to perform action over scope."}}`))
+			return
+		}
+		m.nic = nil
+		_ = json.Unmarshal(b, &m.nic)
+		m.nicEtag++
+		w.Header().Set("x-ms-correlation-request-id", "corr-1234")
+		_, _ = w.Write(b)
+	}))
 	mux.HandleFunc("GET "+sub+"/providers/Microsoft.Authorization/roleDefinitions/{id}", authed(func(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
 		acts := m.roleActions

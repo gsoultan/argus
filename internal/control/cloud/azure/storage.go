@@ -425,8 +425,8 @@ func (p *Provider) DeleteSnapshot(ctx context.Context, a cloud.Account, actor cl
 	return cloud.Result{ResourceID: snapshot, RequestID: req}, nil
 }
 
-// Images and public addresses come to Azure later; Supports says so before
-// any of these is asked.
+// Images come to Azure later; Supports says so before either of these is
+// asked.
 
 func (p *Provider) CreateImage(context.Context, cloud.Account, cloud.Actor, string, string, string, bool) (cloud.Result, error) {
 	return cloud.Result{}, errNotYet("make an image")
@@ -434,22 +434,6 @@ func (p *Provider) CreateImage(context.Context, cloud.Account, cloud.Actor, stri
 
 func (p *Provider) DeleteImage(context.Context, cloud.Account, cloud.Actor, string, string, bool) (cloud.Result, error) {
 	return cloud.Result{}, errNotYet("delete an image")
-}
-
-func (p *Provider) AllocateAddress(context.Context, cloud.Account, cloud.Actor, string, string) (cloud.Result, error) {
-	return cloud.Result{}, errNotYet("make a public address")
-}
-
-func (p *Provider) AssociateAddress(context.Context, cloud.Account, cloud.Actor, string, string, string) (cloud.Result, error) {
-	return cloud.Result{}, errNotYet("attach a public address")
-}
-
-func (p *Provider) DisassociateAddress(context.Context, cloud.Account, cloud.Actor, string, string) (cloud.Result, error) {
-	return cloud.Result{}, errNotYet("take a public address off")
-}
-
-func (p *Provider) ReleaseAddress(context.Context, cloud.Account, cloud.Actor, string, string) (cloud.Result, error) {
-	return cloud.Result{}, errNotYet("delete a public address")
 }
 
 // needs are the manage role's actions each change takes, beyond reading
@@ -462,6 +446,11 @@ var needs = map[cloud.Action][]string{
 	cloud.ActionVolumeDelete:   {"Microsoft.Compute/disks/read", "Microsoft.Compute/disks/delete"},
 	cloud.ActionSnapshotCreate: {"Microsoft.Compute/disks/read", "Microsoft.Compute/disks/beginGetAccess/action", "Microsoft.Compute/snapshots/read", "Microsoft.Compute/snapshots/write"},
 	cloud.ActionSnapshotDelete: {"Microsoft.Compute/snapshots/read", "Microsoft.Compute/snapshots/delete"},
+
+	cloud.ActionAddressAllocate:     {"Microsoft.Network/publicIPAddresses/read", "Microsoft.Network/publicIPAddresses/write"},
+	cloud.ActionAddressAssociate:    {"Microsoft.Network/publicIPAddresses/read", "Microsoft.Network/publicIPAddresses/join/action", "Microsoft.Network/networkInterfaces/read", "Microsoft.Network/networkInterfaces/write"},
+	cloud.ActionAddressDisassociate: {"Microsoft.Network/publicIPAddresses/read", "Microsoft.Network/networkInterfaces/read", "Microsoft.Network/networkInterfaces/write"},
+	cloud.ActionAddressRelease:      {"Microsoft.Network/publicIPAddresses/read", "Microsoft.Network/publicIPAddresses/delete"},
 }
 
 // Needs is the manage role's actions a change takes.

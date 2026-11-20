@@ -195,11 +195,10 @@ func TestDiskChangesNeedTheManageAssignmentAndPassAzuresRefusalOn(t *testing.T) 
 	}
 	for _, f := range []func() (cloud.Result, error){
 		func() (cloud.Result, error) { return p.CreateImage(ctx, acct, "x", "eastus", web1, "img", false) },
-		func() (cloud.Result, error) { return p.AllocateAddress(ctx, acct, "x", "eastus", "ip") },
-		func() (cloud.Result, error) { return p.ReleaseAddress(ctx, acct, "x", "eastus", "ip") },
+		func() (cloud.Result, error) { return p.DeleteImage(ctx, acct, "x", "eastus", "img", false) },
 	} {
 		if _, err := f(); !errors.Is(err, cloud.ErrUnsupported) {
-			t.Fatalf("images and addresses are not made in Azure yet: %v", err)
+			t.Fatalf("images are not made in Azure yet: %v", err)
 		}
 	}
 }

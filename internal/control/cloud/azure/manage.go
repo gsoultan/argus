@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -71,6 +72,21 @@ var ManageActions = []string{
 	"Microsoft.Compute/snapshots/write",
 	"Microsoft.Compute/snapshots/delete",
 	"Microsoft.Compute/snapshots/beginGetAccess/action",
+	// Public addresses. One goes on a VM through its network interface,
+	// which Azure only takes written back whole, and checks the right to
+	// join everything the interface already refers to: its subnet and its
+	// security group. An interface that is also in a load balancer's pool
+	// or an application security group needs more than this, and Azure
+	// refuses it in its own words. Writing an interface is a wider right
+	// than Argus uses: it changes only the reference to the address.
+	"Microsoft.Network/publicIPAddresses/read",
+	"Microsoft.Network/publicIPAddresses/write",
+	"Microsoft.Network/publicIPAddresses/delete",
+	"Microsoft.Network/publicIPAddresses/join/action",
+	"Microsoft.Network/networkInterfaces/read",
+	"Microsoft.Network/networkInterfaces/write",
+	"Microsoft.Network/virtualNetworks/subnets/join/action",
+	"Microsoft.Network/networkSecurityGroups/join/action",
 }
 
 // ManageRoleID is the id of a subscription's manage role: a GUID, as Azure
@@ -98,10 +114,13 @@ var supported = map[cloud.Action]bool{
 	cloud.ActionVolumeCreate: true, cloud.ActionVolumeGrow: true, cloud.ActionVolumeAttach: true,
 	cloud.ActionVolumeDetach: true, cloud.ActionVolumeDelete: true,
 	cloud.ActionSnapshotCreate: true, cloud.ActionSnapshotDelete: true,
+
+	cloud.ActionAddressAllocate: true, cloud.ActionAddressAssociate: true,
+	cloud.ActionAddressDisassociate: true, cloud.ActionAddressRelease: true,
 }
 
 // TaggableKinds are the kinds Argus tags in Azure so far.
-var TaggableKinds = []cloud.Kind{cloud.KindInstance, cloud.KindVolume, cloud.KindSnapshot}
+var TaggableKinds = []cloud.Kind{cloud.KindInstance, cloud.KindVolume, cloud.KindSnapshot, cloud.KindAddress}
 
 // Supports reports whether Argus can make change a in a subscription yet.
 func (p *Provider) Supports(a cloud.Action) bool { return supported[a] }
@@ -110,7 +129,8 @@ func (p *Provider) Supports(a cloud.Action) bool { return supported[a] }
 func SupportedActions() []cloud.Action {
 	return []cloud.Action{cloud.ActionStart, cloud.ActionStop, cloud.ActionReboot, cloud.ActionResize, cloud.ActionTags,
 		cloud.ActionVolumeCreate, cloud.ActionVolumeGrow, cloud.ActionVolumeAttach, cloud.ActionVolumeDetach, cloud.ActionVolumeDelete,
-		cloud.ActionSnapshotCreate, cloud.ActionSnapshotDelete}
+		cloud.ActionSnapshotCreate, cloud.ActionSnapshotDelete,
+		cloud.ActionAddressAllocate, cloud.ActionAddressAssociate, cloud.ActionAddressDisassociate, cloud.ActionAddressRelease}
 }
 
 // errNotYet refuses a change Argus does not make in Azure yet.
@@ -158,6 +178,9 @@ type vm struct {
 	Path     string // /subscriptions/…/virtualMachines/name, built by Argus
 	Location string
 	Tags     map[string]string
+	// NIC is the path of its primary network interface as Azure gave it,
+	// or of its only one; empty when Argus cannot tell which that is.
+	NIC string
 }
 
 // locateVM finds the VM with vmId id in the region the console named. The
@@ -194,13 +217,29 @@ func (p *Provider) locateVM(ctx context.Context, t token, actor cloud.Actor, sub
 	if !reGroupName.MatchString(rg) || !reVMName.MatchString(found.Name) {
 		return vm{}, fmt.Errorf("Azure named VM %s in a way Argus cannot address", id)
 	}
-	return vm{Name: found.Name, Location: region, Tags: found.Tags,
+	primary := ""
+	if list := found.Properties.NetworkProfile.NetworkInterfaces; len(list) == 1 {
+		primary = list[0].ID
+	} else {
+		for _, n := range list {
+			if n.Properties.Primary != nil && *n.Properties.Primary {
+				primary = n.ID
+			}
+		}
+	}
+	return vm{Name: found.Name, Location: region, Tags: found.Tags, NIC: primary,
 		Path: SubscriptionScope(subscription) + "/resourceGroups/" + url.PathEscape(rg) + "/providers/Microsoft.Compute/virtualMachines/" + url.PathEscape(found.Name)}, nil
 }
 
 // send makes a changing call and returns Azure's id for it once Azure has
 // accepted it. v, when not nil, takes the answer's body.
 func (p *Provider) send(ctx context.Context, t token, actor cloud.Actor, method, u string, body, v any) (string, error) {
+	return p.sendIf(ctx, t, actor, method, u, "", body, v)
+}
+
+// sendIf is send that Azure carries out only while the resource still has
+// etag, when one is given.
+func (p *Provider) sendIf(ctx context.Context, t token, actor cloud.Actor, method, u, etag string, body, v any) (string, error) {
 	var rd io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -216,6 +255,9 @@ func (p *Provider) send(ctx context.Context, t token, actor cloud.Actor, method,
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	if etag != "" {
+		req.Header.Set("If-Match", etag)
+	}
 	req.Header.Set("Authorization", "Bearer "+t.value)
 	req.Header.Set("User-Agent", userAgent(actor))
 	resp, err := p.hc.Do(req)
@@ -229,6 +271,8 @@ func (p *Provider) send(ctx context.Context, t token, actor cloud.Actor, method,
 	}
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusCreated, http.StatusAccepted, http.StatusNoContent:
+	case http.StatusPreconditionFailed:
+		return "", errors.New("someone else changed it at the same moment, so Argus changed nothing; ask again")
 	default:
 		return "", azureError(resp.StatusCode, b)
 	}
@@ -351,6 +395,10 @@ func (p *Provider) SetTagsOf(ctx context.Context, a cloud.Account, actor cloud.A
 		var h held
 		h, err = p.locateHeld(ctx, t, actor, a.AccountID, region, map[cloud.Kind]string{cloud.KindVolume: "disks", cloud.KindSnapshot: "snapshots"}[kind], id)
 		m = vm{Name: h.Name, Path: h.Path, Location: h.Location, Tags: h.Tags}
+	case cloud.KindAddress:
+		var ip publicIP
+		ip, err = p.locateAddress(ctx, t, actor, a.AccountID, region, id)
+		m = vm{Name: ip.Name, Path: ip.Path, Location: region, Tags: ip.Tags}
 	}
 	if err != nil {
 		return cloud.Result{}, err

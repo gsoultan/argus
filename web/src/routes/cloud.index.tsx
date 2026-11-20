@@ -121,7 +121,7 @@ function Cloud() {
   const allocators = new Set(list.filter((a) => a.access === 'manage' && allows(a, 'address-allocate')).map((a) => a.provider))
   const firewallMakers = new Set(list.filter((a) => a.access === 'manage' && allows(a, 'firewall-create')).map((a) => a.provider))
   const firewallButton = firewallMakers.size > 1 ? 'New firewall' : firewallMakers.has('gcp') ? 'New firewall rule' : 'New security group'
-  const addressButton = allocators.size > 1 ? 'New public address' : allocators.has('gcp') ? 'Reserve a static address' : 'Allocate an Elastic IP'
+  const addressButton = allocators.size > 1 || allocators.has('azure') ? 'New public address' : allocators.has('gcp') ? 'Reserve a static address' : 'Allocate an Elastic IP'
 
   return (
     <Box>

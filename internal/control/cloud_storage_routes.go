@@ -62,6 +62,8 @@ type cloudDeleteSpec struct {
 type cloudNameSpec struct {
 	Name   string `json:"name"`
 	Reboot bool   `json:"reboot,omitempty"`
+	// Group is the resource group an Azure address is made in.
+	Group string `json:"group,omitempty"`
 }
 
 var envRank = map[string]int{"development": 0, "staging": 1, "production": 2}
@@ -141,6 +143,10 @@ func (a *API) planStorage(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 			}
 		}
 		s.Name = strings.TrimSpace(s.Name)
+		if m.acct.Provider == "azure" {
+			return a.planAzureAddress(ctx, m, in, s, ch)
+		}
+		s.Group = ""
 		if m.acct.Provider == "gcp" {
 			if in.Region == "" || in.Region == gcp.GlobalRegion {
 				return ch, http.StatusBadRequest, errors.New("pick the region of the VMs the address is for")
@@ -473,7 +479,7 @@ func (a *API) planStorage(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 			return ch, http.StatusBadRequest, errors.New("pick the instance to attach it to")
 		}
 		if res.State == "attached" {
-			return ch, http.StatusConflict, errors.New(res.PublicIP + " is attached to something; take it off first")
+			return ch, http.StatusConflict, errors.New(addressName(res) + " is attached to something; take it off first")
 		}
 		if gcpAcct && (res.Region == gcp.GlobalRegion || res.PublicIP == "") {
 			return ch, http.StatusBadRequest, errors.New(res.Name + " is not an external regional address; a VM takes only those")
@@ -486,12 +492,14 @@ func (a *API) planStorage(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 			return ch, http.StatusConflict, errors.New(inst.Name + " is being removed")
 		}
 		if ip, ok := a.addressOf(ctx, m.acct.ID, in.Region, inst.ID); ok {
-			return ch, http.StatusConflict, errors.New(inst.Name + " already has the " + addressWord(gcpAcct) + " " + ip + "; take that one off first")
+			return ch, http.StatusConflict, errors.New(inst.Name + " already has the " + addressWord(m.acct.Provider) + " " + ip + "; take that one off first")
 		}
 		s.InstanceName = inst.Name
 		ch.Environment = stricterEnv(ch.Environment, cloudEnvOf(inst.Tags, m.acct.Environment))
 		ch.Spec, _ = json.Marshal(s)
-		if gcpAcct {
+		if azureAcct {
+			ch.Summary = "Put the public address " + addressName(res) + " on " + inst.Name
+		} else if gcpAcct {
 			ch.Summary = "Assign the static address " + res.PublicIP + " to " + inst.Name
 		} else {
 			ch.Summary = "Attach the Elastic IP " + res.PublicIP + " to " + inst.Name
@@ -502,7 +510,10 @@ func (a *API) planStorage(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 
 	case cloud.ActionAddressDisassociate:
 		if res.State != "attached" {
-			return ch, http.StatusConflict, errors.New(res.PublicIP + " is not attached to anything")
+			return ch, http.StatusConflict, errors.New(addressName(res) + " is not attached to anything")
+		}
+		if _, onVM := attachedTo(res); azureAcct && !onVM {
+			return ch, http.StatusConflict, errors.New(addressName(res) + " is on a load balancer or a gateway, not a VM; take it off in the Azure portal")
 		}
 		s := cloudAttachSpec{}
 		if at, ok := attachedTo(res); ok {
@@ -513,23 +524,29 @@ func (a *API) planStorage(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 			}
 		}
 		ch.Spec, _ = json.Marshal(s)
-		ch.Summary = "Take the " + addressWord(gcpAcct) + " " + res.PublicIP + " off"
+		ch.Summary = "Take the " + addressWord(m.acct.Provider) + " " + addressName(res) + " off"
 		if s.InstanceName != "" {
 			ch.Summary += " " + s.InstanceName
 		}
-		if gcpAcct {
+		if gcpAcct || azureAcct {
 			ch.Summary += "; it has no public address until it is given one"
 		}
 
 	case cloud.ActionAddressRelease:
 		if strings.TrimSpace(in.Confirm) != res.PublicIP && strings.TrimSpace(in.Confirm) != res.Name {
-			return ch, http.StatusBadRequest, errors.New("type the address, " + res.PublicIP + ", to release it")
+			return ch, http.StatusBadRequest, errors.New("type the address, " + addressName(res) + ", to release it")
 		}
 		if res.State == "attached" {
-			return ch, http.StatusConflict, errors.New(res.PublicIP + " is attached; take it off first, which is its own change")
+			return ch, http.StatusConflict, errors.New(addressName(res) + " is attached; take it off first, which is its own change")
 		}
 		ch.Spec = json.RawMessage("{}")
-		if gcpAcct {
+		if azureAcct {
+			ch.Summary = "Delete the public address " + res.Name
+			if res.PublicIP != "" {
+				ch.Summary += " (" + res.PublicIP + ")"
+			}
+			ch.Summary += "; Azure takes the address back for good"
+		} else if gcpAcct {
 			ip := res.PublicIP
 			if ip == "" && len(res.Addresses) > 0 {
 				ip = res.Addresses[0]
@@ -737,11 +754,23 @@ func (a *API) launchedFrom(ctx context.Context, accountID, region, image string)
 }
 
 // addressWord is what a provider calls an address a VM keeps.
-func addressWord(gcpAcct bool) string {
-	if gcpAcct {
+func addressWord(provider string) string {
+	switch provider {
+	case "gcp":
 		return "static address"
+	case "azure":
+		return "public address"
 	}
 	return "Elastic IP"
+}
+
+// addressName is an address in a sentence: the address itself, or its name
+// where the cloud has not given it one yet.
+func addressName(r cloud.Resource) string {
+	if r.PublicIP != "" {
+		return r.PublicIP
+	}
+	return r.Name
 }
 
 func (a *API) addressOf(ctx context.Context, accountID, region, instance string) (string, bool) {
@@ -835,6 +864,9 @@ func (a *API) applyStorage(ctx context.Context, m cloudManaged, ch CloudChange) 
 	case cloud.ActionAddressAllocate:
 		var s cloudNameSpec
 		_ = json.Unmarshal(ch.Spec, &s)
+		if m.acct.Provider == "azure" {
+			return st.AllocateAddress(ctx, t, actor, region, azure.AddressRef(s.Group, s.Name))
+		}
 		return st.AllocateAddress(ctx, t, actor, region, s.Name)
 	case cloud.ActionAddressAssociate:
 		var s cloudAttachSpec

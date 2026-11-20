@@ -972,6 +972,8 @@ export const AZURE_ACTION_NEEDS: Partial<Record<CloudAction, string[]>> = {
   'volume-detach': ['Microsoft.Compute/virtualMachines/attachDetachDataDisks/action'],
   'volume-delete': ['Microsoft.Compute/disks/delete'],
   'snapshot-create': ['Microsoft.Compute/snapshots/write'], 'snapshot-delete': ['Microsoft.Compute/snapshots/delete'],
+  'address-allocate': ['Microsoft.Network/publicIPAddresses/write'], 'address-release': ['Microsoft.Network/publicIPAddresses/delete'],
+  'address-associate': ['Microsoft.Network/networkInterfaces/write'], 'address-disassociate': ['Microsoft.Network/networkInterfaces/write'],
 }
 
 /** Whether an account's manage role lacks what an action takes. */

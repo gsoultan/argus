@@ -25,7 +25,7 @@ to choose.
 // account, in Azure's own spelling: a new disk goes only into a group that
 // already holds something Argus can see.
 func (a *API) azureGroup(ctx context.Context, accountID, g string) (string, bool) {
-	for _, k := range []cloud.Kind{cloud.KindInstance, cloud.KindVolume, cloud.KindSnapshot, cloud.KindNetwork} {
+	for _, k := range []cloud.Kind{cloud.KindInstance, cloud.KindVolume, cloud.KindSnapshot, cloud.KindNetwork, cloud.KindAddress} {
 		items, err := a.store.CloudResources(ctx, k)
 		if err != nil {
 			return "", false
@@ -198,5 +198,32 @@ func (a *API) planAzureDiskGrow(ctx context.Context, m cloudManaged, in *cloudCh
 	}
 	ch.Spec, _ = json.Marshal(s)
 	ch.Summary = fmt.Sprintf("Grow %s from %d to %d GiB", res.Name, s.FromGB, s.SizeGB)
+	return ch, http.StatusOK, nil
+}
+
+// planAzureAddress plans a new public address: named, as Azure requires,
+// in a region and a resource group Argus has read something in.
+func (a *API) planAzureAddress(ctx context.Context, m cloudManaged, in *cloudChangeIn, s cloudNameSpec, ch CloudChange) (CloudChange, int, error) {
+	s.Group, s.Reboot = strings.TrimSpace(s.Group), false
+	if in.Region == "" || !slices.Contains(m.acct.Regions, in.Region) {
+		return ch, http.StatusBadRequest, errors.New("pick the region of the VMs the address is for")
+	}
+	if !azure.ValidAddressName(s.Name) {
+		return ch, http.StatusBadRequest, errors.New("name the address: letters, digits, . _ and -, up to 80, starting with a letter or digit")
+	}
+	if s.Group == "" {
+		return ch, http.StatusBadRequest, errors.New("pick the resource group to make the address in")
+	}
+	g, ok := a.azureGroup(ctx, m.acct.ID, s.Group)
+	if !ok {
+		return ch, http.StatusBadRequest, errors.New("Argus has read nothing in a resource group named " + s.Group + "; pick one it lists")
+	}
+	s.Group = g
+	if a.azureNamed(ctx, m.acct.ID, cloud.KindAddress, s.Group, s.Name) {
+		return ch, http.StatusConflict, errors.New("resource group " + s.Group + " already has a public address named " + s.Name)
+	}
+	ch.Spec, _ = json.Marshal(s)
+	ch.ResourceName = s.Name
+	ch.Summary = "Make the public address " + s.Name + " in " + in.Region + ", resource group " + s.Group
 	return ch, http.StatusOK, nil
 }
