@@ -1,6 +1,6 @@
 import {
   IconCirclePlus, IconClipboardCheck, IconCloud, IconDatabase, IconHistory, IconHome, IconInfoCircle, IconServer2, IconSettings, IconStack2,
-  IconUsersGroup,
+  IconUsersGroup, IconWorld,
   type IconProps,
 } from '@tabler/icons-react'
 import type { ComponentType } from 'react'
@@ -21,6 +21,8 @@ import type { UserRole } from '~/types/domain'
  *   next to Servers because people think "open orders", not "open core-db-01".
  * - **Cloud**: the connected AWS accounts and what is in them, and which
  *   instances have an Argus server. For whoever sees the whole fleet.
+ * - **Websites**: whether each site is up, and its uptime. For whoever sees
+ *   the whole fleet; admins add the addresses.
  * - **Approvals**: everything waiting on a person. Logins straight to a server
  *   that the rule holds, root asked for, and access asked for. It is a menu
  *   item of its own, with a count, because someone is waiting at a terminal.
@@ -83,6 +85,13 @@ export const NAV_ITEMS: NavItem[] = [
     label: 'Cloud',
     icon: IconCloud,
     blurb: 'AWS accounts: instances, disks and firewalls, and what has no Argus server',
+    audience: 'fleet',
+  },
+  {
+    to: '/websites',
+    label: 'Websites',
+    icon: IconWorld,
+    blurb: 'Is each website up, and its uptime; confirmed before anyone is told it is down',
     audience: 'fleet',
   },
   {

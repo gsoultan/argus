@@ -2274,7 +2274,7 @@ export async function controlUpdateBanner(): Promise<{ active: boolean; state?: 
 
 /* ── Console alerts (the bell) ──────────────────────────────────────────── */
 
-export type AlertKind = 'approval' | 'signin' | 'session' | 'security' | 'server' | 'backup' | 'data' | 'updates' | 'resources' | 'cloud'
+export type AlertKind = 'approval' | 'signin' | 'session' | 'security' | 'server' | 'backup' | 'data' | 'updates' | 'resources' | 'cloud' | 'website'
 
 /** One alert under the bell, as GET /api/v1/alerts returns it. */
 export interface ConsoleAlert {

@@ -22,6 +22,7 @@ import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as TeamsRouteImport } from './routes/teams'
 import { Route as UsersRouteImport } from './routes/users'
+import { Route as WebsitesRouteImport } from './routes/websites'
 import { Route as AssetsIndexRouteImport } from './routes/assets.index'
 import { Route as AssetsAssetIdRouteImport } from './routes/assets.$assetId'
 import { Route as AssetsAddRouteImport } from './routes/assets.add'
@@ -104,6 +105,11 @@ const TeamsRoute = TeamsRouteImport.update({
 const UsersRoute = UsersRouteImport.update({
   id: '/users',
   path: '/users',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WebsitesRoute = WebsitesRouteImport.update({
+  id: '/websites',
+  path: '/websites',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AssetsIndexRoute = AssetsIndexRouteImport.update({
@@ -211,6 +217,7 @@ export interface FileRoutesByFullPath {
   '/setup': typeof SetupRoute
   '/teams': typeof TeamsRoute
   '/users': typeof UsersRoute
+  '/websites': typeof WebsitesRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
   '/assets/add': typeof AssetsAddRoute
   '/assets/updates': typeof AssetsUpdatesRoute
@@ -244,6 +251,7 @@ export interface FileRoutesByTo {
   '/setup': typeof SetupRoute
   '/teams': typeof TeamsRoute
   '/users': typeof UsersRoute
+  '/websites': typeof WebsitesRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
   '/assets/add': typeof AssetsAddRoute
   '/assets/updates': typeof AssetsUpdatesRoute
@@ -278,6 +286,7 @@ export interface FileRoutesById {
   '/setup': typeof SetupRoute
   '/teams': typeof TeamsRoute
   '/users': typeof UsersRoute
+  '/websites': typeof WebsitesRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
   '/assets/add': typeof AssetsAddRoute
   '/assets/updates': typeof AssetsUpdatesRoute
@@ -313,6 +322,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/teams'
     | '/users'
+    | '/websites'
     | '/assets/$assetId'
     | '/assets/add'
     | '/assets/updates'
@@ -346,6 +356,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/teams'
     | '/users'
+    | '/websites'
     | '/assets/$assetId'
     | '/assets/add'
     | '/assets/updates'
@@ -379,6 +390,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/teams'
     | '/users'
+    | '/websites'
     | '/assets/$assetId'
     | '/assets/add'
     | '/assets/updates'
@@ -413,6 +425,7 @@ export interface RootRouteChildren {
   SetupRoute: typeof SetupRoute
   TeamsRoute: typeof TeamsRoute
   UsersRoute: typeof UsersRoute
+  WebsitesRoute: typeof WebsitesRoute
   AssetsAssetIdRoute: typeof AssetsAssetIdRoute
   AssetsAddRoute: typeof AssetsAddRoute
   AssetsUpdatesRoute: typeof AssetsUpdatesRoute
@@ -524,6 +537,13 @@ declare module '@tanstack/react-router' {
       path: '/users'
       fullPath: '/users'
       preLoaderRoute: typeof UsersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/websites': {
+      id: '/websites'
+      path: '/websites'
+      fullPath: '/websites'
+      preLoaderRoute: typeof WebsitesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/assets/': {
@@ -669,6 +689,7 @@ const rootRouteChildren: RootRouteChildren = {
   SetupRoute: SetupRoute,
   TeamsRoute: TeamsRoute,
   UsersRoute: UsersRoute,
+  WebsitesRoute: WebsitesRoute,
   AssetsAssetIdRoute: AssetsAssetIdRoute,
   AssetsAddRoute: AssetsAddRoute,
   AssetsUpdatesRoute: AssetsUpdatesRoute,

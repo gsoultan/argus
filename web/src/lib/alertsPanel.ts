@@ -31,6 +31,9 @@ export const ALERT_KINDS: { kind: AlertKind; label: string; description: string;
   { kind: 'cloud', label: 'Cloud',
     description: 'A Reserved Instance, Savings Plan or capacity reservation ends in 30 days, and again at 7. None renews by itself.',
     who: 'Admins, auditors' },
+  { kind: 'website', label: 'Websites',
+    description: 'A website you check is down, confirmed by retries, Argus\'s own network and the servers chosen for it, and when it is back up.',
+    who: 'Admins, auditors' },
 ]
 
 /* ── Fixture ─────────────────────────────────────────────────────────────── */

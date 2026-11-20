@@ -1442,3 +1442,61 @@ func _assertUserShape(m m0.User) {
 		m.PasswordExpiresAt,
 	}
 }
+
+// _assertWebsiteCheckShape fails to compile if m0.WebsiteCheck gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertWebsiteCheckShape(m m0.WebsiteCheck) {
+	type shape m0.WebsiteCheck
+	_ = shape{
+		m.Model,
+		m.Name,
+		m.URL,
+		m.ExpectStatus,
+		m.Keyword,
+		m.EverySeconds,
+		m.TimeoutSeconds,
+		m.ConfirmFrom,
+		m.Paused,
+		m.CreatedBy,
+		m.State,
+		m.StateSince,
+		m.FailingRounds,
+		m.LastAt,
+		m.LastMs,
+		m.LastStatus,
+		m.LastDetail,
+		m.LastOutcome,
+		m.CertNotAfter,
+		m.NextAt,
+		m.LeaseUntil,
+	}
+}
+
+// _assertWebsiteOutageShape fails to compile if m0.WebsiteOutage gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertWebsiteOutageShape(m m0.WebsiteOutage) {
+	type shape m0.WebsiteOutage
+	_ = shape{
+		m.ID,
+		m.Check,
+		m.StartedAt,
+		m.EndedAt,
+		m.Cause,
+		m.Confirmed,
+	}
+}
+
+// _assertWebsiteRoundShape fails to compile if m0.WebsiteRound gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertWebsiteRoundShape(m m0.WebsiteRound) {
+	type shape m0.WebsiteRound
+	_ = shape{
+		m.Check,
+		m.At,
+		m.Secs,
+		m.Outcome,
+		m.Ms,
+		m.Status,
+		m.Detail,
+	}
+}

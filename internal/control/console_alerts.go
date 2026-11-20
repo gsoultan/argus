@@ -42,10 +42,12 @@ const (
 	// AlertCloud is news about cloud accounts: reservations ending soon
 	// (cloud_reservation_alerts.go).
 	AlertCloud = "cloud"
+	// AlertWebsite is a website going down or coming back (websites.go).
+	AlertWebsite = "website"
 )
 
 // AlertKinds is every kind, in the order Settings lists them.
-var AlertKinds = []string{AlertApproval, AlertSignIn, AlertSession, AlertSecurity, AlertServer, AlertBackup, AlertData, AlertUpdates, AlertResources, AlertCloud}
+var AlertKinds = []string{AlertApproval, AlertSignIn, AlertSession, AlertSecurity, AlertServer, AlertBackup, AlertData, AlertUpdates, AlertResources, AlertCloud, AlertWebsite}
 
 // Alert audiences.
 const (

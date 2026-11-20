@@ -71,6 +71,9 @@ type Grant struct {
 	// Reach is the connection a reach check may make; nil for every other
 	// service.
 	Reach *GrantReach `json:"reach,omitempty"`
+	// Site is the website a website check may fetch; nil for every other
+	// service.
+	Site *GrantSite `json:"site,omitempty"`
 	// Logons is what a logons grant may ask; nil for every other service.
 	Logons *GrantLogons `json:"logons,omitempty"`
 	// Ask is who must be asked or told at a workstation before a terminal,

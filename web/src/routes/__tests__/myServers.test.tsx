@@ -210,15 +210,15 @@ describe('the menu follows the role', () => {
     expect(await menu()).toEqual(['Home', 'Assets', 'Databases', 'Brokers', 'Approvals', 'My activity'])
   })
 
-  it('shows an administrator the eight', async () => {
+  it('shows an administrator the whole menu', async () => {
     signedInAs('admin')
     await renderRoute('/assets')
-    expect(await menu()).toEqual(['Home', 'Assets', 'Databases', 'Brokers', 'Cloud', 'Approvals', 'Teams', 'Activity', 'Settings'])
+    expect(await menu()).toEqual(['Home', 'Assets', 'Databases', 'Brokers', 'Cloud', 'Websites', 'Approvals', 'Teams', 'Activity', 'Settings'])
   })
 
   it.each([
     ['/assets/add', 'auditor'], ['/audit', 'operator'], ['/settings', 'operator'],
-    ['/teams', 'operator'], ['/assets/id-web-01', 'operator'],
+    ['/teams', 'operator'], ['/assets/id-web-01', 'operator'], ['/websites', 'operator'],
   ] as const)('sends %s to Assets for an %s', async (path, role) => {
     signedInAs(role)
     await renderRoute(path)

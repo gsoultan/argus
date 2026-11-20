@@ -381,6 +381,13 @@ func runDaemon(args []string) int {
 			Verifier: &tunnel.GrantVerifier{Host: hostname},
 			Log:      log,
 		})
+		// Is a website up from here: the second opinion argus-control asks
+		// for before it calls a site down.
+		services[agent.SiteCheckService] = agent.SiteCheck(agent.SiteCheckConfig{
+			Verifier: &tunnel.GrantVerifier{Host: hostname},
+			Log:      log,
+			Version:  version,
+		})
 		services[agent.RedisService] = agent.Redis(agent.StoreConfig{
 			Verifier:   &tunnel.GrantVerifier{Host: hostname},
 			RecordDir:  *dir,
