@@ -167,7 +167,9 @@ function Launch() {
   const maxExtra = gcp ? 65536 : azure ? 32767 : 16384
   const disksOk = extraDisks.every((g) => g >= (gcp ? 10 : 1) && g <= maxExtra)
   const approval = o?.needsApproval ?? false
-  const ready = account && region && nameOk && img && size && disk >= minDisk && disksOk && count >= 1 && count <= MAX_COUNT && sub &&
+  // Azure has no Spot capacity for its burstable B-series sizes.
+  const spotSizeOk = !(azure && spot && /^standard_b/i.test(size ?? ''))
+  const ready = account && region && nameOk && img && size && disk >= minDisk && disksOk && count >= 1 && count <= MAX_COUNT && sub && spotSizeOk &&
     (gcp ? Boolean(zone) : azure ? Boolean(group) && img.linux : firewalls.length > 0) &&
     (!agent || !o?.agentProblem) && (!approval || reason.trim().length >= 5)
   const exposed = groups.filter((g) => firewalls.includes(g.resource.id) && openToInternet(g.resource).length > 0)
@@ -178,7 +180,7 @@ function Launch() {
         accountId: accountId!, region: region!, action: 'launch', reason,
         spec: {
           name: host, image, size, diskGb: disk, subnet, firewalls, publicIp, protect: protect && !spot && !azure, agent, ...(vm && zone ? { zone } : {}), ...(azure && group ? { group } : {}),
-          ...(count > 1 ? { count } : {}), ...(extraDisks.length ? { extraDisks } : {}), ...(spot && !azure ? { spot } : {}),
+          ...(count > 1 ? { count } : {}), ...(extraDisks.length ? { extraDisks } : {}), ...(spot ? { spot } : {}),
           ...(room ? { capacityReservation: room.resource.id } : {}),
           ...(schedule ? { tags: { [SCHEDULE_TAG]: schedule } } : {}),
         },
@@ -313,10 +315,13 @@ function Launch() {
                   <Button size="xs" variant="default" w="fit-content" leftSection={<IconPlus size={14} />} onClick={() => setExtraDisks((ds) => [...ds, 100])}>Add a disk</Button>
                 )}
               </Stack>
-              {!azure && <Switch mt="md" checked={spot} onChange={(e) => setSpot(e.currentTarget.checked)} label="Use Spot capacity"
-                description={gcp
+              <Switch mt="md" checked={spot} onChange={(e) => setSpot(e.currentTarget.checked)} label="Use Spot capacity"
+                description={azure
+                  ? 'Azure\'s spare capacity, often far cheaper, but Azure can take it back with thirty seconds\' notice. The VM is then stopped, not deleted: its disks and address stay and are still billed, and it can be started again once Azure has room. Suits work that can stop and start again; not a database.'
+                  : gcp
                   ? 'Google\'s spare capacity, often far cheaper, but Google can take it back with thirty seconds\' notice and the VM is then deleted. Suits work that can stop and start again; not a database.'
-                  : 'AWS\'s spare capacity, often far cheaper, but AWS can take it back with two minutes\' notice and the instance is then terminated. Suits work that can stop and start again; not a database.'} />}
+                  : 'AWS\'s spare capacity, often far cheaper, but AWS can take it back with two minutes\' notice and the instance is then terminated. Suits work that can stop and start again; not a database.'} />
+              {!spotSizeOk && <Text size={FS.meta} c={INK.denied} mt="xs">Azure has no Spot capacity for B-series sizes like {size}. Pick another size, or turn Spot off.</Text>}
               {!vm && rooms.length > 0 && (
                 <Select mt="md" label="Capacity reservation" placeholder="None, wherever AWS has room" clearable disabled={spot}
                   value={room ? capacity : null} onChange={setCapacity} data-testid="launch-capacity"
@@ -408,7 +413,7 @@ function Launch() {
               <Row k="Type" v={size} mono />
               <Row k="Disk" v={gcp ? `${disk} GB balanced` : azure ? `${disk} GB Standard SSD` : `${disk} GB gp3, encrypted`} />
               {extraDisks.length > 0 && <Row k="More disks" v={extraDisks.map((g) => `${g} GB`).join(', ')} />}
-              {spot && !azure && <Row k="Capacity" v="Spot" />}
+              {spot && <Row k="Capacity" v="Spot" />}
               {room && <Row k="Capacity" v={`Reserved, ${room.resource.name}`} />}
               <Row k="Subnet" v={sub ? `${sub.resource.name} (${azure ? zone ?? 'no zone' : gcp ? zone ?? '' : sub.resource.zone ?? ''})` : undefined} />
               <Row k={gcp ? 'Firewall rules' : azure ? 'Security group' : 'Security groups'} v={azure && !firewalls.length ? 'The subnet\'s only' : firewalls.length ? groups.filter((g) => firewalls.includes(g.resource.id)).map((g) => g.resource.name).join(', ') : undefined} />

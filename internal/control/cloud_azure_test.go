@@ -696,7 +696,7 @@ func TestCloudAzureSubscriptionLaunchesAVM(t *testing.T) {
 	ask(base+`"name":"api-1","group":"Web-RG","zone":"westeurope-1"`, bad, "pick a zone of eastus, or none")
 	ask(base+`"name":"api-1","group":"Web-RG","firewalls":["`+nsg+`","`+nsg2+`"]`, bad, "takes one network security group")
 	ask(base+`"name":"api-1","group":"Web-RG","diskGb":8`, bad, "the boot disk is 30 to")
-	ask(base+`"name":"api-1","group":"Web-RG","spot":true`, bad, "Spot")
+	ask(base+`"name":"api-1","group":"Web-RG","spot":true`, bad, "no Spot capacity for B-series sizes like Standard_B2s")
 	ask(base+`"name":"api-1","group":"Web-RG","tags":{"Microsoft-x":"y"}`, bad, "cannot be a tag")
 	ask(`"image":"ami-ubuntu","size":"t3.medium","subnet":"web-rg/main/web","agent":false,"name":"api-1","group":"Web-RG"`, bad, "pick a VM size")
 	ask(`"image":"ami-ubuntu","size":"Standard_B2s","subnet":"nope","agent":false,"name":"api-1","group":"Web-RG"`, bad, "pick a subnet in eastus")
@@ -708,8 +708,14 @@ func TestCloudAzureSubscriptionLaunchesAVM(t *testing.T) {
 	}
 	// Asked for or not, a launch never asks Azure for a lock.
 	if fake.LastLaunch.Protect || fake.LastLaunch.Group != "Web-RG" || fake.LastLaunch.Zone != "eastus-2" || fake.LastLaunch.DiskGB != 30 ||
-		fake.LastLaunch.Tags["argus:launched-by"] != e.admin {
+		fake.LastLaunch.Tags["argus:launched-by"] != e.admin || fake.LastLaunch.Spot {
 		t.Fatalf("what was launched: %+v", fake.LastLaunch)
+	}
+	// A Spot VM, of a size Azure has Spot capacity for, says what happens
+	// to it when Azure takes the capacity back.
+	ch = ask(`"image":"ami-ubuntu","size":"Standard_D2s_v5","subnet":"web-rg/main/web","agent":false,"name":"batch-1","group":"Web-RG","spot":true`, http.StatusOK, "")
+	if ch.State != "applied" || !strings.Contains(ch.Summary, ", as Spot: Azure stops it when it takes the capacity back") || !fake.LastLaunch.Spot || fake.LastLaunch.Protect {
+		t.Fatalf("spot launch: %+v / %+v", ch, fake.LastLaunch)
 	}
 }
 
