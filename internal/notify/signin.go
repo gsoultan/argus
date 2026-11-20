@@ -3,6 +3,7 @@ package notify
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"html"
 	"html/template"
@@ -576,6 +577,36 @@ func (n *SignInNotifier) toAdmins(m Rendered, to []string, platform bool, what s
 		}})
 	}
 }
+
+// TelegramChats are the chats Telegram is set up for; nil when it is not.
+func (n *SignInNotifier) TelegramChats() []string {
+	if n == nil || n.telegram == nil {
+		return nil
+	}
+	return n.telegram.ChatIDs()
+}
+
+// TelegramTo queues an HTML message to some of the configured chats (empty
+// is all), for a feature that chooses its own: website checks.
+func (n *SignInNotifier) TelegramTo(chats []string, text, linkLabel, link, what string) {
+	if n == nil || n.telegram == nil {
+		return
+	}
+	n.enqueue(signInJob{what: what + " to telegram", send: func(ctx context.Context) error {
+		return n.telegram.SendHTMLTo(ctx, chats, text, linkLabel, link)
+	}})
+}
+
+// TelegramNow sends at once and says how it went, for a Test button.
+func (n *SignInNotifier) TelegramNow(ctx context.Context, chats []string, text, linkLabel, link string) error {
+	if n == nil || n.telegram == nil {
+		return errors.New("Telegram is not set up: add a bot under Settings, Alerts")
+	}
+	return n.telegram.SendHTMLTo(ctx, chats, text, linkLabel, link)
+}
+
+// TelegramHTML escapes s for a Telegram HTML message.
+func TelegramHTML(s string) string { return escapeHTML(s) }
 
 func dedupeFold(in []string) []string {
 	seen := make(map[string]bool, len(in))

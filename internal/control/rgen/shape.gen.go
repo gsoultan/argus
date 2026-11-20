@@ -1443,6 +1443,19 @@ func _assertUserShape(m m0.User) {
 	}
 }
 
+// _assertWebsiteAlertSettingShape fails to compile if m0.WebsiteAlertSetting gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertWebsiteAlertSettingShape(m m0.WebsiteAlertSetting) {
+	type shape m0.WebsiteAlertSetting
+	_ = shape{
+		m.ID,
+		m.Telegram,
+		m.TelegramChats,
+		m.UpdatedBy,
+		m.UpdatedAt,
+	}
+}
+
 // _assertWebsiteCheckShape fails to compile if m0.WebsiteCheck gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertWebsiteCheckShape(m m0.WebsiteCheck) {
@@ -1457,6 +1470,8 @@ func _assertWebsiteCheckShape(m m0.WebsiteCheck) {
 		m.TimeoutSeconds,
 		m.ConfirmFrom,
 		m.Paused,
+		m.Telegram,
+		m.TelegramChats,
 		m.CreatedBy,
 		m.State,
 		m.StateSince,

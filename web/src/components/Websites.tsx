@@ -4,17 +4,17 @@ import {
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { IconPlus, IconRefresh, IconShieldCheck, IconWorld } from '@tabler/icons-react'
+import { IconBrandTelegram, IconPlus, IconRefresh, IconShieldCheck, IconWorld } from '@tabler/icons-react'
 import { useMemo, useState } from 'react'
 import { DataTable, EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page'
 import { assetName } from '~/lib/assetType'
 import { isConfigured } from '~/lib/live'
-import { run } from '~/lib/notify'
+import { notifyOk, run } from '~/lib/notify'
 import { assetsQuery, meQuery } from '~/lib/queries'
 import {
-  ago, certDaysLeft, formatDuration, formatUptime, outageMinutes, sliceRounds, stateLabel, testWebsite, useAddWebsite,
+  ago, certDaysLeft, testWebsiteAlert, useSetWebsiteSettings, websiteSettingsQuery, formatDuration, formatUptime, outageMinutes, sliceRounds, stateLabel, testWebsite, useAddWebsite,
   useChangeWebsite, useCheckWebsiteNow, useRemoveWebsite, websiteQuery, websitesQuery,
-  type SiteResult, type WebsiteCheck, type WebsiteInput, type WebsiteRound,
+  type SiteResult, type TelegramChoice, type WebsiteAlertSettings, type WebsiteCheck, type WebsiteInput, type WebsiteRound,
 } from '~/lib/websites'
 import { FS, SP } from '~/theme'
 
@@ -32,6 +32,7 @@ export function WebsitesPage({ openId }: { openId?: string }) {
   const canEdit = me?.role === 'admin' || me?.role === 'owner'
   const { data: list, isLoading, error } = useQuery({ ...websitesQuery(), enabled: isConfigured() })
   const [editing, setEditing] = useState<WebsiteCheck | 'new' | null>(null)
+  const [alerting, setAlerting] = useState(false)
   const open = (id?: string) => void navigate({ to: '/websites', search: id ? { check: id } : {}, replace: true })
 
   const down = list?.filter((c) => !c.paused && c.state === 'down').length ?? 0
@@ -48,7 +49,10 @@ export function WebsitesPage({ openId }: { openId?: string }) {
             : <Badge color="teal" variant="light">{up} up</Badge>
         ) : undefined}
         actions={canEdit && isConfigured() ? (
-          <Button leftSection={<IconPlus size={14} />} onClick={() => setEditing('new')}>Add website</Button>
+          <>
+            <Button variant="default" leftSection={<IconBrandTelegram size={14} />} onClick={() => setAlerting(true)}>Telegram alerts</Button>
+            <Button leftSection={<IconPlus size={14} />} onClick={() => setEditing('new')}>Add website</Button>
+          </>
         ) : undefined}
       />
       <PageBody>
@@ -77,6 +81,7 @@ export function WebsitesPage({ openId }: { openId?: string }) {
         <WebsiteDrawer id={openId} canEdit={canEdit} onClose={() => open()}
           onEdit={(c) => setEditing(c)} />
       )}
+      {alerting && <AlertSettings onClose={() => setAlerting(false)} />}
       {editing && (
         <WebsiteForm check={editing === 'new' ? undefined : editing} onClose={() => setEditing(null)}
           onSaved={(c) => { setEditing(null); open(c.id) }} />
@@ -154,6 +159,7 @@ function WebsiteDrawer({ id, canEdit, onClose, onEdit }: {
   const checkNow = useCheckWebsiteNow()
   const remove = useRemoveWebsite()
   const change = useChangeWebsite()
+  const [testingAlert, setTestingAlert] = useState(false)
   const c = data?.check
   const cert = certDaysLeft(c?.certNotAfter)
 
@@ -219,6 +225,9 @@ function WebsiteDrawer({ id, canEdit, onClose, onEdit }: {
               <Text size={FS.body}>{c.confirmHosts.length > 0
                 ? `Before calling it down, Argus asks ${c.confirmHosts.join(', ')} to check too.`
                 : 'Only Argus checks it. Choose servers to confirm from, so a problem on Argus\'s side is never called the site being down.'}</Text>
+              <Text size={FS.body}>{c.telegram === 'off' ? 'Alerts go to the bell only, not Telegram.'
+                : c.telegram === 'chats' ? `Alerts go to the bell and to Telegram chat${c.telegramChats.length === 1 ? '' : 's'} ${c.telegramChats.join(', ')}.`
+                : 'Alerts go to the bell and to Telegram as the Websites alert setting says.'}</Text>
             </Stack>
           </Box>
 
@@ -228,6 +237,17 @@ function WebsiteDrawer({ id, canEdit, onClose, onEdit }: {
                 loading={checkNow.isPending}
                 onClick={() => void run(() => checkNow.mutateAsync(c.id), { failure: 'Not checked', success: ['Checking', 'The result shows here in a few seconds.'] })}>
                 Check now
+              </Button>
+              <Button size="xs" variant="default" leftSection={<IconBrandTelegram size={14} />} disabled={c.telegram === 'off'}
+                loading={testingAlert}
+                onClick={() => {
+                  setTestingAlert(true)
+                  void run(async () => {
+                    const r = await testWebsiteAlert(c.id)
+                    notifyOk('Sent', `A test alert went to Telegram chat${r.chats.length === 1 ? '' : 's'} ${r.chats.join(', ')}.`)
+                  }, { failure: 'Test alert not sent' }).finally(() => setTestingAlert(false))
+                }}>
+                Send test alert
               </Button>
               <Button size="xs" variant="default" onClick={() => onEdit(c)}>Edit</Button>
               <Button size="xs" variant="default" loading={change.isPending}
@@ -346,10 +366,11 @@ function inputOf(c: WebsiteCheck): WebsiteInput {
   return {
     name: c.name, url: c.url, expectStatus: c.expectStatus, keyword: c.keyword, everySeconds: c.everySeconds,
     timeoutSeconds: c.timeoutSeconds, confirmFrom: c.confirmFrom, paused: c.paused,
+    telegram: c.telegram, telegramChats: c.telegramChats,
   }
 }
 
-const BLANK: WebsiteInput = { name: '', url: '', expectStatus: 0, keyword: '', everySeconds: 60, timeoutSeconds: 30, confirmFrom: [], paused: false }
+const BLANK: WebsiteInput = { name: '', url: '', expectStatus: 0, keyword: '', everySeconds: 60, timeoutSeconds: 30, confirmFrom: [], paused: false, telegram: 'default', telegramChats: [] }
 
 function WebsiteForm({ check, onClose, onSaved }: { check?: WebsiteCheck; onClose: () => void; onSaved: (c: WebsiteCheck) => void }) {
   const [v, setV] = useState<WebsiteInput>(check ? inputOf(check) : BLANK)
@@ -390,6 +411,8 @@ function WebsiteForm({ check, onClose, onSaved }: { check?: WebsiteCheck; onClos
           <TextInput label="Page must contain" placeholder="Optional word or phrase" value={v.keyword} maxLength={200}
             onChange={(e) => set('keyword', e.currentTarget.value)} />
         </SimpleGrid>
+        <TelegramFields value={v.telegram} chats={v.telegramChats}
+          onChange={(telegram, telegramChats) => setV((p) => ({ ...p, telegram, telegramChats }))} />
         {check && (
           <Switch label="Paused: not checked, and no alerts" checked={v.paused} onChange={(e) => set('paused', e.currentTarget.checked)} />
         )}
@@ -421,6 +444,74 @@ function WebsiteForm({ check, onClose, onSaved }: { check?: WebsiteCheck; onClos
           </Group>
         </Group>
       </Stack>
+    </Modal>
+  )
+}
+
+/* ── Telegram ────────────────────────────────────────────────────────────── */
+
+/** One site's Telegram choice: follow the Websites setting, off, or its own chats. */
+function TelegramFields({ value, chats, onChange }: {
+  value: TelegramChoice; chats: string[]; onChange: (v: TelegramChoice, chats: string[]) => void
+}) {
+  const { data: set } = useQuery(websiteSettingsQuery())
+  const options = Array.from(new Set([...(set?.chats ?? []), ...chats]))
+  return (
+    <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+      <Select label="Telegram" allowDeselect={false} value={value}
+        data={[
+          { value: 'default', label: set && !set.unavailable ? `As the Websites setting (${describeFeature(set)})` : 'As the Websites setting' },
+          { value: 'chats', label: 'Only these chats' },
+          { value: 'off', label: 'Off: bell only' },
+        ]}
+        onChange={(x) => onChange((x ?? 'default') as TelegramChoice, x === 'chats' ? (chats.length ? chats : options.slice(0, 1)) : [])}
+        description={set?.unavailable ?? 'Down and back-up alerts for this site.'} />
+      {value === 'chats' && (
+        <MultiSelect label="Chats" data={options} value={chats} onChange={(x) => onChange('chats', x)}
+          description="Chats set up under Settings, Alerts." />
+      )}
+    </SimpleGrid>
+  )
+}
+
+function describeFeature(s: WebsiteAlertSettings): string {
+  if (!s.telegram) return 'off'
+  return s.telegramChats.length ? s.telegramChats.join(', ') : 'every chat'
+}
+
+/** The Websites feature's own alert setting: Telegram on or off, and to which chats. */
+function AlertSettings({ onClose }: { onClose: () => void }) {
+  const { data: set, isLoading } = useQuery(websiteSettingsQuery())
+  const save = useSetWebsiteSettings()
+  const [on, setOn] = useState<boolean | null>(null)
+  const [chats, setChats] = useState<string[] | null>(null)
+  const telegram = on ?? set?.telegram ?? true
+  const chosen = chats ?? set?.telegramChats ?? []
+  return (
+    <Modal opened onClose={onClose} title="Website alerts">
+      {isLoading || !set ? <Skeleton h={160} /> : (
+        <Stack gap="sm">
+          <Text size={FS.body} c="dimmed">
+            Every admin sees website alerts in the bell. This decides which go to Telegram too. A site can follow this, turn Telegram off, or choose its own chats when you edit it.
+          </Text>
+          {set.unavailable && <Alert color="amber" variant="light"><Text size={FS.body}>{set.unavailable}.</Text></Alert>}
+          <Switch label="Send website alerts to Telegram" checked={telegram} disabled={Boolean(set.unavailable)}
+            onChange={(e) => setOn(e.currentTarget.checked)} />
+          <MultiSelect label="Chats" placeholder={chosen.length ? undefined : 'Every chat set up in Settings'}
+            data={set.chats} value={chosen} onChange={setChats} disabled={!telegram || Boolean(set.unavailable)} clearable
+            description="Leave empty for every chat set up under Settings, Alerts." />
+          <Group justify="flex-end" mt="xs">
+            <Button variant="default" onClick={onClose}>Cancel</Button>
+            <Button loading={save.isPending}
+              onClick={() => void run(() => save.mutateAsync({ telegram, telegramChats: chosen }), {
+                failure: 'Not saved',
+                success: ['Saved', telegram ? `Website alerts go to ${chosen.length ? chosen.join(', ') : 'every Telegram chat'}.` : 'Website alerts go to the bell only, unless a site chose its own chats.'],
+              }).then((ok) => { if (ok) onClose() })}>
+              Save
+            </Button>
+          </Group>
+        </Stack>
+      )}
     </Modal>
   )
 }

@@ -1473,6 +1473,7 @@ func All() []any {
 		&WebsiteCheck{},
 		&WebsiteRound{},
 		&WebsiteOutage{},
+		&WebsiteAlertSetting{},
 		&Team{},
 		&TeamMember{},
 		&UsageHistory{},
@@ -2517,6 +2518,8 @@ type WebsiteCheck struct {
 	TimeoutSeconds int32
 	ConfirmFrom    [][16]byte
 	Paused         bool
+	Telegram       string
+	TelegramChats  []string
 	CreatedBy      string
 	State          string
 	StateSince     *time.Time
@@ -2538,6 +2541,8 @@ func (m *WebsiteCheck) Schema(t *storm.Table) {
 	t.Col(&m.TimeoutSeconds).Default("30")
 	t.Col(&m.ConfirmFrom).Default("'{}'::uuid[]")
 	t.Col(&m.Paused).Default("false")
+	t.Col(&m.Telegram).Default("'default'::text")
+	t.Col(&m.TelegramChats).Default("'{}'::text[]")
 	t.Col(&m.State).Default("'pending'::text")
 	t.Col(&m.FailingRounds).Default("0")
 	t.Col(&m.LastDetail).Default("''::text")
@@ -2549,6 +2554,8 @@ func (m *WebsiteCheck) Schema(t *storm.Table) {
 	t.CheckNamed("website_checks_keyword_check", "length(keyword) <= 200")
 	t.CheckNamed("website_checks_name_check", "(length(name) >= 1) AND (length(name) <= 100)")
 	t.CheckNamed("website_checks_state_check", "state = ANY (ARRAY['pending'::text, 'up'::text, 'down'::text, 'unknown'::text])")
+	t.CheckNamed("website_checks_telegram_chats_check", "cardinality(telegram_chats) <= 20")
+	t.CheckNamed("website_checks_telegram_check", "telegram = ANY (ARRAY['default'::text, 'off'::text, 'chats'::text])")
 	t.CheckNamed("website_checks_timeout_seconds_check", "(timeout_seconds >= 5) AND (timeout_seconds <= 60)")
 	t.CheckNamed("website_checks_url_check", "(length(url) >= 1) AND (length(url) <= 2000)")
 	t.Index(&m.NextAt).Where("NOT paused").Named("website_checks_due")
@@ -2593,4 +2600,25 @@ func (m *WebsiteOutage) Schema(t *storm.Table) {
 	t.Col(&m.Confirmed).Default("''::text")
 	t.Index(&m.Check, storm.Desc(&m.StartedAt)).Named("website_outages_check")
 	t.Index(&m.Check).Unique().Where("ended_at IS NULL").Named("website_outages_open")
+}
+
+// WebsiteAlertSetting is table website_alert_settings: the Websites
+// feature's Telegram choice.
+type WebsiteAlertSetting struct {
+	ID            bool
+	Telegram      bool
+	TelegramChats []string
+	UpdatedBy     string
+	UpdatedAt     time.Time
+}
+
+func (m *WebsiteAlertSetting) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("true")
+	t.Col(&m.Telegram).Default("true")
+	t.Col(&m.TelegramChats).Default("'{}'::text[]")
+	t.Col(&m.UpdatedBy).Default("''::text")
+	t.Col(&m.UpdatedAt).Default("now()")
+	t.CheckNamed("website_alert_settings_id_check", "id")
+	t.CheckNamed("website_alert_settings_telegram_chats_check", "cardinality(telegram_chats) <= 20")
 }

@@ -15,6 +15,7 @@ const ago = (m: number) => new Date(now - m * 60_000).toISOString()
 const base = {
   expectStatus: 0, keyword: '', everySeconds: 60, timeoutSeconds: 30, paused: false, createdBy: 'dev@northwind.id',
   createdAt: ago(60 * 24 * 40), failingRounds: 0, lastOutcome: 'up', confirmFrom: [] as string[], confirmHosts: [] as string[],
+  telegram: 'default', telegramChats: [] as string[],
 }
 
 const LIST = [
@@ -24,7 +25,7 @@ const LIST = [
     uptime: { day: 100, week: 99.98, month: 99.95 } },
   { ...base, id: 'w2', name: 'Payments API', url: 'https://pay.northwind.id/v1/ping', state: 'down', stateSince: ago(7),
     lastAt: ago(0.4), lastMs: 30_000, lastDetail: 'no answer in 30s (3 tries from Argus; also failed from web-sg-01)',
-    confirmFrom: ['a1'], confirmHosts: ['web-sg-01'],
+    confirmFrom: ['a1'], confirmHosts: ['web-sg-01'], telegram: 'chats', telegramChats: ['-100payments'],
     uptime: { day: 99.51, week: 99.93, month: 99.97 },
     openOutage: { id: 9, checkId: 'w2', startedAt: ago(7), cause: 'no answer in 30s', confirmed: 'Argus, web-sg-01' } },
   { ...base, id: 'w3', name: 'Docs', url: 'https://docs.northwind.id', state: 'up', stateSince: ago(60 * 3),
@@ -55,9 +56,13 @@ const DETAIL = {
   ],
 }
 
+const SETTINGS = { telegram: true, telegramChats: ['-100ops'], chats: ['-100ops', '-100payments', '-100oncall'] }
+
 async function signIn(page: Page) {
   await page.route('**/api/v1/websites', (r) => r.fulfill({ json: LIST }))
   await page.route('**/api/v1/websites/w2', (r) => r.fulfill({ json: DETAIL }))
+  await page.route('**/api/v1/websites/settings', (r) => r.fulfill({ json: SETTINGS }))
+  await page.route('**/api/v1/websites/w2/test-alert', (r) => r.fulfill({ json: { chats: ['-100payments'] } }))
   await page.route('**/api/v1/websites/test', (r) => r.fulfill({ json: { ok: true, status: 200, detail: 'answered 200 OK', ms: 211 } }))
   await page.goto('/')
   await page.getByLabel(/^email$/i).fill('dev@northwind.id')
@@ -91,7 +96,30 @@ test('websites: state, uptime, and how sure down is', async ({ page }) => {
   await expect(drawer.getByText('Confirmed by Argus, web-sg-01').first()).toBeVisible()
   await expect(drawer.getByText('12 min')).toBeVisible()
   await expect(drawer.getByText(/asks web-sg-01 to check too/)).toBeVisible()
+  await expect(drawer.getByText(/Telegram chat -100payments/)).toBeVisible()
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/02-website-down.png` })
+  await drawer.getByRole('button', { name: 'Send test alert' }).click()
+  await expect(page.getByText(/A test alert went to Telegram chat -100payments/)).toBeVisible()
+})
+
+test('websites: Telegram for the whole feature and for one site', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1100 })
+  await signIn(page)
+  await page.goto('/websites')
+  await page.getByRole('button', { name: 'Telegram alerts' }).click()
+  const modal = page.getByRole('dialog', { name: 'Website alerts' })
+  await expect(modal.getByLabel('Send website alerts to Telegram')).toBeChecked()
+  await expect(modal.getByText('-100ops')).toBeVisible()
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/05-website-alerts.png` })
+  await modal.getByRole('button', { name: 'Cancel' }).click()
+
+  await page.getByRole('button', { name: 'Add website' }).first().click()
+  const form = page.getByRole('dialog')
+  await expect(form.getByLabel('Telegram', { exact: true })).toHaveValue('As the Websites setting (-100ops)')
+  await form.getByLabel('Telegram', { exact: true }).click()
+  await page.getByRole('option', { name: 'Only these chats' }).click()
+  await expect(form.getByText('Chats set up under Settings, Alerts.')).toBeVisible()
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/06-website-telegram.png` })
 })
 
 test('websites: adding one, with a test first', async ({ page }) => {

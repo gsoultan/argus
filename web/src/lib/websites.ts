@@ -42,6 +42,9 @@ export interface WebsiteCheck {
   confirmFrom: string[]
   confirmHosts: string[]
   paused: boolean
+  /** default follows the Websites setting; off sends none; chats sends to telegramChats. */
+  telegram: TelegramChoice
+  telegramChats: string[]
   createdBy: string
   createdAt: string
   state: WebsiteState
@@ -82,6 +85,22 @@ export interface WebsiteInput {
   timeoutSeconds: number
   confirmFrom: string[]
   paused: boolean
+  telegram: TelegramChoice
+  telegramChats: string[]
+}
+
+export type TelegramChoice = 'default' | 'off' | 'chats'
+
+/** The Websites feature's Telegram setting, and the chats Settings set up. */
+export interface WebsiteAlertSettings {
+  telegram: boolean
+  /** Empty is every configured chat. */
+  telegramChats: string[]
+  updatedBy?: string
+  updatedAt?: string
+  chats: string[]
+  /** Why Telegram cannot be used here; absent when it can. */
+  unavailable?: string
 }
 
 /** One fetch, as the Test button gets it back. */
@@ -123,6 +142,15 @@ export const useRemoveWebsite = () =>
 
 export const useCheckWebsiteNow = () =>
   useWebsiteMutation((id: string) => send<void>('POST', `/api/v1/websites/${encodeURIComponent(id)}/check`))
+
+export const websiteSettingsQuery = () =>
+  queryOptions({ queryKey: [...key, 'settings'] as const, queryFn: () => get<WebsiteAlertSettings>('/api/v1/websites/settings') })
+
+export const useSetWebsiteSettings = () =>
+  useWebsiteMutation((v: { telegram: boolean; telegramChats: string[] }) => send<WebsiteAlertSettings>('PUT', '/api/v1/websites/settings', v))
+
+export const testWebsiteAlert = (id: string) =>
+  send<{ chats: string[] }>('POST', `/api/v1/websites/${encodeURIComponent(id)}/test-alert`)
 
 export const testWebsite = (in_: WebsiteInput) => send<SiteResult>('POST', '/api/v1/websites/test', in_)
 

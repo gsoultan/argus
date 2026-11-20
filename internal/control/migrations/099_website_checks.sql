@@ -13,6 +13,11 @@ CREATE TABLE IF NOT EXISTS website_checks (
     -- The servers whose agents are asked for a second opinion, by asset id.
     confirm_from    UUID[] NOT NULL DEFAULT '{}' CHECK (cardinality(confirm_from) <= 3),
     paused          BOOLEAN NOT NULL DEFAULT false,
+    -- Telegram for this site: default follows the Websites setting, off
+    -- sends none, chats sends to telegram_chats (some of the configured
+    -- chats; the bot never posts anywhere else).
+    telegram        TEXT NOT NULL DEFAULT 'default' CHECK (telegram IN ('default', 'off', 'chats')),
+    telegram_chats  TEXT[] NOT NULL DEFAULT '{}' CHECK (cardinality(telegram_chats) <= 20),
     created_by      TEXT NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -67,6 +72,16 @@ CREATE TABLE IF NOT EXISTS website_outages (
 CREATE INDEX IF NOT EXISTS website_outages_check ON website_outages (check_id, started_at DESC);
 -- At most one open outage per check.
 CREATE UNIQUE INDEX IF NOT EXISTS website_outages_open ON website_outages (check_id) WHERE ended_at IS NULL;
+
+-- The Websites feature's alert settings, one row; missing is Telegram on,
+-- to every configured chat.
+CREATE TABLE IF NOT EXISTS website_alert_settings (
+    id             BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
+    telegram       BOOLEAN NOT NULL DEFAULT TRUE,
+    telegram_chats TEXT[]  NOT NULL DEFAULT '{}' CHECK (cardinality(telegram_chats) <= 20),
+    updated_by     TEXT    NOT NULL DEFAULT '',
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 -- Website news gets its own kind in the bell, so people can filter and mute it.
 ALTER TABLE console_alerts DROP CONSTRAINT IF EXISTS console_alerts_kind_check;
