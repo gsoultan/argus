@@ -394,7 +394,17 @@ func (c *Collector) Listen(path string) error {
 			c.log.Error("accept failed", "error", err)
 			continue
 		}
+		// Counted under the lock that closing is set under, as the tunnel
+		// and desktop sessions are: an Add racing CloseWithin's Wait is a
+		// data race, and a connection accepted after the close is dropped.
+		c.mu.Lock()
+		if c.closing {
+			c.mu.Unlock()
+			_ = conn.Close()
+			return nil
+		}
 		c.wg.Add(1)
+		c.mu.Unlock()
 		c.trackConn(conn)
 		go func() {
 			defer c.wg.Done()
