@@ -1,5 +1,5 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderRoute } from '~/test/renderRoute'
 import { api } from '~/lib/api'
 import { EPOCH, assets, currentUser } from '~/lib/seed'
@@ -42,6 +42,8 @@ function signedInAs(role: User['role'], list: Asset[] = MINE, approved: AccessRe
 
 afterEach(() => {
   vi.restoreAllMocks()
+  // A layout choice one test made must not reach the next.
+  localStorage.clear()
 })
 
 describe('the servers someone can reach', () => {
@@ -49,7 +51,8 @@ describe('the servers someone can reach', () => {
     signedInAs('operator')
     await renderRoute('/mine')
     const cards = await screen.findAllByRole('heading', { level: 3 })
-    expect(cards.map((c) => c.textContent)).toEqual(['db-02', 'pay-03', 'web-01'])
+    // Blocked first, then offline, then by name: what needs someone leads.
+    expect(cards.map((c) => c.textContent)).toEqual(['pay-03', 'db-02', 'web-01'])
     // Clicking an account opens the session, rather than a form that asks again.
     const asDeploy = screen.getByRole('link', { name: 'Connect to web-01 as deploy' })
     expect(asDeploy.getAttribute('href')).toBe('/connect?host=web-01.prod.northwind.id&as=deploy&open=true')
@@ -80,7 +83,7 @@ describe('the servers someone can reach', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Show all servers' }))
     expect(await screen.findAllByRole('heading', { level: 3 })).toHaveLength(3)
 
-    fireEvent.click(screen.getByText(/^Not answering \(/))
+    fireEvent.click(screen.getByText(/^Offline \(/))
     await waitFor(() =>
       expect(screen.getAllByRole('heading', { level: 3 }).map((c) => c.textContent)).toEqual(['db-02']),
     )
@@ -187,6 +190,43 @@ describe('asking for more', () => {
   })
 })
 
+describe('cards or a table', () => {
+  beforeEach(() => localStorage.clear())
+
+  it('shows the same assets as a table, grouped by what needs you, and opens a row in place', async () => {
+    signedInAs('admin', [...MINE, host('ok-04'), host('ok-05')])
+    await renderRoute('/assets')
+    await screen.findByRole('heading', { name: 'web-01' })
+    fireEvent.click(screen.getByText('Table'))
+    const table = await screen.findByTestId('asset-table', {}, { timeout: 5_000 })
+    // Blocked, then offline, first; the rest after.
+    const groups = [...table.querySelectorAll('[data-group]')].map((g) => g.getAttribute('data-group'))
+    expect(groups.slice(0, 2)).toEqual(['blocked', 'offline'])
+    expect(within(table).getByText('pay-03')).toBeInTheDocument()
+    expect(within(table).getByText('db-02')).toBeInTheDocument()
+
+    // Search narrows the table exactly as it narrows the cards.
+    fireEvent.change(screen.getByRole('textbox', { name: 'Find a server' }), { target: { value: 'db-02' } })
+    await waitFor(() => expect(within(screen.getByTestId('asset-table')).getAllByTestId('asset-row')).toHaveLength(1))
+    fireEvent.click(within(screen.getByTestId('asset-table')).getByRole('button', { name: /Show more about db-02/ }))
+    const detail = screen.getByTestId('asset-row-detail')
+    expect(within(detail).getByText('Log in as')).toBeInTheDocument()
+    expect(within(detail).getByRole('link', { name: /Connect to db-02 as deploy/ })).toBeInTheDocument()
+  }, 15_000)
+
+  it('keeps the choice for next time', async () => {
+    signedInAs('admin')
+    const first = await renderRoute('/assets')
+    await screen.findByRole('heading', { name: 'web-01' })
+    fireEvent.click(screen.getByText('Table'))
+    await screen.findByTestId('asset-table', {}, { timeout: 5_000 })
+    first.unmount()
+    // A fresh page, as after signing in again, opens on the table.
+    await renderRoute('/assets')
+    expect(await screen.findByTestId('asset-table', {}, { timeout: 5_000 })).toBeInTheDocument()
+  }, 15_000)
+})
+
 describe('the menu follows the role', () => {
   const menu = async () => {
     const nav = await screen.findByRole('navigation', { name: 'Main' })
@@ -196,10 +236,10 @@ describe('the menu follows the role', () => {
 
   // Asked for in so many words: an ordinary user's console is their servers,
   // the databases and message brokers they were given, and what they did on them.
-  it('shows a member Home, Assets, Databases, Brokers and My activity', async () => {
+  it('shows a member Home, Assets, Databases, Brokers and My sessions', async () => {
     signedInAs('operator')
     await renderRoute('/assets')
-    expect(await menu()).toEqual(['Home', 'Assets', 'Databases', 'Brokers', 'My activity'])
+    expect(await menu()).toEqual(['Home', 'Assets', 'Databases', 'Brokers', 'My sessions'])
     expect(screen.queryByRole('button', { name: /search/i })).not.toBeInTheDocument()
   })
 
@@ -207,14 +247,30 @@ describe('the menu follows the role', () => {
   it('adds Approvals for an approver', async () => {
     signedInAs('approver')
     await renderRoute('/assets')
-    expect(await menu()).toEqual(['Home', 'Assets', 'Databases', 'Brokers', 'Approvals', 'My activity'])
+    expect(await menu()).toEqual(['Home', 'Approvals', 'Assets', 'Databases', 'Brokers', 'My sessions'])
   })
 
   it('shows an administrator the whole menu', async () => {
     signedInAs('admin')
     await renderRoute('/assets')
-    expect(await menu()).toEqual(['Home', 'Assets', 'Databases', 'Brokers', 'Cloud', 'Websites', 'Approvals', 'Teams', 'Activity', 'Settings'])
+    expect(await menu()).toEqual(['Home', 'Approvals', 'Assets', 'Databases', 'Brokers', 'Websites',
+      'Overview', 'Resources', 'Costs', 'Schedules', 'Console access', 'People', 'Teams', 'Sessions', 'Audit log'])
   })
+
+  it('folds to icons, each named for a screen reader and on hover, and stays folded next time', async () => {
+    signedInAs('admin')
+    const first = await renderRoute('/assets')
+    await menu()
+    fireEvent.click(screen.getByTestId('sidebar-fold'))
+    await waitFor(() => expect(screen.getByTestId('sidebar')).toHaveAttribute('data-folded'))
+    const nav = screen.getByRole('navigation', { name: 'Main' })
+    // No visible words, but every entry still has its name.
+    expect(within(nav).getByRole('link', { name: 'Assets' })).toBeInTheDocument()
+    expect(within(nav).getByRole('link', { name: 'Audit log' })).toBeInTheDocument()
+    first.unmount()
+    await renderRoute('/assets')
+    expect(await screen.findByTestId('sidebar')).toHaveAttribute('data-folded')
+  }, 15_000)
 
   it.each([
     ['/assets/add', 'auditor'], ['/audit', 'operator'], ['/settings', 'operator'],
@@ -272,7 +328,7 @@ describe('reachOf', () => {
     expect(reachOf(host('x', { agentState: 'healthy' }))).toBe('online')
     expect(reachOf(host('x', { agentState: 'healthy', health: 'degraded' }))).toBe('slow')
   })
-  it('lists a silent server as Not answering and one with no agent as No agent, never Online', async () => {
+  it('lists a silent server and one no agent ever reported from as Offline, never Online', async () => {
     signedInAs('operator', [
       host('up-01'),
       host('gone-02', { agentState: 'stale' }),
@@ -284,13 +340,13 @@ describe('reachOf', () => {
     await waitFor(() =>
       expect(screen.getAllByRole('heading', { level: 3 }).map((c) => c.textContent)).toEqual(['up-01']),
     )
-    // The same two words as Home, so the counts agree with its tiles.
-    expect(screen.getByText('Not answering (1)')).toBeInTheDocument()
-    expect(screen.getByText('No agent (1)')).toBeInTheDocument()
+    // The same word as Home, so the counts agree with its tiles.
+    expect(screen.getByText('Offline (2)')).toBeInTheDocument()
+    expect(screen.queryByText(/No agent|Not answering/)).toBeNull()
     expect(screen.queryByText(/^Blocked \(/)).toBeNull()
-    fireEvent.click(screen.getByText('No agent (1)'))
+    fireEvent.click(screen.getByText('Offline (2)'))
     await waitFor(() =>
-      expect(screen.getAllByRole('heading', { level: 3 }).map((c) => c.textContent)).toEqual(['bare-03']),
+      expect(screen.getAllByRole('heading', { level: 3 }).map((c) => c.textContent)).toEqual(['bare-03', 'gone-02']),
     )
   })
 })

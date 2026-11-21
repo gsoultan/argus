@@ -1,6 +1,6 @@
 import {
-  IconCirclePlus, IconClipboardCheck, IconCloud, IconDatabase, IconHistory, IconHome, IconInfoCircle, IconServer2, IconSettings, IconStack2,
-  IconUsersGroup, IconWorld,
+  IconBox, IconCalendarTime, IconCirclePlus, IconClipboardCheck, IconCloud, IconCoin, IconDatabase, IconFileText, IconHistory, IconHome,
+  IconInfoCircle, IconKey, IconServer2, IconSettings, IconStack2, IconUser, IconUsersGroup, IconWorld,
   type IconProps,
 } from '@tabler/icons-react'
 import type { ComponentType } from 'react'
@@ -45,6 +45,24 @@ export interface NavItem {
   badge?: (s: NavCounts) => number
   /** Who it is shown to; see `Audience`. Omitted means everyone. */
   audience?: Audience
+}
+
+/** One entry in the sidebar: a page, or a tab of one. */
+export interface SideItem extends NavItem {
+  /** The search the link sets, for an entry that opens a tab. */
+  search?: Record<string, string>
+  /**
+   * The ?tab= values this entry stands for. An entry with none is the page
+   * itself, lit when no sibling's tab is open.
+   */
+  tabs?: string[]
+}
+
+/** A heading in the sidebar and the pages under it. */
+export interface NavGroup {
+  /** Empty for the unheaded group at the top (Home, Approvals). */
+  label: string
+  items: SideItem[]
 }
 
 export interface NavCounts {
@@ -165,4 +183,69 @@ export function isActive(pathname: string, to: string): boolean {
   if (to === '/') return pathname === '/'
   if (to === '/activity' && (pathname.startsWith('/sessions') || pathname === '/audit')) return true
   return pathname === to || pathname.startsWith(to + '/')
+}
+
+/**
+ * The sidebar: six groups, each with one rule for what goes in it (see
+ * plans/general-layout/design.md), and a plain icon for every entry so the
+ * menu still reads when it is folded to icons. Every page that exists today
+ * is here; a group with nothing this role may see is left out.
+ *
+ * - Connect: what you open a session to.
+ * - Monitoring: is it up, and who is told when it is not.
+ * - Cloud: the connected cloud accounts.
+ * - People: who can sign in, and the teams things are given to.
+ * - Records: what happened: sessions and the audit log.
+ * Settings and About sit apart at the bottom (bottomFor).
+ */
+export function groupsFor(role: UserRole | undefined): NavGroup[] {
+  const by = (to: string) => NAV_ITEMS.find((i) => i.to === to)!
+  const cloud = by('/cloud')
+  const teams = by('/teams')
+  const g: NavGroup[] = [
+    { label: '', items: [by('/'), by('/approvals')] },
+    { label: 'Connect', items: [by('/assets'), by('/databases'), by('/brokers')] },
+    { label: 'Monitoring', items: [{ ...by('/websites'), label: 'Websites' }] },
+    { label: 'Cloud', items: [
+      { ...cloud, label: 'Overview' },
+      { ...cloud, label: 'Resources', icon: IconBox, search: { tab: 'instances' },
+        tabs: ['instances', 'disks', 'network', 'scaling', 'risks', 'changes'], blurb: 'Instances, disks, networks and scale groups' },
+      { ...cloud, label: 'Costs', icon: IconCoin, search: { tab: 'costs' }, tabs: ['costs', 'reservations'], blurb: 'What the cloud accounts cost' },
+      { ...cloud, label: 'Schedules', icon: IconCalendarTime, search: { tab: 'schedules' }, tabs: ['schedules'], blurb: 'When instances start and stop' },
+      { ...cloud, label: 'Console access', icon: IconKey, search: { tab: 'access' }, tabs: ['access'], blurb: 'Who can sign in to the cloud consoles' },
+    ] },
+    { label: 'People', items: [
+      { ...teams, label: 'People', icon: IconUser, search: { tab: 'people' }, tabs: ['people'], blurb: 'Everyone who can sign in' },
+      { ...teams, label: 'Teams' },
+    ] },
+    { label: 'Records', items: [
+      { ...by('/activity'), to: '/sessions', label: seesWholeFleet(role) ? 'Sessions' : 'My sessions' },
+      { ...by('/activity'), to: '/audit', label: 'Audit log', icon: IconFileText, audience: 'fleet', blurb: 'Every change, who made it and when' },
+    ] },
+  ]
+  return g
+    .map((x) => ({ ...x, items: x.items.filter((i) => canSee(role, i.audience)) }))
+    .filter((x) => x.items.length > 0)
+}
+
+/** Settings and About, kept apart at the foot of the sidebar. */
+export function bottomFor(role: UserRole | undefined): SideItem[] {
+  return [
+    NAV_ITEMS.find((i) => i.to === '/settings')!,
+    ALL_PAGES.find((i) => i.to === '/about')!,
+  ].filter((i) => canSee(role, i.audience))
+}
+
+/**
+ * Whether a sidebar entry is the page on screen. An entry for a tab is lit on
+ * that tab; the page's own entry is lit on any tab no sibling claims.
+ */
+export function isItemActive(pathname: string, tab: string | undefined, item: SideItem, siblings: SideItem[]): boolean {
+  if (!isActive(pathname, item.to)) return false
+  // Sessions and the audit log share Records; each is its own page.
+  if (item.to === '/sessions') return pathname.startsWith('/sessions') || pathname === '/activity'
+  const here = pathname === item.to
+  if (item.tabs) return here && tab !== undefined && item.tabs.includes(tab)
+  const claimed = siblings.some((s) => s !== item && s.to === item.to && s.tabs && tab !== undefined && s.tabs.includes(tab))
+  return !(here && claimed)
 }

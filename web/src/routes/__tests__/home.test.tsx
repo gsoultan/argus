@@ -106,17 +106,18 @@ describe('Home for whoever sees the whole fleet', () => {
 
   // Home once said "7 not answering" beside Fleet health's "5 not answering,
   // 2 no agent": a server with no agent was counted as down in one place only.
+  // Now both are Offline, counted together everywhere.
   it('counts servers the same way on the tile, Fleet health and Needs you', async () => {
     fleetHome('admin', snapshot({ servers: { total: 41, answering: 34, quiet: 2, down: 5 } }))
     await renderRoute('/')
     const tile = await screen.findByTestId('tile-servers', {}, { timeout: 5_000 })
     expect(tile).toHaveTextContent('34of 41')
-    expect(tile).toHaveTextContent('5 not answering · 2 no agent')
+    expect(tile).toHaveTextContent('7 offline')
     expect(tile).toHaveAttribute('data-tone', 'denied')
-    expect(screen.getByTestId('fleet-health')).toHaveTextContent('5 not answering')
-    expect(screen.getByTestId('fleet-health')).toHaveTextContent('2 no agent')
+    expect(screen.getByTestId('fleet-health')).toHaveTextContent('7 offline')
+    expect(screen.getByTestId('fleet-health')).not.toHaveTextContent(/no agent|not answering/)
     const needs = screen.getByTestId('needs-you')
-    expect(within(needs).getByText('5 servers are not answering')).toBeInTheDocument()
+    expect(within(needs).getByText('7 servers are offline')).toBeInTheDocument()
     expect(within(needs).getByRole('link', { name: /See which/ })).toHaveAttribute('href', '/assets?status=down')
   }, 15_000)
 

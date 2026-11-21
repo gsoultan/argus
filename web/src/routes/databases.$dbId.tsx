@@ -5,9 +5,8 @@ import { createFileRoute, Link, Navigate } from '@tanstack/react-router'
 import { IconInfoCircle } from '@tabler/icons-react'
 import { useCallback, useEffect } from 'react'
 import { AskModal } from '~/components/DatabaseAskModal'
-import { DatabaseList } from '~/components/DatabaseList'
+import { DatabaseSwitcher } from '~/components/DatabaseSwitcher'
 import { DatabaseWorkspace } from '~/components/DatabaseWorkspace'
-import { SplitView } from '~/components/SplitView'
 import { RedisWorkspace } from '~/components/RedisWorkspace'
 import { MongoWorkspace } from '~/components/MongoWorkspace'
 import { PageBody, PageHeader } from '~/components/page'
@@ -103,17 +102,22 @@ function DatabasePage() {
   }
 
   return (
-    <SplitView storageKey="databases" label="databases" list={<DatabaseList currentId={dbId} />}>
-      {!isSQLEngine(database.engine) && <Group px="md" pl={{ base: 'md', lg: 'xl' }} py={6} gap="xs" style={{ borderBottom: '1px solid var(--color-line)' }}>
-        <Text size={FS.micro} c="dimmed">
+    // Full width: the list that sat beside the workspace is now previous,
+    // next and a search box in this bar, so the editor keeps the room.
+    <Box>
+      <Group px="md" pl={{ base: 'md', lg: 'xl' }} py={6} gap="xs" wrap="nowrap" style={{ borderBottom: '1px solid var(--color-line)' }}>
+        <Text size={FS.micro} c="dimmed" truncate>
           <Link to="/databases" style={{ color: INK.brand }}>Databases</Link> / {engineOf(database.engine).label} · {database.dbname}
         </Text>
-        {admin && (
-          <Link to="/databases/$dbId/settings" params={{ dbId }} style={{ marginLeft: 'auto', fontSize: 11, color: INK.brand }}>
-            Who can connect &amp; settings
-          </Link>
-        )}
-      </Group>}
+        <Group gap="sm" ml="auto" wrap="nowrap">
+          {admin && !isSQLEngine(database.engine) && (
+            <Link to="/databases/$dbId/settings" params={{ dbId }} style={{ fontSize: 11, color: INK.brand, whiteSpace: 'nowrap' }}>
+              Who can connect &amp; settings
+            </Link>
+          )}
+          <DatabaseSwitcher currentId={dbId} />
+        </Group>
+      </Group>
       {database.engine === 'redis' ? (
         <RedisWorkspace database={database} access={access} getTicket={getTicket} endpoint={postgresEndpoint}
           onAskForAccess={access.approvable ? ask.open : undefined} initialPanel={panel} />
@@ -134,6 +138,6 @@ function DatabasePage() {
       {access.approvable && (
         <AskModal dbId={dbId} opened={asking} onClose={ask.close} top={access.approvable} />
       )}
-    </SplitView>
+    </Box>
   )
 }

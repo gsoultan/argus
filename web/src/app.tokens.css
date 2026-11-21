@@ -407,33 +407,32 @@ button.argus-navsection:hover {
   z-index: 1;
 }
 
-/* ---------------------------------------------------------------------------
-   The top bar. One row: the name, the menu, and you. The page you are on is
-   the only item drawn in the brand colour.
-   --------------------------------------------------------------------------- */
-.argus-topnav {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 36px;
-  padding: 0 12px;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--color-ink-soft);
-  text-decoration: none;
-  white-space: nowrap;
-  transition: background-color 120ms ease, color 120ms ease;
+/* Online or offline at a glance: a coloured edge down the left of every card
+   and table row, green online, red offline or blocked. The badge says it in
+   words; the edge lets a long list be scanned without reading. */
+.argus-server[data-answer]::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  pointer-events: none;
 }
-.argus-topnav:hover {
-  background: var(--color-raised);
-  color: var(--color-ink);
-}
-.argus-topnav[data-active] {
-  background: var(--color-brand-wash);
-  color: var(--color-brand-ink);
-  font-weight: 600;
-}
+.argus-server[data-answer='online']::before { background: var(--mantine-color-teal-5); }
+.argus-server[data-answer='down']::before,
+.argus-server[data-answer='blocked']::before { background: var(--mantine-color-rose-5); }
+
+.argus-assettable-row > td:first-child { box-shadow: inset 4px 0 transparent; }
+.argus-assettable-row[data-answer='online'] > td:first-child { box-shadow: inset 4px 0 var(--mantine-color-teal-5); }
+.argus-assettable-row[data-answer='down'] > td:first-child,
+.argus-assettable-row[data-answer='blocked'] > td:first-child { box-shadow: inset 4px 0 var(--mantine-color-rose-5); }
+.argus-assettable-row:hover > td { background: var(--color-raised, var(--mantine-color-default-hover)); }
+.argus-assettable-group > td { background: var(--color-raised, var(--mantine-color-default-hover)); }
+.argus-assettable-detail > td { background: var(--color-raised, var(--mantine-color-default-hover)); }
+.argus-assettable th { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--mantine-color-dimmed); white-space: nowrap; }
+
+/* The sidebar folded to icons: each entry is its icon, centred. */
+.argus-navlink-icon { padding-inline: 0; }
+.argus-sidefold:hover { background: var(--color-raised); color: var(--color-ink) !important; }
 
 /* A card that is the whole step on a wizard page. */
 .argus-panel {

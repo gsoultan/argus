@@ -12,7 +12,7 @@ vi.mock('~/lib/live', async (orig) => ({
 }))
 
 /**
- * Settings › Control plane › Backups: the last run, a backup now, how many to
+ * Settings › Argus itself › Backups: the last run, a backup now, how many to
  * keep, and what is on disk -- all from what the control plane read.
  */
 

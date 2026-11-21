@@ -17,7 +17,7 @@ async function openAlerts(page: import('@playwright/test').Page) {
   await page.getByRole('button', { name: /^sign in$/i }).click()
   await expect(page.getByText('Dev Admin')).toBeVisible()
   await page.goto('/settings?section=alerts')
-  await expect(page.getByText('Alert channels')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Alert channels' })).toBeVisible()
 }
 
 test('"Set up Email" opens the mail server form', async ({ page }) => {

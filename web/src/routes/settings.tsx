@@ -194,10 +194,22 @@ function Settings() {
     ? [
       { id: 'approval-policy', label: 'Approval policy', icon: IconChecklist, changed: false },
       // The organization's own Telegram bots: admins and owners only.
-      ...(canEdit ? [{ id: 'telegram' as const, label: 'Telegram bots', icon: IconBrandTelegram, changed: false }] : []),
+      ...(canEdit ? [{ id: 'telegram' as const, label: 'Notifications', icon: IconBrandTelegram, changed: false }] : []),
     ]
     : []
   const items = [...orgItems, ...statusItems, ...policyItems, ...serverItems, ...controlItems, ...platformItems]
+  // The same headings as the sidebar, so a setting is found where its
+  // feature lives: Connect's rules under Connect, Cloud's under Cloud, and
+  // how Argus itself runs at the end, for the people who run it.
+  const byId = (ids: string[]) => ids.flatMap((id) => items.filter((i) => i.id === id))
+  const ARGUS_ITSELF = ['status', 'control-updates', 'control-backups', 'control-readiness',
+    'addresses', 'certificate', 'database', 'storage', 'signin', 'security', 'alerts', 'organizations']
+  const sectionGroups = [
+    { title: 'Organization', items: orgItems },
+    { title: 'Connect', items: [...policyItems, ...serverItems] },
+    { title: 'Cloud', items: byId(['cloud']) },
+    { title: 'Argus itself', items: byId(ARGUS_ITSELF) },
+  ].filter((g) => g.items.length > 0)
   const active: SectionId = items.find((i) => i.id === section)?.id ?? 'access'
   const open = (id: string | null) => {
     if (id) void navigate({ to: '/settings', search: { section: id }, replace: true })
@@ -293,22 +305,9 @@ function Settings() {
             further down a long page than the screen. */}
         <Group align="flex-start" gap="lg" wrap="nowrap">
           <Box component="nav" aria-label="Settings sections" w={210} visibleFrom="md" style={{ flexShrink: 0 }}>
-            {orgItems.length > 0 && (
-              <SectionNav title="Organization" items={orgItems} active={active} onOpen={open} />
-            )}
-            {statusItems.length > 0 && (
-              <SectionNav title="Control plane" items={statusItems} active={active} onOpen={open} />
-            )}
-            <SectionNav title="Sessions" items={policyItems} active={active} onOpen={open} />
-            {serverItems.length > 0 && (
-              <SectionNav title="Assets" items={serverItems} active={active} onOpen={open} />
-            )}
-            {controlItems.length > 0 && (
-              <SectionNav title="Advanced" items={controlItems} active={active} onOpen={open} />
-            )}
-            {platformItems.length > 0 && (
-              <SectionNav title="Platform" items={platformItems} active={active} onOpen={open} />
-            )}
+            {sectionGroups.map((g) => (
+              <SectionNav key={g.title} title={g.title} items={g.items} active={active} onOpen={open} />
+            ))}
           </Box>
 
           <Stack gap="sm" style={{ flex: 1, minWidth: 0 }}>
@@ -318,24 +317,7 @@ function Settings() {
               allowDeselect={false}
               value={active}
               onChange={open}
-              data={[
-                ...(orgItems.length > 0
-                  ? [{ group: 'Organization', items: orgItems.map(navOption) }]
-                  : []),
-                ...(statusItems.length > 0
-                  ? [{ group: 'Control plane', items: statusItems.map(navOption) }]
-                  : []),
-                { group: 'Sessions', items: policyItems.map(navOption) },
-                ...(serverItems.length > 0
-                  ? [{ group: 'Assets', items: serverItems.map(navOption) }]
-                  : []),
-                ...(controlItems.length > 0
-                  ? [{ group: 'Advanced', items: controlItems.map(navOption) }]
-                  : []),
-                ...(platformItems.length > 0
-                  ? [{ group: 'Platform', items: platformItems.map(navOption) }]
-                  : []),
-              ]}
+              data={sectionGroups.map((g) => ({ group: g.title, items: g.items.map(navOption) }))}
             />
 
             {active === 'access' && (

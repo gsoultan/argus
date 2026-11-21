@@ -43,23 +43,46 @@ export function isUp(r: Reach): boolean {
 
 /**
  * The one set of words for whether a server answers, the same on Home, the
- * Assets list and a server's Overview: Online (online or slow), Not answering
- * (its agent went silent, or it was found unreachable), No agent (nothing
- * reports on it, so Argus cannot tell) and Blocked (its identity changed).
- * Home's counts come from the control plane by the same rules; see
- * internal/control/home_snapshot.go.
+ * Assets list and a server's Overview: Online (online or slow), Offline (its
+ * agent went silent, it was found unreachable, or no agent ever reported
+ * from it) and Blocked (its identity changed).
+ *
+ * There used to be a fourth, "No agent", for a server no agent ever reported
+ * from. Every asset added from the console installs its agent first, so the
+ * word only ever met people as a puzzle: it is Offline now, and the reason is
+ * said beside it (see offlineReason). Home's counts come from the control
+ * plane by the same rules; see internal/control/home_snapshot.go.
  */
-export type Answer = 'online' | 'down' | 'noagent' | 'blocked'
+export type Answer = 'online' | 'down' | 'blocked'
+
+export const ANSWERS: readonly Answer[] = ['online', 'down', 'blocked']
 
 export function answerOf(a: Asset): Answer {
-  return ({ online: 'online', slow: 'online', offline: 'down', unknown: 'noagent', blocked: 'blocked' } as const)[reachOf(a)]
+  return ({ online: 'online', slow: 'online', offline: 'down', unknown: 'down', blocked: 'blocked' } as const)[reachOf(a)]
+}
+
+/** ?status= as a link writes it; the retired "noagent" is Offline now. */
+export function parseAnswer(v: unknown): Answer | undefined {
+  if (v === 'noagent') return 'down'
+  return typeof v === 'string' && (ANSWERS as readonly string[]).includes(v) ? (v as Answer) : undefined
 }
 
 export const ANSWER_LABEL: Record<Answer, string> = {
   online: 'Online',
-  down: 'Not answering',
-  noagent: 'No agent',
+  down: 'Offline',
   blocked: 'Blocked',
+}
+
+/**
+ * Why an asset is offline, in a few words: how long since its agent was last
+ * heard from, or that no agent ever reported from it. Undefined when it is
+ * not offline.
+ */
+export function offlineReason(a: Asset, rel: (iso: string) => string): string | undefined {
+  const r = reachOf(a)
+  if (r === 'unknown') return 'Agent never reported'
+  if (r !== 'offline') return undefined
+  return a.agentLastSeenAt ? `Last seen ${rel(a.agentLastSeenAt)}` : 'Not reachable'
 }
 
 /**

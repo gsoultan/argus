@@ -237,8 +237,8 @@ function FleetNeeds({ me }: { me: User }) {
   if (down > 0) {
     needs.push({
       key: 'down', icon: IconServerOff, color: 'rose',
-      title: `${down} ${down === 1 ? 'server is' : 'servers are'} not answering`,
-      detail: 'Their agents went quiet or could not be reached',
+      title: `${down} ${down === 1 ? 'server is' : 'servers are'} offline`,
+      detail: 'Their agents went quiet, could not be reached, or never reported',
       action: <ButtonLink variant="subtle" size="compact-sm" style={{ flexShrink: 0 }} to="/assets" search={{ status: 'down' }}>See which ›</ButtonLink>,
     })
   }

@@ -10,7 +10,7 @@ import { ServerCards } from '~/components/myservers'
 import { relTime } from '~/components/primitives'
 import { ASSETS_EVERY, agentFleetQuery, assetsQuery, discoveredQuery, meQuery } from '~/lib/queries'
 import { isConfigured } from '~/lib/live'
-import { kindOfHost, type Answer } from '~/lib/reach'
+import { kindOfHost, parseAnswer, type Answer } from '~/lib/reach'
 import { canSee, seesWholeFleet } from '~/lib/roles'
 import { FS, SP } from '~/theme'
 
@@ -42,7 +42,7 @@ export const Route = createFileRoute('/assets/')({
   component: Servers,
   // ?status=down opens the list narrowed, as Home's "not answering" links it.
   validateSearch: (s: Record<string, unknown>): { status?: Answer } => ({
-    status: typeof s.status === 'string' && (ANSWERS as readonly string[]).includes(s.status) ? (s.status as Answer) : undefined,
+    status: parseAnswer(s.status),
   }),
   loader: ({ context }) =>
     Promise.all([
@@ -50,8 +50,6 @@ export const Route = createFileRoute('/assets/')({
       context.queryClient.ensureQueryData(assetsQuery({})),
     ]),
 })
-
-const ANSWERS = ['online', 'down', 'noagent', 'blocked'] as const
 
 function Servers() {
   const { status } = Route.useSearch()

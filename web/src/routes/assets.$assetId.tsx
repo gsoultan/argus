@@ -8,8 +8,7 @@ import { IconPencil, IconServer2 } from '@tabler/icons-react'
 import { ReachBadge, reachOf } from '~/components/myservers'
 import { ControlHostBadge } from '~/components/server/controlHost'
 import { AssetAddresses } from '~/components/AssetAddresses'
-import { ServerList } from '~/components/ServerList'
-import { SplitView } from '~/components/SplitView'
+import { AssetSwitcher } from '~/components/AssetSwitcher'
 import { EmptyState, PageBody, PageHeader } from '~/components/page'
 import { AccessTab } from '~/components/server/AccessTab'
 import { AppsTab } from '~/components/server/AppsTab'
@@ -126,7 +125,7 @@ function AssetDetail() {
   const needsAttention = asset.hostKeyState !== 'pinned'
 
   return (
-    <SplitView storageKey="servers" label="servers" list={<ServerList currentId={asset.id} />}>
+    <Box>
       <PageHeader
         crumbs={[
           { label: 'Assets', to: '/assets' },
@@ -170,6 +169,7 @@ function AssetDetail() {
         }
         actions={
           <>
+            <AssetSwitcher currentId={asset.id} tab={tab} />
             {canEdit && (
               <Button
                 variant="default"
@@ -245,6 +245,6 @@ function AssetDetail() {
           <AssetForm opened={editing} onClose={() => setEditing(false)} asset={asset} />
         )}
       </Suspense>
-    </SplitView>
+    </Box>
   )
 }
