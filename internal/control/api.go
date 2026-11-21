@@ -285,7 +285,7 @@ func (a *API) Handler() http.Handler {
 	a.registerFleet(mux)
 	// scope first: the gate checks the cookie against the organization's
 	// own table, so it needs to know which one.
-	return a.recoverPanics(a.securityHeaders(a.cors(a.scope(a.sessionGate(mux)))))
+	return a.recoverPanics(compress(a.securityHeaders(a.cors(a.scope(a.sessionGate(mux))))))
 }
 
 // ConsoleHandler serves the surface a person reaches: sign-in, the console's
@@ -302,7 +302,7 @@ func (a *API) ConsoleHandler() http.Handler {
 	a.registerConsole(mux)
 	// scope first: the gate checks the cookie against the organization's
 	// own table, so it needs to know which one.
-	return a.recoverPanics(a.securityHeaders(a.cors(a.scope(a.sessionGate(mux)))))
+	return a.recoverPanics(compress(a.securityHeaders(a.cors(a.scope(a.sessionGate(mux))))))
 }
 
 // FleetHandler serves the surface gateways and agents reach.
@@ -316,7 +316,7 @@ func (a *API) FleetHandler() http.Handler {
 	mux := http.NewServeMux()
 	a.registerCommon(mux)
 	a.registerFleet(mux)
-	return a.recoverPanics(a.securityHeaders(a.cors(a.scope(mux))))
+	return a.recoverPanics(compress(a.securityHeaders(a.cors(a.scope(mux)))))
 }
 
 // registerCommon adds what both surfaces need: liveness, and the process's own
