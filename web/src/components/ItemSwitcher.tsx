@@ -22,7 +22,7 @@ export function ItemSwitcher({ items, currentId, onGo, what, width = 220 }: {
           <IconPrev />
         </ActionIcon>
       </Tooltip>
-      <Select data={items} value={i >= 0 ? currentId : null} onChange={(v) => v && onGo(v)} searchable w={width}
+      <Select data={items} value={i >= 0 ? currentId : null} onChange={(v) => v && onGo(v)} searchable w={{ base: 150, sm: width }}
         aria-label={`Go to another ${what}`} placeholder={`Find a ${what}`}
         nothingFoundMessage={`No ${what} by that name`} comboboxProps={{ withinPortal: true }} />
       <Tooltip label={`Next ${what}`}>

@@ -150,8 +150,13 @@ const BUDGET_KB = {
    * reach and the add-from-another-organization list are in their own
    * module (sharedPeople.ts), kept out of live and queries; in them it
    * measured 314.6.
+   * 320.4 kB with the sidebar (314.6 before): the menu moved from the top bar
+   * to a sidebar in groups that folds to icons, so every entry now carries
+   * its icon file and the folded rail its tooltip and count dot (Indicator);
+   * the per-person layout choices (preferences.ts) are read by the shell so
+   * the sidebar opens the way it was left. The Assets table is a lazy chunk.
    */
-  overview: 315,
+  overview: 321,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most
@@ -212,8 +217,9 @@ const BUDGET_KB = {
    * 416.0 kB with SQL Server: its entry in the engine table (name, defaults,
    * what each level grants), its release names, and [name] in the statement
    * classifier, which the recording's statement list shares.
+   * 422.3 kB with the sidebar, the same shared weight as the overview.
    */
-  sessionDetail: 417,
+  sessionDetail: 423,
 }
 
 /**
@@ -236,7 +242,13 @@ const BUDGET_KB = {
  * 33.6 kB on Home with the live dashboard (33.4 before): tiles, the live
  * pill, Fleet health's meters and the reduced-motion rules.
  */
-const CSS_BUDGET_KB = 33.8
+/*
+ * 33.8 kB on Home with the sidebar and Anchor's own stylesheet, which had
+ * been missing from app.css (an Anchor took Text's colour and display): the
+ * sidebar's folded rail, the asset cards' coloured edge and the Assets
+ * table's rows.
+ */
+const CSS_BUDGET_KB = 34.1
 
 /**
  * The two self-hosted variable fonts, latin subsets.
