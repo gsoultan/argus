@@ -197,7 +197,7 @@ func TestCloudConnectAzureSubscription(t *testing.T) {
 			t.Fatal("a subscription on Azure's Main identity must not read as having lost it to AWS's")
 		}
 		// The console offers only what Argus does in Azure so far.
-		if a.ID == c.ID && (!contains(actionNames(a.Actions), "stop") || !contains(actionNames(a.Actions), "remove") || !contains(actionNames(a.Actions), "launch") || contains(actionNames(a.Actions), "protect")) {
+		if a.ID == c.ID && (!contains(actionNames(a.Actions), "stop") || !contains(actionNames(a.Actions), "remove") || !contains(actionNames(a.Actions), "launch") || !contains(actionNames(a.Actions), "protect") || contains(actionNames(a.Actions), "image-create")) {
 			t.Fatalf("a subscription must list the changes Argus makes there, and no others: %v", a.Actions)
 		}
 	}
@@ -299,7 +299,10 @@ func TestCloudAzureSubscriptionStopsResizesAndTags(t *testing.T) {
 		}
 	}
 	for _, act := range azure.ManageActions {
-		if strings.HasPrefix(act, "Microsoft.Authorization/") || strings.Contains(act, "*") {
+		// Of Microsoft.Authorization it holds the delete lock's two actions
+		// and nothing that assigns or defines a role.
+		lock := strings.HasPrefix(act, "Microsoft.Authorization/locks/")
+		if (strings.HasPrefix(act, "Microsoft.Authorization/") && !lock) || strings.Contains(act, "*") {
 			t.Fatalf("the manage role must hold no right to grant access and no wildcard: %s", act)
 		}
 	}
@@ -620,12 +623,23 @@ func TestCloudAzureSubscriptionRemovesAVM(t *testing.T) {
 		_ = json.Unmarshal(w.Body.Bytes(), &ch)
 		return ch
 	}
-	// A lock is Azure's, and Argus says where it comes off.
+	// A lock stands in the way, and Argus says how it comes off.
 	w = do(t, e.h, http.MethodGet, "/api/v1/cloud/remove-plan?accountId="+c.ID+"&region=eastus&resourceId="+api, "admin-token", "")
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "take the lock off in the Azure portal") || strings.Contains(w.Body.String(), "termination protection") {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "turn its protection off first") || strings.Contains(w.Body.String(), "termination protection") {
 		t.Fatalf("the plan for a locked VM: %d %s", w.Code, w.Body)
 	}
-	ask(`"action":"remove","resourceId":"`+api+`","confirm":"api-1","reason":"retired"`, http.StatusConflict, "it has a lock in Azure")
+	ask(`"action":"remove","resourceId":"`+api+`","confirm":"api-1","reason":"retired"`, http.StatusConflict, "it has a delete lock in Azure")
+	// The lock is its own change, worded as Azure's, and taking it off
+	// lets the remove through.
+	if ch := ask(`"action":"protect","resourceId":"`+web+`","reason":"keep it"`, http.StatusOK, ""); ch.State != "applied" ||
+		!strings.HasPrefix(ch.Summary, "Put a delete lock on web-1") || strings.Contains(ch.Summary, "termination") {
+		t.Fatalf("protect: %+v", ch)
+	}
+	ask(`"action":"remove","resourceId":"`+web+`","confirm":"web-1","reason":"retired"`, http.StatusConflict, "it has a delete lock in Azure")
+	if ch := ask(`"action":"unprotect","resourceId":"`+web+`","reason":"retiring it"`, http.StatusOK, ""); ch.State != "applied" ||
+		ch.Summary != "Take Argus's delete lock off web-1" {
+		t.Fatalf("unprotect: %+v", ch)
+	}
 	ask(`"action":"remove","resourceId":"`+web+`","confirm":"web","reason":"retired"`, http.StatusBadRequest, "type the instance's name")
 	if ch := ask(`"action":"remove","resourceId":"`+web+`","confirm":"web-1","reason":"retired","spec":{"finalSnapshots":true}`, http.StatusOK, ""); ch.State != "applied" ||
 		!strings.HasPrefix(ch.Summary, "Remove web-1 ("+web+") and 1 disk") {

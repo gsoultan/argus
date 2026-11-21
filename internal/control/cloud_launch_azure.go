@@ -20,7 +20,8 @@ A launch in Azure differs from the other clouds' in what the plan below
 carries: the VM goes into a resource group, which has to be named; a zone
 is optional; a network interface takes one network security group, not
 several; and there is no deletion protection to turn on, because Azure's
-is a resource lock, which Argus holds no right to set.
+is a resource lock, which goes on a VM that is already there: from the
+VM's menu, once it has launched.
 */
 
 // azureGroups are the resource groups Argus has read something in, in
@@ -98,7 +99,8 @@ func (a *API) planAzureLaunch(r *http.Request, m cloudManaged, actor string, in 
 	if s.CapacityReservation != "" {
 		return ch, bad, errors.New("Argus does not launch into Azure reservations yet")
 	}
-	// Azure's deletion protection is a resource lock, which Argus cannot set.
+	// Azure's deletion protection is a resource lock, put on a VM that is
+	// already there: from the VM's menu, once it has launched.
 	s.Protect = false
 	if s.Count == 0 {
 		s.Count = 1

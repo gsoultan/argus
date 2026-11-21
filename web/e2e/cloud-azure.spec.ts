@@ -137,7 +137,7 @@ test('an Azure VM is launched into a resource group, with one security group and
   await expect(page.getByRole('combobox', { name: 'VM size' })).toHaveValue('Standard_B2s')
   // Azure's own words, and nothing of the other clouds'.
   await expect(page.getByText('Network security group', { exact: true })).toBeVisible()
-  await expect(page.getByText(/a resource lock, which Argus cannot set/)).toBeVisible()
+  await expect(page.getByText(/put the delete lock on from its menu/)).toBeVisible()
   // Spot is Azure's own: the VM is stopped, not deleted, and no B-series.
   await page.getByRole('switch', { name: 'Use Spot capacity' }).click({ force: true })
   await expect(page.getByText(/The VM is then stopped, not deleted/)).toBeVisible()

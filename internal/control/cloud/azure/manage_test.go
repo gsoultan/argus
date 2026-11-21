@@ -175,15 +175,12 @@ func TestWhatArgusDoesInAzureSoFar(t *testing.T) {
 			t.Errorf("%s is listed but not supported", a)
 		}
 	}
-	for _, a := range []cloud.Action{cloud.ActionProtect, cloud.ActionImageCreate, cloud.ActionImageDelete, cloud.ActionTargetRegister, cloud.ActionHibernate} {
+	for _, a := range []cloud.Action{cloud.ActionImageCreate, cloud.ActionImageDelete, cloud.ActionTargetRegister, cloud.ActionHibernate} {
 		if p.Supports(a) {
 			t.Errorf("%s is not made in Azure yet", a)
 		}
 	}
 	ctx := context.Background()
-	if _, err := p.Protect(ctx, cloud.Account{}, "x", "eastus", web1, true); !errors.Is(err, cloud.ErrUnsupported) {
-		t.Fatalf("protect: %v", err)
-	}
 	if _, err := p.CreateImage(ctx, cloud.Account{}, "x", "eastus", web1, "img", false); !errors.Is(err, cloud.ErrUnsupported) {
 		t.Fatalf("image: %v", err)
 	}

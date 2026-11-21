@@ -24,9 +24,11 @@ what goes and what stays, so nobody finds a disk or an address still
 billed after the VM is gone, or loses one they meant to keep.
 
 What stands in for termination protection is a resource lock. Argus reads
-the locks on the VM and refuses to remove one that has any; it holds no
-right to take a lock off. A lock put on the resource group or the
-subscription is not in that list, and Azure refuses the delete itself.
+the locks on the VM and refuses to remove one that has any. Its own lock
+comes off by turning protection off, which is its own change (lock.go);
+anybody else's comes off in the portal. A lock put on the resource group
+or the subscription is not in that list, and Azure refuses the delete
+itself.
 */
 
 // armPath is the path of the resource arm names, rebuilt from its checked
@@ -46,7 +48,7 @@ func armPath(subscription, arm, provider, kind string, name *regexp.Regexp) (str
 }
 
 // ErrLocked is a VM with a resource lock on it.
-var ErrLocked = errors.New("it has a lock in Azure; take the lock off in the Azure portal first, which Argus cannot do")
+var ErrLocked = errors.New("it has a delete lock in Azure; turn its protection off first, which is its own change, or take off in the Azure portal a lock Argus did not put on")
 
 // lockAPI is the Microsoft.Authorization version locks are read with.
 const lockAPI = "2016-09-01"
@@ -125,15 +127,11 @@ func (p *Provider) planRemove(ctx context.Context, t token, actor cloud.Actor, s
 	case whole.ManagedBy != "":
 		plan.ManagedBy = last(whole.ManagedBy)
 	}
-	var locks struct {
-		Value []struct {
-			Name string `json:"name"`
-		} `json:"value"`
+	locks, err := p.locksOn(ctx, t, actor, m)
+	if err != nil {
+		return cloud.RemovePlan{}, removal{}, err
 	}
-	if err := p.get(ctx, t, actor, p.ep.arm+m.Path+"/providers/Microsoft.Authorization/locks?api-version="+lockAPI, &locks); err != nil {
-		return cloud.RemovePlan{}, removal{}, fmt.Errorf("reading the locks on %s: %w", m.Name, err)
-	}
-	plan.Protected = len(locks.Value) > 0
+	plan.Protected = len(locks) > 0
 
 	// The disks, as the console knows them: by uniqueId.
 	type known struct {

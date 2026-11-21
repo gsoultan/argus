@@ -385,7 +385,7 @@ function Launch() {
                 </Alert>
               )}
               {azure ? (
-                <Text size={FS.meta} c="dimmed" mt="md">Azure protects a VM from deletion with a resource lock, which Argus cannot set. Put one on in the Azure portal; Argus will not remove a VM that has one.</Text>
+                <Text size={FS.meta} c="dimmed" mt="md">Azure protects a VM from deletion with a resource lock, which goes on a VM that is already there. Once this one has launched, put the delete lock on from its menu; Argus will not remove a VM that has one.</Text>
               ) : (
                 <Switch mt="md" checked={protect && !spot} disabled={spot} onChange={(e) => setProtect(e.currentTarget.checked)} label={gcp ? 'Deletion protection' : 'Termination protection'}
                   description={spot

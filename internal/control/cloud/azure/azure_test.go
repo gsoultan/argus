@@ -528,6 +528,24 @@ func (m *fakeMicrosoft) handler() http.Handler {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"value": out})
 	}))
+	// A lock is put on at its name and taken off there, as Azure does it:
+	// putting one on again changes nothing.
+	mux.HandleFunc("PUT "+vmPath+"/providers/Microsoft.Authorization/locks/{name}", authed(func(w http.ResponseWriter, r *http.Request) {
+		m.mu.Lock()
+		if !m.refuse && !slices.Contains(m.locks, r.PathValue("name")) {
+			m.locks = append(m.locks, r.PathValue("name"))
+		}
+		m.mu.Unlock()
+		change(w, r)
+	}))
+	mux.HandleFunc("DELETE "+vmPath+"/providers/Microsoft.Authorization/locks/{name}", authed(func(w http.ResponseWriter, r *http.Request) {
+		m.mu.Lock()
+		if !m.refuse {
+			m.locks = slices.DeleteFunc(m.locks, func(l string) bool { return l == r.PathValue("name") })
+		}
+		m.mu.Unlock()
+		change(w, r)
+	}))
 	mux.HandleFunc("PATCH "+vmPath+"/providers/Microsoft.Resources/tags/default", authed(change))
 	mux.HandleFunc("GET "+vmPath+"/vmSizes", authed(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"value":[{"name":"Standard_D2s_v5"},{"name":"Standard_B2s"},{"name":"Standard_B2s"},{"name":"not a size"}]}`))

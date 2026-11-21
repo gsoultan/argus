@@ -457,6 +457,9 @@ var needs = map[cloud.Action][]string{
 	cloud.ActionFirewallDelete:    {"Microsoft.Network/networkSecurityGroups/read", "Microsoft.Network/networkSecurityGroups/delete"},
 	cloud.ActionInstanceFirewalls: {"Microsoft.Network/networkSecurityGroups/read", "Microsoft.Network/networkSecurityGroups/join/action", "Microsoft.Network/networkInterfaces/read", "Microsoft.Network/networkInterfaces/write"},
 
+	cloud.ActionProtect:   {"Microsoft.Authorization/locks/write"},
+	cloud.ActionUnprotect: {"Microsoft.Authorization/locks/delete"},
+
 	cloud.ActionLaunch: {"Microsoft.Compute/virtualMachines/write", "Microsoft.Compute/disks/write", "Microsoft.Compute/images/read",
 		"Microsoft.Network/networkInterfaces/write", "Microsoft.Network/networkInterfaces/join/action",
 		"Microsoft.Network/publicIPAddresses/write", "Microsoft.Network/publicIPAddresses/join/action",
