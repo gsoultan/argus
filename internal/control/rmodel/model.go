@@ -1476,6 +1476,7 @@ func All() []any {
 		&WebsiteAlertSetting{},
 		&TelegramBot{},
 		&TelegramRoute{},
+		&UIPreference{},
 		&Team{},
 		&TeamMember{},
 		&UsageHistory{},
@@ -2685,4 +2686,20 @@ func (m *WebsiteAlertSetting) Schema(t *storm.Table) {
 	t.Col(&m.UpdatedAt).Default("now()")
 	t.CheckNamed("website_alert_settings_id_check", "id")
 	t.CheckNamed("website_alert_settings_telegram_chats_check", "cardinality(telegram_chats) <= 20")
+}
+
+// UIPreference is table ui_preferences: how one person likes the console laid
+// out, cards or a table, the sidebar open or folded (migration 102).
+type UIPreference struct {
+	Email     string
+	Key       string
+	Value     string
+	UpdatedAt time.Time
+}
+
+func (m *UIPreference) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Email, &m.Key)
+	t.Col(&m.UpdatedAt).Default("now()")
+	t.CheckNamed("ui_preferences_key_check", "length(key) >= 1 AND length(key) <= 64")
+	t.CheckNamed("ui_preferences_value_check", "length(value) >= 1 AND length(value) <= 32")
 }
