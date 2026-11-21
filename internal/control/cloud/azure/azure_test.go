@@ -80,6 +80,10 @@ type fakeMicrosoft struct {
 	// locks the resource locks on it.
 	vmBody string
 	locks  []string
+	// groupLocks are the locks on web-1's resource group, and noLockList
+	// refuses the read of the subscription's locks.
+	groupLocks []string
+	noLockList bool
 	// groups are the network security groups as last written, by name,
 	// and groupEtag their etag; raceGroup changes it after every read.
 	groups    map[string]map[string]any
@@ -525,6 +529,26 @@ func (m *fakeMicrosoft) handler() http.Handler {
 		out := []map[string]any{}
 		for _, l := range m.locks {
 			out = append(out, map[string]any{"name": l, "properties": map[string]string{"level": "CanNotDelete"}})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"value": out})
+	}))
+	// Every lock in the subscription, on whatever it sits, as the
+	// inventory reads them.
+	mux.HandleFunc("GET "+sub+"/providers/Microsoft.Authorization/locks", authed(func(w http.ResponseWriter, r *http.Request) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		m.lists++
+		if m.noLockList {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":{"code":"AuthorizationFailed","message":"The client does not have authorization to perform action over scope."}}`))
+			return
+		}
+		out := []map[string]any{}
+		for _, l := range m.locks {
+			out = append(out, map[string]any{"id": vmPath + "/providers/Microsoft.Authorization/locks/" + l, "name": l})
+		}
+		for _, l := range m.groupLocks {
+			out = append(out, map[string]any{"id": sub + "/resourceGroups/Web-RG/providers/Microsoft.Authorization/locks/" + l, "name": l})
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"value": out})
 	}))
