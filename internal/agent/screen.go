@@ -189,6 +189,12 @@ type screenDiffer struct {
 	// scrollOn looks for scrolling (screen_scroll.go), in scroll's rows.
 	scrollOn bool
 	scroll   *scrollRows
+	// owed is, per tile, the frame it was first held back in, when it is
+	// owed to the browser (screen_fit.go); owing counts them.
+	owed   []int
+	owedAs []uint64 // the hash a tile had when it was held back
+	owing  int
+	frames int
 }
 
 // tileJob is one tile to encode, and what it became.
@@ -196,7 +202,10 @@ type tileJob struct {
 	index      int
 	x, y, w, h int
 	hash       uint64
-	frame      []byte
+	// prev is the hash the browser has: what the tile goes back to if it
+	// is held back.
+	prev  uint64
+	frame []byte
 }
 
 // changed returns the changed tiles as display frames (rdp.EncodeBitmap),
@@ -226,12 +235,16 @@ func (d *screenDiffer) find(s screenShot, force bool) []tileJob {
 		d.hashes = make([]uint64, d.cols*d.rows)
 		d.seed = maphash.MakeSeed()
 		d.scroll = nil
+		d.owed, d.owedAs, d.owing = nil, nil, 0
 		if d.scrollOn {
 			d.scroll = newScrollRows(s.width, s.height, d.cols, d.cols*d.rows, d.seed)
 		}
 		force = true
 	}
 	look := d.tilesToLook(s.dirty, force)
+	if !force {
+		look = d.owes(look)
+	}
 	var jobs []tileJob
 	for _, i := range look {
 		j := d.job(s, i)
@@ -242,8 +255,10 @@ func (d *screenDiffer) find(s screenShot, force bool) []tileJob {
 			h = tileHash(d.seed, s.fb, s.stride, j.x, j.y, j.w, j.h)
 		}
 		if !force && h == d.hashes[i] {
+			d.paid(i)
 			continue
 		}
+		j.prev = d.hashes[i]
 		d.hashes[i] = h
 		j.hash = h
 		jobs = append(jobs, j)
@@ -508,6 +523,9 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 		if at := sharp.next(); !at.IsZero() {
 			wait = max(0, min(wait, time.Until(at)))
 		}
+		if diff.owing > 0 {
+			wait = 0 // tiles owed go now, whether or not more changed
+		}
 		started := time.Now()
 		shot, changed, err := c.Capture(wait)
 		captured := time.Now()
@@ -527,7 +545,7 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 		}
 		var jobs []tileJob
 		repaint := false
-		if (changed || force) && last.fb != nil {
+		if (changed || force || diff.owing > 0) && last.fb != nil {
 			if last.width != lastW || last.height != lastH {
 				var p [4]byte
 				binary.LittleEndian.PutUint16(p[0:], uint16(last.width))
@@ -564,7 +582,6 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 				stats.Scrolls++
 			}
 		}
-		diff.commit()
 		// What the link carries, as the agent last measured it: motion
 		// costs no more, and sharpening is spread to fit.
 		budget.rate = int(linkRate.Load())
@@ -580,9 +597,14 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 			}
 			if ok {
 				// The changed tiles went as video; they are sharpened later.
+				diff.fit(jobs, 0)
 				jobs, sent = nil, true
 			}
 		}
+		// What goes exactly is no more than the link carries in a moment;
+		// the rest is owed, and sharpening waits until nothing is.
+		jobs = diff.fit(jobs, budget.frame())
+		diff.commit()
 		// Tiles that settled after video go again, exactly.
 		busy := make(map[int]bool, len(jobs))
 		for _, j := range jobs {
@@ -591,7 +613,7 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 				sharp.clear(j.index)
 			}
 		}
-		if last.fb != nil {
+		if last.fb != nil && diff.owing == 0 {
 			for _, i := range sharp.due(now, busy, budget.refine()) {
 				jobs = append(jobs, diff.job(last, i))
 			}

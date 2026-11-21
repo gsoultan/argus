@@ -728,7 +728,10 @@ jobs:
                 "| Busy window: longest wait | p95 \(.BusyGapP95MS) ms, max \(.BusyGapMaxMS) ms |",
                 "| Busy window: frame sent to frame shown (marks) | p50 \(.BusyLagP50MS) ms, p95 \(.BusyLagP95MS) ms |",
                 "| Busy window: scrolls drawn as moves | \(.BusyMovesPerSec * 10 | floor / 10) per s |",
-                "| Still arriving after the window stopped | \(.BusyStopMS / 100 | floor / 10) s |"' \
+                "| Still arriving after the window stopped | \(.BusyStopMS / 100 | floor / 10) s |",
+                "| Scrolling back (wheel): frames, bandwidth | \(.ScrollFramesPerSec * 10 | floor / 10) per s, \(.ScrollMbitPerSec * 100 | floor / 100) Mbit/s |",
+                "| Scrolling back: frame sent to frame shown | p50 \(.ScrollLagP50MS) ms, p95 \(.ScrollLagP95MS) ms |",
+                "| Scrolling back: drawn as moves, still moving after the wheel stopped | \(.ScrollMovesPerSec * 10 | floor / 10) per s, \(.ScrollStopMS / 100 | floor / 10) s |"' \
                 "$tmp/$name.json" >> "$GITHUB_STEP_SUMMARY"
             else
               cat "$tmp/$name.err"; tail -40 "$log"

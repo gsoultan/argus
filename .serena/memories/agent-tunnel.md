@@ -252,3 +252,12 @@ be decoding it). Test `screen_scroll_test.go` checks the simulated browser
 ends each frame pixel-exact; a scrolled 1280x720 frame went ~560 KB → 16–64 KB.
 CI measures every session type at 1 Mbit/s as well as 2 (`measure_link ... 1000`,
 deskdrill `-scroll`), the owner's target being smooth and sharp at 1 Mbit/s.
+Frames fit the link (2026-11-21, `screen_fit.go`): once the agent has told the
+helper a link rate (scrRate), a frame's exact changed tiles are capped at what
+crosses in 150 ms (min 8 tiles); the rest are "owed": the differ restores the
+browser's hash (`tileJob.prev`), keeps looking at them every frame (the loop
+runs find while `diff.owing > 0` and doesn't wait in Capture), sends the 8
+newest changes first, then owed oldest-first; sharpening waits until nothing
+is owed. CI 1 Mbit/s before this: tiles-only screen sharing 1 fps, 2.3 s
+behind. deskdrill now also scrolls the console back with the wheel for 10 s
+after the busy window (`Scroll*` fields in its report).

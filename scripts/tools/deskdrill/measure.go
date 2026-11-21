@@ -86,7 +86,21 @@ type Report struct {
 	// no marks.
 	BusyLagP50MS float64
 	BusyLagP95MS float64
+
+	// Scroll is the console scrolled back through what it listed, with
+	// the mouse wheel, as someone reading a page does: what each frame
+	// costs when most of it is the screen's own pixels moved.
+	ScrollSeconds      float64
+	ScrollFramesPerSec float64
+	ScrollMbitPerSec   float64
+	ScrollMovesPerSec  float64
+	ScrollLagP50MS     float64
+	ScrollLagP95MS     float64
+	ScrollStopMS       float64
 }
+
+// scrollFor is how long the console is scrolled back.
+const scrollFor = 10 * time.Second
 
 type meter struct {
 	ctx     context.Context
@@ -192,6 +206,7 @@ func measure(ctx context.Context, c *websocket.Conn, send func(any), busyFor tim
 	if tail := m.until(time.Second, 120*time.Second); len(tail) > 0 {
 		r.BusyStopMS = ms(tail[len(tail)-1].at.Sub(stop))
 	}
+	m.scroll(&r)
 	if len(busy) > 1 {
 		secs := busyFor.Seconds()
 		r.BusySeconds = secs
@@ -397,6 +412,50 @@ func (m *meter) key(code string, shift bool) {
 	if shift {
 		m.send(map[string]any{"type": "key", "code": "ShiftLeft", "down": false})
 	}
+}
+
+// scroll turns the wheel over the console, three lines up ten times a
+// second, for scrollFor, and notes what that cost and how long the screen
+// went on moving after the wheel stopped.
+func (m *meter) scroll(r *Report) {
+	x, y := m.width/2, m.height/2
+	m.send(map[string]any{"type": "mouse", "x": x, "y": y})
+	m.until(500*time.Millisecond, 5*time.Second)
+	m.lags()
+	stopWheel := make(chan struct{})
+	go func() {
+		t := time.NewTicker(100 * time.Millisecond)
+		defer t.Stop()
+		for {
+			select {
+			case <-stopWheel:
+				return
+			case <-m.ctx.Done():
+				return
+			case <-t.C:
+				m.send(map[string]any{"type": "wheel", "delta": -120, "x": x, "y": y})
+			}
+		}
+	}()
+	got := m.window(scrollFor)
+	close(stopWheel)
+	stop := time.Now()
+	if lags := m.lags(); len(lags) > 0 {
+		slices.Sort(lags)
+		r.ScrollLagP50MS, r.ScrollLagP95MS = pct(lags, 50), pct(lags, 95)
+	}
+	if tail := m.until(time.Second, 60*time.Second); len(tail) > 0 {
+		r.ScrollStopMS = ms(tail[len(tail)-1].at.Sub(stop))
+	}
+	secs := scrollFor.Seconds()
+	r.ScrollSeconds = secs
+	slots := map[int64]bool{}
+	for _, u := range got {
+		slots[u.at.UnixNano()/int64(time.Second/60)] = true
+	}
+	r.ScrollFramesPerSec = float64(len(slots)) / secs
+	r.ScrollMbitPerSec = float64(sum(got, func(u update) int { return u.bytes })*8) / secs / 1e6
+	r.ScrollMovesPerSec = float64(sum(got, func(u update) int { return u.moves })) / secs
 }
 
 // run starts a command from the Run box, typed as a US keyboard would.
