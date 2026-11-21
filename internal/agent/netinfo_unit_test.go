@@ -3,6 +3,7 @@ package agent
 import (
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -24,8 +25,10 @@ func TestAgentUnitsAllowNetlink(t *testing.T) {
 		if m == nil {
 			continue // no restriction at all
 		}
-		if !strings.Contains(" "+string(m[1])+" ", " AF_NETLINK ") {
-			t.Errorf("%s: RestrictAddressFamilies=%s leaves out AF_NETLINK, so the agent cannot read its addresses", unit, m[1])
+		// Fields, not a plain match: a Windows checkout ends the line in \r.
+		if !slices.Contains(strings.Fields(string(m[1])), "AF_NETLINK") {
+			t.Errorf("%s: RestrictAddressFamilies=%s leaves out AF_NETLINK, so the agent cannot read its addresses",
+				unit, strings.TrimSpace(string(m[1])))
 		}
 	}
 }
