@@ -79,7 +79,12 @@ func (s *Store) notifyChanged(ctx context.Context) {
 
 // Open connects and applies migrations.
 func Open(ctx context.Context, dsn string) (*Store, error) {
-	pool, err := pgxpool.New(ctx, dsn)
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("connect: %w", err)
+	}
+	noJIT(cfg)
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", err)
 	}
@@ -92,6 +97,31 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// noJIT turns Postgres's JIT compiler off for this pool's connections, unless
+// the database URL sets jit itself.
+//
+// JIT compiles a query to machine code when the planner thinks it expensive,
+// and the queries that join every server to its agent are estimated far above
+// the threshold while running in tens of milliseconds. Measured with 7,000
+// servers: GET /api/v1/assets 107 ms with JIT, 78 ms without; the home page
+// 50 ms against 37; resources-low 43 against 25. The compiling is the
+// difference, paid on every request, and nothing here runs long enough to win
+// it back.
+//
+// A SET after connecting rather than a startup parameter, because a
+// connection pooler such as PgBouncer refuses a startup parameter it does not
+// know, and that would be an outage where this is only a cost. A server that
+// does not know jit refuses the SET, and the connection is used as it is.
+func noJIT(cfg *pgxpool.Config) {
+	if _, set := cfg.ConnConfig.RuntimeParams["jit"]; set {
+		return
+	}
+	cfg.AfterConnect = func(ctx context.Context, c *pgx.Conn) error {
+		_, _ = c.Exec(ctx, "SET jit = off")
+		return nil
+	}
 }
 
 func newStore(pool *pgxpool.Pool) *Store {

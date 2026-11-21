@@ -285,7 +285,7 @@ func (a *API) Handler() http.Handler {
 	a.registerFleet(mux)
 	// scope first: the gate checks the cookie against the organization's
 	// own table, so it needs to know which one.
-	return a.recoverPanics(a.securityHeaders(a.cors(a.scope(a.sessionGate(mux)))))
+	return a.recoverPanics(compress(a.securityHeaders(a.cors(a.scope(a.sessionGate(mux))))))
 }
 
 // ConsoleHandler serves the surface a person reaches: sign-in, the console's
@@ -302,7 +302,7 @@ func (a *API) ConsoleHandler() http.Handler {
 	a.registerConsole(mux)
 	// scope first: the gate checks the cookie against the organization's
 	// own table, so it needs to know which one.
-	return a.recoverPanics(a.securityHeaders(a.cors(a.scope(a.sessionGate(mux)))))
+	return a.recoverPanics(compress(a.securityHeaders(a.cors(a.scope(a.sessionGate(mux))))))
 }
 
 // FleetHandler serves the surface gateways and agents reach.
@@ -316,7 +316,7 @@ func (a *API) FleetHandler() http.Handler {
 	mux := http.NewServeMux()
 	a.registerCommon(mux)
 	a.registerFleet(mux)
-	return a.recoverPanics(a.securityHeaders(a.cors(a.scope(mux))))
+	return a.recoverPanics(compress(a.securityHeaders(a.cors(a.scope(mux)))))
 }
 
 // registerCommon adds what both surfaces need: liveness, and the process's own
@@ -862,6 +862,15 @@ func (a *API) getAudit(w http.ResponseWriter, r *http.Request, _ string) {
 	// A header rather than an envelope: the body is a bare array everywhere
 	// this is consumed, and X-Argus-Chain-Verified already establishes the
 	// pattern for saying something *about* a response here.
+	//
+	// Counted on the first page only. The console reads it from the first
+	// response and from no other, so a later page's count changes nothing it
+	// shows -- and counting a log of a million entries is 45 ms, paid again on
+	// each of the ten pages the console fetches.
+	if before > 0 {
+		writeJSON(w, http.StatusOK, events)
+		return
+	}
 	if total, cerr := a.store.CountAuditEvents(r.Context()); cerr == nil {
 		w.Header().Set("X-Argus-Audit-Total", strconv.Itoa(total))
 	} else {

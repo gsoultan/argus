@@ -2,6 +2,9 @@ package control
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
 	"testing"
 )
 
@@ -43,5 +46,36 @@ func TestTheAuditTotalIsNotTheNumberOfEventsReturned(t *testing.T) {
 	}
 	if total < len(events) {
 		t.Errorf("count %d is smaller than a single page of %d", total, len(events))
+	}
+}
+
+// The total rides on the first page, the only one the console reads it from,
+// and a later page does not count the log again.
+func TestTheAuditTotalIsCountedOnTheFirstPageOnly(t *testing.T) {
+	_, s, h, _ := enrollAPI(t)
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		if _, err := s.AppendAudit(ctx, AuditEvent{Action: "test.page", Severity: "info",
+			ActorEmail: "pager@example.com", Target: "audit", Detail: "page"}); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+	first := do(t, h, http.MethodGet, "/api/v1/audit?limit=2", "admin-token", "")
+	if first.Code != http.StatusOK || first.Header().Get("X-Argus-Audit-Total") == "" {
+		t.Fatalf("first page: %d, total %q", first.Code, first.Header().Get("X-Argus-Audit-Total"))
+	}
+	var page []AuditEvent
+	if err := json.Unmarshal(first.Body.Bytes(), &page); err != nil || len(page) != 2 {
+		t.Fatalf("first page: %v, %d events", err, len(page))
+	}
+	next := do(t, h, http.MethodGet, fmt.Sprintf("/api/v1/audit?limit=2&before=%d", page[1].Seq), "admin-token", "")
+	if next.Code != http.StatusOK {
+		t.Fatalf("next page: %d %s", next.Code, next.Body)
+	}
+	if got := next.Header().Get("X-Argus-Audit-Total"); got != "" {
+		t.Fatalf("a later page counted the log again: %q", got)
+	}
+	if err := json.Unmarshal(next.Body.Bytes(), &page); err != nil || len(page) == 0 {
+		t.Fatalf("next page: %v, %d events", err, len(page))
 	}
 }
