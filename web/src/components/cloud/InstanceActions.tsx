@@ -59,7 +59,13 @@ export function InstanceActions({ it }: { it: CloudItem }) {
   // Azure's is a resource lock on the VM, which Argus puts on and takes off.
   const protectWord = gcp ? 'deletion protection' : azure ? 'the delete lock' : 'termination protection'
   // Google's inventory says whether it is on, so only the way it can go is offered.
-  const protectedNow = gcp ? r.details?.deletionProtection === 'on' : undefined
+  // Azure's inventory says which lock is on the VM: Argus's own, somebody
+  // else's, both or none. Argus takes off only its own, so that alone
+  // decides which way is offered; when the locks could not be read, both are.
+  const lock = azure ? r.details?.lock : undefined
+  const protectedNow = gcp ? r.details?.deletionProtection === 'on'
+    : lock ? lock === 'argus' || lock === 'both' : undefined
+  const lockNote = azure ? lockSays(r.details) : ''
 
   return (
     <Stack gap="xs">
@@ -72,6 +78,12 @@ export function InstanceActions({ it }: { it: CloudItem }) {
         <Alert color="amber" variant="light" p="xs" icon={<IconPlayerStop size={16} />}>
           <Text size={FS.meta}>{r.name} was shut down from inside the VM, so Azure keeps it allocated and still bills it in full.{can('stop') ? ' Deallocate it to stop the bill for the VM.' : ''}</Text>
         </Alert>
+      )}
+      {lockNote && (
+        <Group gap={6} wrap="nowrap" align="flex-start">
+          <IconLock size={14} color="var(--mantine-color-dimmed)" style={{ flexShrink: 0, marginTop: 2 }} />
+          <Text size={FS.meta} c="dimmed">{lockNote}</Text>
+        </Group>
       )}
       <Group gap="xs">
         {(running || allocated) && can('stop') && <Button size="xs" variant="default" leftSection={<IconPlayerStop size={14} />} disabled={!!waiting} onClick={() => setOpen('stop')}>{allocated ? 'Deallocate' : 'Stop'}</Button>}
@@ -124,6 +136,17 @@ export function InstanceActions({ it }: { it: CloudItem }) {
       {open === 'instance-firewalls' && <InstanceFirewalls it={it} env={env} onClose={close} />}
     </Stack>
   )
+}
+
+/** What an Azure VM's details say of the locks that stop it being deleted. */
+function lockSays(d?: Record<string, string>): string {
+  const names = d?.lockNames
+  const parts: string[] = []
+  if (d?.lock === 'argus') parts.push('The delete lock is on: nobody can delete this VM until it is off.')
+  if (d?.lock === 'both') parts.push(`The delete lock is on, and so is ${names} from Azure, which comes off in the Azure portal.`)
+  if (d?.lock === 'other') parts.push(`Locked in Azure by ${names}, which Argus did not put on; it comes off in the Azure portal.`)
+  if (d?.lockAbove) parts.push(`A lock on its ${d.lockAbove} also stops it being deleted.`)
+  return parts.join(' ')
 }
 
 const CHECK_WORD: Record<string, { label: string; color: string }> = {

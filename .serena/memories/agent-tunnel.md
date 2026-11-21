@@ -238,3 +238,26 @@ live view and the browser decoder are unchanged. Ctrl+Alt+Del becomes
 unset. A console session change (sign-out) gets a new helper. Session and
 account are checked on a schedule independent of NextBitmaps calls: a
 per-call timer never fired on a busy screen.
+
+Scrolls as moves (2026-11-21): the helper keeps a maphash of every row of
+every 64px column (`internal/agent/screen_scroll.go`); when ≥8 tiles change it
+votes on a vertical shift and sends tiles that match the old screen at that
+shift as `rdp.FrameCopy` (kind 9, 12 bytes, int16 dy at [10:12]) before the
+frame's tiles, ordered so none reads where an earlier one wrote. Recorded as
+standalone ScrBlt primary orders (`internal/rdp/scrblt.go`) in a Fast-Path
+orders update; replay decodes them back to FrameCopy and draws sequentially.
+Only when the browser says `scroll: true` in logon (→ `DesktopOpen.Scroll` →
+helper `--scroll`); none within 1.2 s of a video picture (the browser may still
+be decoding it). Test `screen_scroll_test.go` checks the simulated browser
+ends each frame pixel-exact; a scrolled 1280x720 frame went ~560 KB → 16–64 KB.
+CI measures every session type at 1 Mbit/s as well as 2 (`measure_link ... 1000`,
+deskdrill `-scroll`), the owner's target being smooth and sharp at 1 Mbit/s.
+Frames fit the link (2026-11-21, `screen_fit.go`): once the agent has told the
+helper a link rate (scrRate), a frame's exact changed tiles are capped at what
+crosses in 150 ms (min 8 tiles); the rest are "owed": the differ restores the
+browser's hash (`tileJob.prev`), keeps looking at them every frame (the loop
+runs find while `diff.owing > 0` and doesn't wait in Capture), sends the 8
+newest changes first, then owed oldest-first; sharpening waits until nothing
+is owed. CI 1 Mbit/s before this: tiles-only screen sharing 1 fps, 2.3 s
+behind. deskdrill now also scrolls the console back with the wheel for 10 s
+after the busy window (`Scroll*` fields in its report).

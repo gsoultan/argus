@@ -44,6 +44,8 @@ type screenStats struct {
 	CreditMS float64 `json:"creditMs"`
 	// PaceMS is the time spent keeping to the frame rate.
 	PaceMS float64 `json:"paceMs"`
+	// Scrolls counts frames that sent a scroll as moves.
+	Scrolls int `json:"scrolls,omitempty"`
 
 	sent time.Time
 }

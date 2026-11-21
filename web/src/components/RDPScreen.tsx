@@ -12,6 +12,7 @@ import {
 import { chord, isMac, KeyMapper, loadKeyboardPrefs, type KeyboardPrefs, type KeyOut } from '~/lib/keymap'
 import { pictureSize, slowLink, type PicturePrefs } from '~/lib/picture'
 import { PointerInput } from '~/lib/pointerInput'
+import { drawMove, type DisplayMove } from '~/lib/displayMove'
 import type { RDPWorkerRequest, RDPWorkerResponse } from '~/workers/rdp.worker'
 
 /**
@@ -335,13 +336,19 @@ export function RDPScreen({
     // Rectangles are queued and drawn in one animation frame rather than one at
     // a time. A desktop update is often a dozen rectangles; drawing each on
     // arrival means a dozen separate paints for one visual change.
-    let pending: Array<{ x: number; y: number; bitmap: ImageBitmap }> = []
+    // A move (a scroll) waits in the same queue, so it reads the screen as
+    // the rectangles before it left it.
+    let pending: Array<{ x: number; y: number; bitmap: ImageBitmap } | { move: DisplayMove }> = []
     let scheduled = false
     const flush = () => {
       scheduled = false
       const batch = pending
       pending = []
       for (const r of batch) {
+        if ('move' in r) {
+          if (ctx) drawMove(ctx, canvas, r.move)
+          continue
+        }
         ctx?.drawImage(r.bitmap, r.x, r.y)
         // Closing releases the decoded pixels immediately instead of waiting
         // for the collector, which is what stops memory tracking session
@@ -355,6 +362,13 @@ export function RDPScreen({
       switch (m.type) {
         case 'rects':
           for (const r of m.rects) pending.push({ x: r.x, y: r.y, bitmap: r.bitmap })
+          if (!scheduled) {
+            scheduled = true
+            requestAnimationFrame(flush)
+          }
+          break
+        case 'copy':
+          pending.push({ move: m.move })
           if (!scheduled) {
             scheduled = true
             requestAnimationFrame(flush)
@@ -431,6 +445,8 @@ export function RDPScreen({
               graphics,
               video,
               slowLink: slowLink(pictureRef.current?.size ?? 'fit'),
+              // Scrolling may come as moves of what is on screen (FRAME_COPY).
+              scroll: true,
               ...pictureSize(pictureRef.current?.size ?? 'fit', wantedSize()),
             }),
           )
@@ -484,7 +500,7 @@ export function RDPScreen({
       document.removeEventListener('fullscreenchange', place)
       wsRef.current?.close()
       worker.terminate()
-      for (const r of pending) r.bitmap.close()
+      for (const r of pending) if ('bitmap' in r) r.bitmap.close()
       pending = []
       canvas.remove()
       if (canvasRef.current === canvas) canvasRef.current = null

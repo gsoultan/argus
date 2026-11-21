@@ -197,6 +197,8 @@ func frameSize(f []byte) int {
 	switch f[0] {
 	case FrameGraphics, FrameGraphicsPart:
 		return FrameHeaderSize + int((binary.LittleEndian.Uint32(f[4:8])+3)&^3)
+	case FrameCopy, FrameMark:
+		return FrameHeaderSize
 	}
 	w := int(binary.LittleEndian.Uint16(f[6:8]))
 	h := int(binary.LittleEndian.Uint16(f[8:10]))

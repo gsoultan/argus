@@ -398,12 +398,16 @@ func RunScreenHelper(args []string, in io.Reader, out io.Writer) int {
 	// No H.264 encoder here yet: motion goes as exact tiles, which the
 	// helper says, so the agent and its log know.
 	var newVideo func(int, int) (screenVideo, error)
+	pace := defaultScreenPace
 	for _, a := range args {
-		if a == "--video" {
+		switch a {
+		case "--video":
 			newVideo = newLinuxVideo
+		case "--scroll":
+			pace.scroll = true
 		}
 	}
-	if err := serveScreen(c, newInput, in, out, defaultScreenPace, newVideo); err != nil {
+	if err := serveScreen(c, newInput, in, out, pace, newVideo); err != nil {
 		_ = writeScreenMsg(out, scrFail, []byte(err.Error()))
 		return 1
 	}

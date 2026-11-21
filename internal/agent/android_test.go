@@ -20,7 +20,7 @@ the next look sees; "view" plays nothing on the device.
 // come up.
 func openDevice(t *testing.T, dev AndroidDevice, principal string) (*androidClient, DesktopInfo) {
 	t.Helper()
-	c, info, err := connectAndroid(dev, principal, false, nil)
+	c, info, err := connectAndroid(dev, principal, screenWants{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

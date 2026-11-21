@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -128,7 +129,7 @@ func (f *Fake) Inventory(_ context.Context, a Account, region string, kinds []Ki
 	var out []Resource
 	for _, r := range f.Resources[region] {
 		if want[r.Kind] {
-			out = append(out, r)
+			out = append(out, r.copied())
 		}
 	}
 	now := time.Now()
@@ -515,7 +516,27 @@ func (f *Fake) AccountInventory(_ context.Context, a Account, _ []string) (Snaps
 	if f.Now != nil {
 		now = f.Now()
 	}
-	return Snapshot{Region: GlobalRegion, Kinds: append(slices.Clone(AccountKinds), ReservationKinds...), Resources: append([]Resource(nil), f.Resources[GlobalRegion]...), ReadAt: now}, nil
+	return Snapshot{Region: GlobalRegion, Kinds: append(slices.Clone(AccountKinds), ReservationKinds...), Resources: copiedAll(f.Resources[GlobalRegion]), ReadAt: now}, nil
+}
+
+// copied is r with its own slices and maps, as a provider's answer is: the
+// fake goes on changing its resources after a read, while the reader may
+// still be looking at what it got.
+func (r Resource) copied() Resource {
+	r.Addresses = slices.Clone(r.Addresses)
+	r.Links = slices.Clone(r.Links)
+	r.Rules = slices.Clone(r.Rules)
+	r.Tags = maps.Clone(r.Tags)
+	r.Details = maps.Clone(r.Details)
+	return r
+}
+
+func copiedAll(rs []Resource) []Resource {
+	var out []Resource
+	for _, r := range rs {
+		out = append(out, r.copied())
+	}
+	return out
 }
 
 func (f *Fake) ConsoleOutput(_ context.Context, a Account, actor Actor, region, id string) (ConsoleText, error) {

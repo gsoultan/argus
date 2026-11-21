@@ -701,18 +701,20 @@ jobs:
             "| Busy window: decode (native) | \(.BusyDecodeShare * 1000 | floor / 10) % of a core |"' \
             "$tmp/desktop-measure.json" >> "$GITHUB_STEP_SUMMARY"
 
-          # The same desktop as someone behind a 2 Mbit/s link has it: how
-          # far behind the picture runs while a window is busy, which is what
-          # a slow link feels as lag. Reported, not yet held to a number.
-          measure_link() { # name, title, deskdrill flags...
-            local name=$1 title=$2; shift 2
+          # The same desktop as someone behind a slow link (2 Mbit/s, and
+          # 1 Mbit/s, the slowest a session should still feel smooth on) has
+          # it: how far behind the picture runs while a window is busy, which
+          # is what a slow link feels as lag. Reported, not yet held to a
+          # number.
+          measure_link() { # name, title, kbit/s, deskdrill flags...
+            local name=$1 title=$2 kbit=$3; shift 3
             local tkt
             desktop_gone
             tkt=$($c -X POST https://localhost:8080/api/v1/terminal/ticket \
               -d "{\"target\":\"$host\",\"principal\":\"argusdrill\"}" | jq -r .ticket)
             if "$tmp/deskdrill.exe" -url https://localhost:8080 -ca "$tmp/ca.crt" \
                  -ticket "$tkt" -target "$host" -principal argusdrill \
-                 -password-env DRILL_PASSWORD -measure 20s -keys 10 -link 2000 "$@" \
+                 -password-env DRILL_PASSWORD -measure 20s -keys 10 -link "$kbit" "$@" \
                  -report "$tmp/$name.json" 2>"$tmp/$name.err"; then
               cat "$tmp/$name.err"
               cp "$tmp/$name.json" measure/
@@ -725,7 +727,11 @@ jobs:
                 "| Busy window: bandwidth | \(.BusyMbitPerSec * 100 | floor / 100) Mbit/s |",
                 "| Busy window: longest wait | p95 \(.BusyGapP95MS) ms, max \(.BusyGapMaxMS) ms |",
                 "| Busy window: frame sent to frame shown (marks) | p50 \(.BusyLagP50MS) ms, p95 \(.BusyLagP95MS) ms |",
-                "| Still arriving after the window stopped | \(.BusyStopMS / 100 | floor / 10) s |"' \
+                "| Busy window: scrolls drawn as moves | \(.BusyMovesPerSec * 10 | floor / 10) per s |",
+                "| Still arriving after the window stopped | \(.BusyStopMS / 100 | floor / 10) s |",
+                "| Scrolling back (wheel): frames, bandwidth | \(.ScrollFramesPerSec * 10 | floor / 10) per s, \(.ScrollMbitPerSec * 100 | floor / 100) Mbit/s |",
+                "| Scrolling back: frame sent to frame shown | p50 \(.ScrollLagP50MS) ms, p95 \(.ScrollLagP95MS) ms |",
+                "| Scrolling back: drawn as moves, still moving after the wheel stopped | \(.ScrollMovesPerSec * 10 | floor / 10) per s, \(.ScrollStopMS / 100 | floor / 10) s |"' \
                 "$tmp/$name.json" >> "$GITHUB_STEP_SUMMARY"
             else
               cat "$tmp/$name.err"; tail -40 "$log"
@@ -734,8 +740,10 @@ jobs:
             fi
           }
           mkdir -p measure
-          measure_link desktop-link "Remote Desktop, bitmaps," -width 1920 -height 1080
-          measure_link desktop-graphics-link "Remote Desktop, graphics pipeline," -width 1920 -height 1080 -graphics
+          measure_link desktop-link "Remote Desktop, bitmaps," 2000 -width 1920 -height 1080
+          measure_link desktop-graphics-link "Remote Desktop, graphics pipeline," 2000 -width 1920 -height 1080 -graphics
+          measure_link desktop-link-1m "Remote Desktop, bitmaps," 1000 -width 1920 -height 1080
+          measure_link desktop-graphics-link-1m "Remote Desktop, graphics pipeline," 1000 -width 1920 -height 1080 -graphics
 
           # The graphics pipeline through the agent, as the console asks for
           # it, kept for Chrome to decode in the next step.
@@ -822,7 +830,12 @@ jobs:
           measure_screen screen-measure "exact tiles"
           desktop_gone
           measure_screen screen-video-measure "motion as H.264" -video
-          measure_link screen-video-link "Screen sharing, motion as H.264," -video
+          measure_link screen-video-link "Screen sharing, motion as H.264," 2000 -video -scroll
+          # 1 Mbit/s: as the console has it (motion as H.264, scrolls as
+          # moves), and with exact tiles only, scrolls as moves and not.
+          measure_link screen-video-link-1m "Screen sharing, motion as H.264, scrolls as moves," 1000 -video -scroll
+          measure_link screen-link-1m "Screen sharing, exact tiles, scrolls as moves," 1000 -scroll
+          measure_link screen-link-1m-noscroll "Screen sharing, exact tiles, no moves," 1000
           # What the agent made of it: whether H.264 was asked for, what
           # motion went as (or why not), and how many pictures it sent. -a:
           # the log is searched as text whatever bytes are in it.

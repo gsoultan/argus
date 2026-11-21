@@ -169,6 +169,9 @@ type screenPace struct {
 	// linkRate is what the link is taken to carry before the agent has
 	// measured it, in bits a second; 0 is no limit.
 	linkRate int
+	// scroll sends scrolling as moves of what the browser shows, for a
+	// browser that draws them (screen_scroll.go).
+	scroll bool
 }
 
 var defaultScreenPace = screenPace{minGap: screenMinGap, idleMax: screenIdleMax}
@@ -183,6 +186,15 @@ type screenDiffer struct {
 	seed          maphash.Seed
 	// scratch is one encoding buffer per worker.
 	scratch [][]byte
+	// scrollOn looks for scrolling (screen_scroll.go), in scroll's rows.
+	scrollOn bool
+	scroll   *scrollRows
+	// owed is, per tile, the frame it was first held back in, when it is
+	// owed to the browser (screen_fit.go); owing counts them.
+	owed   []int
+	owedAs []uint64 // the hash a tile had when it was held back
+	owing  int
+	frames int
 }
 
 // tileJob is one tile to encode, and what it became.
@@ -190,13 +202,26 @@ type tileJob struct {
 	index      int
 	x, y, w, h int
 	hash       uint64
-	frame      []byte
+	// prev is the hash the browser has: what the tile goes back to if it
+	// is held back.
+	prev  uint64
+	frame []byte
 }
 
 // changed returns the changed tiles as display frames (rdp.EncodeBitmap),
 // grouped into batches under limit bytes. force sends every tile.
 func (d *screenDiffer) changed(s screenShot, force bool, limit int) [][]byte {
-	return d.batches(s, d.find(s, force), limit)
+	jobs := d.find(s, force)
+	d.commit()
+	return d.batches(s, jobs, limit)
+}
+
+// commit takes the screen found last as the browser's: what a scroll is
+// looked for against next.
+func (d *screenDiffer) commit() {
+	if d.scroll != nil {
+		d.scroll.commit()
+	}
 }
 
 // find returns the tiles that changed since they were last found, and
@@ -209,16 +234,31 @@ func (d *screenDiffer) find(s screenShot, force bool) []tileJob {
 		d.rows = (s.height + screenTile - 1) / screenTile
 		d.hashes = make([]uint64, d.cols*d.rows)
 		d.seed = maphash.MakeSeed()
+		d.scroll = nil
+		d.owed, d.owedAs, d.owing = nil, nil, 0
+		if d.scrollOn {
+			d.scroll = newScrollRows(s.width, s.height, d.cols, d.cols*d.rows, d.seed)
+		}
 		force = true
 	}
 	look := d.tilesToLook(s.dirty, force)
+	if !force {
+		look = d.owes(look)
+	}
 	var jobs []tileJob
 	for _, i := range look {
 		j := d.job(s, i)
-		h := tileHash(d.seed, s.fb, s.stride, j.x, j.y, j.w, j.h)
+		var h uint64
+		if d.scroll != nil {
+			h = d.scroll.hash(s.fb, s.stride, i, j)
+		} else {
+			h = tileHash(d.seed, s.fb, s.stride, j.x, j.y, j.w, j.h)
+		}
 		if !force && h == d.hashes[i] {
+			d.paid(i)
 			continue
 		}
+		j.prev = d.hashes[i]
 		d.hashes[i] = h
 		j.hash = h
 		jobs = append(jobs, j)
@@ -434,7 +474,7 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 		}
 	}()
 
-	var diff screenDiffer
+	diff := screenDiffer{scrollOn: pace.scroll}
 	var sharp screenSharpener
 	mo := motion{newVideo: newVideo, out: out}
 	defer mo.close()
@@ -483,6 +523,9 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 		if at := sharp.next(); !at.IsZero() {
 			wait = max(0, min(wait, time.Until(at)))
 		}
+		if diff.owing > 0 {
+			wait = 0 // tiles owed go now, whether or not more changed
+		}
 		started := time.Now()
 		shot, changed, err := c.Capture(wait)
 		captured := time.Now()
@@ -502,7 +545,7 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 		}
 		var jobs []tileJob
 		repaint := false
-		if (changed || force) && last.fb != nil {
+		if (changed || force || diff.owing > 0) && last.fb != nil {
 			if last.width != lastW || last.height != lastH {
 				var p [4]byte
 				binary.LittleEndian.PutUint16(p[0:], uint16(last.width))
@@ -526,6 +569,19 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 
 		now := found
 		sent := false
+		// A scroll goes as a move of what the browser already shows, and
+		// only what scrolled into view as tiles, exactly; not while a video
+		// picture may still be being drawn.
+		var moves []rdp.Bitmap
+		if !repaint && now.Sub(mo.last) >= scrollAfterVideo {
+			var dy int
+			var rest []tileJob
+			if moves, rest, dy = diff.scrolls(jobs); len(moves) > 0 {
+				jobs = rest
+				diff.moveBlur(&sharp, moves, dy, now)
+				stats.Scrolls++
+			}
+		}
 		// What the link carries, as the agent last measured it: motion
 		// costs no more, and sharpening is spread to fit.
 		budget.rate = int(linkRate.Load())
@@ -533,7 +589,7 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 		// A whole screen goes exactly where the link takes it in a moment.
 		// On a slow one that is seconds of nothing, so it goes as a key
 		// picture, there at once, and is sharpened as the link allows.
-		if (!repaint || (budget.rate != 0 && mo.newVideo != nil && !mo.off)) &&
+		if len(moves) == 0 && (!repaint || (budget.rate != 0 && mo.newVideo != nil && !mo.off)) &&
 			(repaint || mo.wants(len(jobs), now)) {
 			ok, err := mo.send(last, &diff, &sharp, jobs, now)
 			if err != nil {
@@ -541,9 +597,14 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 			}
 			if ok {
 				// The changed tiles went as video; they are sharpened later.
+				diff.fit(jobs, 0)
 				jobs, sent = nil, true
 			}
 		}
+		// What goes exactly is no more than the link carries in a moment;
+		// the rest is owed, and sharpening waits until nothing is.
+		jobs = diff.fit(jobs, budget.frame())
+		diff.commit()
 		// Tiles that settled after video go again, exactly.
 		busy := make(map[int]bool, len(jobs))
 		for _, j := range jobs {
@@ -552,7 +613,7 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 				sharp.clear(j.index)
 			}
 		}
-		if last.fb != nil {
+		if last.fb != nil && diff.owing == 0 {
 			for _, i := range sharp.due(now, busy, budget.refine()) {
 				jobs = append(jobs, diff.job(last, i))
 			}
@@ -560,6 +621,10 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 		coded := time.Now()
 		batches := diff.batches(last, jobs, desktopBatch)
 		encoded := time.Now()
+		if len(moves) > 0 {
+			// First: the frame's tiles are drawn over what moved.
+			batches = append([][]byte{encodeMoves(moves)}, batches...)
+		}
 		if len(batches) == 0 && !sent {
 			// Nothing new. A capturer that waited has already spent the
 			// time; one that looked and returned (GDI) waits here, a
@@ -586,8 +651,10 @@ func serveScreen(c screenCapturer, newInput func() screenInputer, in io.Reader, 
 			continue
 		}
 		exact := 0
-		for _, b := range batches {
-			exact += len(b)
+		for i, b := range batches {
+			if i > 0 || len(moves) == 0 {
+				exact += len(b)
+			}
 			if err := writeScreenMsg(out, scrRects, b); err != nil {
 				return err
 			}
@@ -793,6 +860,8 @@ type helperMode struct {
 	// slow starts it as for a slow link: the browser said its link is one,
 	// before any frame has measured it.
 	slow bool
+	// scroll lets it send scrolling as moves, for a browser that draws them.
+	scroll bool
 }
 
 // screenGraphicsChannel is the MCS channel a screen session's pictures are
@@ -877,24 +946,34 @@ type screenClient struct {
 	link linkGauge
 	// slow is the browser having said its link is slow.
 	slow bool
+	// scroll is the browser drawing moves (rdp.FrameCopy).
+	scroll bool
 }
 
 // openScreen starts the helper in the console's session and waits for it
 // to say how large the screen is.
 func openScreen(host screenHost, video bool, log *slog.Logger) (*screenClient, error) {
-	return openScreenOn(host, video, false, log)
+	return openScreenOn(host, screenWants{video: video}, log)
+}
+
+// screenWants is what the browser said it can take.
+type screenWants struct {
+	// video: it decodes H.264. slow: its link is slow. scroll: it draws
+	// moves of its own pixels (rdp.FrameCopy).
+	video, slow, scroll bool
 }
 
 // openScreenOn is openScreen for a browser that says whether its link is
 // slow, which starts the screen as for one.
-func openScreenOn(host screenHost, video, slow bool, log *slog.Logger) (*screenClient, error) {
+func openScreenOn(host screenHost, wants screenWants, log *slog.Logger) (*screenClient, error) {
+	video, slow := wants.video, wants.slow
 	session, ok := host.ConsoleSession()
 	if !ok {
 		return nil, errors.New("this host has no console session to share; " +
 			"it may be starting or shutting down")
 	}
 	c := &screenClient{host: host, log: log, msgs: make(chan screenMsg, 8),
-		done: make(chan struct{}), checkEvery: time.Second, video: video, slow: slow}
+		done: make(chan struct{}), checkEvery: time.Second, video: video, slow: slow, scroll: wants.scroll}
 	if video {
 		c.gfx, c.gtap = &GraphicsSink{}, rdp.NewGraphicsTap(screenGraphicsChannel)
 	}
@@ -936,7 +1015,8 @@ func (c *screenClient) start(session uint32) error {
 	c.mu.Lock()
 	failed := c.failed > 0
 	c.mu.Unlock()
-	h, err := c.host.StartHelper(session, helperMode{gdiOnly: failed, video: c.video && !failed, slow: c.slow})
+	h, err := c.host.StartHelper(session, helperMode{gdiOnly: failed, video: c.video && !failed, slow: c.slow,
+		scroll: c.scroll})
 	if err != nil {
 		return err
 	}
@@ -1085,6 +1165,18 @@ func (c *screenClient) rects(p []byte) ([]rdp.Bitmap, error) {
 	c.mu.Unlock()
 	var out []rdp.Bitmap
 	for len(p) >= rdp.FrameHeaderSize {
+		if p[0] == rdp.FrameCopy {
+			b, _ := rdp.ParseCopy(p)
+			c.mu.Lock()
+			fits := c.scroll && rdp.CopyFits(b, c.width, c.height)
+			c.mu.Unlock()
+			if !fits {
+				return nil, errors.New("the screen helper sent a move off the screen, or one nobody asked for")
+			}
+			out = append(out, b)
+			p = p[rdp.FrameHeaderSize:]
+			continue
+		}
 		if p[0] != rdp.FrameEncoded {
 			return nil, errors.New("the screen helper sent something other than a bitmap")
 		}
@@ -1385,7 +1477,7 @@ func connectScreen(cfg DesktopConfig, _ tunnel.Grant, open tunnel.DesktopOpen,
 	if host == nil {
 		return nil, DesktopInfo{}, errors.New("screen sharing works on Windows, Linux and macOS hosts only")
 	}
-	c, err := openScreenOn(host, open.Graphics, open.SlowLink, log)
+	c, err := openScreenOn(host, screenWants{video: open.Graphics, slow: open.SlowLink, scroll: open.Scroll}, log)
 	if err != nil {
 		return nil, DesktopInfo{}, err
 	}

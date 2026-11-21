@@ -394,9 +394,9 @@ func (c *Collector) Listen(path string) error {
 			c.log.Error("accept failed", "error", err)
 			continue
 		}
-		// Counted under the lock that closing is set under, as the tunnel
-		// and desktop sessions are: an Add racing CloseWithin's Wait is a
-		// data race, and a connection accepted after the close is dropped.
+		// Added under the lock that a shutdown sets closing under, so the
+		// shutdown's Wait either counts this session or never sees it: an
+		// Add racing a Wait is a data race, and one could slip past it.
 		c.mu.Lock()
 		if c.closing {
 			c.mu.Unlock()

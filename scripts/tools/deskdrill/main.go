@@ -47,6 +47,7 @@ func main() {
 	report := flag.String("report", "", "file to write the measurement to, as JSON")
 	graphics := flag.Bool("graphics", false, "ask for the graphics pipeline (H.264)")
 	video := flag.Bool("video", false, "say the browser decodes H.264, as the console does, so screen sharing sends motion as it")
+	scroll := flag.Bool("scroll", false, "say the browser draws scrolls as moves of its own pixels, as the console does")
 	link := flag.Int("link", 0, "when measuring, pretend to be behind a link of this many kbit/s")
 	capturePath := flag.String("capture", "", "file to keep the display messages in")
 	captureFor := flag.Duration("capture-for", 15*time.Second, "how long to capture, from the first screen")
@@ -91,7 +92,7 @@ func main() {
 		password = os.Getenv(*passwordEnv)
 	}
 	logon, _ := json.Marshal(map[string]any{"type": "logon", "password": password,
-		"width": *width, "height": *height, "graphics": *graphics, "video": *video,
+		"width": *width, "height": *height, "graphics": *graphics, "video": *video, "scroll": *scroll,
 		// A browser behind such a link says so, where it can tell.
 		"slowLink": *link > 0})
 	if err := c.Write(ctx, websocket.MessageText, logon); err != nil {

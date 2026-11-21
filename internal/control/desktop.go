@@ -64,6 +64,9 @@ type desktopLogon struct {
 	Video bool `json:"video"`
 	// SlowLink is the browser saying its link is slow, where it can tell.
 	SlowLink bool `json:"slowLink"`
+	// Scroll is the browser drawing moves of its own pixels, which screen
+	// sharing sends a scroll as.
+	Scroll bool `json:"scroll"`
 }
 
 // handleDesktop serves GET /api/v1/desktop.
@@ -208,7 +211,8 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 	st, answer, err := a.Tunnels.OpenWith(octx, agentHost, tunnel.Header{
 		Service: service, Grant: grant,
 		Desktop: &tunnel.DesktopOpen{Password: logon.Password, Width: logon.Width, Height: logon.Height,
-			Graphics: logon.Graphics, Clipboard: openClip, SlowLink: logon.SlowLink},
+			Graphics: logon.Graphics, Clipboard: openClip, SlowLink: logon.SlowLink,
+			Scroll: logon.Scroll},
 	})
 	cancel()
 	logon.Password = ""
