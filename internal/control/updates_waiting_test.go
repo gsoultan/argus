@@ -30,6 +30,12 @@ func TestUpdatesWaitingAndTheDailyDigest(t *testing.T) {
 	plainReport.RebootRequired = true
 	e.beat(t, plainCred, plain.Hostname, &PackageBeat{Supported: true, Report: plainReport})
 	e.beat(t, cleanCred, clean.Hostname, &PackageBeat{Supported: true, Report: pkgReport(now)})
+	// Nothing to patch, but a new release: still waiting, as a major upgrade.
+	major, majorCred := e.server(t)
+	majorReport := pkgReport(now)
+	majorReport.Release = &ReleaseInfo{Distro: "Ubuntu", Current: "Ubuntu 22.04.5 LTS", Version: "22.04",
+		Next: "24.04", NextName: "Ubuntu 24.04 LTS"}
+	e.beat(t, majorCred, major.Hostname, &PackageBeat{Supported: true, Report: majorReport})
 
 	w := do(t, e.h, http.MethodGet, "/api/v1/updates-waiting", "auditor-token", "")
 	var v UpdatesWaiting
@@ -45,6 +51,12 @@ func TestUpdatesWaitingAndTheDailyDigest(t *testing.T) {
 	}
 	if r := got[plain.ID]; r.Security != 0 || r.Updates != 1 || !r.RebootRequired {
 		t.Errorf("plain server: %+v", r)
+	}
+	if r := got[major.ID]; r.ReleaseNext != "Ubuntu 24.04 LTS" || r.Updates != 0 {
+		t.Errorf("server with a new release: %+v", r)
+	}
+	if v.ReleaseAssets < 1 {
+		t.Errorf("release count: %+v", v)
 	}
 	if _, ok := got[clean.ID]; ok {
 		t.Error("a server with nothing waiting is listed")
