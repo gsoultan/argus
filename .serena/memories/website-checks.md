@@ -43,7 +43,9 @@ optional keyword in the first MB.
   admin/owner.
 - Replicas: `TakeDueWebsiteChecks` leases with FOR UPDATE SKIP LOCKED (5 min);
   a round cut by shutdown releases the lease and records nothing.
-- No probe ever connects to link-local/metadata addresses: refused in
+- No probe ever connects to link-local/metadata addresses (plus the two
+  metadata services outside link-local, `metadataAddrs`: fd00:ec2::254 and
+  100.100.100.200; a keyword check is an oracle for the body): refused in
   `ValidSiteURL`, at dial time (`Control`), and before handing a literal to a
   proxy. Nothing of the page body leaves the machine that fetched it.
 - No fixture: without a control plane the page says so, never shows invented sites.
