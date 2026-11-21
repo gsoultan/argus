@@ -57,7 +57,7 @@ const ChangePasswordModal = lazy(() =>
   import('~/components/ChoosePassword').then((m) => ({ default: m.ChangePasswordModal })),
 )
 import {
-  isActive, navFor, type NavCounts, type NavItem,
+  groupsFor, isActive, navFor, type NavCounts, type NavItem,
 } from '~/components/nav'
 import { LogoMark } from '~/components/Logo'
 import { AlertBell } from '~/components/AlertBell'
@@ -266,7 +266,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
       header={{ height: HEADER_H }}
       // The menu lives in the top bar. On a phone the same items open from the
       // burger as a panel down the side.
-      navbar={{ width: 260, breakpoint: 'md', collapsed: { mobile: !opened, desktop: true } }}
+      navbar={{ width: 232, breakpoint: 'md', collapsed: { mobile: !opened, desktop: false } }}
       padding={0}
       styles={{
         header: { background: 'var(--color-surface)', borderColor: 'var(--color-line)' },
@@ -290,11 +290,9 @@ function ShellInner({ children }: { children: React.ReactNode }) {
                 <Text fw={700} size="md" visibleFrom="xs">Argus</Text>
               </Group>
             </Link>
-            <Group component="nav" aria-label="Main" gap={4} wrap="nowrap" visibleFrom="md">
-              {items.map((item) => (
-                <TopNavLink key={item.to} item={item} pathname={pathname} counts={counts} />
-              ))}
-            </Group>
+            {false && items.map((item) => (
+              <TopNavLink key={item.to} item={item} pathname={pathname} counts={counts} />
+            ))}
           </Group>
 
           <Group gap="xs" wrap="nowrap">
@@ -462,26 +460,46 @@ function ShellInner({ children }: { children: React.ReactNode }) {
         </Group>
       </AppShell.Header>
 
-      <AppShell.Navbar p="sm" hiddenFrom="md">
-        <Stack gap={2}>
-          {items.map((item) => {
-            const count = item.badge ? item.badge(counts) : 0
-            return (
-              <MantineNavLink
-                key={item.to}
-                component={Link}
-                to={item.to as never}
-                label={item.label}
-                active={isActive(pathname, item.to)}
-                variant="light"
-                color="azure"
-                leftSection={<item.icon size={18} stroke={1.6} />}
-                rightSection={count > 0 ? <Badge size="sm" circle color="rose" variant="filled">{count}</Badge> : null}
-                className="argus-navlink"
-              />
-            )
-          })}
+      <AppShell.Navbar p="sm" style={{ overflowY: 'auto' }}>
+        <Stack gap={0} component="nav" aria-label="Main" style={{ flex: 1 }}>
+          {groupsFor(me?.role).map((g) => (
+            <Box key={g.label || 'top'} mb={6}>
+              {g.label && (
+                <Text size="10.5px" fw={700} c="dimmed" tt="uppercase" px={12} mt={10} mb={4} style={{ letterSpacing: '.07em' }}>{g.label}</Text>
+              )}
+              {g.items.map((item) => {
+                const count = item.badge ? item.badge(counts) : 0
+                const here = item.search
+                  ? pathname === item.to && Object.entries(item.search).every(([k, v]) => new URLSearchParams(window.location.search).get(k) === v)
+                  : isActive(pathname, item.to) && !(item.to === '/cloud' || item.to === '/teams') || (isActive(pathname, item.to) && !window.location.search.includes('tab='))
+                return (
+                  <MantineNavLink
+                    key={item.label + item.to}
+                    component={Link}
+                    to={item.to as never}
+                    search={(item.search ?? {}) as never}
+                    label={item.label}
+                    active={here}
+                    variant="light"
+                    color="azure"
+                    leftSection={<item.icon size={17} stroke={1.6} />}
+                    rightSection={count > 0 ? <Badge size="sm" circle color="rose" variant="filled">{count}</Badge> : null}
+                    className="argus-navlink"
+                    py={6}
+                  />
+                )
+              })}
+            </Box>
+          ))}
         </Stack>
+        <Box pt="xs" style={{ borderTop: '1px solid var(--color-line)' }}>
+          {items.filter((i) => i.to === '/settings').map((item) => (
+            <MantineNavLink key="settings" component={Link} to="/settings" label="Settings" active={isActive(pathname, '/settings')}
+              variant="light" color="azure" leftSection={<item.icon size={17} stroke={1.6} />} className="argus-navlink" py={6} />
+          ))}
+          <MantineNavLink component={Link} to="/about" label="About" active={isActive(pathname, '/about')}
+            variant="light" color="azure" className="argus-navlink" py={6} />
+        </Box>
       </AppShell.Navbar>
 
       <AppShell.Main>

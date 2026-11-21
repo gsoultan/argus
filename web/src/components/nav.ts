@@ -47,6 +47,13 @@ export interface NavItem {
   audience?: Audience
 }
 
+/** A heading in the sidebar and the pages under it. */
+export interface NavGroup {
+  /** Empty for the unheaded group at the top (Home, Approvals). */
+  label: string
+  items: (NavItem & { search?: Record<string, string> })[]
+}
+
 export interface NavCounts {
   /** Everything on Approvals: held logins and access requests. */
   approvalsPending: number
@@ -165,4 +172,36 @@ export function isActive(pathname: string, to: string): boolean {
   if (to === '/') return pathname === '/'
   if (to === '/activity' && (pathname.startsWith('/sessions') || pathname === '/audit')) return true
   return pathname === to || pathname.startsWith(to + '/')
+}
+
+/**
+ * The sidebar: six groups, each with one rule for what goes in it (see
+ * plans/general-layout/design.md). Every page that exists today is here; a
+ * group with nothing this role may see is left out.
+ */
+export function groupsFor(role: UserRole | undefined): NavGroup[] {
+  const by = (to: string) => NAV_ITEMS.find((i) => i.to === to)!
+  const g: NavGroup[] = [
+    { label: '', items: [by('/'), by('/approvals')] },
+    { label: 'Connect', items: [by('/assets'), by('/databases'), by('/brokers')] },
+    { label: 'Monitoring', items: [{ ...by('/websites'), label: 'Websites' }] },
+    { label: 'Cloud', items: [
+      { ...by('/cloud'), label: 'Overview' },
+      { ...by('/cloud'), label: 'Resources', search: { tab: 'instances' } },
+      { ...by('/cloud'), label: 'Costs', search: { tab: 'costs' } },
+      { ...by('/cloud'), label: 'Schedules', search: { tab: 'schedules' } },
+      { ...by('/cloud'), label: 'Console access', search: { tab: 'access' } },
+    ] },
+    { label: 'People', items: [
+      { ...by('/teams'), label: 'People', search: { tab: 'people' } },
+      { ...by('/teams'), label: 'Teams' },
+    ] },
+    { label: 'Records', items: [
+      { ...by('/activity'), label: seesWholeFleet(role) ? 'Sessions' : 'My sessions' },
+      { ...by('/activity'), to: '/audit', label: 'Audit log', audience: 'fleet' },
+    ] },
+  ]
+  return g
+    .map((x) => ({ ...x, items: x.items.filter((i) => canSee(role, i.audience)) }))
+    .filter((x) => x.items.length > 0)
 }
