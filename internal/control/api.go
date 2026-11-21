@@ -862,6 +862,15 @@ func (a *API) getAudit(w http.ResponseWriter, r *http.Request, _ string) {
 	// A header rather than an envelope: the body is a bare array everywhere
 	// this is consumed, and X-Argus-Chain-Verified already establishes the
 	// pattern for saying something *about* a response here.
+	//
+	// Counted on the first page only. The console reads it from the first
+	// response and from no other, so a later page's count changes nothing it
+	// shows -- and counting a log of a million entries is 45 ms, paid again on
+	// each of the ten pages the console fetches.
+	if before > 0 {
+		writeJSON(w, http.StatusOK, events)
+		return
+	}
 	if total, cerr := a.store.CountAuditEvents(r.Context()); cerr == nil {
 		w.Header().Set("X-Argus-Audit-Total", strconv.Itoa(total))
 	} else {
