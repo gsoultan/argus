@@ -82,7 +82,7 @@ const (
 // websiteRetryGap is the wait between tries in one round; tests shorten it.
 var websiteRetryGap = 20 * time.Second
 
-// Round outcomes, as website_rounds stores them.
+// Round outcomes, as check_rounds stores them.
 const (
 	RoundUp      = "up"
 	RoundPartial = "partial"
@@ -128,11 +128,18 @@ type WebsiteCheck struct {
 	// reached it), pending, down or unknown.
 	LastOutcome  string     `json:"lastOutcome"`
 	CertNotAfter *time.Time `json:"certNotAfter,omitempty"`
+	// GroupID is the Monitoring group it is in, or empty (checks_access.go).
+	GroupID string `json:"groupId"`
 
 	// Filled in for the console, not stored on the row.
 	Uptime      WebsiteUptime  `json:"uptime"`
 	OpenOutage  *WebsiteOutage `json:"openOutage,omitempty"`
 	ConfirmHost []string       `json:"confirmHosts"`
+	// CanOperate is whether the person asking may check it now and pause it.
+	CanOperate bool `json:"canOperate"`
+	// Limited is a check shown to someone outside the fleet roles, with what
+	// it sends, where it alerts and which servers confirm it left out.
+	Limited bool `json:"limited,omitempty"`
 }
 
 // WebsiteUptime is the share of time up, 0–100, over three windows; nil
@@ -434,15 +441,28 @@ func (a *API) prepareWebsiteRequest(ctx context.Context, in *WebsiteInput, befor
 
 /* ── Store ───────────────────────────────────────────────────────────────── */
 
-const websiteCols = `id::text, name, url, expect_status, keyword, every_seconds, timeout_seconds,
-	confirm_from::text[], paused, telegram, telegram_bot, telegram_chats, method, request_body, header_names, headers_sealed, created_by, created_at, updated_at, state, state_since, failing_rounds,
-	last_at, last_ms, last_status, last_detail, last_outcome, cert_not_after`
+// A website check is a row of checks (checks.go) of kind website, its own
+// settings in the settings column; websiteCols reads them back out in the
+// order scanWebsite takes them.
+const websiteCols = `id::text, name, settings->>'url', COALESCE((settings->>'expectStatus')::int, 0),
+	COALESCE(settings->>'keyword', ''), every_seconds, timeout_seconds,
+	confirm_from::text[], paused, telegram, telegram_bot, telegram_chats, COALESCE(settings->>'method', 'GET'),
+	COALESCE(settings->>'body', ''), ARRAY(SELECT jsonb_array_elements_text(COALESCE(settings->'headerNames', '[]'::jsonb))),
+	secrets_sealed, created_by, created_at, updated_at, state, state_since, failing_rounds,
+	last_at, last_ms, last_status, last_detail, last_outcome, expires_at, COALESCE(group_id::text, '')`
+
+// websiteSettings is the settings column for a website check, built from
+// the numbered parameters $url..$headerNames of an INSERT or UPDATE.
+func websiteSettings(url, status, keyword, method, body, names int) string {
+	return fmt.Sprintf(`jsonb_build_object('url', $%d::text, 'expectStatus', $%d::int, 'keyword', $%d::text,
+		'method', $%d::text, 'body', $%d::text, 'headerNames', to_jsonb($%d::text[]))`, url, status, keyword, method, body, names)
+}
 
 func scanWebsite(row pgx.Row) (WebsiteCheck, error) {
 	var c WebsiteCheck
 	err := row.Scan(&c.ID, &c.Name, &c.URL, &c.ExpectStatus, &c.Keyword, &c.EverySeconds, &c.TimeoutSeconds,
 		&c.ConfirmFrom, &c.Paused, &c.Telegram, &c.TelegramBot, &c.TelegramChats, &c.Method, &c.Body, &c.HeaderNames, &c.headersSealed, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt, &c.State, &c.StateSince,
-		&c.FailingRounds, &c.LastAt, &c.LastMS, &c.LastStatus, &c.LastDetail, &c.LastOutcome, &c.CertNotAfter)
+		&c.FailingRounds, &c.LastAt, &c.LastMS, &c.LastStatus, &c.LastDetail, &c.LastOutcome, &c.CertNotAfter, &c.GroupID)
 	if c.ConfirmFrom == nil {
 		c.ConfirmFrom = []string{}
 	}
@@ -461,7 +481,7 @@ var ErrNoWebsite = errors.New("no such website check")
 
 // WebsiteChecks lists every check, by name.
 func (s *Store) WebsiteChecks(ctx context.Context) ([]WebsiteCheck, error) {
-	rows, err := s.db(ctx).Query(ctx, `SELECT `+websiteCols+` FROM website_checks ORDER BY lower(name), id`)
+	rows, err := s.db(ctx).Query(ctx, `SELECT `+websiteCols+` FROM checks WHERE kind = 'website' ORDER BY lower(name), id`)
 	if err != nil {
 		return nil, err
 	}
@@ -479,8 +499,8 @@ func (s *Store) WebsiteChecks(ctx context.Context) ([]WebsiteCheck, error) {
 
 // WebsiteCheck is one check.
 func (s *Store) WebsiteCheck(ctx context.Context, id string) (WebsiteCheck, error) {
-	c, err := scanWebsite(s.db(ctx).QueryRow(ctx, `SELECT `+websiteCols+` FROM website_checks
-		WHERE id::text = $1`, id))
+	c, err := scanWebsite(s.db(ctx).QueryRow(ctx, `SELECT `+websiteCols+` FROM checks
+		WHERE id::text = $1 AND kind = 'website'`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return c, ErrNoWebsite
 	}
@@ -506,16 +526,17 @@ func (s *Store) CreateWebsiteCheck(ctx context.Context, in WebsiteInput, by stri
 		return WebsiteCheck{}, err
 	}
 	var n int
-	if err := s.db(ctx).QueryRow(ctx, `SELECT count(*) FROM website_checks`).Scan(&n); err != nil {
+	if err := s.db(ctx).QueryRow(ctx, `SELECT count(*) FROM checks`).Scan(&n); err != nil {
 		return WebsiteCheck{}, err
 	}
 	if n >= websiteMaxChecks {
 		return WebsiteCheck{}, ErrInvalidWebsite{fmt.Sprintf("an organization can check at most %d websites", websiteMaxChecks)}
 	}
-	return scanWebsite(s.db(ctx).QueryRow(ctx, `INSERT INTO website_checks
-		(name, url, expect_status, keyword, every_seconds, timeout_seconds, confirm_from, paused, created_by,
-		 telegram, telegram_chats, telegram_bot, method, request_body, header_names, headers_sealed)
-		VALUES ($1, $2, $3, $4, $5, $6, $7::uuid[], $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING `+websiteCols,
+	return scanWebsite(s.db(ctx).QueryRow(ctx, `INSERT INTO checks
+		(kind, name, settings, every_seconds, timeout_seconds, confirm_from, paused, created_by,
+		 telegram, telegram_chats, telegram_bot, secrets_sealed)
+		VALUES ('website', $1, `+websiteSettings(2, 3, 4, 13, 14, 15)+`, $5, $6, $7::uuid[], $8, $9, $10, $11, $12, $16)
+		RETURNING `+websiteCols,
 		in.Name, in.URL, in.ExpectStatus, in.Keyword, in.EverySeconds, in.TimeoutSeconds, in.ConfirmFrom, in.Paused,
 		strings.ToLower(by), in.Telegram, in.TelegramChats, in.TelegramBot, in.Method, in.Body, in.headerNames, in.headersSealed))
 }
@@ -537,15 +558,14 @@ func (s *Store) UpdateWebsiteCheck(ctx context.Context, id string, in WebsiteInp
 		return before, after, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	after, err = scanWebsite(tx.QueryRow(ctx, `UPDATE website_checks SET name = $2, url = $3, expect_status = $4,
-		keyword = $5, every_seconds = $6, timeout_seconds = $7, confirm_from = $8::uuid[], paused = $9,
-		telegram = $10, telegram_chats = $11, telegram_bot = $12, method = $13, request_body = $14,
-		header_names = $15, headers_sealed = $16, updated_at = now(),
-		state = CASE WHEN url <> $3 THEN 'pending' ELSE state END,
-		state_since = CASE WHEN url <> $3 THEN NULL ELSE state_since END,
-		failing_rounds = CASE WHEN url <> $3 THEN 0 ELSE failing_rounds END,
-		next_at = CASE WHEN url <> $3 OR (paused AND NOT $9) THEN now() ELSE next_at END
-		WHERE id::text = $1 RETURNING `+websiteCols,
+	after, err = scanWebsite(tx.QueryRow(ctx, `UPDATE checks SET name = $2, settings = `+websiteSettings(3, 4, 5, 13, 14, 15)+`,
+		every_seconds = $6, timeout_seconds = $7, confirm_from = $8::uuid[], paused = $9,
+		telegram = $10, telegram_chats = $11, telegram_bot = $12, secrets_sealed = $16, updated_at = now(),
+		state = CASE WHEN settings->>'url' <> $3 THEN 'pending' ELSE state END,
+		state_since = CASE WHEN settings->>'url' <> $3 THEN NULL ELSE state_since END,
+		failing_rounds = CASE WHEN settings->>'url' <> $3 THEN 0 ELSE failing_rounds END,
+		next_at = CASE WHEN settings->>'url' <> $3 OR (paused AND NOT $9) THEN now() ELSE next_at END
+		WHERE id::text = $1 AND kind = 'website' RETURNING `+websiteCols,
 		id, in.Name, in.URL, in.ExpectStatus, in.Keyword, in.EverySeconds, in.TimeoutSeconds, in.ConfirmFrom, in.Paused,
 		in.Telegram, in.TelegramChats, in.TelegramBot, in.Method, in.Body, in.headerNames, in.headersSealed))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -556,11 +576,11 @@ func (s *Store) UpdateWebsiteCheck(ctx context.Context, id string, in WebsiteInp
 	}
 	if before.URL != after.URL {
 		// An outage of the old address is over as far as this check goes.
-		if _, err := tx.Exec(ctx, `UPDATE website_outages SET ended_at = now()
+		if _, err := tx.Exec(ctx, `UPDATE check_outages SET ended_at = now()
 			WHERE check_id::text = $1 AND ended_at IS NULL`, id); err != nil {
 			return before, after, err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE website_rounds SET outcome = 'unknown'
+		if _, err := tx.Exec(ctx, `UPDATE check_rounds SET outcome = 'unknown'
 			WHERE check_id::text = $1 AND outcome = 'pending'`, id); err != nil {
 			return before, after, err
 		}
@@ -570,7 +590,7 @@ func (s *Store) UpdateWebsiteCheck(ctx context.Context, id string, in WebsiteInp
 
 // DeleteWebsiteCheck removes a check and its history.
 func (s *Store) DeleteWebsiteCheck(ctx context.Context, id string) (WebsiteCheck, error) {
-	c, err := scanWebsite(s.db(ctx).QueryRow(ctx, `DELETE FROM website_checks WHERE id::text = $1
+	c, err := scanWebsite(s.db(ctx).QueryRow(ctx, `DELETE FROM checks WHERE id::text = $1 AND kind = 'website'
 		RETURNING `+websiteCols, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return c, ErrNoWebsite
@@ -580,7 +600,7 @@ func (s *Store) DeleteWebsiteCheck(ctx context.Context, id string) (WebsiteCheck
 
 // CheckWebsiteNow makes a check due at once.
 func (s *Store) CheckWebsiteNow(ctx context.Context, id string) error {
-	tag, err := s.db(ctx).Exec(ctx, `UPDATE website_checks SET next_at = now() WHERE id::text = $1 AND NOT paused`, id)
+	tag, err := s.db(ctx).Exec(ctx, `UPDATE checks SET next_at = now() WHERE id::text = $1 AND kind = 'website' AND NOT paused`, id)
 	if err == nil && tag.RowsAffected() == 0 {
 		return ErrNoWebsite
 	}
@@ -589,9 +609,9 @@ func (s *Store) CheckWebsiteNow(ctx context.Context, id string) error {
 
 // TakeDueWebsiteChecks leases up to limit due checks to this replica.
 func (s *Store) TakeDueWebsiteChecks(ctx context.Context, limit int) ([]WebsiteCheck, error) {
-	rows, err := s.db(ctx).Query(ctx, `UPDATE website_checks SET lease_until = now() + $2::interval
-		WHERE id IN (SELECT id FROM website_checks
-		              WHERE NOT paused AND next_at <= now() AND (lease_until IS NULL OR lease_until < now())
+	rows, err := s.db(ctx).Query(ctx, `UPDATE checks SET lease_until = now() + $2::interval
+		WHERE id IN (SELECT id FROM checks
+		              WHERE kind = 'website' AND NOT paused AND next_at <= now() AND (lease_until IS NULL OR lease_until < now())
 		              ORDER BY next_at LIMIT $1 FOR UPDATE SKIP LOCKED)
 		RETURNING `+websiteCols, limit, fmt.Sprintf("%d seconds", int(websiteLease.Seconds())))
 	if err != nil {
@@ -612,7 +632,7 @@ func (s *Store) TakeDueWebsiteChecks(ctx context.Context, limit int) ([]WebsiteC
 // ReleaseWebsiteLease gives a check back without a round, to be taken
 // again at once.
 func (s *Store) ReleaseWebsiteLease(ctx context.Context, id string) error {
-	_, err := s.db(ctx).Exec(ctx, `UPDATE website_checks SET lease_until = NULL WHERE id::text = $1`, id)
+	_, err := s.db(ctx).Exec(ctx, `UPDATE checks SET lease_until = NULL WHERE id::text = $1`, id)
 	return err
 }
 
@@ -645,7 +665,7 @@ func (s *Store) RecordWebsiteRound(ctx context.Context, id string, r websiteRoun
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	c, err := scanWebsite(tx.QueryRow(ctx, `SELECT `+websiteCols+` FROM website_checks WHERE id::text = $1 FOR UPDATE`, id))
+	c, err := scanWebsite(tx.QueryRow(ctx, `SELECT `+websiteCols+` FROM checks WHERE id::text = $1 AND kind = 'website' FOR UPDATE`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil // deleted while it was being checked
 	}
@@ -661,7 +681,7 @@ func (s *Store) RecordWebsiteRound(ctx context.Context, id string, r websiteRoun
 	case RoundUp, RoundPartial:
 		if state == "down" {
 			var o WebsiteOutage
-			err := tx.QueryRow(ctx, `UPDATE website_outages SET ended_at = $2
+			err := tx.QueryRow(ctx, `UPDATE check_outages SET ended_at = $2
 				WHERE check_id::text = $1 AND ended_at IS NULL
 				RETURNING id, check_id::text, started_at, ended_at, cause, confirmed`, id, at).
 				Scan(&o.ID, &o.CheckID, &o.StartedAt, &o.EndedAt, &o.Cause, &o.Confirmed)
@@ -673,7 +693,7 @@ func (s *Store) RecordWebsiteRound(ctx context.Context, id string, r websiteRoun
 			}
 		}
 		// Failed rounds that were never confirmed were blips.
-		if _, err := tx.Exec(ctx, `UPDATE website_rounds SET outcome = 'up'
+		if _, err := tx.Exec(ctx, `UPDATE check_rounds SET outcome = 'up'
 			WHERE check_id::text = $1 AND outcome = 'pending'`, id); err != nil {
 			return nil, err
 		}
@@ -699,19 +719,19 @@ func (s *Store) RecordWebsiteRound(ctx context.Context, id string, r websiteRoun
 			outcome = RoundDown
 			first := at
 			var pendingFirst *time.Time
-			if err := tx.QueryRow(ctx, `SELECT min(at) FROM website_rounds
+			if err := tx.QueryRow(ctx, `SELECT min(at) FROM check_rounds
 				WHERE check_id::text = $1 AND outcome = 'pending'`, id).Scan(&pendingFirst); err != nil {
 				return nil, err
 			}
 			if pendingFirst != nil {
 				first = *pendingFirst
 			}
-			if _, err := tx.Exec(ctx, `UPDATE website_rounds SET outcome = 'down'
+			if _, err := tx.Exec(ctx, `UPDATE check_rounds SET outcome = 'down'
 				WHERE check_id::text = $1 AND outcome = 'pending'`, id); err != nil {
 				return nil, err
 			}
 			o := WebsiteOutage{CheckID: id, StartedAt: first, Cause: clip(r.Detail, 500), Confirmed: clip(r.Confirmed, 300)}
-			if err := tx.QueryRow(ctx, `INSERT INTO website_outages (check_id, started_at, cause, confirmed)
+			if err := tx.QueryRow(ctx, `INSERT INTO check_outages (check_id, started_at, cause, confirmed)
 				VALUES ($1::uuid, $2, $3, $4) ON CONFLICT (check_id) WHERE ended_at IS NULL DO NOTHING
 				RETURNING id`, id, o.StartedAt, o.Cause, o.Confirmed).Scan(&o.ID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return nil, err
@@ -722,14 +742,14 @@ func (s *Store) RecordWebsiteRound(ctx context.Context, id string, r websiteRoun
 			outcome = RoundPending
 		}
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO website_rounds (check_id, at, secs, outcome, ms, status, detail)
+	if _, err := tx.Exec(ctx, `INSERT INTO check_rounds (check_id, at, secs, outcome, ms, status, detail)
 		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING`,
 		id, at, c.EverySeconds, outcome, r.MS, r.Status, clip(r.Detail, 500)); err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE website_checks SET state = $2, state_since = $3, failing_rounds = $4,
+	if _, err := tx.Exec(ctx, `UPDATE checks SET state = $2, state_since = $3, failing_rounds = $4,
 		last_at = $5::timestamptz, last_ms = $6, last_status = $7, last_detail = $8,
-		cert_not_after = COALESCE($9, cert_not_after), last_outcome = $10,
+		expires_at = COALESCE($9, expires_at), last_outcome = $10,
 		next_at = $5::timestamptz + make_interval(secs => every_seconds), lease_until = NULL
 		WHERE id::text = $1`, id, state, since, failing, at, r.MS, r.Status, clip(r.Detail, 500), r.Cert, outcome); err != nil {
 		return nil, err
@@ -746,7 +766,7 @@ func (s *Store) RecordWebsiteRound(ctx context.Context, id string, r websiteRoun
 
 // WebsiteRounds is a check's rounds since since, oldest first.
 func (s *Store) WebsiteRounds(ctx context.Context, id string, since time.Time) ([]WebsiteRound, error) {
-	rows, err := s.db(ctx).Query(ctx, `SELECT at, secs, outcome, ms, status, detail FROM website_rounds
+	rows, err := s.db(ctx).Query(ctx, `SELECT at, secs, outcome, ms, status, detail FROM check_rounds
 		WHERE check_id::text = $1 AND at >= $2 ORDER BY at LIMIT 5000`, id, since)
 	if err != nil {
 		return nil, err
@@ -766,11 +786,11 @@ func (s *Store) WebsiteRounds(ctx context.Context, id string, since time.Time) (
 // WebsiteOutages is a check's outages, newest first; an empty id lists
 // every check's open ones.
 func (s *Store) WebsiteOutages(ctx context.Context, id string, limit int) ([]WebsiteOutage, error) {
-	q := `SELECT id, check_id::text, started_at, ended_at, cause, confirmed FROM website_outages
+	q := `SELECT id, check_id::text, started_at, ended_at, cause, confirmed FROM check_outages
 		WHERE check_id::text = $1 ORDER BY started_at DESC LIMIT $2`
 	args := []any{id, limit}
 	if id == "" {
-		q = `SELECT id, check_id::text, started_at, ended_at, cause, confirmed FROM website_outages
+		q = `SELECT id, check_id::text, started_at, ended_at, cause, confirmed FROM check_outages
 			WHERE ended_at IS NULL ORDER BY started_at DESC LIMIT $1`
 		args = []any{limit}
 	}
@@ -799,7 +819,7 @@ func (s *Store) WebsiteUptimes(ctx context.Context, now time.Time) (map[string]W
 		sum(secs) FILTER (WHERE outcome IN ('up','partial','down') AND at >= $1::timestamptz - interval '7 days'),
 		sum(secs) FILTER (WHERE outcome IN ('up','partial')),
 		sum(secs) FILTER (WHERE outcome IN ('up','partial','down'))
-		FROM website_rounds WHERE at >= $1::timestamptz - interval '30 days' GROUP BY check_id`, now)
+		FROM check_rounds WHERE at >= $1::timestamptz - interval '30 days' GROUP BY check_id`, now)
 	if err != nil {
 		return nil, err
 	}
@@ -830,7 +850,7 @@ func share(up, counted *int64) *float64 {
 
 // pruneWebsiteRounds drops rounds older than websiteRoundsKeep.
 func (s *Store) pruneWebsiteRounds(ctx context.Context, now time.Time) error {
-	_, err := s.db(ctx).Exec(ctx, `DELETE FROM website_rounds WHERE at < $1`, now.Add(-websiteRoundsKeep))
+	_, err := s.db(ctx).Exec(ctx, `DELETE FROM check_rounds WHERE at < $1`, now.Add(-websiteRoundsKeep))
 	return err
 }
 
@@ -1266,6 +1286,7 @@ func (a *API) announceWebsite(ctx context.Context, tr websiteTransition) {
 		al.Subject = websiteSubject(c.ID)
 	}
 	a.raiseAlert(ctx, al)
+	a.alertCheckWatchers(ctx, c.ID, al)
 	icon := "🔴"
 	if tr.CameBack {
 		icon = "🟢"

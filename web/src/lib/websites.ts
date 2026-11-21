@@ -66,6 +66,30 @@ export interface WebsiteCheck {
   certNotAfter?: string
   uptime: WebsiteUptime
   openOutage?: WebsiteOutage
+  /** The Monitoring group it is in, or ''. */
+  groupId: string
+  /** Whether the person asking may check it now and pause it. */
+  canOperate: boolean
+  /**
+   * Shown to someone outside the fleet roles: what it sends, where it alerts
+   * and which servers confirm it are left out.
+   */
+  limited?: boolean
+}
+
+/** A named set of checks, shown together. */
+export interface CheckGroup {
+  id: string
+  name: string
+  checks: number
+}
+
+/** One person (email) or team (teamId) given a check or a group. */
+export interface CheckViewer {
+  email?: string
+  teamId?: string
+  teamName?: string
+  canOperate: boolean
 }
 
 export interface WebsiteRound {
@@ -169,6 +193,70 @@ export const useRemoveWebsite = () =>
 
 export const useCheckWebsiteNow = () =>
   useWebsiteMutation((id: string) => send<void>('POST', `/api/v1/websites/${encodeURIComponent(id)}/check`))
+
+export const usePauseWebsite = () =>
+  useWebsiteMutation(({ id, paused }: { id: string; paused: boolean }) =>
+    send<void>('POST', `/api/v1/websites/${encodeURIComponent(id)}/pause`, { paused }))
+
+/* ── Groups, and who sees what (internal/control/checks_access.go) ─────── */
+
+const groupsKey = ['check-groups'] as const
+
+export const checkGroupsQuery = () =>
+  queryOptions({ queryKey: groupsKey, queryFn: () => get<CheckGroup[]>('/api/v1/check-groups') })
+
+function useGroupMutation<A, R>(fn: (a: A) => Promise<R>) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: fn,
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: groupsKey })
+      void qc.invalidateQueries({ queryKey: key })
+    },
+  })
+}
+
+export const useAddCheckGroup = () =>
+  useGroupMutation((name: string) => send<CheckGroup>('POST', '/api/v1/check-groups', { name }))
+
+export const useRenameCheckGroup = () =>
+  useGroupMutation(({ id, name }: { id: string; name: string }) =>
+    send<CheckGroup>('PUT', `/api/v1/check-groups/${encodeURIComponent(id)}`, { name }))
+
+export const useRemoveCheckGroup = () =>
+  useGroupMutation((id: string) => send<void>('DELETE', `/api/v1/check-groups/${encodeURIComponent(id)}`))
+
+export const useMoveCheck = () =>
+  useGroupMutation(({ id, groupId }: { id: string; groupId: string }) =>
+    send<void>('PUT', `/api/v1/checks/${encodeURIComponent(id)}/group`, { groupId }))
+
+export type ViewerTarget = 'check' | 'group'
+
+const viewersPath = (target: ViewerTarget, id: string) =>
+  `/api/v1/${target === 'check' ? 'checks' : 'check-groups'}/${encodeURIComponent(id)}/viewers`
+
+export const checkViewersQuery = (target: ViewerTarget, id: string) =>
+  queryOptions({ queryKey: ['check-viewers', target, id] as const, queryFn: () => get<CheckViewer[]>(viewersPath(target, id)) })
+
+export const useSetCheckViewers = (target: ViewerTarget, id: string) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (list: CheckViewer[]) => send<CheckViewer[]>('PUT', viewersPath(target, id), list),
+    onSuccess: (list) => qc.setQueryData(['check-viewers', target, id], list),
+  })
+}
+
+/**
+ * The worst state among checks, for a group's roll-up: down, then unknown,
+ * then pending, then up. Paused checks do not count; all paused is paused.
+ */
+export function rollUp(list: Pick<WebsiteCheck, 'state' | 'paused'>[]): WebsiteState | 'paused' | 'empty' {
+  if (list.length === 0) return 'empty'
+  const live = list.filter((c) => !c.paused)
+  if (live.length === 0) return 'paused'
+  for (const s of ['down', 'unknown', 'pending'] as const) if (live.some((c) => c.state === s)) return s
+  return 'up'
+}
 
 export const testWebsiteAlert = (id: string) =>
   send<{ bot: string; chats: string[] }>('POST', `/api/v1/websites/${encodeURIComponent(id)}/test-alert`)

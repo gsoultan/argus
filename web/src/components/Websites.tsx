@@ -1,12 +1,13 @@
 import {
-  ActionIcon, Alert, Badge, Box, Button, Drawer, Group, Modal, MultiSelect, NumberInput, PasswordInput, SegmentedControl, Select,
+  ActionIcon, Alert, Badge, Box, Button, Drawer, Group, Menu, Modal, MultiSelect, NumberInput, PasswordInput, SegmentedControl, Select,
   SimpleGrid, Skeleton, Stack, Switch, Table, Text, Textarea, TextInput, Tooltip, UnstyledButton,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { IconBrandTelegram, IconPlus, IconRefresh, IconShieldCheck, IconWorld, IconX } from '@tabler/icons-react'
-import { useMemo, useState } from 'react'
+import { IconBrandTelegram, IconDots, IconEye, IconFolderPlus, IconPlayerPause, IconPlayerPlay, IconPlus, IconRefresh, IconShieldCheck, IconWorld, IconX } from '@tabler/icons-react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { DataTable, EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page'
+import { GroupForm, WhoCanSee } from '~/components/CheckAccess'
 import { assetName } from '~/lib/assetType'
 import { isConfigured } from '~/lib/live'
 import { notifyOk, run } from '~/lib/notify'
@@ -16,7 +17,8 @@ import {
 import { assetsQuery, meQuery } from '~/lib/queries'
 import {
   ago, certDaysLeft, testWebsiteAlert, formatDuration, formatUptime, outageMinutes, requestSummary, sendsBody, sliceRounds, SITE_METHODS,
-  stateLabel, testWebsite, useAddWebsite, useChangeWebsite, useCheckWebsiteNow, useRemoveWebsite, websiteQuery, websitesQuery,
+  checkGroupsQuery, rollUp, stateLabel, testWebsite, useAddWebsite, useChangeWebsite, useCheckWebsiteNow, useMoveCheck, usePauseWebsite,
+  useRemoveCheckGroup, useRemoveWebsite, websiteQuery, websitesQuery, type CheckGroup,
   type HeaderInput, type SiteMethod, type SiteResult, type TelegramChoice, type WebsiteCheck, type WebsiteInput, type WebsiteRound,
 } from '~/lib/websites'
 import { FS, SP } from '~/theme'
@@ -34,18 +36,25 @@ export function WebsitesPage({ openId }: { openId?: string }) {
   const { data: me } = useQuery(meQuery())
   const canEdit = me?.role === 'admin' || me?.role === 'owner'
   const { data: list, isLoading, error } = useQuery({ ...websitesQuery(), enabled: isConfigured() })
+  const { data: groups } = useQuery({ ...checkGroupsQuery(), enabled: isConfigured() })
   const [editing, setEditing] = useState<WebsiteCheck | 'new' | null>(null)
   const [alerting, setAlerting] = useState(false)
+  const [grouping, setGrouping] = useState<CheckGroup | 'new' | null>(null)
+  const [sharing, setSharing] = useState<CheckGroup | null>(null)
   const open = (id?: string) => void navigate({ to: '/websites', search: id ? { check: id } : {}, replace: true })
 
   const down = list?.filter((c) => !c.paused && c.state === 'down').length ?? 0
   const up = list?.filter((c) => !c.paused && c.state === 'up').length ?? 0
+  const limited = list?.some((c) => c.limited) ?? false
+  const sections = useMemo(() => sectionsOf(list ?? [], groups ?? [], canEdit), [list, groups, canEdit])
 
   return (
     <Box>
       <PageHeader
         title="Websites"
-        description="Argus checks each address every minute and tells admins when a site goes down and when it comes back."
+        description={limited
+          ? 'The websites you were given. Argus checks each one every minute and tells you in the bell when one goes down and when it comes back.'
+          : 'Argus checks each address every minute and tells admins, and whoever was given a site, when it goes down and when it comes back.'}
         status={list && list.length > 0 ? (
           down > 0
             ? <Badge color="rose" variant="filled">{down} down</Badge>
@@ -54,6 +63,7 @@ export function WebsitesPage({ openId }: { openId?: string }) {
         actions={canEdit && isConfigured() ? (
           <>
             <Button variant="default" leftSection={<IconBrandTelegram size={14} />} onClick={() => setAlerting(true)}>Telegram alerts</Button>
+            <Button variant="default" leftSection={<IconFolderPlus size={14} />} onClick={() => setGrouping('new')}>New group</Button>
             <Button leftSection={<IconPlus size={14} />} onClick={() => setEditing('new')}>Add website</Button>
           </>
         ) : undefined}
@@ -65,31 +75,120 @@ export function WebsitesPage({ openId }: { openId?: string }) {
           <Alert color="rose"><Text size={FS.body}>Could not read the website checks: {error.message}</Text></Alert>
         ) : (
           <Stack gap="lg">
-            <DataTable
-              columns={['Website', 'Status', 'Response', 'Last 24 hours', '7 days', '30 days', 'Checked']}
-              minWidth={820}
-              loading={isLoading}
-              isEmpty={list?.length === 0}
-              empty={<EmptyState icon={IconWorld} title="No websites are checked yet."
-                description={canEdit ? 'Add an address and Argus starts checking it at once.' : 'An admin can add the addresses to check.'}
-                action={canEdit ? <Button size="xs" onClick={() => setEditing('new')}>Add website</Button> : undefined} />}
-            >
-              {list?.map((c) => <WebsiteRow key={c.id} c={c} onOpen={() => open(c.id)} />)}
-            </DataTable>
+            {isLoading || list?.length === 0 || sections.length === 0 ? (
+              <SiteTable list={list ?? []} loading={isLoading} onOpen={open}
+                empty={<EmptyState icon={IconWorld} title="No websites are checked yet."
+                  description={canEdit ? 'Add an address and Argus starts checking it at once.' : 'An admin can add the addresses to check.'}
+                  action={canEdit ? <Button size="xs" onClick={() => setEditing('new')}>Add website</Button> : undefined} />} />
+            ) : sections.map((sec) => (
+              <Box key={sec.group?.id ?? 'none'} data-testid="check-group">
+                {(sections.length > 1 || sec.group) && (
+                  <Group justify="space-between" mb={SP.snug} wrap="nowrap">
+                    <Group gap="xs" wrap="nowrap">
+                      <Text fw={600} size="sm">{sec.group?.name ?? 'Not in a group'}</Text>
+                      <RollUpBadge list={sec.checks} />
+                      <Text size={FS.meta} c="dimmed">{sec.checks.length} {sec.checks.length === 1 ? 'site' : 'sites'}</Text>
+                    </Group>
+                    {canEdit && sec.group && (
+                      <GroupMenu group={sec.group} onShare={() => setSharing(sec.group!)} onRename={() => setGrouping(sec.group!)} />
+                    )}
+                  </Group>
+                )}
+                <SiteTable list={sec.checks} onOpen={open}
+                  empty={<Text size={FS.body} c="dimmed" p="md">No checks in this group yet. Open a check and choose this group for it.</Text>} />
+              </Box>
+            ))}
             <HowSure />
           </Stack>
         )}
       </PageBody>
       {openId && (
-        <WebsiteDrawer id={openId} canEdit={canEdit} onClose={() => open()}
+        <WebsiteDrawer id={openId} canEdit={canEdit} groups={groups ?? []} onClose={() => open()}
           onEdit={(c) => setEditing(c)} />
       )}
       {alerting && <AlertSettings onClose={() => setAlerting(false)} />}
+      {grouping && <GroupForm group={grouping === 'new' ? undefined : grouping} onClose={() => setGrouping(null)} />}
+      {sharing && <WhoCanSee target="group" id={sharing.id} name={sharing.name} onClose={() => setSharing(null)} />}
       {editing && (
         <WebsiteForm check={editing === 'new' ? undefined : editing} onClose={() => setEditing(null)}
           onSaved={(c) => { setEditing(null); open(c.id) }} />
       )}
     </Box>
+  )
+}
+
+const SEVERITY: Record<string, number> = { down: 0, unknown: 1, pending: 2, up: 3, paused: 4, empty: 5 }
+
+/**
+ * The checks by group, problems first: groups with a site down come before
+ * the rest, and inside a group a site down comes before one that is up.
+ * Checks in no group come last. An empty group is shown to admins only, so
+ * they can fill it.
+ */
+export function sectionsOf(list: WebsiteCheck[], groups: CheckGroup[], showEmpty: boolean): { group?: CheckGroup; checks: WebsiteCheck[] }[] {
+  const rank = (c: WebsiteCheck) => SEVERITY[c.paused ? 'paused' : c.state] ?? 9
+  const byState = (a: WebsiteCheck, b: WebsiteCheck) => rank(a) - rank(b)
+  const known = new Set(groups.map((g) => g.id))
+  const out = groups
+    .map((g) => ({ group: g, checks: list.filter((c) => c.groupId === g.id).sort(byState) }))
+    .filter((s) => s.checks.length > 0 || showEmpty)
+    .sort((a, b) => SEVERITY[rollUp(a.checks)]! - SEVERITY[rollUp(b.checks)]! || a.group.name.localeCompare(b.group.name))
+  const loose = list.filter((c) => !c.groupId || !known.has(c.groupId)).sort(byState)
+  return loose.length > 0 ? [...out, { checks: loose }] : out
+}
+
+function RollUpBadge({ list }: { list: WebsiteCheck[] }) {
+  const r = rollUp(list)
+  if (r === 'empty') return null
+  const n = list.filter((c) => !c.paused && c.state === 'down').length
+  const [label, color] = r === 'down' ? [`${n} down`, 'rose'] : r === 'unknown' ? ['Not sure', 'amber']
+    : r === 'pending' ? ['Waiting', 'slate'] : r === 'paused' ? ['Paused', 'slate'] : ['All up', 'teal']
+  return <Badge size="sm" color={color} variant={r === 'down' ? 'filled' : 'light'}>{label}</Badge>
+}
+
+function GroupMenu({ group, onShare, onRename }: { group: CheckGroup; onShare: () => void; onRename: () => void }) {
+  const remove = useRemoveCheckGroup()
+  const [asking, setAsking] = useState(false)
+  return (
+    <>
+      <Group gap="xs" wrap="nowrap">
+        <Button size="compact-sm" variant="default" leftSection={<IconEye size={14} />} onClick={onShare}>Who can see this</Button>
+        <Menu position="bottom-end" withinPortal>
+          <Menu.Target>
+            <ActionIcon variant="subtle" color="gray" aria-label={`More for ${group.name}`}><IconDots size={16} /></ActionIcon>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <Menu.Item onClick={onRename}>Rename</Menu.Item>
+            <Menu.Item color="rose" onClick={() => setAsking(true)}>Remove group</Menu.Item>
+          </Menu.Dropdown>
+        </Menu>
+      </Group>
+      <Modal opened={asking} onClose={() => setAsking(false)} title={`Remove ${group.name}?`}>
+        <Stack>
+          <Text size={FS.body}>Its checks stay, in no group. Whoever was given the group stops seeing them, unless they were given a check on its own.</Text>
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => setAsking(false)}>Keep it</Button>
+            <Button color="rose" loading={remove.isPending} onClick={() => void run(() => remove.mutateAsync(group.id), {
+              failure: 'Not removed', success: ['Removed', `${group.name} is removed. Its checks are in no group now.`],
+            }).then(() => setAsking(false))}>Remove</Button>
+          </Group>
+        </Stack>
+      </Modal>
+    </>
+  )
+}
+
+function SiteTable({ list, loading = false, empty, onOpen }: { list: WebsiteCheck[]; loading?: boolean; empty: ReactNode; onOpen: (id: string) => void }) {
+  return (
+    <DataTable
+      columns={['Website', 'Status', 'Response', 'Last 24 hours', '7 days', '30 days', 'Checked']}
+      minWidth={820}
+      loading={loading}
+      isEmpty={list.length === 0}
+      empty={empty}
+    >
+      {list.map((c) => <WebsiteRow key={c.id} c={c} onOpen={() => onOpen(c.id)} />)}
+    </DataTable>
   )
 }
 
@@ -155,9 +254,12 @@ function HowSure() {
 
 /* ── One site ─────────────────────────────────────────────────────────────── */
 
-function WebsiteDrawer({ id, canEdit, onClose, onEdit }: {
-  id: string; canEdit: boolean; onClose: () => void; onEdit: (c: WebsiteCheck) => void
+function WebsiteDrawer({ id, canEdit, groups, onClose, onEdit }: {
+  id: string; canEdit: boolean; groups: CheckGroup[]; onClose: () => void; onEdit: (c: WebsiteCheck) => void
 }) {
+  const pause = usePauseWebsite()
+  const move = useMoveCheck()
+  const [sharing, setSharing] = useState(false)
   const { data, isLoading, error } = useQuery(websiteQuery(id))
   const checkNow = useCheckWebsiteNow()
   const remove = useRemoveWebsite()
@@ -229,12 +331,52 @@ function WebsiteDrawer({ id, canEdit, onClose, onEdit }: {
                 <Text size={FS.body}>Sends {requestSummary(c)}.{(c.headerNames ?? []).length > 0 ? ' Header values are kept encrypted and never shown.' : ''}</Text>
               )}
               <Text size={FS.body}>{c.expectStatus ? `Must answer ${c.expectStatus}.` : 'Any answer below 400, after redirects, is up.'}{c.keyword ? ` The page must contain "${c.keyword}".` : ''}</Text>
-              <Text size={FS.body}>{c.confirmHosts.length > 0
-                ? `Before calling it down, Argus asks ${c.confirmHosts.join(', ')} to check too.`
-                : 'Only Argus checks it. Choose servers to confirm from, so a problem on Argus\'s side is never called the site being down.'}</Text>
-              <Text size={FS.body}>{telegramSentence(c, tg)}</Text>
+              {!c.limited && (
+                <>
+                  <Text size={FS.body}>{c.confirmHosts.length > 0
+                    ? `Before calling it down, Argus asks ${c.confirmHosts.join(', ')} to check too.`
+                    : 'Only Argus checks it. Choose servers to confirm from, so a problem on Argus\'s side is never called the site being down.'}</Text>
+                  <Text size={FS.body}>{telegramSentence(c, tg)}</Text>
+                </>
+              )}
             </Stack>
           </Box>
+
+          {canEdit && (
+            <Box>
+              <Text fw={600} size="sm" mb={SP.snug}>Group and who can see it</Text>
+              <Group gap="xs" align="flex-end">
+                <Select size="xs" w={220} aria-label="Group" placeholder="No group" clearable
+                  value={c.groupId || null}
+                  data={groups.map((g) => ({ value: g.id, label: g.name }))}
+                  nothingFoundMessage="No groups yet: add one with New group"
+                  onChange={(v) => void run(() => move.mutateAsync({ id: c.id, groupId: v ?? '' }), {
+                    failure: 'Not moved',
+                    success: ['Moved', v ? `${c.name} is in ${groups.find((g) => g.id === v)?.name}.` : `${c.name} is in no group.`],
+                  })} />
+                <Button size="xs" variant="default" leftSection={<IconEye size={14} />} onClick={() => setSharing(true)}>Who can see this</Button>
+              </Group>
+              {sharing && <WhoCanSee target="check" id={c.id} name={c.name} onClose={() => setSharing(false)} />}
+            </Box>
+          )}
+
+          {!canEdit && c.canOperate && (
+            <Group gap="xs">
+              <Button size="xs" variant="default" leftSection={<IconRefresh size={14} />} disabled={c.paused}
+                loading={checkNow.isPending}
+                onClick={() => void run(() => checkNow.mutateAsync(c.id), { failure: 'Not checked', success: ['Checking', 'The result shows here in a few seconds.'] })}>
+                Check now
+              </Button>
+              <Button size="xs" variant="default" loading={pause.isPending}
+                leftSection={c.paused ? <IconPlayerPlay size={14} /> : <IconPlayerPause size={14} />}
+                onClick={() => void run(() => pause.mutateAsync({ id: c.id, paused: !c.paused }), {
+                  failure: c.paused ? 'Not resumed' : 'Not paused',
+                  success: c.paused ? ['Resumed', `${c.name} is checked again.`] : ['Paused', `${c.name} is not checked, and sends no alerts, until it is resumed.`],
+                })}>
+                {c.paused ? 'Resume' : 'Pause'}
+              </Button>
+            </Group>
+          )}
 
           {canEdit && (
             <Group gap="xs">

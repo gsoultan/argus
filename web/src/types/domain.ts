@@ -24,6 +24,8 @@ export interface User {
   org?: { id: string; slug: string; name: string; default: boolean }
   /** Whether this account may manage organizations; see Identity.platformOwner. */
   platformOwner?: boolean
+  /** Whether Monitoring has checks for them; see Identity.seesChecks. */
+  seesChecks?: boolean
   /** Organizations the signed-in person can switch to; see Identity.orgs. */
   orgs?: Array<{ id: string; slug: string; name: string; default: boolean; role: string; home: boolean }>
   /** True when more than one organization shares this control plane. */

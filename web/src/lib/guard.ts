@@ -16,6 +16,12 @@ import { canSee, type Audience } from '~/lib/roles'
  * page's own error state are better placed to say what went wrong than a
  * redirect would be.
  */
+/** Websites: the fleet roles, and anyone who was given a check. */
+export async function guardChecks(queryClient: QueryClient): Promise<void> {
+  const me = await queryClient.ensureQueryData(meQuery()).catch(() => undefined)
+  if (me && !canSee(me.role, 'fleet') && !me.seesChecks) throw redirect({ to: '/assets', replace: true })
+}
+
 export async function guard(queryClient: QueryClient, audience: Audience): Promise<void> {
   const me = await queryClient.ensureQueryData(meQuery()).catch(() => undefined)
   if (me && !canSee(me.role, audience)) throw redirect({ to: '/assets', replace: true })

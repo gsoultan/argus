@@ -207,6 +207,9 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 		// default one. Said here so the console can draw the menu entry;
 		// the routes check it again.
 		"platformOwner": t.IsDefault() && managesPlatform(sess.Role),
+		// seesChecks draws Monitoring in the menu: every check for the fleet
+		// roles, the ones they were given for anyone else.
+		"seesChecks": a.seesChecks(r, sess.Role, sess.Email),
 	})
 }
 

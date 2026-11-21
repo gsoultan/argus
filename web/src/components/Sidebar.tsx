@@ -1,5 +1,7 @@
 import { Badge, Box, Divider, Indicator, NavLink as MantineNavLink, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core'
 import { Link, useRouterState } from '@tanstack/react-router'
+import { useQuery } from '@tanstack/react-query'
+import { meQuery } from '~/lib/queries'
 import { IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand } from '@tabler/icons-react'
 import { bottomFor, groupsFor, isItemActive, type NavCounts, type SideItem } from '~/components/nav'
 import type { UserRole } from '~/types/domain'
@@ -28,7 +30,8 @@ export function Sidebar({ role, counts, folded, onFold, phone }: {
   const tab = useRouterState({ select: (s) => (s.location.search as { tab?: unknown }).tab })
   const tabStr = typeof tab === 'string' ? tab : undefined
   const icons = folded && !phone
-  const groups = groupsFor(role)
+  const { data: me } = useQuery({ ...meQuery(), enabled: role !== undefined })
+  const groups = groupsFor(role, me?.seesChecks === true)
 
   return (
     <Stack gap={0} h="100%" data-testid="sidebar" data-folded={icons || undefined}>

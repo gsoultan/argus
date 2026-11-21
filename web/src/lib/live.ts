@@ -233,6 +233,8 @@ export interface Identity {
    * again on every such request; this only draws the menu entry.
    */
   platformOwner?: boolean
+  /** Monitoring has something for them: every check for the fleet roles, the ones given to them for anyone else. */
+  seesChecks?: boolean
 }
 
 /** An organization the signed-in person is a member of. */

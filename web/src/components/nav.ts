@@ -198,14 +198,15 @@ export function isActive(pathname: string, to: string): boolean {
  * - Records: what happened: sessions and the audit log.
  * Settings and About sit apart at the bottom (bottomFor).
  */
-export function groupsFor(role: UserRole | undefined): NavGroup[] {
+export function groupsFor(role: UserRole | undefined, seesChecks = false): NavGroup[] {
   const by = (to: string) => NAV_ITEMS.find((i) => i.to === to)!
   const cloud = by('/cloud')
   const teams = by('/teams')
   const g: NavGroup[] = [
     { label: '', items: [by('/'), by('/approvals')] },
     { label: 'Connect', items: [by('/assets'), by('/databases'), by('/brokers')] },
-    { label: 'Monitoring', items: [{ ...by('/websites'), label: 'Websites' }] },
+    // Someone outside the fleet roles who was given a check sees it here.
+    { label: 'Monitoring', items: [{ ...by('/websites'), label: 'Websites', ...(seesChecks ? { audience: undefined } : {}) }] },
     { label: 'Cloud', items: [
       { ...cloud, label: 'Overview' },
       { ...cloud, label: 'Resources', icon: IconBox, search: { tab: 'instances' },
