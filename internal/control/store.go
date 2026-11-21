@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gsoultan/argus/internal/control/rgen/session"
@@ -55,6 +56,12 @@ type Store struct {
 	// of running it against the default one. On in production, off for
 	// the tests written before organizations existed.
 	Strict bool
+
+	// mfaKey opens and seals authenticator secrets, and mfaSealing says
+	// whether new ones are sealed yet; see mfa_seal.go. mfaKey is set once,
+	// before serving; nil keeps them unsealed.
+	mfaKey     []byte
+	mfaSealing atomic.Bool
 
 	// changed, when set, is told the organization whenever a session is
 	// reported or an audit entry written, so Home's live dashboard can

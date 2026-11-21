@@ -2689,7 +2689,7 @@ func (m *WebsiteAlertSetting) Schema(t *storm.Table) {
 }
 
 // UIPreference is table ui_preferences: how one person likes the console laid
-// out, cards or a table, the sidebar open or folded (migration 102).
+// out, cards or a table, the sidebar open or folded (migration 103).
 type UIPreference struct {
 	Email     string
 	Key       string

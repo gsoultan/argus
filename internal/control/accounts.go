@@ -92,7 +92,7 @@ func (s *Store) Account(ctx context.Context, email string) (*Account, error) {
 		a.PasswordHash = *pw
 	}
 	if secret != nil {
-		a.TOTPSecret = *secret
+		a.TOTPSecret = s.openMFA(*secret)
 	}
 	if home != nil {
 		a.HomeTenant = *home
@@ -194,9 +194,13 @@ func (s *Store) BeginMFAEnrolment(ctx context.Context, email string) (secret str
 	if err != nil {
 		return "", err
 	}
+	sealed, err := s.sealMFA(secret)
+	if err != nil {
+		return "", err
+	}
 	tag, err := s.db(ctx).Exec(ctx, `
 		UPDATE users SET totp_pending_secret = $2
-		 WHERE lower(email) = lower($1)`, email, secret)
+		 WHERE lower(email) = lower($1)`, email, sealed)
 	if err != nil {
 		return "", fmt.Errorf("begin MFA enrolment: %w", err)
 	}
@@ -229,7 +233,10 @@ func (s *Store) ConfirmMFAEnrolment(
 	secret := ""
 	switch {
 	case pending != nil && *pending != "":
-		secret = *pending
+		secret = s.openMFA(*pending)
+		if secret == "" {
+			return nil, errors.New("this enrolment cannot be read now; start it again")
+		}
 	case !a.MFAEnrolled && a.TOTPSecret != "":
 		// An enrolment begun before pending secrets existed kept its secret
 		// in totp_secret, unconfirmed.
@@ -240,6 +247,10 @@ func (s *Store) ConfirmMFAEnrolment(
 	step, ok := auth.VerifyTOTPStep(secret, code, time.Now())
 	if !ok {
 		return nil, errors.New("that code is not correct; check the clock on your phone")
+	}
+	sealed, err := s.sealMFA(secret)
+	if err != nil {
+		return nil, err
 	}
 
 	tx, err := s.db(ctx).Begin(ctx)
@@ -253,7 +264,7 @@ func (s *Store) ConfirmMFAEnrolment(
 		                 mfa_enrolled_at = now(), mfa_enrolled = true,
 		                 totp_last_step = $3, sessions_valid_after = $4
 		 WHERE id = $1::uuid`,
-		a.ID, secret, step, revocationMoment()); err != nil {
+		a.ID, sealed, step, revocationMoment()); err != nil {
 		return nil, fmt.Errorf("confirm MFA: %w", err)
 	}
 	// Re-issuing replaces any earlier set, so a re-enrolment does not leave

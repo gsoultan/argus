@@ -491,6 +491,8 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	// is the platform's, which is the default organization.
 	pctx := control.PlatformContext(ctx)
 	log.Info("database ready, migrations applied")
+	store.SetMFAKey(control.MFAKeyFromSecret(cfg.SigningSecret))
+	go sealAuthenticatorSecrets(pctx, store, log)
 
 	if cfg.Storage != nil {
 		sc, err := storage.New(*cfg.Storage, log)
@@ -1530,4 +1532,32 @@ func (c *cloudConfig) cloudIdentities() []control.CloudIdentity {
 			Organizations: i.Organizations, Provider: awscloud.New(i.options())})
 	}
 	return out
+}
+
+// mfaSealDelay is how long this version serves before it seals authenticator
+// secrets: well past the 90 seconds an update from the console waits for it
+// to come up and the restarts it allows, so a version that is rolled back
+// never leaves secrets the old one cannot read. See internal/control/mfa_seal.go.
+const mfaSealDelay = 15 * time.Minute
+
+// sealAuthenticatorSecrets starts sealing authenticator secrets once this
+// version has been serving for mfaSealDelay. An upgrade needs no step and
+// nobody enrols again: unsealed secrets keep verifying until they are sealed
+// here. A failure is logged, not fatal; the next start tries again.
+func sealAuthenticatorSecrets(ctx context.Context, store *control.Store, log *slog.Logger) {
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(mfaSealDelay):
+	}
+	n, err := store.StartSealingMFA(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			log.Error("cannot seal stored authenticator secrets; they keep working and the next start tries again", "error", err)
+		}
+		return
+	}
+	if n > 0 {
+		log.Info("sealed stored authenticator secrets", "count", n)
+	}
 }
