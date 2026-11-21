@@ -390,7 +390,17 @@ func (c *Collector) Listen(path string) error {
 			c.log.Error("accept failed", "error", err)
 			continue
 		}
+		// Added under the lock that a shutdown sets closing under, so the
+		// shutdown's Wait either counts this session or never sees it: an
+		// Add racing a Wait is a data race, and one could slip past it.
+		c.mu.Lock()
+		if c.closing {
+			c.mu.Unlock()
+			_ = conn.Close()
+			return nil
+		}
 		c.wg.Add(1)
+		c.mu.Unlock()
 		c.trackConn(conn)
 		go func() {
 			defer c.wg.Done()
