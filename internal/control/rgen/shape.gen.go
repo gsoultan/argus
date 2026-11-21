@@ -299,6 +299,19 @@ func _assertCheckShape(m m0.Check) {
 		m.ExpiresAt,
 		m.NextAt,
 		m.LeaseUntil,
+		m.Group,
+	}
+}
+
+// _assertCheckGroupShape fails to compile if m0.CheckGroup gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertCheckGroupShape(m m0.CheckGroup) {
+	type shape m0.CheckGroup
+	_ = shape{
+		m.ID,
+		m.Name,
+		m.CreatedBy,
+		m.CreatedAt,
 	}
 }
 
@@ -328,6 +341,22 @@ func _assertCheckRoundShape(m m0.CheckRound) {
 		m.Ms,
 		m.Status,
 		m.Detail,
+	}
+}
+
+// _assertCheckViewerShape fails to compile if m0.CheckViewer gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertCheckViewerShape(m m0.CheckViewer) {
+	type shape m0.CheckViewer
+	_ = shape{
+		m.ID,
+		m.Check,
+		m.Group,
+		m.UserEmail,
+		m.Team,
+		m.CanOperate,
+		m.GrantedBy,
+		m.GrantedAt,
 	}
 }
 

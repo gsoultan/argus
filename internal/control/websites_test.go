@@ -382,7 +382,9 @@ func TestWebsiteRoutesAreAuditedAndGuarded(t *testing.T) {
 	if code, _ := h.call(t, op, "", http.MethodPost, "/api/v1/websites", `{"url":"https://x.example.com"}`); code != http.StatusForbidden {
 		t.Errorf("an operator adding a check = %d, want 403", code)
 	}
-	if code, _ := h.call(t, op, "", http.MethodGet, "/api/v1/websites", ""); code != http.StatusForbidden {
-		t.Errorf("an operator reading checks = %d, want 403", code)
+	// Someone outside the fleet roles sees only the checks they were given:
+	// here none (checks_access_test.go gives some).
+	if code, body := h.call(t, op, "", http.MethodGet, "/api/v1/websites", ""); code != http.StatusOK || strings.TrimSpace(body) != "[]" {
+		t.Errorf("an operator reading checks = %d %s, want 200 []", code, body)
 	}
 }

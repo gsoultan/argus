@@ -128,11 +128,18 @@ type WebsiteCheck struct {
 	// reached it), pending, down or unknown.
 	LastOutcome  string     `json:"lastOutcome"`
 	CertNotAfter *time.Time `json:"certNotAfter,omitempty"`
+	// GroupID is the Monitoring group it is in, or empty (checks_access.go).
+	GroupID string `json:"groupId"`
 
 	// Filled in for the console, not stored on the row.
 	Uptime      WebsiteUptime  `json:"uptime"`
 	OpenOutage  *WebsiteOutage `json:"openOutage,omitempty"`
 	ConfirmHost []string       `json:"confirmHosts"`
+	// CanOperate is whether the person asking may check it now and pause it.
+	CanOperate bool `json:"canOperate"`
+	// Limited is a check shown to someone outside the fleet roles, with what
+	// it sends, where it alerts and which servers confirm it left out.
+	Limited bool `json:"limited,omitempty"`
 }
 
 // WebsiteUptime is the share of time up, 0–100, over three windows; nil
@@ -442,7 +449,7 @@ const websiteCols = `id::text, name, settings->>'url', COALESCE((settings->>'exp
 	confirm_from::text[], paused, telegram, telegram_bot, telegram_chats, COALESCE(settings->>'method', 'GET'),
 	COALESCE(settings->>'body', ''), ARRAY(SELECT jsonb_array_elements_text(COALESCE(settings->'headerNames', '[]'::jsonb))),
 	secrets_sealed, created_by, created_at, updated_at, state, state_since, failing_rounds,
-	last_at, last_ms, last_status, last_detail, last_outcome, expires_at`
+	last_at, last_ms, last_status, last_detail, last_outcome, expires_at, COALESCE(group_id::text, '')`
 
 // websiteSettings is the settings column for a website check, built from
 // the numbered parameters $url..$headerNames of an INSERT or UPDATE.
@@ -455,7 +462,7 @@ func scanWebsite(row pgx.Row) (WebsiteCheck, error) {
 	var c WebsiteCheck
 	err := row.Scan(&c.ID, &c.Name, &c.URL, &c.ExpectStatus, &c.Keyword, &c.EverySeconds, &c.TimeoutSeconds,
 		&c.ConfirmFrom, &c.Paused, &c.Telegram, &c.TelegramBot, &c.TelegramChats, &c.Method, &c.Body, &c.HeaderNames, &c.headersSealed, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt, &c.State, &c.StateSince,
-		&c.FailingRounds, &c.LastAt, &c.LastMS, &c.LastStatus, &c.LastDetail, &c.LastOutcome, &c.CertNotAfter)
+		&c.FailingRounds, &c.LastAt, &c.LastMS, &c.LastStatus, &c.LastDetail, &c.LastOutcome, &c.CertNotAfter, &c.GroupID)
 	if c.ConfirmFrom == nil {
 		c.ConfirmFrom = []string{}
 	}
@@ -1279,6 +1286,7 @@ func (a *API) announceWebsite(ctx context.Context, tr websiteTransition) {
 		al.Subject = websiteSubject(c.ID)
 	}
 	a.raiseAlert(ctx, al)
+	a.alertCheckWatchers(ctx, c.ID, al)
 	icon := "🔴"
 	if tr.CameBack {
 		icon = "🟢"

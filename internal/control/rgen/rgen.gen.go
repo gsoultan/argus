@@ -14,8 +14,10 @@ import (
 	"github.com/gsoultan/argus/internal/control/rgen/assetassignment"
 	"github.com/gsoultan/argus/internal/control/rgen/assetteamassignment"
 	"github.com/gsoultan/argus/internal/control/rgen/check"
+	"github.com/gsoultan/argus/internal/control/rgen/checkgroup"
 	"github.com/gsoultan/argus/internal/control/rgen/checkoutage"
 	"github.com/gsoultan/argus/internal/control/rgen/checkround"
+	"github.com/gsoultan/argus/internal/control/rgen/checkviewer"
 	"github.com/gsoultan/argus/internal/control/rgen/cloudaccess"
 	"github.com/gsoultan/argus/internal/control/rgen/cloudaccount"
 	"github.com/gsoultan/argus/internal/control/rgen/cloudbudget"
@@ -69,75 +71,77 @@ var FlushOrder = map[string]int{
 	"approval_policy_settings":  3,
 	"assets":                    4,
 	"audit_events":              5,
-	"checks":                    6,
-	"cloud_accounts":            7,
-	"cloud_budgets":             8,
-	"cloud_changes":             9,
-	"cloud_costs":               10,
-	"cloud_finding_keeps":       11,
-	"cloud_keep_running":        12,
-	"cloud_resources":           13,
-	"cloud_schedules":           14,
-	"console_alert_prefs":       15,
-	"console_alerts":            16,
-	"databases":                 17,
-	"direct_login_requests":     18,
-	"disk_grow_rules":           19,
-	"disk_grow_runs":            20,
-	"gateway_policy":            21,
-	"host_key_pins":             22,
-	"log_cleanup_rules":         23,
-	"log_cleanup_runs":          24,
-	"package_runs":              25,
-	"package_update_rules":      26,
-	"redeemed_tickets":          27,
-	"revoked_sessions":          28,
-	"saved_queries":             29,
-	"scale_groups":              30,
-	"schema_migrations":         31,
-	"server_logins":             32,
-	"sessions":                  33,
-	"sign_in_devices":           34,
-	"software_files":            35,
-	"software_previews":         36,
-	"software_scripts":          37,
-	"teams":                     38,
-	"telegram_bots":             39,
-	"telegram_routes":           40,
-	"ui_preferences":            41,
-	"usage_history":             42,
-	"usage_hourly":              43,
-	"users":                     44,
-	"website_alert_settings":    45,
-	"website_checks":            46,
-	"website_outages":           47,
-	"website_rounds":            48,
-	"access_requests":           49,
-	"agent_enrollment_tokens":   50,
-	"asset_assignments":         51,
-	"asset_team_assignments":    52,
-	"check_outages":             53,
-	"check_rounds":              54,
-	"cloud_access":              55,
-	"cloud_schedule_runs":       56,
-	"console_alert_reads":       57,
-	"database_access_rules":     58,
-	"database_assignments":      59,
-	"database_backup_schedules": 60,
-	"database_backups":          61,
-	"database_changes":          62,
-	"database_read_endpoints":   63,
-	"database_replicas":         64,
-	"database_restores":         65,
-	"database_statements":       66,
-	"recovery_codes":            67,
-	"scale_group_activity":      68,
-	"scale_group_members":       69,
-	"software_script_versions":  70,
-	"team_members":              71,
-	"agent_credentials":         72,
-	"database_backup_tests":     73,
-	"database_statement_items":  74,
+	"check_groups":              6,
+	"checks":                    7,
+	"cloud_accounts":            8,
+	"cloud_budgets":             9,
+	"cloud_changes":             10,
+	"cloud_costs":               11,
+	"cloud_finding_keeps":       12,
+	"cloud_keep_running":        13,
+	"cloud_resources":           14,
+	"cloud_schedules":           15,
+	"console_alert_prefs":       16,
+	"console_alerts":            17,
+	"databases":                 18,
+	"direct_login_requests":     19,
+	"disk_grow_rules":           20,
+	"disk_grow_runs":            21,
+	"gateway_policy":            22,
+	"host_key_pins":             23,
+	"log_cleanup_rules":         24,
+	"log_cleanup_runs":          25,
+	"package_runs":              26,
+	"package_update_rules":      27,
+	"redeemed_tickets":          28,
+	"revoked_sessions":          29,
+	"saved_queries":             30,
+	"scale_groups":              31,
+	"schema_migrations":         32,
+	"server_logins":             33,
+	"sessions":                  34,
+	"sign_in_devices":           35,
+	"software_files":            36,
+	"software_previews":         37,
+	"software_scripts":          38,
+	"teams":                     39,
+	"telegram_bots":             40,
+	"telegram_routes":           41,
+	"ui_preferences":            42,
+	"usage_history":             43,
+	"usage_hourly":              44,
+	"users":                     45,
+	"website_alert_settings":    46,
+	"website_checks":            47,
+	"website_outages":           48,
+	"website_rounds":            49,
+	"access_requests":           50,
+	"agent_enrollment_tokens":   51,
+	"asset_assignments":         52,
+	"asset_team_assignments":    53,
+	"check_outages":             54,
+	"check_rounds":              55,
+	"check_viewers":             56,
+	"cloud_access":              57,
+	"cloud_schedule_runs":       58,
+	"console_alert_reads":       59,
+	"database_access_rules":     60,
+	"database_assignments":      61,
+	"database_backup_schedules": 62,
+	"database_backups":          63,
+	"database_changes":          64,
+	"database_read_endpoints":   65,
+	"database_replicas":         66,
+	"database_restores":         67,
+	"database_statements":       68,
+	"recovery_codes":            69,
+	"scale_group_activity":      70,
+	"scale_group_members":       71,
+	"software_script_versions":  72,
+	"team_members":              73,
+	"agent_credentials":         74,
+	"database_backup_tests":     75,
+	"database_statement_items":  76,
 }
 
 // NewUnit stages writes across this context and flushes them in foreign-key
@@ -1099,6 +1103,504 @@ func (p CheckRoundWithCheckQuery) All(ctx context.Context, ex runtime.Executor) 
 			return nil, fmt.Errorf("storm: %s references a missing %s row", "check_rounds", "checks")
 		}
 		out[i].Check = targets[j]
+	}
+	return out, nil
+}
+
+// CheckViewerWithCheckRow is check_viewers with its Check loaded.
+type CheckViewerWithCheckRow struct {
+	checkviewer.Row
+	// A pointer because the link is optional. nil means the row has no
+	// Check, which is different from having one that failed to load.
+	Check *check.Row
+}
+
+type CheckViewerWithCheckQuery struct {
+	q checkviewer.Query
+}
+
+// CheckViewerWithCheck starts the plan.
+func CheckViewerWithCheck() CheckViewerWithCheckQuery {
+	return CheckViewerWithCheckQuery{q: checkviewer.New()}
+}
+
+func (p CheckViewerWithCheckQuery) Where(ps ...checkviewer.Pred) CheckViewerWithCheckQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p CheckViewerWithCheckQuery) WhereIf(cond bool, pr checkviewer.Pred) CheckViewerWithCheckQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p CheckViewerWithCheckQuery) Any(ps ...checkviewer.Pred) CheckViewerWithCheckQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p CheckViewerWithCheckQuery) Not(pr checkviewer.Pred) CheckViewerWithCheckQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p CheckViewerWithCheckQuery) NotAny(ps ...checkviewer.Pred) CheckViewerWithCheckQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p CheckViewerWithCheckQuery) Order(ts ...checkviewer.Sort) CheckViewerWithCheckQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p CheckViewerWithCheckQuery) Limit(n int64) CheckViewerWithCheckQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p CheckViewerWithCheckQuery) Offset(n int64) CheckViewerWithCheckQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p CheckViewerWithCheckQuery) After(r CheckViewerWithCheckRow) CheckViewerWithCheckQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p CheckViewerWithCheckQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p CheckViewerWithCheckQuery) All(ctx context.Context, ex runtime.Executor) ([]CheckViewerWithCheckRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]CheckViewerWithCheckRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = CheckViewerWithCheckRow{Row: r}
+		key, ok := r.CheckID.Get()
+		if !ok {
+			continue
+		}
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := check.New().Unordered().
+		Where(check.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key, ok := out[i].Row.CheckID.Get()
+		if !ok {
+			continue
+		}
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "check_viewers", "checks")
+		}
+		out[i].Check = &targets[j]
+	}
+	return out, nil
+}
+
+// CheckViewerWithGroupRow is check_viewers with its Group loaded.
+type CheckViewerWithGroupRow struct {
+	checkviewer.Row
+	// A pointer because the link is optional. nil means the row has no
+	// Group, which is different from having one that failed to load.
+	Group *checkgroup.Row
+}
+
+type CheckViewerWithGroupQuery struct {
+	q checkviewer.Query
+}
+
+// CheckViewerWithGroup starts the plan.
+func CheckViewerWithGroup() CheckViewerWithGroupQuery {
+	return CheckViewerWithGroupQuery{q: checkviewer.New()}
+}
+
+func (p CheckViewerWithGroupQuery) Where(ps ...checkviewer.Pred) CheckViewerWithGroupQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p CheckViewerWithGroupQuery) WhereIf(cond bool, pr checkviewer.Pred) CheckViewerWithGroupQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p CheckViewerWithGroupQuery) Any(ps ...checkviewer.Pred) CheckViewerWithGroupQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p CheckViewerWithGroupQuery) Not(pr checkviewer.Pred) CheckViewerWithGroupQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p CheckViewerWithGroupQuery) NotAny(ps ...checkviewer.Pred) CheckViewerWithGroupQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p CheckViewerWithGroupQuery) Order(ts ...checkviewer.Sort) CheckViewerWithGroupQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p CheckViewerWithGroupQuery) Limit(n int64) CheckViewerWithGroupQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p CheckViewerWithGroupQuery) Offset(n int64) CheckViewerWithGroupQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p CheckViewerWithGroupQuery) After(r CheckViewerWithGroupRow) CheckViewerWithGroupQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p CheckViewerWithGroupQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p CheckViewerWithGroupQuery) All(ctx context.Context, ex runtime.Executor) ([]CheckViewerWithGroupRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]CheckViewerWithGroupRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = CheckViewerWithGroupRow{Row: r}
+		key, ok := r.GroupID.Get()
+		if !ok {
+			continue
+		}
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := checkgroup.New().Unordered().
+		Where(checkgroup.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key, ok := out[i].Row.GroupID.Get()
+		if !ok {
+			continue
+		}
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "check_viewers", "check_groups")
+		}
+		out[i].Group = &targets[j]
+	}
+	return out, nil
+}
+
+// CheckViewerWithTeamRow is check_viewers with its Team loaded.
+type CheckViewerWithTeamRow struct {
+	checkviewer.Row
+	// A pointer because the link is optional. nil means the row has no
+	// Team, which is different from having one that failed to load.
+	Team *team.Row
+}
+
+type CheckViewerWithTeamQuery struct {
+	q checkviewer.Query
+}
+
+// CheckViewerWithTeam starts the plan.
+func CheckViewerWithTeam() CheckViewerWithTeamQuery {
+	return CheckViewerWithTeamQuery{q: checkviewer.New()}
+}
+
+func (p CheckViewerWithTeamQuery) Where(ps ...checkviewer.Pred) CheckViewerWithTeamQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p CheckViewerWithTeamQuery) WhereIf(cond bool, pr checkviewer.Pred) CheckViewerWithTeamQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p CheckViewerWithTeamQuery) Any(ps ...checkviewer.Pred) CheckViewerWithTeamQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p CheckViewerWithTeamQuery) Not(pr checkviewer.Pred) CheckViewerWithTeamQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p CheckViewerWithTeamQuery) NotAny(ps ...checkviewer.Pred) CheckViewerWithTeamQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p CheckViewerWithTeamQuery) Order(ts ...checkviewer.Sort) CheckViewerWithTeamQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p CheckViewerWithTeamQuery) Limit(n int64) CheckViewerWithTeamQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p CheckViewerWithTeamQuery) Offset(n int64) CheckViewerWithTeamQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p CheckViewerWithTeamQuery) After(r CheckViewerWithTeamRow) CheckViewerWithTeamQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p CheckViewerWithTeamQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p CheckViewerWithTeamQuery) All(ctx context.Context, ex runtime.Executor) ([]CheckViewerWithTeamRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]CheckViewerWithTeamRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = CheckViewerWithTeamRow{Row: r}
+		key, ok := r.TeamID.Get()
+		if !ok {
+			continue
+		}
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := team.New().Unordered().
+		Where(team.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key, ok := out[i].Row.TeamID.Get()
+		if !ok {
+			continue
+		}
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "check_viewers", "teams")
+		}
+		out[i].Team = &targets[j]
+	}
+	return out, nil
+}
+
+// CheckWithGroupRow is checks with its Group loaded.
+type CheckWithGroupRow struct {
+	check.Row
+	// A pointer because the link is optional. nil means the row has no
+	// Group, which is different from having one that failed to load.
+	Group *checkgroup.Row
+}
+
+type CheckWithGroupQuery struct {
+	q check.Query
+}
+
+// CheckWithGroup starts the plan.
+func CheckWithGroup() CheckWithGroupQuery { return CheckWithGroupQuery{q: check.New()} }
+
+func (p CheckWithGroupQuery) Where(ps ...check.Pred) CheckWithGroupQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p CheckWithGroupQuery) WhereIf(cond bool, pr check.Pred) CheckWithGroupQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p CheckWithGroupQuery) Any(ps ...check.Pred) CheckWithGroupQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p CheckWithGroupQuery) Not(pr check.Pred) CheckWithGroupQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p CheckWithGroupQuery) NotAny(ps ...check.Pred) CheckWithGroupQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p CheckWithGroupQuery) Order(ts ...check.Sort) CheckWithGroupQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p CheckWithGroupQuery) Limit(n int64) CheckWithGroupQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p CheckWithGroupQuery) Offset(n int64) CheckWithGroupQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p CheckWithGroupQuery) After(r CheckWithGroupRow) CheckWithGroupQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p CheckWithGroupQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p CheckWithGroupQuery) All(ctx context.Context, ex runtime.Executor) ([]CheckWithGroupRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]CheckWithGroupRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = CheckWithGroupRow{Row: r}
+		key, ok := r.GroupID.Get()
+		if !ok {
+			continue
+		}
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := checkgroup.New().Unordered().
+		Where(checkgroup.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key, ok := out[i].Row.GroupID.Get()
+		if !ok {
+			continue
+		}
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "checks", "check_groups")
+		}
+		out[i].Group = &targets[j]
 	}
 	return out, nil
 }

@@ -46,6 +46,7 @@ type Row struct {
 	ExpiresAt      runtime.Null[time.Time]
 	NextAt         time.Time
 	LeaseUntil     runtime.Null[time.Time]
+	GroupID        runtime.Null[[16]byte]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -84,7 +85,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 26
+const nCols = 27
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -362,6 +363,13 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.tims[q.ntm] = r.LeaseUntil.V
 		q.ntm++
+	case 26:
+		if int(q.nr) >= len(q.raws) {
+			q.over = true
+			return
+		}
+		q.raws[q.nr] = r.GroupID.V
+		q.nr++
 	}
 }
 
@@ -558,6 +566,7 @@ var (
 	ExpiresAt      = NullTimeCol{23}
 	NextAt         = TimeCol{24}
 	LeaseUntil     = NullTimeCol{25}
+	GroupID        = NullUUIDCol{26}
 )
 
 // UUIDCol addresses a uuid column.
@@ -809,6 +818,29 @@ func (h NullInt32Col) In(v ...int32) Pred { return Pred{col: h.c, op: opIn, anyI
 func (h NullInt32Col) NotIn(v ...int32) Pred { return Pred{col: h.c, op: opNotIn, anyI32: v} }
 func (h NullInt32Col) IsNull() Pred          { return Pred{col: h.c, op: opIsNull} }
 func (h NullInt32Col) IsNotNull() Pred       { return Pred{col: h.c, op: opIsNotNull} }
+
+// NullUUIDCol addresses a uuid column.
+type NullUUIDCol struct{ c uint8 }
+
+func (h NullUUIDCol) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
+func (h NullUUIDCol) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
+func (h NullUUIDCol) AscNullsFirst() Sort {
+	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
+}
+func (h NullUUIDCol) DescNullsLast() Sort {
+	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
+}
+
+func (h NullUUIDCol) Eq(v [16]byte) Pred    { return Pred{col: h.c, op: opEq, raw: v} }
+func (h NullUUIDCol) NotEq(v [16]byte) Pred { return Pred{col: h.c, op: opNotEq, raw: v} }
+func (h NullUUIDCol) In(v ...[16]byte) Pred { return Pred{col: h.c, op: opIn, anyRaw: v} }
+
+// NotIn is `<> ALL($1)`. A NULL anywhere in v makes the
+// comparison NULL for every row and the result empty —
+// PostgreSQL's rule for NOT IN, not storm's.
+func (h NullUUIDCol) NotIn(v ...[16]byte) Pred { return Pred{col: h.c, op: opNotIn, anyRaw: v} }
+func (h NullUUIDCol) IsNull() Pred             { return Pred{col: h.c, op: opIsNull} }
+func (h NullUUIDCol) IsNotNull() Pred          { return Pred{col: h.c, op: opIsNotNull} }
 
 // Where applies predicates, ANDed together.
 func (q Query) Where(ps ...Pred) Query {
@@ -1070,6 +1102,13 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 26:
+			if int(q.nar) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyRaw[q.nar] = p.anyRaw
+			q.nar++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1247,6 +1286,13 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.tims[q.ntm] = p.tim
 		q.ntm++
+	case 26:
+		if int(q.nr) >= 4 {
+			q.over = true
+			return
+		}
+		q.raws[q.nr] = p.raw
+		q.nr++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1458,8 +1504,14 @@ func (q Query) LeaseUntilLt(v time.Time) Query          { return q.Where(LeaseUn
 func (q Query) LeaseUntilLte(v time.Time) Query         { return q.Where(LeaseUntil.Lte(v)) }
 func (q Query) LeaseUntilIsNull() Query                 { return q.Where(LeaseUntil.IsNull()) }
 func (q Query) LeaseUntilIsNotNull() Query              { return q.Where(LeaseUntil.IsNotNull()) }
+func (q Query) GroupIDEq(v [16]byte) Query              { return q.Where(GroupID.Eq(v)) }
+func (q Query) GroupIDNotEq(v [16]byte) Query           { return q.Where(GroupID.NotEq(v)) }
+func (q Query) GroupIDIn(v ...[16]byte) Query           { return q.Where(GroupID.In(v...)) }
+func (q Query) GroupIDNotIn(v ...[16]byte) Query        { return q.Where(GroupID.NotIn(v...)) }
+func (q Query) GroupIDIsNull() Query                    { return q.Where(GroupID.IsNull()) }
+func (q Query) GroupIDIsNotNull() Query                 { return q.Where(GroupID.IsNotNull()) }
 
-const selectPrefix = `SELECT "id", "created_at", "updated_at", "kind", "name", "settings", "secrets_sealed", "every_seconds", "timeout_seconds", "confirm_from", "paused", "telegram", "telegram_bot", "telegram_chats", "created_by", "state", "state_since", "failing_rounds", "last_at", "last_ms", "last_status", "last_detail", "last_outcome", "expires_at", "next_at", "lease_until" FROM "checks"`
+const selectPrefix = `SELECT "id", "created_at", "updated_at", "kind", "name", "settings", "secrets_sealed", "every_seconds", "timeout_seconds", "confirm_from", "paused", "telegram", "telegram_bot", "telegram_chats", "created_by", "state", "state_since", "failing_rounds", "last_at", "last_ms", "last_status", "last_detail", "last_outcome", "expires_at", "next_at", "lease_until", "group_id" FROM "checks"`
 const countPrefix = `SELECT count(*) FROM "checks"`
 const existsPrefix = `SELECT 1 FROM "checks"`
 const existsSuffix = ` LIMIT 1`
@@ -1652,6 +1704,12 @@ var orderTable = [nCols][4]string{
 		"\"lease_until\" ASC NULLS FIRST",
 		"\"lease_until\" DESC NULLS LAST",
 	},
+	{ // group_id
+		"\"group_id\"",
+		"\"group_id\" DESC",
+		"\"group_id\" ASC NULLS FIRST",
+		"\"group_id\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1683,6 +1741,7 @@ var identTable = [nCols]string{
 	"\"expires_at\"",
 	"\"next_at\"",
 	"\"lease_until\"",
+	"\"group_id\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1715,7 +1774,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [26][28]runtime.Frag{
+var fragTable = [27][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -2496,6 +2555,36 @@ var fragTable = [26][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // group_id
+		{}, // opNone
+		{A: "\"group_id\" = $", B: ""},
+		{A: "\"group_id\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"group_id\" = ANY($", B: ")"},
+		{A: "\"group_id\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"group_id\" IS NULL", B: ""},
+		{A: "\"group_id\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -2685,6 +2774,7 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.ExpiresAt = runtime.Nullable(rv[23], runtime.Timestamptz)
 	r.NextAt = runtime.Timestamptz(rv[24])
 	r.LeaseUntil = runtime.Nullable(rv[25], runtime.Timestamptz)
+	r.GroupID = runtime.Nullable(rv[26], runtime.UUID)
 	return decErr
 }
 
@@ -2825,6 +2915,10 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 26:
+				b.anyRaw[nar] = q.anyRaw[nar]
+				v = append(v, &b.anyRaw[nar])
+				nar++
 			}
 			continue
 		}
@@ -2925,6 +3019,10 @@ func (q Query) bindPreds(b *binder) []any {
 			b.tims[ntm] = q.tims[ntm]
 			v = append(v, &b.tims[ntm])
 			ntm++
+		case 26:
+			b.raws[nr] = q.raws[nr]
+			v = append(v, &b.raws[nr])
+			nr++
 		}
 	}
 	b.vals = v
@@ -3062,7 +3160,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "checks" ("id", "created_at", "updated_at", "kind", "name", "settings", "secrets_sealed", "every_seconds", "timeout_seconds", "confirm_from", "paused", "telegram", "telegram_bot", "telegram_chats", "created_by", "state", "state_since", "failing_rounds", "last_at", "last_ms", "last_status", "last_detail", "last_outcome", "expires_at", "next_at", "lease_until") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26) RETURNING "id", "created_at", "updated_at", "kind", "name", "settings", "secrets_sealed", "every_seconds", "timeout_seconds", "confirm_from", "paused", "telegram", "telegram_bot", "telegram_chats", "created_by", "state", "state_since", "failing_rounds", "last_at", "last_ms", "last_status", "last_detail", "last_outcome", "expires_at", "next_at", "lease_until"`
+const insertSQL = `INSERT INTO "checks" ("id", "created_at", "updated_at", "kind", "name", "settings", "secrets_sealed", "every_seconds", "timeout_seconds", "confirm_from", "paused", "telegram", "telegram_bot", "telegram_chats", "created_by", "state", "state_since", "failing_rounds", "last_at", "last_ms", "last_status", "last_detail", "last_outcome", "expires_at", "next_at", "lease_until", "group_id") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27) RETURNING "id", "created_at", "updated_at", "kind", "name", "settings", "secrets_sealed", "every_seconds", "timeout_seconds", "confirm_from", "paused", "telegram", "telegram_bot", "telegram_chats", "created_by", "state", "state_since", "failing_rounds", "last_at", "last_ms", "last_status", "last_detail", "last_outcome", "expires_at", "next_at", "lease_until", "group_id"`
 
 const updatePrefix = `UPDATE "checks" SET `
 const deletePrefix = `DELETE FROM "checks"`
@@ -3094,9 +3192,10 @@ const (
 	dExpiresAt      uint64 = 1 << 21
 	dNextAt         uint64 = 1 << 22
 	dLeaseUntil     uint64 = 1 << 23
+	dGroupID        uint64 = 1 << 24
 )
 
-const nUpdatable = 24
+const nUpdatable = 25
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -3124,6 +3223,7 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"expires_at\" = $", B: ""},      // expires_at
 	{A: "\"next_at\" = $", B: ""},         // next_at
 	{A: "\"lease_until\" = $", B: ""},     // lease_until
+	{A: "\"group_id\" = $", B: ""},        // group_id
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -3154,6 +3254,7 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{A: "\"expires_at\" = now()", B: ""},  // expires_at = the database's clock
 	{A: "\"next_at\" = now()", B: ""},     // next_at = the database's clock
 	{A: "\"lease_until\" = now()", B: ""}, // lease_until = the database's clock
+	{},                                    // group_id has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -3191,9 +3292,10 @@ const (
 	iExpiresAt      uint64 = 1 << 23
 	iNextAt         uint64 = 1 << 24
 	iLeaseUntil     uint64 = 1 << 25
+	iGroupID        uint64 = 1 << 26
 )
 
-const nInsertable = 26
+const nInsertable = 27
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -3223,6 +3325,7 @@ var insCols = [nInsertable]string{
 	"\"expires_at\"",
 	"\"next_at\"",
 	"\"lease_until\"",
+	"\"group_id\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -3231,7 +3334,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"checks\""
-const insReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"kind\", \"name\", \"settings\", \"secrets_sealed\", \"every_seconds\", \"timeout_seconds\", \"confirm_from\", \"paused\", \"telegram\", \"telegram_bot\", \"telegram_chats\", \"created_by\", \"state\", \"state_since\", \"failing_rounds\", \"last_at\", \"last_ms\", \"last_status\", \"last_detail\", \"last_outcome\", \"expires_at\", \"next_at\", \"lease_until\""
+const insReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"kind\", \"name\", \"settings\", \"secrets_sealed\", \"every_seconds\", \"timeout_seconds\", \"confirm_from\", \"paused\", \"telegram\", \"telegram_bot\", \"telegram_chats\", \"created_by\", \"state\", \"state_since\", \"failing_rounds\", \"last_at\", \"last_ms\", \"last_status\", \"last_detail\", \"last_outcome\", \"expires_at\", \"next_at\", \"lease_until\", \"group_id\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -3250,7 +3353,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"kind\", \"name\", \"settings\", \"secrets_sealed\", \"every_seconds\", \"timeout_seconds\", \"confirm_from\", \"paused\", \"telegram\", \"telegram_bot\", \"telegram_chats\", \"created_by\", \"state\", \"state_since\", \"failing_rounds\", \"last_at\", \"last_ms\", \"last_status\", \"last_detail\", \"last_outcome\", \"expires_at\", \"next_at\", \"lease_until\""
+const updReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"kind\", \"name\", \"settings\", \"secrets_sealed\", \"every_seconds\", \"timeout_seconds\", \"confirm_from\", \"paused\", \"telegram\", \"telegram_bot\", \"telegram_chats\", \"created_by\", \"state\", \"state_since\", \"failing_rounds\", \"last_at\", \"last_ms\", \"last_status\", \"last_detail\", \"last_outcome\", \"expires_at\", \"next_at\", \"lease_until\", \"group_id\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -3606,6 +3709,20 @@ func (m *Mut) SetLeaseUntilNull() {
 	m.expr &^= dLeaseUntil
 }
 
+func (m *Mut) SetGroupID(v [16]byte) {
+	m.row.GroupID = runtime.Null[[16]byte]{V: v, Valid: true}
+	m.dirty |= dGroupID
+	m.expr &^= dGroupID
+}
+
+// SetGroupIDNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetGroupIDNull() {
+	m.row.GroupID = runtime.Null[[16]byte]{}
+	m.dirty |= dGroupID
+	m.expr &^= dGroupID
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -3855,6 +3972,18 @@ func (n *Ins) SetLeaseUntilNull() {
 	n.set |= iLeaseUntil
 }
 
+func (n *Ins) SetGroupID(v [16]byte) {
+	n.row.GroupID = runtime.Null[[16]byte]{V: v, Valid: true}
+	n.set |= iGroupID
+}
+
+// SetGroupIDNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetGroupIDNull() {
+	n.row.GroupID = runtime.Null[[16]byte]{}
+	n.set |= iGroupID
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -3904,7 +4033,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 24)
+	set := make([]string, 0, 25)
 	switch i {
 	case 0:
 		if mask&(1<<2) != 0 {
@@ -3978,6 +4107,9 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<25) != 0 {
 			set = append(set, "lease_until")
+		}
+		if mask&(1<<26) != 0 {
+			set = append(set, "group_id")
 		}
 	}
 	return set
@@ -4071,6 +4203,7 @@ var assignFor = map[string]string{
 	"expires_at":      "\"expires_at\" = EXCLUDED.\"expires_at\"",
 	"next_at":         "\"next_at\" = EXCLUDED.\"next_at\"",
 	"lease_until":     "\"lease_until\" = EXCLUDED.\"lease_until\"",
+	"group_id":        "\"group_id\" = EXCLUDED.\"group_id\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -4173,6 +4306,8 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.NextAt)
 		case 25:
 			args = append(args, n.row.LeaseUntil.Arg())
+		case 26:
+			args = append(args, n.row.GroupID.Arg())
 		}
 	}
 	var out Row
@@ -4210,7 +4345,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 26)
+	args := make([]any, 0, 27)
 	args = append(args, r.ID)
 	args = append(args, r.CreatedAt)
 	args = append(args, r.UpdatedAt)
@@ -4237,6 +4372,7 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.ExpiresAt.Arg())
 	args = append(args, r.NextAt)
 	args = append(args, r.LeaseUntil.Arg())
+	args = append(args, r.GroupID.Arg())
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -4289,13 +4425,14 @@ var copyCols = []string{
 	"expires_at",
 	"next_at",
 	"lease_until",
+	"group_id",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [26]any
+	buf  [27]any
 }
 
 func (s *rowSource) Next() bool {
@@ -4339,6 +4476,7 @@ func (s *rowSource) Values() []any {
 	s.buf[23] = r.ExpiresAt.Ptr()
 	s.buf[24] = &r.NextAt
 	s.buf[25] = r.LeaseUntil.Ptr()
+	s.buf[26] = r.GroupID.Ptr()
 	return s.buf[:]
 }
 
@@ -4395,8 +4533,9 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 23
 	mask |= 1 << 24
 	mask |= 1 << 25
+	mask |= 1 << 26
 	st := stmtForInsertNoReturn(mask, 0, 0)
-	args := make([]any, 0, 26)
+	args := make([]any, 0, 27)
 	args = append(args, r.ID)
 	args = append(args, r.CreatedAt)
 	args = append(args, r.UpdatedAt)
@@ -4423,6 +4562,7 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.ExpiresAt.Arg())
 	args = append(args, r.NextAt)
 	args = append(args, r.LeaseUntil.Arg())
+	args = append(args, r.GroupID.Arg())
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -4508,6 +4648,8 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.NextAt)
 		case 25:
 			args = append(args, n.row.LeaseUntil.Arg())
+		case 26:
+			args = append(args, n.row.GroupID.Arg())
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -4611,6 +4753,8 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.NextAt)
 		case 23:
 			args = append(args, m.row.LeaseUntil.Arg())
+		case 24:
+			args = append(args, m.row.GroupID.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -4741,6 +4885,8 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.NextAt)
 		case 23:
 			args = append(args, m.row.LeaseUntil.Arg())
+		case 24:
+			args = append(args, m.row.GroupID.Arg())
 		}
 	}
 	args = append(args, m.row.ID)
@@ -4937,6 +5083,8 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.NextAt)
 		case 23:
 			args = append(args, m.row.LeaseUntil.Arg())
+		case 24:
+			args = append(args, m.row.GroupID.Arg())
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

@@ -88,6 +88,12 @@ var accessKinds = []accessKind{
 		tables: []string{"cloud_access"},
 		list:   cloudAccess,
 	},
+	{
+		kind: "checks", label: "Monitoring", give: "/websites",
+		empty:  "No checks yet. Give one to a team of theirs, or to them, under \"Who can see this\" on a check or a group.",
+		tables: []string{"check_viewers"},
+		list:   checkAccessItems,
+	},
 }
 
 // notGrantTables name people or teams without giving anyone access to

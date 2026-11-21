@@ -9,9 +9,11 @@ import (
 )
 
 /*
-Routes for website checks (websites.go). Reading is for the roles that see
-the whole fleet (admin, owner, auditor); adding, changing, removing and
-checking now are for admins and owners, and adding, changing and removing
+Routes for website checks (websites.go). The roles that see the whole fleet
+(admin, owner, auditor) read every check; anyone else reads the checks they
+were given, limited (checks_access.go). Adding, changing and removing are for
+admins and owners; checking now and pausing also for someone given a check
+with can_operate, and adding, changing and removing
 are in the audit log, since a check names servers whose agents fetch the
 address.
 
@@ -22,23 +24,52 @@ address.
 	PUT    /api/v1/websites/{id}       change one
 	DELETE /api/v1/websites/{id}       remove one, and its history
 	POST   /api/v1/websites/{id}/check check it now
+	POST   /api/v1/websites/{id}/pause pause or resume it (checks_access.go)
 	POST   /api/v1/websites/{id}/test-alert  send a test alert to its Telegram chats now
 
 The Websites feature's own Telegram choice is the "website" route in
 telegram_routes.go.
 */
 
-func (a *API) websiteReader(w http.ResponseWriter, r *http.Request) bool {
+// websiteReader lets in anyone signed in and says which checks they see: nil
+// for every check (admins, owners and auditors), or the ones they were given
+// (checks_access.go), mapped to whether they may operate each.
+func (a *API) websiteReader(w http.ResponseWriter, r *http.Request) (seen map[string]bool, role string, ok bool) {
 	sess, ok := a.authenticate(r)
 	if !ok {
 		writeErr(w, http.StatusUnauthorized, "unauthorized")
-		return false
+		return nil, "", false
 	}
-	if !seesWholeFleet(sess.Role) {
-		writeErr(w, http.StatusForbidden, "website checks are for admins, owners and auditors")
-		return false
+	if seesWholeFleet(sess.Role) {
+		return nil, sess.Role, true
 	}
-	return true
+	seen, err := a.store.VisibleChecks(r.Context(), sess.Email)
+	if err != nil {
+		a.fail(w, "website checks", err)
+		return nil, "", false
+	}
+	return seen, sess.Role, true
+}
+
+// shownTo narrows list to what seen allows and marks what each may do: an
+// admin or owner operates every check, an auditor none they were not given.
+func shownTo(list []WebsiteCheck, seen map[string]bool, role string) []WebsiteCheck {
+	out := list[:0]
+	for _, c := range list {
+		if seen == nil {
+			c.CanOperate = role == "admin" || role == "owner"
+			out = append(out, c)
+			continue
+		}
+		op, ok := seen[c.ID]
+		if !ok {
+			continue
+		}
+		c.CanOperate = op
+		limitWebsite(&c)
+		out = append(out, c)
+	}
+	return out
 }
 
 func (a *API) websiteAdmin(w http.ResponseWriter, r *http.Request) (string, bool) {
@@ -108,7 +139,8 @@ func (a *API) decorateWebsites(r *http.Request, list []WebsiteCheck) error {
 }
 
 func (a *API) getWebsites(w http.ResponseWriter, r *http.Request) {
-	if !a.websiteReader(w, r) {
+	seen, role, ok := a.websiteReader(w, r)
+	if !ok {
 		return
 	}
 	list, err := a.store.WebsiteChecks(r.Context())
@@ -119,14 +151,20 @@ func (a *API) getWebsites(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "website checks", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, list)
+	writeJSON(w, http.StatusOK, shownTo(list, seen, role))
 }
 
 func (a *API) getWebsite(w http.ResponseWriter, r *http.Request) {
-	if !a.websiteReader(w, r) {
+	seen, role, ok := a.websiteReader(w, r)
+	if !ok {
 		return
 	}
 	id := r.PathValue("id")
+	if _, given := seen[id]; seen != nil && !given {
+		// Not forbidden: that would say the id names a check.
+		writeErr(w, http.StatusNotFound, "no such website check")
+		return
+	}
 	c, err := a.store.WebsiteCheck(r.Context(), id)
 	if err != nil {
 		a.websiteErr(w, "website check", err)
@@ -147,6 +185,7 @@ func (a *API) getWebsite(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "website outages", err)
 		return
 	}
+	list = shownTo(list, seen, role)
 	writeJSON(w, http.StatusOK, map[string]any{"check": list[0], "rounds": rounds, "outages": outages})
 }
 
@@ -271,7 +310,12 @@ func (a *API) deleteWebsite(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) postWebsiteCheckNow(w http.ResponseWriter, r *http.Request) {
-	if _, ok := a.websiteAdmin(w, r); !ok {
+	sess, ok := a.authenticate(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if !a.operatesCheck(w, r, sess.Role, sess.Email, r.PathValue("id")) {
 		return
 	}
 	if err := a.store.CheckWebsiteNow(r.Context(), r.PathValue("id")); err != nil {

@@ -72,3 +72,12 @@ per-check alert recipients, public status page.
 - What every kind shares is a column (name, every/timeout, confirm_from, paused, Telegram, state, last_*, lease). A website's own settings are JSON in `settings` (url, expectStatus, keyword, method, body, headerNames); its header values are `secrets_sealed`; its certificate end is `expires_at`; `last_status` is the HTTP status.
 - `websiteCols` reads the JSON back into the old column order, so `scanWebsite` and the API are unchanged; `websiteSettings` builds it on INSERT/UPDATE. Every single-check statement also says `kind = 'website'`.
 - A new kind: add it to `checkKinds` (checks.go) and to `checks_kind_check` in a migration; `TestCheckKindsMatchTheTable` keeps them the same. The 200-check limit counts every kind.
+
+## Groups and who sees a check (migration 104, checks_access.go)
+- `check_groups` (name unique case-insensitively) and `checks.group_id` (ON DELETE SET NULL).
+- `check_viewers`: one check or one group, given to one person or one team, with `can_operate` (check now and pause).
+- Admins, owners and auditors see every check. Anyone else sees what they, or a team of theirs, were given, directly or through the group, and sees it limited (`limited: true`: no body, header names, Telegram or confirming servers).
+- Opening a check you were not given is 404, not 403. Giving, groups and moving are for admins and owners, and are audited (`check.viewers`, `check.group.*`, `website.pause`).
+- Going down also raises a person alert for each non-fleet watcher (same subject, so coming back up closes it).
+- `/auth/me` has `seesChecks`; the sidebar shows Websites to non-fleet roles only when it is true, and `/websites` uses `guardChecks`.
+- The "checks" access kind (label Monitoring) lists them in what a person can reach.
