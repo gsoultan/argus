@@ -13,6 +13,9 @@ import (
 	"github.com/gsoultan/argus/internal/control/rgen/asset"
 	"github.com/gsoultan/argus/internal/control/rgen/assetassignment"
 	"github.com/gsoultan/argus/internal/control/rgen/assetteamassignment"
+	"github.com/gsoultan/argus/internal/control/rgen/check"
+	"github.com/gsoultan/argus/internal/control/rgen/checkoutage"
+	"github.com/gsoultan/argus/internal/control/rgen/checkround"
 	"github.com/gsoultan/argus/internal/control/rgen/cloudaccess"
 	"github.com/gsoultan/argus/internal/control/rgen/cloudaccount"
 	"github.com/gsoultan/argus/internal/control/rgen/cloudbudget"
@@ -66,72 +69,75 @@ var FlushOrder = map[string]int{
 	"approval_policy_settings":  3,
 	"assets":                    4,
 	"audit_events":              5,
-	"cloud_accounts":            6,
-	"cloud_budgets":             7,
-	"cloud_changes":             8,
-	"cloud_costs":               9,
-	"cloud_finding_keeps":       10,
-	"cloud_keep_running":        11,
-	"cloud_resources":           12,
-	"cloud_schedules":           13,
-	"console_alert_prefs":       14,
-	"console_alerts":            15,
-	"databases":                 16,
-	"direct_login_requests":     17,
-	"disk_grow_rules":           18,
-	"disk_grow_runs":            19,
-	"gateway_policy":            20,
-	"host_key_pins":             21,
-	"log_cleanup_rules":         22,
-	"log_cleanup_runs":          23,
-	"package_runs":              24,
-	"package_update_rules":      25,
-	"redeemed_tickets":          26,
-	"revoked_sessions":          27,
-	"saved_queries":             28,
-	"scale_groups":              29,
-	"schema_migrations":         30,
-	"server_logins":             31,
-	"sessions":                  32,
-	"sign_in_devices":           33,
-	"software_files":            34,
-	"software_previews":         35,
-	"software_scripts":          36,
-	"teams":                     37,
-	"telegram_bots":             38,
-	"telegram_routes":           39,
-	"ui_preferences":            40,
-	"usage_history":             41,
-	"usage_hourly":              42,
-	"users":                     43,
-	"website_alert_settings":    44,
-	"website_checks":            45,
-	"website_outages":           46,
-	"website_rounds":            47,
-	"access_requests":           48,
-	"agent_enrollment_tokens":   49,
-	"asset_assignments":         50,
-	"asset_team_assignments":    51,
-	"cloud_access":              52,
-	"cloud_schedule_runs":       53,
-	"console_alert_reads":       54,
-	"database_access_rules":     55,
-	"database_assignments":      56,
-	"database_backup_schedules": 57,
-	"database_backups":          58,
-	"database_changes":          59,
-	"database_read_endpoints":   60,
-	"database_replicas":         61,
-	"database_restores":         62,
-	"database_statements":       63,
-	"recovery_codes":            64,
-	"scale_group_activity":      65,
-	"scale_group_members":       66,
-	"software_script_versions":  67,
-	"team_members":              68,
-	"agent_credentials":         69,
-	"database_backup_tests":     70,
-	"database_statement_items":  71,
+	"checks":                    6,
+	"cloud_accounts":            7,
+	"cloud_budgets":             8,
+	"cloud_changes":             9,
+	"cloud_costs":               10,
+	"cloud_finding_keeps":       11,
+	"cloud_keep_running":        12,
+	"cloud_resources":           13,
+	"cloud_schedules":           14,
+	"console_alert_prefs":       15,
+	"console_alerts":            16,
+	"databases":                 17,
+	"direct_login_requests":     18,
+	"disk_grow_rules":           19,
+	"disk_grow_runs":            20,
+	"gateway_policy":            21,
+	"host_key_pins":             22,
+	"log_cleanup_rules":         23,
+	"log_cleanup_runs":          24,
+	"package_runs":              25,
+	"package_update_rules":      26,
+	"redeemed_tickets":          27,
+	"revoked_sessions":          28,
+	"saved_queries":             29,
+	"scale_groups":              30,
+	"schema_migrations":         31,
+	"server_logins":             32,
+	"sessions":                  33,
+	"sign_in_devices":           34,
+	"software_files":            35,
+	"software_previews":         36,
+	"software_scripts":          37,
+	"teams":                     38,
+	"telegram_bots":             39,
+	"telegram_routes":           40,
+	"ui_preferences":            41,
+	"usage_history":             42,
+	"usage_hourly":              43,
+	"users":                     44,
+	"website_alert_settings":    45,
+	"website_checks":            46,
+	"website_outages":           47,
+	"website_rounds":            48,
+	"access_requests":           49,
+	"agent_enrollment_tokens":   50,
+	"asset_assignments":         51,
+	"asset_team_assignments":    52,
+	"check_outages":             53,
+	"check_rounds":              54,
+	"cloud_access":              55,
+	"cloud_schedule_runs":       56,
+	"console_alert_reads":       57,
+	"database_access_rules":     58,
+	"database_assignments":      59,
+	"database_backup_schedules": 60,
+	"database_backups":          61,
+	"database_changes":          62,
+	"database_read_endpoints":   63,
+	"database_replicas":         64,
+	"database_restores":         65,
+	"database_statements":       66,
+	"recovery_codes":            67,
+	"scale_group_activity":      68,
+	"scale_group_members":       69,
+	"software_script_versions":  70,
+	"team_members":              71,
+	"agent_credentials":         72,
+	"database_backup_tests":     73,
+	"database_statement_items":  74,
 }
 
 // NewUnit stages writes across this context and flushes them in foreign-key
@@ -859,6 +865,240 @@ func (p AssetTeamAssignmentWithTeamQuery) All(ctx context.Context, ex runtime.Ex
 			return nil, fmt.Errorf("storm: %s references a missing %s row", "asset_team_assignments", "teams")
 		}
 		out[i].Team = targets[j]
+	}
+	return out, nil
+}
+
+// CheckOutageWithCheckRow is check_outages with its Check loaded.
+type CheckOutageWithCheckRow struct {
+	checkoutage.Row
+	Check check.Row
+}
+
+type CheckOutageWithCheckQuery struct {
+	q checkoutage.Query
+}
+
+// CheckOutageWithCheck starts the plan.
+func CheckOutageWithCheck() CheckOutageWithCheckQuery {
+	return CheckOutageWithCheckQuery{q: checkoutage.New()}
+}
+
+func (p CheckOutageWithCheckQuery) Where(ps ...checkoutage.Pred) CheckOutageWithCheckQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p CheckOutageWithCheckQuery) WhereIf(cond bool, pr checkoutage.Pred) CheckOutageWithCheckQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p CheckOutageWithCheckQuery) Any(ps ...checkoutage.Pred) CheckOutageWithCheckQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p CheckOutageWithCheckQuery) Not(pr checkoutage.Pred) CheckOutageWithCheckQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p CheckOutageWithCheckQuery) NotAny(ps ...checkoutage.Pred) CheckOutageWithCheckQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p CheckOutageWithCheckQuery) Order(ts ...checkoutage.Sort) CheckOutageWithCheckQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p CheckOutageWithCheckQuery) Limit(n int64) CheckOutageWithCheckQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p CheckOutageWithCheckQuery) Offset(n int64) CheckOutageWithCheckQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p CheckOutageWithCheckQuery) After(r CheckOutageWithCheckRow) CheckOutageWithCheckQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p CheckOutageWithCheckQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p CheckOutageWithCheckQuery) All(ctx context.Context, ex runtime.Executor) ([]CheckOutageWithCheckRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]CheckOutageWithCheckRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = CheckOutageWithCheckRow{Row: r}
+		key := r.CheckID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := check.New().Unordered().
+		Where(check.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.CheckID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "check_outages", "checks")
+		}
+		out[i].Check = targets[j]
+	}
+	return out, nil
+}
+
+// CheckRoundWithCheckRow is check_rounds with its Check loaded.
+type CheckRoundWithCheckRow struct {
+	checkround.Row
+	Check check.Row
+}
+
+type CheckRoundWithCheckQuery struct {
+	q checkround.Query
+}
+
+// CheckRoundWithCheck starts the plan.
+func CheckRoundWithCheck() CheckRoundWithCheckQuery {
+	return CheckRoundWithCheckQuery{q: checkround.New()}
+}
+
+func (p CheckRoundWithCheckQuery) Where(ps ...checkround.Pred) CheckRoundWithCheckQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p CheckRoundWithCheckQuery) WhereIf(cond bool, pr checkround.Pred) CheckRoundWithCheckQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p CheckRoundWithCheckQuery) Any(ps ...checkround.Pred) CheckRoundWithCheckQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p CheckRoundWithCheckQuery) Not(pr checkround.Pred) CheckRoundWithCheckQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p CheckRoundWithCheckQuery) NotAny(ps ...checkround.Pred) CheckRoundWithCheckQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p CheckRoundWithCheckQuery) Order(ts ...checkround.Sort) CheckRoundWithCheckQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p CheckRoundWithCheckQuery) Limit(n int64) CheckRoundWithCheckQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p CheckRoundWithCheckQuery) Offset(n int64) CheckRoundWithCheckQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p CheckRoundWithCheckQuery) After(r CheckRoundWithCheckRow) CheckRoundWithCheckQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p CheckRoundWithCheckQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p CheckRoundWithCheckQuery) All(ctx context.Context, ex runtime.Executor) ([]CheckRoundWithCheckRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]CheckRoundWithCheckRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = CheckRoundWithCheckRow{Row: r}
+		key := r.CheckID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := check.New().Unordered().
+		Where(check.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.CheckID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "check_rounds", "checks")
+		}
+		out[i].Check = targets[j]
 	}
 	return out, nil
 }

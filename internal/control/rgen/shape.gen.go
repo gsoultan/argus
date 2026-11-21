@@ -270,6 +270,67 @@ func _assertAuditEventShape(m m0.AuditEvent) {
 	}
 }
 
+// _assertCheckShape fails to compile if m0.Check gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertCheckShape(m m0.Check) {
+	type shape m0.Check
+	_ = shape{
+		m.Model,
+		m.Kind,
+		m.Name,
+		m.Settings,
+		m.SecretsSealed,
+		m.EverySeconds,
+		m.TimeoutSeconds,
+		m.ConfirmFrom,
+		m.Paused,
+		m.Telegram,
+		m.TelegramBot,
+		m.TelegramChats,
+		m.CreatedBy,
+		m.State,
+		m.StateSince,
+		m.FailingRounds,
+		m.LastAt,
+		m.LastMs,
+		m.LastStatus,
+		m.LastDetail,
+		m.LastOutcome,
+		m.ExpiresAt,
+		m.NextAt,
+		m.LeaseUntil,
+	}
+}
+
+// _assertCheckOutageShape fails to compile if m0.CheckOutage gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertCheckOutageShape(m m0.CheckOutage) {
+	type shape m0.CheckOutage
+	_ = shape{
+		m.ID,
+		m.Check,
+		m.StartedAt,
+		m.EndedAt,
+		m.Cause,
+		m.Confirmed,
+	}
+}
+
+// _assertCheckRoundShape fails to compile if m0.CheckRound gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertCheckRoundShape(m m0.CheckRound) {
+	type shape m0.CheckRound
+	_ = shape{
+		m.Check,
+		m.At,
+		m.Secs,
+		m.Outcome,
+		m.Ms,
+		m.Status,
+		m.Detail,
+	}
+}
+
 // _assertCloudAccessShape fails to compile if m0.CloudAccess gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertCloudAccessShape(m m0.CloudAccess) {

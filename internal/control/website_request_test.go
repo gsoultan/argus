@@ -45,7 +45,7 @@ func TestWebsiteRequestPayload(t *testing.T) {
 		t.Fatalf("saved as %+v", got)
 	}
 	var sealed []byte
-	if err := h.store.db(ctx).QueryRow(ctx, `SELECT headers_sealed FROM website_checks WHERE id::text = $1`, got.ID).Scan(&sealed); err != nil {
+	if err := h.store.db(ctx).QueryRow(ctx, `SELECT secrets_sealed FROM checks WHERE id::text = $1`, got.ID).Scan(&sealed); err != nil {
 		t.Fatal(err)
 	}
 	if len(sealed) == 0 || bytes.Contains(sealed, []byte("s3cret")) {
