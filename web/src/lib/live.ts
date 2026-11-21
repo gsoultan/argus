@@ -2227,7 +2227,7 @@ export interface ControlUpdateStatus {
   at: string
 }
 
-/** Settings › Control plane › Updates, as GET /api/v1/platform/update returns it. */
+/** Settings › Argus itself › Updates, as GET /api/v1/platform/update returns it. */
 export interface ControlUpdateView {
   running: string
   hostname: string

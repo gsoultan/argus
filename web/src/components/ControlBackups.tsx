@@ -16,7 +16,7 @@ import { notifyOk, run } from '~/lib/notify'
 import { FS, SP } from '~/theme'
 
 /**
- * Settings › Control plane › Backups: argus-control's own backups, the ones
+ * Settings › Argus itself › Backups: argus-control's own backups, the ones
  * argus-backup.service takes on its timer and before every update.
  *
  * Until this page, how many were kept was a line in /etc/argus/backup.env on

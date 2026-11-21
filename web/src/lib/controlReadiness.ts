@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { get, send } from '~/lib/live'
 
 /*
- * Settings › Control plane › If Argus goes down. Kept out of live.ts and
+ * Settings › Argus itself › If Argus goes down. Kept out of live.ts and
  * queries.ts, which every route loads, so only the settings page pays for it.
  */
 

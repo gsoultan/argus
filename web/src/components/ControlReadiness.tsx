@@ -16,7 +16,7 @@ import { notifyOk, run } from '~/lib/notify'
 import { FS } from '~/theme'
 
 /**
- * Settings › Control plane › If Argus goes down.
+ * Settings › Argus itself › If Argus goes down.
  *
  * What should be ready before this control plane stops. The first card is
  * what Argus can see for itself; the second is what only a person can say,

@@ -20,7 +20,7 @@ import {
 import { FS, SP } from '~/theme'
 
 /**
- * Settings › Control plane › Updates: argus-control updating itself.
+ * Settings › Argus itself › Updates: argus-control updating itself.
  *
  * Updating used to be a package install and a restart by hand, which ended
  * every open session and had no way back. From here the control plane hands
