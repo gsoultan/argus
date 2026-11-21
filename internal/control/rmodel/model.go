@@ -1474,6 +1474,8 @@ func All() []any {
 		&WebsiteRound{},
 		&WebsiteOutage{},
 		&WebsiteAlertSetting{},
+		&TelegramBot{},
+		&TelegramRoute{},
 		&Team{},
 		&TeamMember{},
 		&UsageHistory{},
@@ -2321,6 +2323,55 @@ func (m *CloudResource) Schema(t *storm.Table) {
 	t.Index(&m.Kind, &m.Account).Where("gone_at IS NULL").Named("cloud_resources_present")
 }
 
+// TelegramBot is table telegram_bots: an organization's own Telegram bot,
+// its token sealed (control/telegram_bots.go).
+type TelegramBot struct {
+	storm.Model
+
+	Name        string
+	Username    string
+	TokenSealed []byte
+	TokenTail   string
+	Chats       storm.JSON
+	IsDefault   bool
+	LastOkAt    *time.Time
+	LastError   string
+	LastErrorAt *time.Time
+	CreatedBy   string
+}
+
+func (m *TelegramBot) Schema(t *storm.Table) {
+	t.Col(&m.Username).Default("''::text")
+	t.Col(&m.TokenSealed).NotNull()
+	t.Col(&m.TokenTail).Default("''::text")
+	t.Col(&m.Chats).Default("'[]'::jsonb")
+	t.Col(&m.IsDefault).Default("false")
+	t.Col(&m.LastError).Default("''::text")
+	t.CheckNamed("telegram_bots_chats_check", "jsonb_typeof(chats) = 'array'::text")
+	t.CheckNamed("telegram_bots_name_check", "(length(name) >= 1) AND (length(name) <= 80)")
+	t.Index(&m.IsDefault).Unique().Where("is_default").Named("telegram_bots_one_default")
+}
+
+// TelegramRoute is table telegram_routes: which bot each kind of alert uses.
+type TelegramRoute struct {
+	Kind      string
+	Bot       string
+	Chats     []string
+	UpdatedBy string
+	UpdatedAt time.Time
+}
+
+func (m *TelegramRoute) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Kind)
+	t.Col(&m.Bot).Default("''::text")
+	t.Col(&m.Chats).Default("'{}'::text[]")
+	t.Col(&m.UpdatedBy).Default("''::text")
+	t.Col(&m.UpdatedAt).Default("now()")
+	t.CheckNamed("telegram_routes_bot_check", "length(bot) <= 40")
+	t.CheckNamed("telegram_routes_chats_check", "cardinality(chats) <= 20")
+	t.CheckNamed("telegram_routes_kind_check", "kind = ANY (ARRAY['signin'::text, 'server'::text, 'website'::text, 'backup'::text])")
+}
+
 // UsageHistory is table usage_history: one agent's resource usage folded
 // into 5-minute buckets, kept 30 days, for the Metrics tab (migrations 075
 // and 082).
@@ -2519,6 +2570,7 @@ type WebsiteCheck struct {
 	ConfirmFrom    [][16]byte
 	Paused         bool
 	Telegram       string
+	TelegramBot    string
 	TelegramChats  []string
 	CreatedBy      string
 	State          string
@@ -2559,6 +2611,8 @@ func (m *WebsiteCheck) Schema(t *storm.Table) {
 	t.CheckNamed("website_checks_timeout_seconds_check", "(timeout_seconds >= 5) AND (timeout_seconds <= 60)")
 	t.CheckNamed("website_checks_url_check", "(length(url) >= 1) AND (length(url) <= 2000)")
 	t.Index(&m.NextAt).Where("NOT paused").Named("website_checks_due")
+	t.Col(&m.TelegramBot).Default("''::text")
+	t.CheckNamed("website_checks_telegram_bot_check", "length(telegram_bot) <= 40")
 }
 
 // WebsiteRound is table website_rounds: one round of a check, for uptime.

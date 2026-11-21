@@ -14,7 +14,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/gsoultan/argus/internal/notify"
 	"github.com/gsoultan/argus/internal/tunnel"
 )
 
@@ -97,9 +96,10 @@ type WebsiteCheck struct {
 	TimeoutSeconds int      `json:"timeoutSeconds"`
 	ConfirmFrom    []string `json:"confirmFrom"`
 	Paused         bool     `json:"paused"`
-	// Telegram is default (follow the Websites setting), off, or chats
-	// (TelegramChats, some of the configured chats).
+	// Telegram is default (follow the Websites setting), off, or chats:
+	// its own bot (TelegramBot) and some of that bot's chats.
 	Telegram      string    `json:"telegram"`
+	TelegramBot   string    `json:"telegramBot"`
 	TelegramChats []string  `json:"telegramChats"`
 	CreatedBy     string    `json:"createdBy"`
 	CreatedAt     time.Time `json:"createdAt"`
@@ -162,6 +162,7 @@ type WebsiteInput struct {
 	ConfirmFrom    []string `json:"confirmFrom"`
 	Paused         bool     `json:"paused"`
 	Telegram       string   `json:"telegram"`
+	TelegramBot    string   `json:"telegramBot"`
 	TelegramChats  []string `json:"telegramChats"`
 }
 
@@ -217,10 +218,12 @@ func (in *WebsiteInput) normalise() error {
 		return ErrInvalidWebsite{"Telegram is default, off or chats"}
 	}
 	in.TelegramChats = cleanChats(in.TelegramChats)
+	in.TelegramBot = strings.TrimSpace(in.TelegramBot)
 	if in.Telegram != TelegramChats {
 		in.TelegramChats = []string{}
-	} else if len(in.TelegramChats) == 0 {
-		return ErrInvalidWebsite{"choose at least one Telegram chat, or follow the Websites setting"}
+		in.TelegramBot = BotDefault
+	} else if in.TelegramBot != BotDefault && in.TelegramBot != BotPlatform && !validUUID(in.TelegramBot) {
+		return ErrInvalidWebsite{"choose one of the Telegram bots"}
 	}
 	if len(in.TelegramChats) > 20 {
 		return ErrInvalidWebsite{"choose at most 20 Telegram chats"}
@@ -264,13 +267,13 @@ func (c WebsiteCheck) grant() tunnel.GrantSite {
 /* ── Store ───────────────────────────────────────────────────────────────── */
 
 const websiteCols = `id::text, name, url, expect_status, keyword, every_seconds, timeout_seconds,
-	confirm_from::text[], paused, telegram, telegram_chats, created_by, created_at, updated_at, state, state_since, failing_rounds,
+	confirm_from::text[], paused, telegram, telegram_bot, telegram_chats, created_by, created_at, updated_at, state, state_since, failing_rounds,
 	last_at, last_ms, last_status, last_detail, last_outcome, cert_not_after`
 
 func scanWebsite(row pgx.Row) (WebsiteCheck, error) {
 	var c WebsiteCheck
 	err := row.Scan(&c.ID, &c.Name, &c.URL, &c.ExpectStatus, &c.Keyword, &c.EverySeconds, &c.TimeoutSeconds,
-		&c.ConfirmFrom, &c.Paused, &c.Telegram, &c.TelegramChats, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt, &c.State, &c.StateSince,
+		&c.ConfirmFrom, &c.Paused, &c.Telegram, &c.TelegramBot, &c.TelegramChats, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt, &c.State, &c.StateSince,
 		&c.FailingRounds, &c.LastAt, &c.LastMS, &c.LastStatus, &c.LastDetail, &c.LastOutcome, &c.CertNotAfter)
 	if c.ConfirmFrom == nil {
 		c.ConfirmFrom = []string{}
@@ -340,10 +343,10 @@ func (s *Store) CreateWebsiteCheck(ctx context.Context, in WebsiteInput, by stri
 	}
 	return scanWebsite(s.db(ctx).QueryRow(ctx, `INSERT INTO website_checks
 		(name, url, expect_status, keyword, every_seconds, timeout_seconds, confirm_from, paused, created_by,
-		 telegram, telegram_chats)
-		VALUES ($1, $2, $3, $4, $5, $6, $7::uuid[], $8, $9, $10, $11) RETURNING `+websiteCols,
+		 telegram, telegram_chats, telegram_bot)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::uuid[], $8, $9, $10, $11, $12) RETURNING `+websiteCols,
 		in.Name, in.URL, in.ExpectStatus, in.Keyword, in.EverySeconds, in.TimeoutSeconds, in.ConfirmFrom, in.Paused,
-		strings.ToLower(by), in.Telegram, in.TelegramChats))
+		strings.ToLower(by), in.Telegram, in.TelegramChats, in.TelegramBot))
 }
 
 // UpdateWebsiteCheck changes a check. A changed address starts over: its
@@ -365,14 +368,14 @@ func (s *Store) UpdateWebsiteCheck(ctx context.Context, id string, in WebsiteInp
 	defer func() { _ = tx.Rollback(ctx) }()
 	after, err = scanWebsite(tx.QueryRow(ctx, `UPDATE website_checks SET name = $2, url = $3, expect_status = $4,
 		keyword = $5, every_seconds = $6, timeout_seconds = $7, confirm_from = $8::uuid[], paused = $9,
-		telegram = $10, telegram_chats = $11, updated_at = now(),
+		telegram = $10, telegram_chats = $11, telegram_bot = $12, updated_at = now(),
 		state = CASE WHEN url <> $3 THEN 'pending' ELSE state END,
 		state_since = CASE WHEN url <> $3 THEN NULL ELSE state_since END,
 		failing_rounds = CASE WHEN url <> $3 THEN 0 ELSE failing_rounds END,
 		next_at = CASE WHEN url <> $3 OR (paused AND NOT $9) THEN now() ELSE next_at END
 		WHERE id::text = $1 RETURNING `+websiteCols,
 		id, in.Name, in.URL, in.ExpectStatus, in.Keyword, in.EverySeconds, in.TimeoutSeconds, in.ConfirmFrom, in.Paused,
-		in.Telegram, in.TelegramChats))
+		in.Telegram, in.TelegramChats, in.TelegramBot))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return before, after, ErrNoWebsite
 	}
@@ -1091,110 +1094,32 @@ func (a *API) announceWebsite(ctx context.Context, tr websiteTransition) {
 
 /* ── Telegram, per feature and per site ──────────────────────────────────── */
 
-// WebsiteAlertSettings is the Websites feature's own alert settings.
-type WebsiteAlertSettings struct {
-	// Telegram sends website alerts to Telegram at all.
-	Telegram bool `json:"telegram"`
-	// TelegramChats narrows them to some configured chats; empty is all.
-	TelegramChats []string   `json:"telegramChats"`
-	UpdatedBy     string     `json:"updatedBy,omitempty"`
-	UpdatedAt     *time.Time `json:"updatedAt,omitempty"`
-}
-
-// WebsiteAlertSettings reads the row; missing is on, to every chat.
-func (s *Store) WebsiteAlertSettings(ctx context.Context) (WebsiteAlertSettings, error) {
-	v := WebsiteAlertSettings{Telegram: true, TelegramChats: []string{}}
-	err := s.db(ctx).QueryRow(ctx, `SELECT telegram, telegram_chats, updated_by, updated_at FROM website_alert_settings`).
-		Scan(&v.Telegram, &v.TelegramChats, &v.UpdatedBy, &v.UpdatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return v, nil
+// websiteTelegram is where c's alerts go on Telegram, or why nowhere: its
+// own bot and chats, or else the Websites choice (telegram_bots.go).
+func (a *API) websiteTelegram(ctx context.Context, c WebsiteCheck) (telegramTarget, string) {
+	switch c.Telegram {
+	case TelegramOff:
+		return telegramTarget{}, "Telegram is off for this website"
+	case TelegramChats:
+		return a.telegramFor(ctx, c.TelegramBot, c.TelegramChats, false)
 	}
-	if v.TelegramChats == nil {
-		v.TelegramChats = []string{}
+	t, why := a.telegramForKind(ctx, TelegramRouteWebsite)
+	if t.bot == nil && why == "Telegram is off for it" {
+		why = "Telegram is off for all websites"
 	}
-	return v, err
-}
-
-// SetWebsiteAlertSettings stores the row.
-func (s *Store) SetWebsiteAlertSettings(ctx context.Context, v WebsiteAlertSettings, by string) (WebsiteAlertSettings, error) {
-	v.TelegramChats = cleanChats(v.TelegramChats)
-	if len(v.TelegramChats) > 20 {
-		return v, ErrInvalidWebsite{"choose at most 20 Telegram chats"}
-	}
-	_, err := s.db(ctx).Exec(ctx, `INSERT INTO website_alert_settings (id, telegram, telegram_chats, updated_by, updated_at)
-		VALUES (true, $1, $2, $3, now())
-		ON CONFLICT (id) DO UPDATE SET telegram = EXCLUDED.telegram, telegram_chats = EXCLUDED.telegram_chats,
-		  updated_by = EXCLUDED.updated_by, updated_at = now()`, v.Telegram, v.TelegramChats, strings.ToLower(by))
-	if err != nil {
-		return v, err
-	}
-	return s.WebsiteAlertSettings(ctx)
-}
-
-// websiteTelegramChats is where c's alerts go on Telegram, or why nowhere.
-// The bot and its chats are the platform's (Settings, Alerts), so only the
-// default organization uses them, as with sign-in alerts; the feature and
-// the site can only narrow the configured chats, never add one.
-func (a *API) websiteTelegramChats(ctx context.Context, c WebsiteCheck) ([]string, string) {
-	configured := a.SignInAlerts.TelegramChats()
-	switch {
-	case len(configured) == 0:
-		return nil, "Telegram is not set up: add a bot and chats under Settings, Alerts"
-	case tenantIDOf(ctx) != DefaultTenantID:
-		return nil, "Telegram alerts are set up for the platform, and only its default organization uses them"
-	case c.Telegram == TelegramOff:
-		return nil, "Telegram is off for this website"
-	}
-	want := c.TelegramChats
-	if c.Telegram != TelegramChats {
-		set, err := a.store.WebsiteAlertSettings(ctx)
-		if err != nil {
-			return nil, "the Websites alert settings could not be read"
-		}
-		if !set.Telegram {
-			return nil, "Telegram is off for all websites"
-		}
-		want = set.TelegramChats
-	}
-	if len(want) == 0 {
-		return configured, ""
-	}
-	in := map[string]bool{}
-	for _, ch := range configured {
-		in[ch] = true
-	}
-	var out []string
-	for _, ch := range want {
-		if in[ch] {
-			out = append(out, ch)
-		}
-	}
-	if len(out) == 0 {
-		return nil, "none of the chats chosen for it is set up in Settings any more"
-	}
-	return out, ""
+	return t, why
 }
 
 // websiteTelegramText is one alert as a Telegram message.
-func websiteTelegramText(icon, title, detail string) string {
-	return icon + " <b>" + notify.TelegramHTML(title) + "</b>\n\n" + notify.TelegramHTML(detail)
-}
-
-func (a *API) websiteConsoleLink(link string) string {
-	base := strings.TrimRight(a.SignInAlerts.ConsoleURL(), "/")
-	if base == "" {
-		return ""
-	}
-	return base + link
-}
+func websiteTelegramText(icon, title, detail string) string { return telegramText(icon, title, detail) }
 
 // telegramWebsite queues c's alert to its chats, if it has any.
 func (a *API) telegramWebsite(ctx context.Context, c WebsiteCheck, icon, title, detail, link string) {
-	chats, why := a.websiteTelegramChats(ctx, c)
-	if len(chats) == 0 {
+	t, why := a.websiteTelegram(ctx, c)
+	if t.bot == nil {
 		a.log.Debug("website alert not sent to Telegram", "check", c.Name, "why", why)
 		return
 	}
-	a.SignInAlerts.TelegramTo(chats, websiteTelegramText(icon, title, detail), "Open in Argus",
-		a.websiteConsoleLink(link), "website "+c.Name)
+	a.queueTelegram(ctx, t, websiteTelegramText(icon, title, detail), "Open in Argus",
+		a.consoleLinkTo(link), "website "+c.Name)
 }

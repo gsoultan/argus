@@ -244,6 +244,13 @@ type API struct {
 	// websiteProbe and websiteAsk stand in for the network in tests.
 	websiteProbe func(ctx context.Context, g tunnel.GrantSite) tunnel.SiteResult
 	websiteAsk   func(ctx context.Context, host string, g tunnel.GrantSite) serverOpinion
+
+	// Telegram for the organizations' own bots (telegram_bots.go):
+	// telegramSlots bounds the messages in flight; telegramClient and
+	// telegramAPI stand in for the network in tests.
+	telegramSlots  chan struct{}
+	telegramClient *http.Client
+	telegramAPI    string
 }
 
 // SetThrottles enables per-client rate limiting.
@@ -255,7 +262,7 @@ func NewAPI(store *Store, log *slog.Logger) *API {
 		log = slog.Default()
 	}
 	a := &API{store: store, log: log, UserTokens: map[string]string{},
-		startedAt: time.Now()}
+		startedAt: time.Now(), telegramSlots: make(chan struct{}, 16)}
 	a.alertHub.store, a.alertHub.logErr = store, log.Error
 	// Only a real store: a nil *Store in an interface is not a nil interface.
 	if store != nil {
@@ -363,8 +370,15 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/websites/{id}", a.deleteWebsite)
 	mux.HandleFunc("POST /api/v1/websites/{id}/check", a.postWebsiteCheckNow)
 	mux.HandleFunc("POST /api/v1/websites/{id}/test-alert", a.postWebsiteTestAlert)
-	mux.HandleFunc("GET /api/v1/websites/settings", a.getWebsiteSettings)
-	mux.HandleFunc("PUT /api/v1/websites/settings", a.putWebsiteSettings)
+	mux.HandleFunc("GET /api/v1/telegram", a.getTelegram)
+	mux.HandleFunc("POST /api/v1/telegram/bots", a.postTelegramBot)
+	mux.HandleFunc("PUT /api/v1/telegram/bots/{id}", a.putTelegramBot)
+	mux.HandleFunc("DELETE /api/v1/telegram/bots/{id}", a.deleteTelegramBot)
+	mux.HandleFunc("POST /api/v1/telegram/bots/{id}/test", a.postTelegramBotTest)
+	mux.HandleFunc("POST /api/v1/telegram/check", a.postTelegramCheck)
+	mux.HandleFunc("POST /api/v1/telegram/chats", a.postTelegramChats)
+	mux.HandleFunc("PUT /api/v1/telegram/routes/{kind}", a.putTelegramRoute)
+	mux.HandleFunc("POST /api/v1/telegram/routes/{kind}/test", a.postTelegramRouteTest)
 	mux.HandleFunc("GET /api/v1/assets/{id}/databases/create-options", a.dbAdmin(a.getCreateOptions))
 	mux.HandleFunc("POST /api/v1/assets/{id}/databases/create", a.dbAdmin(a.postCreateDatabase))
 	mux.HandleFunc("POST /api/v1/databases/{id}/owner", a.dbAdmin(a.postDatabaseOwner))

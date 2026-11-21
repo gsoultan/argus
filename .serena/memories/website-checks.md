@@ -52,9 +52,7 @@ Not done yet: alerting on certificate expiry (the date is stored and shown),
 per-check alert recipients, public status page.
 
 ## Telegram routing (per feature, per site)
-- Website alerts go to the bell and to Telegram only; they are not emailed and do not go through Dispatcher.SecurityEvent.
-- Feature setting: `website_alert_settings` (one row; missing = on, every chat). GET/PUT /api/v1/websites/settings (admin/owner, audited `website.alerts`).
-- Per site: `website_checks.telegram` = default (follow the feature) | off | chats (`telegram_chats`).
-- `websiteTelegramChats` resolves the chats, always intersected with the chats configured in Settings › Alerts. Only the default organization uses Telegram, since the bot is platform-wide.
-- POST /api/v1/websites/{id}/test-alert sends a test now (409 with the reason if none, 502 on a Telegram error).
-- Test: TestWebsiteTelegramPerFeatureAndPerSite (fake Telegram server via notify.Telegram.WithAPI).
+- Website alerts go to the bell and to Telegram only; they are not emailed.
+- The Websites feature's choice is the `website` row in `telegram_routes` (see telegram-bots.md). `website_alert_settings` is kept unused for rollback; migration 100 copied it over.
+- Per site: `website_checks.telegram` = default (follow the feature) | off | chats, with `telegram_bot` ('' default bot, 'platform', or a bot id) and `telegram_chats`.
+- POST /api/v1/websites/{id}/test-alert sends a test now through the resolved bot.

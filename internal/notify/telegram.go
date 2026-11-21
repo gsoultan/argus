@@ -198,3 +198,135 @@ func (t *Telegram) postForm(ctx context.Context, chat, text, parseMode, linkLabe
 func (t *Telegram) redact(err error) error {
 	return errors.New(strings.ReplaceAll(err.Error(), t.token, "<bot-token>"))
 }
+
+// TelegramBotInfo is who a token belongs to.
+type TelegramBotInfo struct {
+	ID       int64  `json:"id"`
+	Username string `json:"username"`
+	Name     string `json:"name"`
+}
+
+// TelegramChat is a chat a bot can post to.
+type TelegramChat struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	// Kind is private, group, supergroup or channel.
+	Kind string `json:"kind,omitempty"`
+}
+
+// NewTelegramBot is a sender for an organization's own bot: its token and
+// the chats it may post to, without the config file's checks.
+func NewTelegramBot(token string, chatIDs []string, client *http.Client) *Telegram {
+	if client == nil {
+		client = http.DefaultClient
+	}
+	return &Telegram{token: token, chatIDs: chatIDs, client: client, api: "https://api.telegram.org"}
+}
+
+// ValidTelegramToken reports whether s looks like a token from @BotFather:
+// digits, a colon, then the secret. It keeps anything else out of a URL.
+func ValidTelegramToken(s string) bool {
+	id, secret, ok := strings.Cut(s, ":")
+	if !ok || id == "" || len(secret) < 20 || len(s) > 200 {
+		return false
+	}
+	for _, r := range id {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	for _, r := range secret {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+// Me asks Telegram who the token belongs to, which also proves it works.
+func (t *Telegram) Me(ctx context.Context) (TelegramBotInfo, error) {
+	var out struct {
+		ID        int64  `json:"id"`
+		Username  string `json:"username"`
+		FirstName string `json:"first_name"`
+	}
+	if err := t.call(ctx, "getMe", nil, &out); err != nil {
+		return TelegramBotInfo{}, err
+	}
+	return TelegramBotInfo{ID: out.ID, Username: out.Username, Name: out.FirstName}, nil
+}
+
+// RecentChats are the chats the bot has heard from lately: groups it was
+// added to and people who wrote to it. Telegram keeps a day of updates, and
+// only while no webhook is set.
+func (t *Telegram) RecentChats(ctx context.Context) ([]TelegramChat, error) {
+	type chat struct {
+		ID        int64  `json:"id"`
+		Type      string `json:"type"`
+		Title     string `json:"title"`
+		Username  string `json:"username"`
+		FirstName string `json:"first_name"`
+		LastName  string `json:"last_name"`
+	}
+	type withChat struct {
+		Chat *chat `json:"chat"`
+	}
+	var updates []struct {
+		Message           *withChat `json:"message"`
+		ChannelPost       *withChat `json:"channel_post"`
+		MyChatMember      *withChat `json:"my_chat_member"`
+		EditedMessage     *withChat `json:"edited_message"`
+		EditedChannelPost *withChat `json:"edited_channel_post"`
+	}
+	if err := t.call(ctx, "getUpdates", url.Values{"limit": {"100"}, "timeout": {"0"}}, &updates); err != nil {
+		return nil, err
+	}
+	seen := map[int64]bool{}
+	var out []TelegramChat
+	for _, u := range updates {
+		for _, w := range []*withChat{u.MyChatMember, u.Message, u.ChannelPost, u.EditedMessage, u.EditedChannelPost} {
+			if w == nil || w.Chat == nil || seen[w.Chat.ID] {
+				continue
+			}
+			c := w.Chat
+			seen[c.ID] = true
+			title := c.Title
+			if title == "" {
+				title = strings.TrimSpace(c.FirstName + " " + c.LastName)
+			}
+			if title == "" && c.Username != "" {
+				title = "@" + c.Username
+			}
+			out = append(out, TelegramChat{ID: fmt.Sprint(c.ID), Title: title, Kind: c.Type})
+		}
+	}
+	return out, nil
+}
+
+// call is one Bot API method whose result is decoded into result.
+func (t *Telegram) call(ctx context.Context, method string, form url.Values, result any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		t.api+"/bot"+t.token+"/"+method, strings.NewReader(form.Encode()))
+	if err != nil {
+		return t.redact(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := t.client.Do(req)
+	if err != nil {
+		return t.redact(err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		OK          bool            `json:"ok"`
+		Description string          `json:"description"`
+		Result      json.RawMessage `json:"result"`
+	}
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return fmt.Errorf("telegram answered %s with something that is not JSON", resp.Status)
+	}
+	if !out.OK {
+		return fmt.Errorf("telegram refused it: %s", out.Description)
+	}
+	return json.Unmarshal(out.Result, result)
+}

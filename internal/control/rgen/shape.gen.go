@@ -1346,6 +1346,38 @@ func _assertTeamMemberShape(m m0.TeamMember) {
 	}
 }
 
+// _assertTelegramBotShape fails to compile if m0.TelegramBot gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertTelegramBotShape(m m0.TelegramBot) {
+	type shape m0.TelegramBot
+	_ = shape{
+		m.Model,
+		m.Name,
+		m.Username,
+		m.TokenSealed,
+		m.TokenTail,
+		m.Chats,
+		m.IsDefault,
+		m.LastOkAt,
+		m.LastError,
+		m.LastErrorAt,
+		m.CreatedBy,
+	}
+}
+
+// _assertTelegramRouteShape fails to compile if m0.TelegramRoute gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertTelegramRouteShape(m m0.TelegramRoute) {
+	type shape m0.TelegramRoute
+	_ = shape{
+		m.Kind,
+		m.Bot,
+		m.Chats,
+		m.UpdatedBy,
+		m.UpdatedAt,
+	}
+}
+
 // _assertUsageHistoryShape fails to compile if m0.UsageHistory gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertUsageHistoryShape(m m0.UsageHistory) {
@@ -1471,6 +1503,7 @@ func _assertWebsiteCheckShape(m m0.WebsiteCheck) {
 		m.ConfirmFrom,
 		m.Paused,
 		m.Telegram,
+		m.TelegramBot,
 		m.TelegramChats,
 		m.CreatedBy,
 		m.State,

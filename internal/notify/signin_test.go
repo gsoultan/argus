@@ -230,7 +230,7 @@ func TestAdminsOfTheDefaultOrganizationHearOnEveryChannel(t *testing.T) {
 	e, got := multiSMTP(t)
 	tg, texts, mu := fakeTelegram(t)
 	n := NewSignInNotifier(e, tg, "https://argus.acme.co", nil)
-	n.Admins(dewi, []string{"rizal@acme.co", "SEC@acme.co"}, true)
+	n.Admins(dewi, []string{"rizal@acme.co", "SEC@acme.co"}, true, nil)
 	n.Close(context.Background())
 
 	if strings.Join(got.rcpt, ",") != "rizal@acme.co,SEC@acme.co" {
@@ -249,8 +249,8 @@ func TestAnotherOrganizationNeverReachesThePlatformChannels(t *testing.T) {
 	e, got := multiSMTP(t)
 	tg, texts, mu := fakeTelegram(t)
 	n := NewSignInNotifier(e, tg, "", nil)
-	n.Admins(dewi, []string{"admin@other.co"}, false)
-	n.Reported(SignInReport{SignIn: dewi}, []string{"admin@other.co"}, false)
+	n.Admins(dewi, []string{"admin@other.co"}, false, nil)
+	n.Reported(SignInReport{SignIn: dewi}, []string{"admin@other.co"}, false, nil)
 	n.Close(context.Background())
 
 	for _, r := range got.rcpt {
@@ -290,7 +290,7 @@ func TestWithoutEmailThePersonIsNotTold(t *testing.T) {
 		t.Fatal("channels misreported")
 	}
 	n.Person(dewi, "")
-	n.Admins(dewi, []string{"rizal@acme.co"}, true)
+	n.Admins(dewi, []string{"rizal@acme.co"}, true, nil)
 	n.Close(context.Background())
 	mu.Lock()
 	defer mu.Unlock()
@@ -304,7 +304,7 @@ func TestNoChannelMeansNoNotifier(t *testing.T) {
 	if n != nil {
 		t.Fatal("a notifier with nothing to send through")
 	}
-	n.Admins(dewi, []string{"x@y.z"}, true)
+	n.Admins(dewi, []string{"x@y.z"}, true, nil)
 	n.Person(dewi, "")
 	n.Close(context.Background())
 }

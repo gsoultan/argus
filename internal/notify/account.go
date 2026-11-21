@@ -202,9 +202,10 @@ func ServerConnectedMessage(e ServerConnected, consoleURL string) Rendered {
 
 // ServerConnected tells administrators a server connected: an email to each
 // of to and, with platform set, the configured recipients and Telegram chats.
-func (n *SignInNotifier) ServerConnected(e ServerConnected, to []string, platform bool) {
+// A non-nil tg takes over Telegram, as for Admins.
+func (n *SignInNotifier) ServerConnected(e ServerConnected, to []string, platform bool, tg func(Rendered)) {
 	if n == nil {
 		return
 	}
-	n.toAdmins(ServerConnectedMessage(e, n.consoleURL), to, platform, "server "+e.Host+" connected")
+	n.toAdmins(ServerConnectedMessage(e, n.consoleURL), to, platform, "server "+e.Host+" connected", tg)
 }

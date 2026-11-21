@@ -197,4 +197,14 @@ func (a *API) alertBackup(ctx context.Context, db Database, severity, title, det
 	if a.Alerts != nil {
 		a.Alerts.SecurityEvent("Argus: "+title, detail)
 	}
+	// And to the organization's own bot, if it chose one: the platform's
+	// channels above already have it, so its bot is left out here.
+	if t, _ := a.telegramForKind(ctx, TelegramRouteBackup); t.bot != nil {
+		icon := "⚠️"
+		if severity == "critical" {
+			icon = "🚨"
+		}
+		a.queueTelegram(ctx, t, telegramText(icon, title, detail), "Open in Argus",
+			a.consoleLinkTo("/databases/"+db.ID), "backup "+db.ID)
+	}
 }

@@ -60,7 +60,7 @@ func (a *API) ServerConnected(ctx context.Context, c ServerConnection) {
 		policy = ServerAlertFirst
 	}
 	switch {
-	case policy == ServerAlertOff, a.SignInAlerts == nil:
+	case policy == ServerAlertOff, a.SignInAlerts == nil && !a.store.HasTelegramBots(ctx):
 		return
 	case !c.First && (policy != ServerAlertEvery || c.Replaced):
 		return
@@ -72,8 +72,14 @@ func (a *API) ServerConnected(ctx context.Context, c ServerConnection) {
 	if err != nil {
 		a.log.Error("could not list administrators for a server alert", "error", err)
 	}
-	a.SignInAlerts.ServerConnected(notify.ServerConnected{
+	e := notify.ServerConnected{
 		Host: c.Host, Org: orgLabel(ctx), First: c.First,
 		Transport: c.Transport, RemoteAddr: c.RemoteAddr, At: time.Now().UTC(),
-	}, admins, tenantIDOf(ctx) == DefaultTenantID)
+	}
+	tg := a.routedTelegram(ctx, TelegramRouteServer, "server "+c.Host+" connected")
+	if a.SignInAlerts != nil {
+		a.SignInAlerts.ServerConnected(e, admins, tenantIDOf(ctx) == DefaultTenantID, tg)
+	} else {
+		tg(notify.ServerConnectedMessage(e, a.consoleURL))
+	}
 }
