@@ -99,6 +99,17 @@ type ReleaseInfo struct {
 	PrepareRabbitMQ bool `json:"prepare_rabbitmq,omitempty"`
 }
 
+// nextLabel is the release r can move to, as people name it; "" for none.
+func (r *ReleaseInfo) nextLabel() string {
+	if r == nil || r.Next == "" {
+		return ""
+	}
+	if r.NextName != "" {
+		return r.NextName
+	}
+	return strings.TrimSpace(r.Distro + " " + r.Next)
+}
+
 // StrandedPackages is what the agent found installed that no apt source
 // offers (internal/agent/packages_stranded.go): the ones it can show
 // nothing uses, and why it keeps the rest.
@@ -1397,7 +1408,11 @@ type PackageFleetRow struct {
 	Security       int        `json:"security"`
 	RebootRequired bool       `json:"rebootRequired"`
 	CanReboot      bool       `json:"canReboot"`
-	Mode           string     `json:"mode"`
+	// ReleaseNext is the operating system release the server can be
+	// upgraded to ("Ubuntu 24.04 LTS"), empty when there is none or the
+	// agent is too old to say.
+	ReleaseNext string `json:"releaseNext,omitempty"`
+	Mode        string `json:"mode"`
 	// Run is the run going or waiting on the server, if any.
 	Run *PackageRun `json:"run"`
 }
@@ -1408,6 +1423,8 @@ type packageSummary struct {
 	checkedAt, manager, err, securityPatches *string
 	updates, security                        int
 	reboot                                   bool
+	// The release it can move to: release.distro, .next and .next_name.
+	distro, next, nextName *string
 }
 
 // apply fills a fleet row as decoding the whole report would have. A
@@ -1430,6 +1447,16 @@ func (p packageSummary) apply(row *PackageFleetRow) {
 		row.Error = *p.err
 	}
 	row.Updates, row.RebootRequired = p.updates, p.reboot
+	if p.next != nil && *p.next != "" {
+		r := ReleaseInfo{Next: *p.next}
+		if p.distro != nil {
+			r.Distro = *p.distro
+		}
+		if p.nextName != nil {
+			r.NextName = *p.nextName
+		}
+		row.ReleaseNext = r.nextLabel()
+	}
 	// securityCount: the flagged updates, or the agent's own count when it
 	// flags none.
 	row.Security = p.security
@@ -1460,7 +1487,8 @@ func (s *Store) PackageFleet(ctx context.Context) ([]PackageFleetRow, error) {
 		            THEN jsonb_array_length(jsonb_path_query_array(g.packages->'updates',
 		                   'strict $[*] ? (@.security == true)')) ELSE 0 END,
 		       g.packages->>'security_patches',
-		       COALESCE(g.packages->'reboot_required' = 'true'::jsonb, false)
+		       COALESCE(g.packages->'reboot_required' = 'true'::jsonb, false),
+		       g.packages->'release'->>'distro', g.packages->'release'->>'next', g.packages->'release'->>'next_name'
 		  FROM assets a
 		  JOIN LATERAL (SELECT hostname, packages, packages_state FROM agents g
 		                 WHERE g.hostname = COALESCE(NULLIF(a.agent_hostname, ''), a.hostname)
@@ -1485,7 +1513,7 @@ func (s *Store) PackageFleet(ctx context.Context) ([]PackageFleetRow, error) {
 		)
 		if err := rows.Scan(&p.row.AssetID, &p.row.Hostname, &p.row.Tags, &p.row.OS, &p.agent, &sb,
 			&reported, &sum.checkedAt, &sum.manager, &sum.err, &sum.updates, &sum.security,
-			&sum.securityPatches, &sum.reboot); err != nil {
+			&sum.securityPatches, &sum.reboot, &sum.distro, &sum.next, &sum.nextName); err != nil {
 			rows.Close()
 			return nil, err
 		}

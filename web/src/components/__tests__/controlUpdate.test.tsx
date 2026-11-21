@@ -20,7 +20,7 @@ vi.mock('~/lib/notify', async (orig) => ({
 }))
 
 /**
- * Settings › Control plane › Updates says, before anything starts, what the
+ * Settings › Argus itself › Updates says, before anything starts, what the
  * restart would do, from what the control plane reported: which sessions end,
  * and whether going back would be clean for the data.
  */

@@ -1,9 +1,9 @@
 import {
   ActionIcon, Alert, AppShell, Avatar, Badge, Box, Burger, Button, Center, Group,
-  Loader, Menu, NavLink as MantineNavLink, Stack, Text, Tooltip,
+  Loader, Menu, Text, Tooltip,
   UnstyledButton,
 } from '@mantine/core'
-import { useDisclosure } from '@mantine/hooks'
+import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { notifyError } from '~/lib/notify'
@@ -56,9 +56,9 @@ const PasswordChangeRequired = lazy(() =>
 const ChangePasswordModal = lazy(() =>
   import('~/components/ChoosePassword').then((m) => ({ default: m.ChangePasswordModal })),
 )
-import {
-  isActive, navFor, type NavCounts, type NavItem,
-} from '~/components/nav'
+import { type NavCounts } from '~/components/nav'
+import { SIDEBAR_FOLDED, SIDEBAR_OPEN, Sidebar } from '~/components/Sidebar'
+import { usePreference } from '~/lib/preferences'
 import { LogoMark } from '~/components/Logo'
 import { AlertBell } from '~/components/AlertBell'
 import { ControlUpdatingBanner, useControlUpdating } from '~/components/ControlUpdateBanner'
@@ -238,7 +238,9 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const live = useSessions()
   const updating = useControlUpdating(Boolean(me) && isConfigured())
-  const items = navFor(me?.role)
+  const [sidebar, setSidebar] = usePreference('sidebar')
+  const folded = sidebar === 'collapsed'
+  const phone = useMediaQuery('(max-width: 61.99em)') ?? false
 
   // Cmd-K anywhere. Captured on the document so it works while focus is inside
   // a table, a filter or the replay player.
@@ -264,9 +266,9 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   return (
     <AppShell
       header={{ height: HEADER_H }}
-      // The menu lives in the top bar. On a phone the same items open from the
-      // burger as a panel down the side.
-      navbar={{ width: 260, breakpoint: 'md', collapsed: { mobile: !opened, desktop: true } }}
+      // The menu is down the left, open or folded to icons as each person
+      // last left it. On a phone it is the panel the burger opens.
+      navbar={{ width: phone ? SIDEBAR_OPEN : folded ? SIDEBAR_FOLDED : SIDEBAR_OPEN, breakpoint: 'md', collapsed: { mobile: !opened, desktop: false } }}
       padding={0}
       styles={{
         header: { background: 'var(--color-surface)', borderColor: 'var(--color-line)' },
@@ -290,11 +292,6 @@ function ShellInner({ children }: { children: React.ReactNode }) {
                 <Text fw={700} size="md" visibleFrom="xs">Argus</Text>
               </Group>
             </Link>
-            <Group component="nav" aria-label="Main" gap={4} wrap="nowrap" visibleFrom="md">
-              {items.map((item) => (
-                <TopNavLink key={item.to} item={item} pathname={pathname} counts={counts} />
-              ))}
-            </Group>
           </Group>
 
           <Group gap="xs" wrap="nowrap">
@@ -462,26 +459,8 @@ function ShellInner({ children }: { children: React.ReactNode }) {
         </Group>
       </AppShell.Header>
 
-      <AppShell.Navbar p="sm" hiddenFrom="md">
-        <Stack gap={2}>
-          {items.map((item) => {
-            const count = item.badge ? item.badge(counts) : 0
-            return (
-              <MantineNavLink
-                key={item.to}
-                component={Link}
-                to={item.to as never}
-                label={item.label}
-                active={isActive(pathname, item.to)}
-                variant="light"
-                color="azure"
-                leftSection={<item.icon size={18} stroke={1.6} />}
-                rightSection={count > 0 ? <Badge size="sm" circle color="rose" variant="filled">{count}</Badge> : null}
-                className="argus-navlink"
-              />
-            )
-          })}
-        </Stack>
+      <AppShell.Navbar style={{ transition: 'width 150ms ease' }}>
+        <Sidebar role={me?.role} counts={counts} folded={folded} onFold={(f) => setSidebar(f ? 'collapsed' : 'expanded')} phone={phone} />
       </AppShell.Navbar>
 
       <AppShell.Main>
@@ -517,27 +496,6 @@ function ShellInner({ children }: { children: React.ReactNode }) {
         </Suspense>
       )}
     </AppShell>
-  )
-}
-
-/** One word in the top bar, with a red count when something waits on you. */
-function TopNavLink({ item, pathname, counts }: { item: NavItem; pathname: string; counts: NavCounts }) {
-  const count = item.badge ? item.badge(counts) : 0
-  const active = isActive(pathname, item.to)
-  return (
-    <Link
-      to={item.to as never}
-      className="argus-topnav"
-      data-active={active || undefined}
-      aria-current={active ? 'page' : undefined}
-    >
-      {item.label}
-      {count > 0 && (
-        <Badge size="sm" circle color="rose" variant="filled" aria-label={`${count} waiting`}>
-          {count}
-        </Badge>
-      )}
-    </Link>
   )
 }
 

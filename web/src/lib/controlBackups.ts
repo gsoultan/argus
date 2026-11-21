@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { get, send } from '~/lib/live'
 
 /*
- * Settings › Control plane › Backups. Kept out of live.ts and queries.ts,
+ * Settings › Argus itself › Backups. Kept out of live.ts and queries.ts,
  * which every route loads, so only the settings page pays for it.
  */
 
@@ -17,7 +17,7 @@ export interface ControlBackupRun {
   version?: string
 }
 
-/** Settings › Control plane › Backups, as GET /api/v1/platform/backups returns it. */
+/** Settings › Argus itself › Backups, as GET /api/v1/platform/backups returns it. */
 export interface ControlBackupsView {
   installed: boolean
   reason?: string

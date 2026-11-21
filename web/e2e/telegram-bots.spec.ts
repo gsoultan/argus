@@ -45,6 +45,9 @@ async function open(page: Page) {
   await page.getByRole('button', { name: /^sign in$/i }).click()
   await expect(page.getByRole('button', { name: /^sign in$/i })).toBeHidden()
   await page.goto('/settings?section=telegram')
+  // Notifications opens on where each alert goes; the bots are the next tab.
+  await expect(page.getByRole('tab', { name: 'Where alerts go', selected: true })).toBeVisible()
+  await page.getByRole('tab', { name: /^Bots/ }).click()
   await expect(page.getByText('Bots that send this organization')).toBeVisible()
   return sent
 }
@@ -57,7 +60,7 @@ test('telegram bots: the list, and adding one', async ({ page }) => {
   await expect(ops.getByText('Ops on-call')).toBeVisible()
   await expect(ops.getByText('Sign-in alerts, Server connected, Websites, Backups')).toBeVisible()
   await expect(page.getByRole('row', { name: /Old marketing bot/ }).getByText('Failed')).toBeVisible()
-  await expect(page.getByText('Platform bot', { exact: true })).toBeVisible()
+  await expect(page.getByRole('tabpanel', { name: /^Bots/ }).getByText('Platform bot', { exact: true })).toBeVisible()
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/07-telegram-bots.png`, fullPage: true })
 
   await ops.getByRole('button', { name: 'Test' }).click()

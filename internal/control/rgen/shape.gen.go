@@ -1378,6 +1378,18 @@ func _assertTelegramRouteShape(m m0.TelegramRoute) {
 	}
 }
 
+// _assertUIPreferenceShape fails to compile if m0.UIPreference gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertUIPreferenceShape(m m0.UIPreference) {
+	type shape m0.UIPreference
+	_ = shape{
+		m.Email,
+		m.Key,
+		m.Value,
+		m.UpdatedAt,
+	}
+}
+
 // _assertUsageHistoryShape fails to compile if m0.UsageHistory gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertUsageHistoryShape(m m0.UsageHistory) {

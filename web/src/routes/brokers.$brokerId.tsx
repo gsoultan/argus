@@ -1,7 +1,7 @@
-import { Alert, Box, Button, Stack } from '@mantine/core'
+import { Alert, Box, Button, Group, Stack, Text } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
-import { createFileRoute, Navigate, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, Link, Navigate, useNavigate } from '@tanstack/react-router'
 import { IconInfoCircle } from '@tabler/icons-react'
 import { useCallback } from 'react'
 import { BrokerWorkspace, type BrokerTab } from '~/components/broker/BrokerWorkspace'
@@ -14,6 +14,8 @@ import { levelName } from '~/lib/engines'
 import { canSee } from '~/lib/roles'
 import type { DBLevel } from '~/types/domain'
 import { AskModal } from '~/components/DatabaseAskModal'
+import { DatabaseSwitcher } from '~/components/DatabaseSwitcher'
+import { FS, INK } from '~/theme'
 
 /**
  * One RabbitMQ vhost's workspace, or one Kafka entry's. As for a database, nothing here decides
@@ -99,6 +101,7 @@ function BrokerPage() {
     const tab = (KAFKA_TABS as string[]).includes(search.tab ?? '') ? (search.tab as KafkaTab) : 'overview'
     return (
       <>
+        <BrokerBar brokerId={brokerId} label={`Kafka · ${database.dbname}`} />
         <KafkaWorkspace
           database={database}
           access={access}
@@ -117,6 +120,7 @@ function BrokerPage() {
 
   return (
     <>
+      <BrokerBar brokerId={brokerId} label={`RabbitMQ · ${database.dbname}`} />
       <BrokerWorkspace
         database={database}
         access={access}
@@ -131,5 +135,17 @@ function BrokerPage() {
       />
       {access.approvable && <AskModal what="broker" engine={data?.database.engine} dbId={brokerId} opened={asking} onClose={ask.close} top={access.approvable} />}
     </>
+  )
+}
+
+/** The trail back to Brokers, and previous, next and a search over every broker. */
+function BrokerBar({ brokerId, label }: { brokerId: string; label: string }) {
+  return (
+    <Group px="md" pl={{ base: 'md', lg: 'xl' }} py={6} gap="xs" wrap="nowrap" style={{ borderBottom: '1px solid var(--color-line)' }}>
+      <Text size={FS.micro} c="dimmed" truncate>
+        <Link to="/brokers" style={{ color: INK.brand }}>Brokers</Link> / {label}
+      </Text>
+      <Box ml="auto"><DatabaseSwitcher currentId={brokerId} brokers /></Box>
+    </Group>
   )
 }

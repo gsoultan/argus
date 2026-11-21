@@ -31,7 +31,8 @@ for (const [label, viewport] of [
     for (const tab of TABS) {
       const errs = watchErrors(page)
       await page.goto(tab === 'overview' ? path : `${path}?tab=${tab}`)
-      await expect(page.getByRole('tab', { selected: true })).toHaveText(new RegExp(
+      // The page's own tabs: a tab's content can have tabs of its own (Apps does).
+      await expect(page.getByRole('tablist').first().getByRole('tab', { selected: true })).toHaveText(new RegExp(
         { overview: 'Overview', access: 'Access', sessions: 'Sessions', apps: 'Apps', agent: 'Agent', settings: 'Settings' }[tab],
       ))
       await page.waitForLoadState('networkidle')

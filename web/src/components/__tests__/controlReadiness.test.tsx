@@ -13,7 +13,7 @@ vi.mock('~/lib/live', async (orig) => ({
 }))
 
 /**
- * Settings › Control plane › If Argus goes down: what Argus can see about its
+ * Settings › Argus itself › If Argus goes down: what Argus can see about its
  * own outages, and what only a person can confirm.
  */
 

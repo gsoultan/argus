@@ -45,8 +45,8 @@ export const CONTROL_SECTIONS: ControlSectionSpec[] = [
   { id: 'security', label: 'Account security', icon: IconShieldLock, keys: ['security'] },
   { id: 'database', label: 'Database', icon: IconDatabase, keys: ['database'] },
   { id: 'certificate', label: 'Certificate', icon: IconCertificate, keys: ['tls'] },
-  { id: 'storage', label: 'Recordings', icon: IconCloudUpload, keys: ['storage', 'agentKeepRecordingsDays', 'archive'] },
-  { id: 'alerts', label: 'Alerts', icon: IconBell, keys: ['email', 'telegram', 'fcm', 'signInAlerts', 'serverAlerts', 'outsideCheck'] },
+  { id: 'storage', label: 'Storage', icon: IconCloudUpload, keys: ['storage', 'agentKeepRecordingsDays', 'archive'] },
+  { id: 'alerts', label: 'Alert channels', icon: IconBell, keys: ['email', 'telegram', 'fcm', 'signInAlerts', 'serverAlerts', 'outsideCheck'] },
   { id: 'cloud', label: 'Cloud identities', icon: IconCloud, keys: ['cloud'] },
 ]
 

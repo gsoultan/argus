@@ -18,12 +18,12 @@ import { ago } from '~/lib/websites'
 import { FS } from '~/theme'
 
 /**
- * Settings › Telegram bots: the organization's own bots, and which bot each
- * kind of alert uses. Admins and owners only; the server says the same.
+ * Settings › Notifications: which bot and chats each kind of alert goes to,
+ * first, and the organization's own bots behind them. Admins and owners only; the server says the same.
  */
 export function TelegramBots() {
   const { data: v, isLoading, error } = useQuery({ ...telegramQuery(), enabled: isConfigured() })
-  const [tab, setTab] = useState<string | null>('bots')
+  const [tab, setTab] = useState<string | null>('routes')
   const [editing, setEditing] = useState<TelegramBot | 'new' | null>(null)
   const [removing, setRemoving] = useState<TelegramBot | null>(null)
 
@@ -46,8 +46,8 @@ export function TelegramBots() {
       )}
       <Tabs value={tab} onChange={setTab}>
         <Tabs.List>
-          <Tabs.Tab value="bots">Bots · {v.bots.length}</Tabs.Tab>
           <Tabs.Tab value="routes">Where alerts go</Tabs.Tab>
+          <Tabs.Tab value="bots">Bots · {v.bots.length}</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="bots" pt="sm">
           <BotsList v={v} onAdd={() => setEditing('new')} onEdit={setEditing} onRemove={setRemoving} />

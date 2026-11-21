@@ -579,7 +579,7 @@ function TelegramFields({ value, bot, chats, onChange }: {
           { value: 'off', label: 'Off: bell only' },
         ]}
         onChange={(x) => onChange((x ?? 'default') as TelegramChoice, '', [])}
-        description="Down and back-up alerts for this site. Bots are added under Settings, Telegram bots." />
+        description="Down and back-up alerts for this site. Bots are added under Settings, Notifications." />
       {value === 'chats' && (
         <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
           <Select label="Bot" allowDeselect={false} value={bot}
@@ -613,7 +613,7 @@ function AlertSettings({ onClose }: { onClose: () => void }) {
           </Text>
           <Select label="Bot" allowDeselect={false} value={b} data={botOptions(tg)}
             onChange={(x) => { setBot(x ?? ''); setChats([]) }}
-            description="Bots are added under Settings, Telegram bots." />
+            description="Bots are added under Settings, Notifications." />
           {b !== 'off' && (
             <MultiSelect label="Chats" placeholder={chosen.length ? undefined : 'All of its chats'}
               data={options} value={chosen} onChange={setChats} clearable

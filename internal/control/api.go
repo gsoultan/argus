@@ -512,6 +512,8 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/me/server-account", a.getMyServerAccount)
 	mux.HandleFunc("GET /api/v1/me/servers", a.user(a.getMyServers))
 	mux.HandleFunc("PUT /api/v1/me/ssh-key", a.putMySSHKey)
+	mux.HandleFunc("GET /api/v1/me/preferences", a.getUIPreferences)
+	mux.HandleFunc("PUT /api/v1/me/preferences", a.putUIPreference)
 	mux.HandleFunc("GET /api/v1/settings", a.getSettings)
 	mux.HandleFunc("PUT /api/v1/settings", a.putSettings)
 	mux.HandleFunc("POST /api/v1/settings/test-database", a.postTestDatabase)

@@ -32,6 +32,9 @@ type UpdatesWaitingRow struct {
 	// updating, held, cannot, too_old; empty when current or not known.
 	Agent        string `json:"agent,omitempty"`
 	AgentVersion string `json:"agentVersion,omitempty"`
+	// ReleaseNext is the operating system release the asset can be
+	// upgraded to (a major upgrade), empty when none.
+	ReleaseNext string `json:"releaseNext,omitempty"`
 }
 
 // UpdatesWaiting is the fleet's view.
@@ -45,6 +48,8 @@ type UpdatesWaiting struct {
 	UpdateAssets   int `json:"updateAssets"`
 	RebootAssets   int `json:"rebootAssets"`
 	AgentsBehind   int `json:"agentsBehind"`
+	// ReleaseAssets is how many assets can move to a new OS release.
+	ReleaseAssets int `json:"releaseAssets"`
 }
 
 func (a *API) updatesWaiting(ctx context.Context) (UpdatesWaiting, error) {
@@ -63,11 +68,12 @@ func (a *API) updatesWaiting(ctx context.Context) (UpdatesWaiting, error) {
 		return out, err
 	}
 	for _, p := range pkgs {
-		if !p.Reported || (p.Updates == 0 && p.Security == 0 && !p.RebootRequired) {
+		if !p.Reported || (p.Updates == 0 && p.Security == 0 && !p.RebootRequired && p.ReleaseNext == "") {
 			continue
 		}
 		r := row(p.AssetID, p.Hostname)
 		r.Updates, r.Security, r.RebootRequired = p.Updates, p.Security, p.RebootRequired
+		r.ReleaseNext = p.ReleaseNext
 	}
 	agents, err := a.agentFleetView(ctx)
 	if err != nil {
@@ -95,6 +101,9 @@ func (a *API) updatesWaiting(ctx context.Context) (UpdatesWaiting, error) {
 		}
 		if r.Agent == agentBehind {
 			out.AgentsBehind++
+		}
+		if r.ReleaseNext != "" {
+			out.ReleaseAssets++
 		}
 	}
 	sort.Slice(out.Assets, func(i, j int) bool {

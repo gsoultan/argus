@@ -1,5 +1,5 @@
 import './ssh/ssh.css'
-import { useMemo, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useMemo, useState, type ReactNode } from 'react'
 import {
   ActionIcon, Badge, Box, Button, Card, Group, Menu, Progress, SegmentedControl, SimpleGrid, Skeleton, Stack, Text, TextInput,
   ThemeIcon, Tooltip,
@@ -8,7 +8,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import {
   IconAppWindow, IconBrandWindows, IconChevronDown, IconClock, IconDeviceDesktop, IconDeviceLaptop, IconDeviceMobile, IconFolder,
-  IconLock, IconSearch, IconServer2, IconServerOff, IconSettings, IconTerminal2,
+  IconLayoutGrid, IconLock, IconSearch, IconTable, IconServer2, IconServerOff, IconSettings, IconTerminal2,
 } from '@tabler/icons-react'
 import { AssetAddresses } from '~/components/AssetAddresses'
 import { DownloadSshConfigButton } from '~/components/ssh/OwnTerminal'
@@ -21,12 +21,15 @@ import { assetsQuery, meQuery, myServersQuery, requestsQuery } from '~/lib/queri
 import { seesWholeFleet } from '~/lib/roles'
 import { useSessions } from '~/lib/sessions'
 import type { Asset, MyServer } from '~/types/domain'
-import { ANSWER_LABEL, answerOf, isUp, kindOf, reachOf, shortName, type Answer, type Reach } from '~/lib/reach'
+import { ANSWER_LABEL, answerOf, isUp, kindOf, offlineReason, reachOf, shortName, type Answer, type Reach } from '~/lib/reach'
 import { ASSET_TYPES, ASSET_TYPE_LABEL, assetHostnameAside, assetShortName, assetTypeOf, type AssetType } from '~/lib/assetType'
 import { needsUpdates, updatesWaitingQuery, type UpdatesWaitingRow } from '~/lib/updatesWaiting'
 import { warningBadge, warningText, warningTone } from '~/lib/resourcesLow'
 import { assetsUsageQuery, usageTone, type AssetUsageRow } from '~/lib/assetsUsage'
-import { isConfigured } from '~/lib/live'
+import { usePreference } from '~/lib/preferences'
+
+/** Fetched only by someone who picks the table. */
+const AssetTable = lazy(() => import('~/components/AssetTable').then((m) => ({ default: m.AssetTable })))
 
 // Re-exported: every page that shows a server's status imports them from here.
 export { ANSWER_LABEL, answerOf, isUp, kindOf, reachOf, shortName, type Answer, type Reach }
@@ -36,7 +39,7 @@ type Show = 'all' | Answer
 type Kind = 'all' | 'linux' | 'windows' | 'android'
 type TypeFilter = 'all' | AssetType
 
-const SHOWN: Answer[] = ['online', 'down', 'noagent', 'blocked']
+const SHOWN: Answer[] = ['online', 'down', 'blocked']
 
 /** What the Connect button opens: a phone's screen, a desktop or a terminal. */
 function OpenIcon({ kind, rdp }: { kind: ReturnType<typeof kindOf>; rdp: boolean }) {
@@ -58,12 +61,12 @@ const REACH: Record<Reach, { label: string; color: string; hint: string }> = {
   offline: {
     label: ANSWER_LABEL.down,
     color: 'rose',
-    hint: 'Its Argus agent has stopped checking in. You can still try; it may be back.',
+    hint: 'Its Argus agent has stopped checking in: the server may be off or cut off. You can still try; it may be back.',
   },
   unknown: {
-    label: ANSWER_LABEL.noagent,
-    color: 'slate',
-    hint: 'No Argus agent reports from it, so Argus cannot tell whether it is up. You can still try.',
+    label: ANSWER_LABEL.down,
+    color: 'rose',
+    hint: 'No Argus agent has ever reported from it, so Argus cannot see it. Install the agent from its page. You can still try to connect.',
   },
   blocked: {
     label: 'Blocked',
@@ -141,10 +144,16 @@ export function UsageRow({ usage }: { usage: AssetUsageRow }) {
  * one question, "can I get on it, and how", and the answer is the status, the
  * accounts they were given, and a button.
  */
-export function ServerCard({ asset: a, admin = false, mine, waiting, usage }: {
+export function ServerCard({ asset: a, admin = false, mine, waiting, usage, updates }: {
   asset: Asset; admin?: boolean; mine?: MyServer
   /** What is waiting to be updated on it, for those who see the fleet. */
   waiting?: UpdatesWaitingRow
+  /**
+   * Whether this person sees what is waiting across the fleet, and the agent
+   * version offered: the card then always says its updates, "Up to date"
+   * included. Undefined for someone who does not.
+   */
+  updates?: { latest: string }
   /**
    * Its processor, memory and fullest disk now, and what it is running low
    * on. Everyone gets it for the servers they see; absent when the agent
@@ -175,7 +184,7 @@ export function ServerCard({ asset: a, admin = false, mine, waiting, usage }: {
   const openLabel = kind === 'android' ? 'Open device' : rdp ? 'Open desktop' : 'Open terminal'
 
   return (
-    <Card padding="lg" className="argus-server" data-reach={reach} h="100%">
+    <Card padding="lg" className="argus-server" data-reach={reach} data-answer={answerOf(a)} h="100%">
       <Stack gap="md" h="100%">
         <Group justify="space-between" align="flex-start" wrap="nowrap" gap="sm">
           <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
@@ -195,18 +204,21 @@ export function ServerCard({ asset: a, admin = false, mine, waiting, usage }: {
               <AssetAddresses asset={a} />
             </Box>
           </Group>
-          <ReachBadge reach={reach} />
+          <Stack gap={2} align="flex-end" style={{ flexShrink: 0 }}>
+            <ReachBadge reach={reach} />
+            {offlineReason(a, relTime) && (
+              <Text size={FS.micro} c="dimmed" data-testid="offline-reason">{offlineReason(a, relTime)}</Text>
+            )}
+          </Stack>
         </Group>
 
-        {((tag && reach !== 'blocked' && !noAccount) || needsUpdates(waiting) || !!usage?.warnings.length) && (
+        {updates && <UpdatesLine waiting={waiting} latest={updates.latest} checked={updatesChecked(a)} />}
+
+        {((tag && reach !== 'blocked' && !noAccount) || !!usage?.warnings.length) && (
           <Group gap={SP.snug}>
             {tag && reach !== 'blocked' && !noAccount && (
               <Badge color={tag.color} variant="light" size="sm" radius="sm" tt="none" fw={600}>{tag.label}</Badge>
             )}
-            {!!waiting?.security && <Badge color="rose" variant="light" size="sm" radius="sm" tt="none">{waiting.security} security</Badge>}
-            {!waiting?.security && !!waiting?.updates && <Badge color="slate" variant="light" size="sm" radius="sm" tt="none">{waiting.updates} updates</Badge>}
-            {waiting?.agent === 'behind' && <Badge color="azure" variant="light" size="sm" radius="sm" tt="none">agent behind</Badge>}
-            {waiting?.rebootRequired && <Badge color="amber" variant="light" size="sm" radius="sm" tt="none">restart</Badge>}
             {usage?.warnings.map((w) => (
               <Badge key={w.resource + (w.mount ?? '')} color={warningTone(w)} variant="light" size="sm" radius="sm" tt="none"
                 title={warningText(w)} data-testid="low-badge">
@@ -351,6 +363,62 @@ export function ServerCard({ asset: a, admin = false, mine, waiting, usage }: {
   )
 }
 
+/**
+ * What is waiting to be updated on one asset, as short chips: the Argus agent
+ * behind (from → to), a new OS release (a major upgrade), security fixes,
+ * other patches, a restart. "Up to date" when nothing waits, so a card that
+ * says nothing never leaves someone wondering whether it was checked.
+ */
+export function UpdatesLine({ waiting: w, latest, checked, compact = false }: {
+  waiting?: UpdatesWaitingRow; latest: string
+  /** Whether Argus reads this asset's updates at all: see updatesChecked. */
+  checked: boolean
+  compact?: boolean
+}) {
+  const chips = updateChips(w, latest)
+  return (
+    <Group gap={SP.tight} wrap="wrap" data-testid="updates-line">
+      {!compact && <Text size={FS.micro} c="dimmed" mr={2}>Updates</Text>}
+      {chips.length === 0 ? (
+        checked
+          ? <Text size={FS.micro} c="teal.7" fw={600}>Up to date</Text>
+          : <Text size={FS.micro} c="dimmed" title="No agent has reported this asset's updates">Not checked</Text>
+      ) : chips.map((c) => (
+        <Badge key={c.key} color={c.color} variant="light" size="sm" radius="sm" tt="none" title={c.title}>{c.label}</Badge>
+      ))}
+    </Group>
+  )
+}
+
+/**
+ * Whether "Up to date" can be said of an asset: its agent has reported, and
+ * it is a server whose packages Argus reads (over SSH). Anything else would be
+ * claiming a check that never ran.
+ */
+export function updatesChecked(a: Asset): boolean {
+  return a.agentState !== 'absent' && a.protocol !== 'rdp' && a.kind !== 'android'
+}
+
+/** The chips UpdatesLine draws, in the order they matter. */
+export function updateChips(w: UpdatesWaitingRow | undefined, latest: string): { key: string; label: string; color: string; title: string }[] {
+  if (!w) return []
+  const out: { key: string; label: string; color: string; title: string }[] = []
+  if (w.agent === 'behind') {
+    out.push({ key: 'agent', color: 'azure', label: w.agentVersion && latest ? `Agent ${w.agentVersion} → ${latest}` : 'Agent behind',
+      title: 'A newer Argus agent is out. It updates itself once nobody is connected.' })
+  } else if (w.agent === 'updating') {
+    out.push({ key: 'agent', color: 'azure', label: 'Agent updating', title: 'The Argus agent is updating now.' })
+  } else if (w.agent === 'cannot' || w.agent === 'too_old') {
+    out.push({ key: 'agent', color: 'amber', label: 'Agent needs a manual update', title: 'This agent cannot update itself. Open the asset for the command.' })
+  }
+  if (w.releaseNext) out.push({ key: 'release', color: 'violet', label: `${w.releaseNext} available`, title: 'A new operating system release (a major upgrade). Upgrade from the asset’s Updates tab.' })
+  if (w.security > 0) out.push({ key: 'security', color: 'rose', label: `${w.security} security`, title: 'Security fixes waiting to be installed.' })
+  const other = w.updates - w.security
+  if (other > 0) out.push({ key: 'patches', color: 'slate', label: `${other} ${other === 1 ? 'patch' : 'patches'}`, title: 'Other package updates waiting.' })
+  if (w.rebootRequired) out.push({ key: 'restart', color: 'amber', label: 'Restart needed', title: 'An installed update takes effect after a restart.' })
+  return out
+}
+
 function MenuText({ title, sub, mono }: { title: string; sub: string; mono?: boolean }) {
   return (
     <Box>
@@ -425,6 +493,52 @@ export function GrantCard({
   )
 }
 
+export interface AssetFilter {
+  text: string
+  show: Show
+  kind: Kind
+  type: TypeFilter
+  needs: boolean
+  lowOnly: boolean
+  needsUpdate: (a: Asset) => boolean
+  low: (a: Asset) => boolean
+}
+
+/** The words an asset is found by: its names, every address, OS, tags and accounts. */
+function haystack(a: Asset): string {
+  return [a.alias ?? '', assetShortName(a), a.hostname, a.agentHostname ?? '', a.address,
+    ...(a.addresses ?? []).map((x) => x.address), a.os, ...a.tags, ...a.principals,
+    ASSET_TYPE_LABEL[assetTypeOf(a)].one, ANSWER_LABEL[answerOf(a)]].join(' ').toLowerCase()
+}
+
+/**
+ * The assets that fit what was picked. Every word typed must appear
+ * somewhere (so "core prod" finds core-04 tagged production), and every
+ * other filter narrows further. The one place both the cards and the table
+ * get their rows, so the two always agree.
+ */
+export function filterAssets(assets: Asset[], f: AssetFilter): Asset[] {
+  const words = f.text.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  return assets.filter((a) => {
+    if (words.length > 0) {
+      const hay = haystack(a)
+      if (!words.every((w) => hay.includes(w))) return false
+    }
+    if (f.show !== 'all' && answerOf(a) !== f.show) return false
+    if (f.kind !== 'all' && kindOf(a) !== f.kind) return false
+    if (f.type !== 'all' && assetTypeOf(a) !== f.type) return false
+    if (f.needs && !f.needsUpdate(a)) return false
+    if (f.lowOnly && !f.low(a)) return false
+    return true
+  })
+}
+
+/** Blocked, then offline, then the rest; by name within each. */
+export function sortAssets(assets: Asset[]): Asset[] {
+  const rank: Record<Answer, number> = { blocked: 0, down: 1, online: 2 }
+  return [...assets].sort((x, y) => rank[answerOf(x)] - rank[answerOf(y)] || assetShortName(x).localeCompare(assetShortName(y)))
+}
+
 /**
  * The servers the signed-in person can reach, as cards with a Connect button
  * on each, plus any temporary access from approved requests.
@@ -453,7 +567,8 @@ export function ServerCards({ initialShow = 'all' }: { initialShow?: Show } = {}
   const [kind, setKind] = useState<Kind>('all')
   const [type, setType] = useState<TypeFilter>('all')
   const [needs, setNeeds] = useState(false)
-  const { data: waiting } = useQuery({ ...updatesWaitingQuery(), enabled: whole && isConfigured() })
+  const { data: waiting } = useQuery({ ...updatesWaitingQuery(), enabled: whole })
+  const [view, setView] = usePreference('assets.view')
   const waitingBy = useMemo(() => new Map((waiting?.assets ?? []).map((w) => [w.assetId, w])), [waiting])
   const needCount = (assets ?? []).filter((a) => needsUpdates(waitingBy.get(a.id))).length
   const [lowOnly, setLowOnly] = useState(false)
@@ -498,29 +613,19 @@ export function ServerCards({ initialShow = 'all' }: { initialShow?: Show } = {}
 
   const counts = useMemo(() => {
     if (!assets) return undefined
-    const c: Record<Answer, number> = { online: 0, down: 0, noagent: 0, blocked: 0 }
+    const c: Record<Answer, number> = { online: 0, down: 0, blocked: 0 }
     for (const a of assets) c[answerOf(a)]++
     return { all: assets.length, ...c }
   }, [assets])
 
   const needle = text.trim().toLowerCase()
   const visible = useMemo(
-    () =>
-      (assets ?? [])
-        .filter((a) => {
-          if (needle) {
-            const hay = `${a.alias ?? ''} ${a.hostname} ${a.address} ${(a.addresses ?? []).map((x) => x.address).join(' ')} ${a.os} ${a.tags.join(' ')} ${a.principals.join(' ')}`
-            if (!hay.toLowerCase().includes(needle)) return false
-          }
-          if (show !== 'all' && answerOf(a) !== show) return false
-          if (kind !== 'all' && kindOf(a) !== kind) return false
-          if (type !== 'all' && assetTypeOf(a) !== type) return false
-          if (needs && !needsUpdates(waitingBy.get(a.id))) return false
-          if (lowOnly && !lowBy.has(a.id)) return false
-          return true
-        })
-        .sort((x, y) => assetShortName(x).localeCompare(assetShortName(y))),
-    [assets, needle, show, kind, type, needs, waitingBy, lowOnly, lowBy],
+    () => sortAssets(filterAssets(assets ?? [], {
+      text, show, kind, type, needs, lowOnly,
+      needsUpdate: (a) => needsUpdates(waitingBy.get(a.id)),
+      low: (a) => lowBy.has(a.id),
+    })),
+    [assets, text, show, kind, type, needs, waitingBy, lowOnly, lowBy],
   )
 
   const filtering = needle !== '' || show !== 'all' || kind !== 'all' || type !== 'all' || needs || lowOnly
@@ -555,10 +660,20 @@ export function ServerCards({ initialShow = 'all' }: { initialShow?: Show } = {}
         right={
           assets && (
             <Group gap="md" wrap="nowrap">
-              <Text size={FS.micro} c="dimmed">
+              <Text size={FS.micro} c="dimmed" data-testid="asset-count">
                 {filtering ? `${visible.length} of ${assets.length}` : assets.length}{' '}
                 {assets.length === 1 ? 'asset' : 'assets'}
               </Text>
+              <SegmentedControl
+                size="xs"
+                aria-label="Show as"
+                value={view}
+                onChange={(v) => setView(v as 'cards' | 'table')}
+                data={[
+                  { value: 'cards', label: <Group gap={4} wrap="nowrap"><IconLayoutGrid size={14} />Cards</Group> },
+                  { value: 'table', label: <Group gap={4} wrap="nowrap"><IconTable size={14} />Table</Group> },
+                ]}
+              />
               <DownloadSshConfigButton size="sm" />
             </Group>
           )
@@ -654,11 +769,17 @@ export function ServerCards({ initialShow = 'all' }: { initialShow?: Show } = {}
             </Button>
           }
         />
+      ) : view === 'table' ? (
+        <Suspense fallback={<Skeleton h={320} />}>
+          <AssetTable assets={visible} admin={canAdmin} mineBy={mineBy} waitingBy={waitingBy} usageBy={usageBy}
+            updates={waiting ? { latest: waiting.latest } : undefined} />
+        </Suspense>
       ) : (
         <CardGrid>
           {visible.map((a) => (
             <ServerCard key={a.id} asset={a} admin={canAdmin} mine={mineBy.get(a.hostname)}
-              waiting={waitingBy.get(a.id)} usage={usageBy.get(a.id)} />
+              waiting={waitingBy.get(a.id)} usage={usageBy.get(a.id)}
+              updates={waiting ? { latest: waiting.latest } : undefined} />
           ))}
         </CardGrid>
       )}
