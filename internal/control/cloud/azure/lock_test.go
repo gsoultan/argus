@@ -115,3 +115,80 @@ func TestTheManageRoleHoldsOnlyLocksOfAuthorization(t *testing.T) {
 		}
 	}
 }
+
+// lockOf is what the inventory says of web-1's locks.
+func lockOf(t *testing.T, p *Provider, a cloud.Account) map[string]string {
+	t.Helper()
+	snap, err := p.Inventory(context.Background(), a, "eastus", cloud.Kinds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range snap.Resources {
+		if r.Kind == cloud.KindInstance && r.Name == "web-1" {
+			return r.Details
+		}
+	}
+	t.Fatal("no web-1 in the inventory")
+	return nil
+}
+
+func TestTheInventorySaysWhichVMsAreLocked(t *testing.T) {
+	p, m, a := removable(t)
+	ctx := context.Background()
+	if d := lockOf(t, p, a); d["lock"] != "none" || d["lockNames"] != "" || d["lockAbove"] != "" {
+		t.Fatalf("no lock: %v", d)
+	}
+	// Argus's own lock shows at once, not when the read in hand runs out.
+	if _, err := p.Protect(ctx, a, "ada@example.com", "eastus", web1, true); err != nil {
+		t.Fatal(err)
+	}
+	if d := lockOf(t, p, a); d["lock"] != "argus" || d["lockNames"] != "" {
+		t.Fatalf("Argus's lock: %v", d)
+	}
+	// Somebody else's beside it is named, and so is one on the group.
+	m.mu.Lock()
+	m.locks = append(m.locks, "finance-hold")
+	m.groupLocks = []string{"rg-freeze"}
+	m.mu.Unlock()
+	p.stale(a.AccountID)
+	if d := lockOf(t, p, a); d["lock"] != "both" || d["lockNames"] != "finance-hold" || d["lockAbove"] != "resource group" {
+		t.Fatalf("both: %v", d)
+	}
+	if _, err := p.Protect(ctx, a, "ada@example.com", "eastus", web1, false); err == nil {
+		t.Fatal("the other lock is still there, and the answer must say so")
+	}
+	if d := lockOf(t, p, a); d["lock"] != "other" || d["lockNames"] != "finance-hold" {
+		t.Fatalf("the other's lock: %v", d)
+	}
+}
+
+func TestAnInventoryWithoutTheLocksSaysNothingOfThem(t *testing.T) {
+	p, m, a := removable(t)
+	m.noLockList = true
+	d := lockOf(t, p, a)
+	if _, said := d["lock"]; said || d["resourceGroup"] != "Web-RG" {
+		t.Fatalf("locks that could not be read must not read as none: %v", d)
+	}
+}
+
+func TestLocksAreSortedByWhatTheyAreOn(t *testing.T) {
+	const sub = "/subscriptions/S"
+	vm := sub + "/resourceGroups/Web-RG/providers/Microsoft.Compute/virtualMachines/web-1"
+	idx := lockIndex([]raw{
+		{ID: sub + "/providers/Microsoft.Authorization/locks/all", Name: "all"},
+		{ID: sub + "/resourcegroups/web-rg/providers/Microsoft.Authorization/locks/rg", Name: "rg"},
+		{ID: vm + "/providers/Microsoft.Authorization/locks/" + LockName, Name: LockName},
+		{ID: sub + "/resourceGroups/Other/providers/Microsoft.Authorization/locks/elsewhere", Name: "elsewhere"},
+		{ID: "not a lock", Name: "x"},
+	})
+	d := map[string]string{}
+	idx.mark(d, vm)
+	if d["lock"] != "argus" || d["lockAbove"] != "resource group and subscription" {
+		t.Fatalf("details = %v", d)
+	}
+	d = map[string]string{}
+	idx.mark(d, sub+"/resourceGroups/Third/providers/Microsoft.Compute/virtualMachines/api-1")
+	if d["lock"] != "none" || d["lockAbove"] != "subscription" {
+		t.Fatalf("details = %v", d)
+	}
+}

@@ -252,6 +252,7 @@ func (p *Provider) readSubscription(ctx context.Context, t token, subscription s
 		lAddresses
 		lNetworks
 		lNSGs
+		lLocks
 	)
 	lists := []string{
 		lVMs:       "Microsoft.Compute/virtualMachines?api-version=" + computeAPI,
@@ -263,6 +264,7 @@ func (p *Provider) readSubscription(ctx context.Context, t token, subscription s
 		lAddresses: "Microsoft.Network/publicIPAddresses?api-version=" + networkAPI,
 		lNetworks:  "Microsoft.Network/virtualNetworks?api-version=" + networkAPI,
 		lNSGs:      "Microsoft.Network/networkSecurityGroups?api-version=" + networkAPI,
+		lLocks:     "Microsoft.Authorization/locks?api-version=" + lockAPI,
 	}
 	got := make([][]raw, len(lists))
 	errs := make([]error, len(lists))
@@ -275,6 +277,10 @@ func (p *Provider) readSubscription(ctx context.Context, t token, subscription s
 		}()
 	}
 	wg.Wait()
+	// The locks only say which VMs are protected. An inventory without
+	// them is still an inventory: no VM then says whether it is locked.
+	locks, locksRead := lockIndex(got[lLocks]), errs[lLocks] == nil
+	errs[lLocks] = nil
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
@@ -332,7 +338,11 @@ func (p *Provider) readSubscription(ctx context.Context, t token, subscription s
 
 	var out []cloud.Resource
 	for _, r := range got[lVMs] {
-		out = append(out, instance(r, ids, power, nics, addresses, subnets))
+		vm := instance(r, ids, power, nics, addresses, subnets)
+		if locksRead {
+			locks.mark(vm.Details, r.ID)
+		}
+		out = append(out, vm)
 	}
 	for _, r := range got[lDisks] {
 		out = append(out, disk(r, ids))
