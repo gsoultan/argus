@@ -62,7 +62,10 @@ MemoryDenyWriteExecute=yes
 RemoveIPC=no
 
 # Reporting to the control plane, plus the local unix socket the shim uses.
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# AF_NETLINK is how Go reads the interface table on Linux (net.Interfaces):
+# without it every address read fails, so the server's LAN address never
+# reaches the console and the database network panels list none.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 
 # Reading another user's authorized_keys needs DAC_READ_SEARCH. Loading the
 # exec probe (kernel-observed commands) needs BPF and PERFMON, on kernels 5.8
