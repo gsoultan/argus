@@ -43,6 +43,10 @@ type Rect struct {
 	X, Y          int
 	Width, Height int
 	Pixels        []byte
+	// Copy says the rectangle is not pixels but a move: the screen's own
+	// pixels at (SrcX, SrcY), Width by Height, drawn at (X, Y). See ScrBlt.
+	Copy       bool
+	SrcX, SrcY int
 }
 
 // Bitmap is one screen rectangle as the target sent it, before decoding.
@@ -61,10 +65,16 @@ type Bitmap struct {
 	// Data aliases the PDU it was read from. Encode or decode it before the
 	// next read.
 	Data []byte
+	// Copy marks a move rather than pixels, as Rect's does: Data is empty.
+	Copy       bool
+	SrcX, SrcY int
 }
 
 // Decode expands the bitmap to RGBA.
 func (b Bitmap) Decode() (Rect, error) {
+	if b.Copy {
+		return Rect{X: b.X, Y: b.Y, Width: b.Width, Height: b.Height, Copy: true, SrcX: b.SrcX, SrcY: b.SrcY}, nil
+	}
 	px, err := pixels.Decode(b.Data, b.Width, b.Height, b.BPP, b.Compressed)
 	if err != nil {
 		return Rect{}, err

@@ -32,6 +32,7 @@
 
 import { FRAME_GRAPHICS, FRAME_GRAPHICS_PART, PartJoiner } from '~/lib/gfx'
 import { GraphicsRenderer } from '~/lib/gfxRenderer'
+import { drawMove, FRAME_COPY, readMove, type DisplayMove } from '~/lib/displayMove'
 import { loadPixels, type PixelsModule } from '~/lib/rdpPixels'
 
 /** Frame types, matching internal/rdp/display.go. */
@@ -59,6 +60,8 @@ export type RDPWorkerRequest = ArrayBuffer | { type: 'canvas'; canvas: Offscreen
 
 export type RDPWorkerResponse =
   | { type: 'rects'; rects: DisplayRect[] }
+  /** The page draws it, in order with the rectangles around it. */
+  | { type: 'copy'; move: DisplayMove }
   | { type: 'resize'; width: number; height: number }
   | { type: 'ready'; width: number; height: number }
   | { type: 'closed' }
@@ -210,6 +213,16 @@ async function handle(buf: ArrayBuffer) {
           await flush(pending)
           await renderer().command(command)
         }
+        continue
+      }
+
+      if (kind === FRAME_COPY) {
+        const move = readMove(view, at)
+        at += HEADER
+        // What came before is on the screen first: the move reads it.
+        await flush(pending)
+        if (screen && surface) drawMove(screen, surface, move)
+        else post({ type: 'copy', move })
         continue
       }
 

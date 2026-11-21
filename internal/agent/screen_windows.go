@@ -307,6 +307,9 @@ func (windowsScreenHost) StartHelper(session uint32, mode helperMode) (io.ReadWr
 	if mode.slow {
 		args = append(args, "--slow")
 	}
+	if mode.scroll {
+		args = append(args, "--scroll")
+	}
 	cmdline := windows.ComposeCommandLine(args)
 	var pi windows.ProcessInformation
 	if err := windows.CreateProcessAsUser(token, nil, windows.StringToUTF16Ptr(cmdline),
@@ -346,7 +349,8 @@ const screenPipeBuffer = 1 << 20
 // console session and it serves the screen on stdin and stdout until stdin
 // closes. "--gdi" keeps it to GDI capture, which the agent asks for after a
 // helper has failed; "--video" lets it send motion as H.264; "--slow" starts
-// it as for a slow link, before the first frame has measured one.
+// it as for a slow link, before the first frame has measured one; "--scroll"
+// sends scrolling as moves.
 func RunScreenHelper(args []string, in io.Reader, out io.Writer) int {
 	// Real pixels, not the scaled ones a process that is not DPI aware sees.
 	if procSetProcessDpiAwareCtx.Find() == nil {
@@ -364,6 +368,8 @@ func RunScreenHelper(args []string, in io.Reader, out io.Writer) int {
 			video = true
 		case "--slow":
 			pace.linkRate = linkRateSlowStart
+		case "--scroll":
+			pace.scroll = true
 		}
 	}
 	c := newConsoleCapturer(gdiOnly)

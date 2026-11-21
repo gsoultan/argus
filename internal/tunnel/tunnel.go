@@ -148,6 +148,10 @@ type DesktopOpen struct {
 	// SlowLink says the browser reports a slow link, so the desktop is
 	// asked for what one can carry. An agent that predates it ignores it.
 	SlowLink bool `json:"slowLink,omitempty"`
+	// Scroll says the browser draws moves of its own pixels (FrameCopy), so
+	// screen sharing may send a scroll as one. An agent that predates it
+	// ignores it and sends tiles, which every browser draws.
+	Scroll bool `json:"scroll,omitempty"`
 }
 
 // Clipboard directions, as the asset type's rule sets them.

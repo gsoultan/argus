@@ -21,6 +21,9 @@ func helperArgs(mode helperMode) []string {
 	if mode.video {
 		args = append(args, "--video")
 	}
+	if mode.scroll {
+		args = append(args, "--scroll")
+	}
 	return args
 }
 

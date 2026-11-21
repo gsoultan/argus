@@ -141,12 +141,16 @@ func RunScreenHelper(args []string, in io.Reader, out io.Writer) int {
 	}
 	newInput := func() screenInputer { return newMacInputer(cg) }
 	var newVideo func(int, int) (screenVideo, error)
+	pace := defaultScreenPace
 	for _, a := range args {
-		if a == "--video" {
+		switch a {
+		case "--video":
 			newVideo = newMacVideo
+		case "--scroll":
+			pace.scroll = true
 		}
 	}
-	if err := serveScreen(c, newInput, in, out, defaultScreenPace, newVideo); err != nil {
+	if err := serveScreen(c, newInput, in, out, pace, newVideo); err != nil {
 		return fail(err)
 	}
 	return 0

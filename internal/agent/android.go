@@ -244,7 +244,7 @@ func Android(cfg AndroidConfig) TunnelService {
 		if err != nil {
 			return nil, DesktopInfo{}, err
 		}
-		c, info, err := connectAndroid(dev, g.Principal, o.SlowLink, log)
+		c, info, err := connectAndroid(dev, g.Principal, screenWants{slow: o.SlowLink, scroll: o.Scroll}, log)
 		if err != nil {
 			_ = dev.Close()
 			return nil, DesktopInfo{}, err
@@ -257,12 +257,14 @@ func Android(cfg AndroidConfig) TunnelService {
 // connectAndroid opens the device for one session and waits for its first
 // picture. "view" opens it with input refused here, whatever the console
 // sends. slow is the browser having said its link is slow.
-func connectAndroid(dev AndroidDevice, principal string, slow bool,
+func connectAndroid(dev AndroidDevice, principal string, wants screenWants,
 	log *slog.Logger) (*androidClient, DesktopInfo, error) {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	sc, err := openScreenOn(&androidHost{dev: dev}, false, slow, log)
+	// Tiles, and scrolling as moves where the browser draws them: no video
+	// from a device yet.
+	sc, err := openScreenOn(&androidHost{dev: dev}, screenWants{slow: wants.slow, scroll: wants.scroll}, log)
 	if err != nil {
 		return nil, DesktopInfo{}, fmt.Errorf("the device did not show its screen: %w", err)
 	}
@@ -288,6 +290,7 @@ func (h *androidHost) StartHelper(_ uint32, mode helperMode) (io.ReadWriteCloser
 	if mode.slow {
 		pace.linkRate = linkRateSlowStart
 	}
+	pace.scroll = mode.scroll
 	go func() {
 		// The device's own input goes through Play, never through here.
 		err := serveScreen(androidCapturer{dev: h.dev}, func() screenInputer { return noScreenInput{} },
