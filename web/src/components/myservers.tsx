@@ -1,7 +1,7 @@
 import './ssh/ssh.css'
 import { lazy, Suspense, useMemo, useState, type ReactNode } from 'react'
 import {
-  ActionIcon, Badge, Box, Button, Card, Group, Menu, Progress, SegmentedControl, SimpleGrid, Skeleton, Stack, Text, TextInput,
+  ActionIcon, Badge, Box, Button, Card, Group, Menu, Progress, SegmentedControl, Select, SimpleGrid, Skeleton, Stack, Text, TextInput,
   ThemeIcon, Tooltip,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
@@ -14,7 +14,7 @@ import { AssetAddresses } from '~/components/AssetAddresses'
 import { DownloadSshConfigButton } from '~/components/ssh/OwnTerminal'
 import { shortCommand } from '~/lib/sshConfig'
 import { notifyOk } from '~/lib/notify'
-import { EmptyState, Toolbar } from '~/components/page'
+import { EmptyState } from '~/components/page'
 import { ButtonLink } from '~/components/links'
 import { now, relTime } from '~/components/primitives'
 import { assetsQuery, meQuery, myServersQuery, requestsQuery } from '~/lib/queries'
@@ -29,6 +29,7 @@ import { assetsUsageQuery, usageTone, type AssetUsageRow } from '~/lib/assetsUsa
 import { usePreference } from '~/lib/preferences'
 
 /** Fetched only by someone who picks the table. */
+import type { GroupBy } from '~/components/AssetTable'
 const AssetTable = lazy(() => import('~/components/AssetTable').then((m) => ({ default: m.AssetTable })))
 
 // Re-exported: every page that shows a server's status imports them from here.
@@ -93,6 +94,19 @@ function Dot({ color }: { color: string }) {
       h={6}
       style={{ borderRadius: '50%', background: `var(--mantine-color-${color}-5)` }}
     />
+  )
+}
+
+/** One filter in the Assets bar: a word, a coloured dot and a count, on or off. */
+function Pill({ pressed, onClick, label, count, dot }: {
+  pressed: boolean; onClick: () => void; label: string; count?: number; dot?: string
+}) {
+  return (
+    <button type="button" className="argus-pill" aria-pressed={pressed} onClick={onClick}>
+      {dot && <span className="argus-pill-dot" style={{ background: `var(--mantine-color-${dot}-5)` }} />}
+      {label}
+      {count !== undefined && <>{' '}<span className="argus-pill-count">{count}</span></>}
+    </button>
   )
 }
 
@@ -569,6 +583,7 @@ export function ServerCards({ initialShow = 'all' }: { initialShow?: Show } = {}
   const [needs, setNeeds] = useState(false)
   const { data: waiting } = useQuery({ ...updatesWaitingQuery(), enabled: whole })
   const [view, setView] = usePreference('assets.view')
+  const [groupBy, setGroupBy] = useState<GroupBy>('needs')
   const waitingBy = useMemo(() => new Map((waiting?.assets ?? []).map((w) => [w.assetId, w])), [waiting])
   const needCount = (assets ?? []).filter((a) => needsUpdates(waitingBy.get(a.id))).length
   const [lowOnly, setLowOnly] = useState(false)
@@ -656,88 +671,111 @@ export function ServerCards({ initialShow = 'all' }: { initialShow?: Show } = {}
         </Box>
       )}
 
-      <Toolbar
-        right={
-          assets && (
-            <Group gap="md" wrap="nowrap">
-              <Text size={FS.micro} c="dimmed" data-testid="asset-count">
-                {filtering ? `${visible.length} of ${assets.length}` : assets.length}{' '}
-                {assets.length === 1 ? 'asset' : 'assets'}
-              </Text>
+      {assets && assets.length > 0 && (
+        <Box className="argus-filterbar" data-testid="asset-filters">
+          <Group gap="sm" wrap="wrap" align="center">
+            <TextInput
+              style={{ flex: '1 1 220px', minWidth: 180 }}
+              size="sm"
+              aria-label="Find a server"
+              placeholder="Find by name, IP or tag"
+              leftSection={<IconSearch size={15} />}
+              value={text}
+              onChange={(e) => setText(e.currentTarget.value)}
+            />
+            {hasTypes && (
+              <Select
+                size="sm"
+                w={170}
+                aria-label="Type of asset"
+                value={type}
+                allowDeselect={false}
+                onChange={(v) => v && setType(v as TypeFilter)}
+                data={[
+                  { value: 'all', label: 'All types' },
+                  ...ASSET_TYPES.filter((t) => typeCounts[t] > 0).map((t) => ({
+                    value: t,
+                    label: `${ASSET_TYPE_LABEL[t].many} · ${typeCounts[t]}`,
+                  })),
+                ]}
+              />
+            )}
+            {hasBothKinds && (
+              <Select
+                size="sm"
+                w={150}
+                aria-label="Kind of server"
+                value={kind}
+                allowDeselect={false}
+                onChange={(v) => v && setKind(v as Kind)}
+                data={[
+                  { value: 'all', label: 'Any system' },
+                  { value: 'linux', label: 'Linux' },
+                  { value: 'windows', label: 'Windows' },
+                  { value: 'android', label: 'Android' },
+                ].filter((k) => k.value === 'all' || kinds.has(k.value as 'linux' | 'windows' | 'android'))}
+              />
+            )}
+            <Group gap="xs" wrap="nowrap" ml="auto">
               <SegmentedControl
-                size="xs"
+                size="sm"
                 aria-label="Show as"
                 value={view}
                 onChange={(v) => setView(v as 'cards' | 'table')}
                 data={[
-                  { value: 'cards', label: <Group gap={4} wrap="nowrap"><IconLayoutGrid size={14} />Cards</Group> },
-                  { value: 'table', label: <Group gap={4} wrap="nowrap"><IconTable size={14} />Table</Group> },
+                  { value: 'cards', label: <Group gap={6} wrap="nowrap"><IconLayoutGrid size={15} />Cards</Group> },
+                  { value: 'table', label: <Group gap={6} wrap="nowrap"><IconTable size={15} />Table</Group> },
                 ]}
               />
-              <DownloadSshConfigButton size="sm" />
+              <DownloadSshConfigButton icon />
             </Group>
-          )
-        }
-      >
-        {hasTypes && (
-          <SegmentedControl
-            aria-label="Type of asset"
-            value={type}
-            onChange={(v) => setType(v as TypeFilter)}
-            data={[
-              { value: 'all', label: 'All' },
-              ...ASSET_TYPES.filter((t) => typeCounts[t] > 0).map((t) => ({
-                value: t,
-                label: `${ASSET_TYPE_LABEL[t].many} (${typeCounts[t]})`,
-              })),
-            ]}
-          />
-        )}
-        <TextInput
-          w={260}
-          aria-label="Find a server"
-          placeholder="Find by name, IP or tag"
-          leftSection={<IconSearch size={14} />}
-          value={text}
-          onChange={(e) => setText(e.currentTarget.value)}
-        />
-        <SegmentedControl
-          aria-label="Status"
-          value={show}
-          onChange={(v) => setShow(v as Show)}
-          data={[
-            { value: 'all', label: counts ? `All (${counts.all})` : 'All' },
-            // Blocked is rare, so it is offered only while a server is.
-            ...SHOWN.filter((k) => k !== 'blocked' || (counts?.blocked ?? 0) > 0 || show === 'blocked').map((k) => ({
-              value: k, label: counts ? `${ANSWER_LABEL[k]} (${counts[k]})` : ANSWER_LABEL[k],
-            })),
-          ]}
-        />
-        {(needCount > 0 || needs) && (
-          <Button size="xs" variant={needs ? 'filled' : 'default'} aria-pressed={needs} onClick={() => setNeeds(!needs)}>
-            Needs updates ({needCount})
-          </Button>
-        )}
-        {(lowCount > 0 || lowOnly) && (
-          <Button size="xs" variant={lowOnly ? 'filled' : 'default'} aria-pressed={lowOnly} onClick={() => setLowOnly(!lowOnly)}
-            color={[...lowBy.values()].some((r) => r.warnings[0]?.level === 'critical') ? 'rose' : 'amber'}>
-            Running low ({lowCount})
-          </Button>
-        )}
-        {hasBothKinds && (
-          <SegmentedControl
-            aria-label="Kind of server"
-            value={kind}
-            onChange={(v) => setKind(v as Kind)}
-            data={[
-              { value: 'all', label: 'Any' },
-              { value: 'linux', label: 'Linux' },
-              { value: 'windows', label: 'Windows' },
-              { value: 'android', label: 'Android' },
-            ].filter((k) => k.value === 'all' || kinds.has(k.value as 'linux' | 'windows' | 'android'))}
-          />
-        )}
-      </Toolbar>
+          </Group>
+
+          <Group className="argus-filterbar-pills" gap="xs" wrap="wrap" align="center" justify="space-between">
+            <Group gap={6} wrap="wrap" role="group" aria-label="Status">
+              <Pill pressed={show === 'all'} onClick={() => setShow('all')} label="All" count={counts?.all} />
+              {/* Blocked is rare, so it is offered only while a server is. */}
+              {SHOWN.filter((k) => k !== 'blocked' || (counts?.blocked ?? 0) > 0 || show === 'blocked').map((k) => (
+                <Pill key={k} pressed={show === k} onClick={() => setShow(show === k ? 'all' : k)}
+                  label={ANSWER_LABEL[k]} count={counts?.[k]} dot={k === 'online' ? 'teal' : 'rose'} />
+              ))}
+              {(needCount > 0 || needs || lowCount > 0 || lowOnly) && (
+                <Box aria-hidden w={1} h={18} mx={4} style={{ background: 'var(--color-line)' }} />
+              )}
+              {(needCount > 0 || needs) && (
+                <Pill pressed={needs} onClick={() => setNeeds(!needs)} label="Needs updates" count={needCount} dot="azure" />
+              )}
+              {(lowCount > 0 || lowOnly) && (
+                <Pill pressed={lowOnly} onClick={() => setLowOnly(!lowOnly)} label="Running low" count={lowCount}
+                  dot={[...lowBy.values()].some((r) => r.warnings[0]?.level === 'critical') ? 'rose' : 'amber'} />
+              )}
+            </Group>
+            <Group gap="sm" wrap="nowrap">
+              {filtering && (
+                <Button size="compact-xs" variant="subtle" color="gray" onClick={clear}>Clear</Button>
+              )}
+              <Text size={FS.meta} c="dimmed" data-testid="asset-count">
+                {filtering ? `${visible.length} of ${assets.length}` : assets.length}{' '}
+                {assets.length === 1 ? 'asset' : 'assets'}
+              </Text>
+              {view === 'table' && (
+                <Select
+                  size="xs"
+                  w={190}
+                  aria-label="Group by"
+                  value={groupBy}
+                  allowDeselect={false}
+                  onChange={(v) => v && setGroupBy(v as GroupBy)}
+                  data={[
+                    { value: 'needs', label: 'Group: what needs you' },
+                    { value: 'none', label: 'No groups' },
+                  ]}
+                />
+              )}
+            </Group>
+          </Group>
+        </Box>
+      )}
 
       {assets === undefined ? (
         <CardGrid busy>
@@ -771,7 +809,7 @@ export function ServerCards({ initialShow = 'all' }: { initialShow?: Show } = {}
         />
       ) : view === 'table' ? (
         <Suspense fallback={<Skeleton h={320} />}>
-          <AssetTable assets={visible} admin={canAdmin} mineBy={mineBy} waitingBy={waitingBy} usageBy={usageBy}
+          <AssetTable assets={visible} groupBy={groupBy} admin={canAdmin} mineBy={mineBy} waitingBy={waitingBy} usageBy={usageBy}
             updates={waiting ? { latest: waiting.latest } : undefined} />
         </Suspense>
       ) : (

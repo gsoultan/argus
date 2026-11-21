@@ -1,7 +1,7 @@
 import './ssh.css'
 import { useEffect, useState, type ReactNode } from 'react'
 import {
-  Alert, Anchor, Badge, Box, Button, Code, CopyButton, Group, SegmentedControl, Stack, Text, Textarea, ThemeIcon,
+  ActionIcon, Alert, Anchor, Badge, Box, Button, Code, CopyButton, Group, SegmentedControl, Stack, Text, Textarea, ThemeIcon, Tooltip,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -50,18 +50,31 @@ export function directTargets(mine: MyServer[] | undefined, assets: Asset[] | un
     .map((a) => ({ hostname: a.hostname, address: a.address }))
 }
 
-export function DownloadSshConfigButton({ variant = 'default', size }: { variant?: 'default' | 'light'; size?: 'xs' | 'sm' }) {
+export function DownloadSshConfigButton({ variant = 'default', size, icon = false }: {
+  variant?: 'default' | 'light'; size?: 'xs' | 'sm'
+  /** Drawn as an icon with its name on hover, for a toolbar. */
+  icon?: boolean
+}) {
   const { data: account } = useQuery({ ...myServerAccountQuery(), retry: false })
   const { data: mine } = useQuery({ ...myServersQuery(), retry: false })
   const { data: assets } = useQuery(assetsQuery({}))
   const targets = directTargets(mine, assets)
   if (!account?.loginName || targets.length === 0) return null
+  const download = () => {
+    downloadText(sshConfig(account.loginName!, targets), 'argus-ssh-config.txt')
+    notifyOk('SSH config downloaded', `Add it to ~/.ssh/config, then run "ssh <server>" for any of your ${targets.length} servers.`)
+  }
+  if (icon) {
+    return (
+      <Tooltip label="Download SSH config">
+        <ActionIcon variant="default" size={30} aria-label="Download SSH config" onClick={download}>
+          <IconDownload size={16} />
+        </ActionIcon>
+      </Tooltip>
+    )
+  }
   return (
-    <Button variant={variant} size={size} leftSection={<IconDownload size={16} />}
-      onClick={() => {
-        downloadText(sshConfig(account.loginName, targets), 'argus-ssh-config.txt')
-        notifyOk('SSH config downloaded', `Add it to ~/.ssh/config, then run "ssh <server>" for any of your ${targets.length} servers.`)
-      }}>
+    <Button variant={variant} size={size} leftSection={<IconDownload size={16} />} onClick={download}>
       Download SSH config
     </Button>
   )
