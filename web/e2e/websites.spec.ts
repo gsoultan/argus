@@ -17,6 +17,7 @@ const base = {
   expectStatus: 0, keyword: '', everySeconds: 60, timeoutSeconds: 30, paused: false, createdBy: 'dev@northwind.id',
   createdAt: ago(60 * 24 * 40), failingRounds: 0, lastOutcome: 'up', confirmFrom: [] as string[], confirmHosts: [] as string[],
   telegram: 'default', telegramBot: '', telegramChats: [] as string[],
+  method: 'GET', body: '', headerNames: [] as string[],
 }
 
 const LIST = [
@@ -27,6 +28,7 @@ const LIST = [
   { ...base, id: 'w2', name: 'Payments API', url: 'https://pay.northwind.id/v1/ping', state: 'down', stateSince: ago(7),
     lastAt: ago(0.4), lastMs: 30_000, lastDetail: 'no answer in 30s (3 tries from Argus; also failed from web-sg-01)',
     confirmFrom: ['a1'], confirmHosts: ['web-sg-01'], telegram: 'chats', telegramBot: 'b-pay', telegramChats: ['-100payments'],
+    method: 'POST', body: '{"ping": true}', headerNames: ['X-Api-Key'],
     uptime: { day: 99.51, week: 99.93, month: 99.97 },
     openOutage: { id: 9, checkId: 'w2', startedAt: ago(7), cause: 'no answer in 30s', confirmed: 'Argus, web-sg-01' } },
   { ...base, id: 'w3', name: 'Docs', url: 'https://docs.northwind.id', state: 'up', stateSince: ago(60 * 3),
@@ -135,6 +137,48 @@ test('websites: adding one, with a test first', async ({ page }) => {
   await form.getByRole('button', { name: 'Test now' }).click()
   await expect(form.getByText(/Up from Argus: answered 200 OK in 211 ms/)).toBeVisible()
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/03-add-website.png` })
+})
+
+test('websites: a check that sends a POST with a key', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1200 })
+  await signIn(page)
+  let tested: Record<string, unknown> | null = null
+  await page.route('**/api/v1/websites/test?id=w2', (r) => {
+    tested = JSON.parse(r.request().postData() ?? '{}')
+    return r.fulfill({ json: { ok: true, status: 200, detail: 'answered 200 OK', ms: 143 } })
+  })
+  await page.goto('/websites?check=w2')
+  await expect(page.getByText('Sends POST, a body and the X-Api-Key header. Header values are kept encrypted and never shown.')).toBeVisible()
+  await page.getByRole('button', { name: 'Edit' }).click()
+  const form = page.getByRole('dialog', { name: 'Edit Payments API' })
+  await expect(form.getByRole('radio', { name: 'POST' })).toBeChecked()
+  await expect(form.getByLabel('Header 1 value')).toHaveAttribute('placeholder', 'Saved; type to replace')
+  await expect(form.getByLabel('Body')).toHaveValue('{"ping": true}')
+  await form.getByRole('button', { name: 'Add header' }).click()
+  await form.getByLabel('Header 2 name').fill('X-Trace')
+  await form.getByLabel('Header 2 value').fill('argus')
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/10-website-request.png` })
+  await form.getByRole('button', { name: 'Test now' }).click()
+  await expect(form.getByText(/Up from Argus: answered 200 OK in 143 ms/)).toBeVisible()
+  expect(tested).toMatchObject({
+    method: 'POST', body: '{"ping": true}',
+    headers: [{ name: 'X-Api-Key', value: '', keep: true }, { name: 'X-Trace', value: 'argus' }],
+  })
+  // HEAD has no page, so it has no word to look for and no body.
+  await form.locator('label', { hasText: /^HEAD$/ }).click()
+  await expect(form.getByLabel('Body')).toBeHidden()
+  await expect(form.getByLabel('Page must contain')).toBeDisabled()
+})
+
+test('websites: a plain check offers the request only when asked', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1100 })
+  await signIn(page)
+  await page.goto('/websites')
+  await page.getByRole('button', { name: 'Add website' }).first().click()
+  const form = page.getByRole('dialog')
+  await expect(form.getByRole('radio', { name: 'POST' })).toHaveCount(0)
+  await form.getByRole('button', { name: 'Send a method, headers or a body' }).click()
+  await expect(form.getByRole('radio', { name: 'GET' })).toBeChecked()
 })
 
 test('websites: on a phone', async ({ page }) => {

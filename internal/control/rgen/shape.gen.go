@@ -1517,6 +1517,10 @@ func _assertWebsiteCheckShape(m m0.WebsiteCheck) {
 		m.CertNotAfter,
 		m.NextAt,
 		m.LeaseUntil,
+		m.Method,
+		m.RequestBody,
+		m.HeaderNames,
+		m.HeadersSealed,
 	}
 }
 
