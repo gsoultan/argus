@@ -169,7 +169,7 @@ function AssetDetail() {
         }
         actions={
           <>
-            <AssetSwitcher currentId={asset.id} />
+            <AssetSwitcher currentId={asset.id} tab={tab} />
             {canEdit && (
               <Button
                 variant="default"

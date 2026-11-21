@@ -149,15 +149,11 @@ export function HomeTiles() {
         label="Servers online"
         value={servers ? servers.answering : undefined}
         small={servers ? `of ${servers.total}` : undefined}
-        tone={servers && servers.down > 0 ? 'denied' : servers && servers.quiet > 0 ? 'pending' : 'calm'}
+        tone={servers && servers.down + servers.quiet > 0 ? 'denied' : 'calm'}
         sub={servers ? (servers.down + servers.quiet === 0 ? 'Every server answers' : (
-          // The same two words, and the same counts, as Fleet health and the
-          // Assets list: a server with no agent is not counted as down.
-          <>
-            {servers.down > 0 && <Text span inherit c={INK.denied} fw={600}>{servers.down} not answering</Text>}
-            {servers.down > 0 && servers.quiet > 0 && ' · '}
-            {servers.quiet > 0 && <Text span inherit c={servers.down > 0 ? undefined : INK.pending} fw={servers.down > 0 ? undefined : 600}>{servers.quiet} no agent</Text>}
-          </>
+          // The same word and count as the Assets list: a server whose agent
+          // went silent and one no agent ever reported from are both Offline.
+          <Text span inherit c={INK.denied} fw={600}>{servers.down + servers.quiet} offline</Text>
         )) : undefined}
         viz={<Line values={trends?.answering} max={servers?.total} color={servers && servers.down > 0 ? 'var(--color-denied)' : 'var(--color-verified)'} label="Servers answering, last hour" />}
         to={() => void navigate({ to: '/assets' })}
@@ -367,15 +363,17 @@ export function FleetHealth() {
       ) : (
         <Box className="argus-health" data-testid="fleet-health">
           <Box>
-            <Box className="argus-stack" role="img" aria-label={`${servers.answering} answering, ${servers.quiet} with no agent, ${servers.down} not answering`}>
+            <Box className="argus-stack" role="img" aria-label={`${servers.answering} online, ${servers.down + servers.quiet} offline`}>
               <i data-tone="calm" style={{ width: `${(servers.answering / total) * 100}%` }} />
-              <i data-tone="pending" style={{ width: `${(servers.quiet / total) * 100}%` }} />
-              <i data-tone="denied" style={{ width: `${(servers.down / total) * 100}%` }} />
+              <i data-tone="denied" style={{ width: `${((servers.down + servers.quiet) / total) * 100}%` }} />
             </Box>
             <Group gap="md" mt={8}>
-              <Text size={FS.meta} c="dimmed"><Text span inherit fw={600} c="var(--mantine-color-text)">{servers.answering}</Text> answering</Text>
-              {servers.quiet > 0 && <Text size={FS.meta} c="dimmed"><Text span inherit fw={600} c="var(--mantine-color-text)">{servers.quiet}</Text> no agent</Text>}
-              {servers.down > 0 && <Text size={FS.meta} c="dimmed"><Text span inherit fw={600} c="var(--mantine-color-text)">{servers.down}</Text> not answering</Text>}
+              <Text size={FS.meta} c="dimmed"><Text span inherit fw={600} c="var(--mantine-color-text)">{servers.answering}</Text> online</Text>
+              {servers.down + servers.quiet > 0 && (
+                <AnchorLink to="/assets" search={{ status: 'down' }} size={FS.meta} c={INK.denied}>
+                  <Text span inherit fw={600}>{servers.down + servers.quiet}</Text> offline
+                </AnchorLink>
+              )}
             </Group>
           </Box>
           <Box>
@@ -463,7 +461,8 @@ export function useLiveNeeds(): {
     unreviewed,
     fullDisks: (disks ?? []).filter((d) => d.used >= 95),
     failed15m: signIns?.failed15m ?? 0,
-    down: servers?.down ?? 0,
+    // Offline: an agent gone quiet and one that never reported alike.
+    down: (servers?.down ?? 0) + (servers?.quiet ?? 0),
   }
 }
 

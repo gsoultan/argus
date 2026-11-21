@@ -183,10 +183,10 @@ describe('navigation', () => {
     expect(within(nav).queryByRole('link', { name: /connect/i })).not.toBeInTheDocument()
   })
 
-  it('puts the audit log under Activity', async () => {
+  it('puts the audit log under Records', async () => {
     await renderRoute('/audit')
     const nav = await screen.findByRole('navigation', { name: 'Main' })
-    expect(await within(nav).findByRole('link', { name: /^Activity/ })).toHaveAttribute('data-active')
+    expect(await within(nav).findByRole('link', { name: /^Audit log/ })).toHaveAttribute('data-active')
     expect(screen.getByRole('tab', { name: /audit log/i })).toHaveAttribute('aria-selected', 'true')
   })
 

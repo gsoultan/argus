@@ -229,7 +229,7 @@ export function connectsBy(a: Asset): string {
 }
 
 function reachLabel(a: Asset): string {
-  return { online: 'Online', slow: 'Slow', offline: 'Not answering', blocked: 'Blocked', unknown: 'No agent' }[reachOf(a)]
+  return { online: 'Online', slow: 'Slow', offline: 'Offline', blocked: 'Blocked', unknown: 'Offline' }[reachOf(a)]
 }
 
 /**
