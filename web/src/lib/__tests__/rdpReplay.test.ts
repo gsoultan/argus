@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { FRAME_COPY, readMove } from '~/lib/displayMove'
 import { FRAME_GRAPHICS, FRAME_GRAPHICS_PART } from '~/lib/gfx'
 import { indexReplay, lowerBound } from '~/lib/rdpReplay'
 
@@ -57,5 +58,28 @@ describe('replay index', () => {
     const { entries, graphics } = indexReplay(join(whole, cut))
     expect(entries).toHaveLength(1)
     expect(graphics).toBe(false)
+  })
+
+  it('takes a move as its twelve bytes, and says the frames must be drawn in order', () => {
+    // A move of 640x448 at (64, 0) from 40 rows below, as EncodeCopy writes it.
+    const move = new Uint8Array(4 + 12)
+    const v = new DataView(move.buffer)
+    v.setUint32(0, 30, true)
+    v.setUint8(4, FRAME_COPY)
+    v.setUint16(6, 64, true)
+    v.setUint16(8, 0, true)
+    v.setUint16(10, 640, true)
+    v.setUint16(12, 448, true)
+    v.setInt16(14, -40, true)
+    const buf = join(frame(0, 1, [1, 2, 3, 4], { w: 1, h: 1 }), move, frame(30, 1, [1, 2, 3, 4], { w: 1, h: 1 }))
+    const { entries, graphics, moves } = indexReplay(buf)
+    expect(graphics).toBe(false)
+    expect(moves).toBe(true)
+    expect(entries.map((e) => [e.ms, e.kind, e.size])).toEqual([
+      [0, 1, 16],
+      [30, FRAME_COPY, 12],
+      [30, 1, 16],
+    ])
+    expect(readMove(new DataView(buf), entries[1]!.at)).toEqual({ x: 64, y: 0, width: 640, height: 448, dy: -40 })
   })
 })

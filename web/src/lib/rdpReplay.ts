@@ -15,6 +15,7 @@
  * changed. Going backwards starts again from the beginning.
  */
 
+import { drawMove, FRAME_COPY, readMove } from './displayMove'
 import { FRAME_GRAPHICS, FRAME_GRAPHICS_PART, PartJoiner } from './gfx'
 import { GraphicsRenderer, type DirtyRect } from './gfxRenderer'
 
@@ -45,10 +46,11 @@ export interface ReplayEntry {
  * the first frame it does not know or that runs past the end, keeping what
  * came before.
  */
-export function indexReplay(buffer: ArrayBuffer): { entries: ReplayEntry[]; graphics: boolean } {
+export function indexReplay(buffer: ArrayBuffer): { entries: ReplayEntry[]; graphics: boolean; moves: boolean } {
   const view = new DataView(buffer)
   const entries: ReplayEntry[] = []
   let graphics = false
+  let moves = false
   let at = 0
   while (at + REPLAY_HEADER + HEADER <= buffer.byteLength) {
     const ms = view.getUint32(at, true)
@@ -59,15 +61,18 @@ export function indexReplay(buffer: ArrayBuffer): { entries: ReplayEntry[]; grap
       size = HEADER + view.getUint16(frame + 6, true) * view.getUint16(frame + 8, true) * 4
     } else if (kind === FRAME_GRAPHICS || kind === FRAME_GRAPHICS_PART) {
       size = HEADER + ((view.getUint32(frame + 4, true) + 3) & ~3)
+    } else if (kind === FRAME_COPY) {
+      size = HEADER
+      moves = true
     } else {
       break
     }
     if (frame + size > buffer.byteLength) break
-    if (kind !== FRAME_BITMAP) graphics = true
+    if (kind === FRAME_GRAPHICS || kind === FRAME_GRAPHICS_PART) graphics = true
     entries.push({ at: frame, ms, kind, size })
     at = frame + size
   }
-  return { entries, graphics }
+  return { entries, graphics, moves }
 }
 
 /** First index whose timestamp is >= `ms`. */
@@ -85,6 +90,12 @@ export function lowerBound(entries: Array<{ ms: number }>, ms: number): number {
 export class ReplayPlayer {
   readonly entries: ReplayEntry[]
   readonly graphics: boolean
+  /**
+   * Whether frames must be drawn onto the screen kept here, each once and in
+   * order: a picture depends on those before it, and a move (a scroll) reads
+   * the screen as they left it.
+   */
+  readonly sequential: boolean
   readonly durationMs: number
   private buffer: ArrayBuffer
   private width: number
@@ -103,9 +114,10 @@ export class ReplayPlayer {
     this.buffer = buffer
     this.width = width
     this.height = height
-    const { entries, graphics } = indexReplay(buffer)
+    const { entries, graphics, moves } = indexReplay(buffer)
     this.entries = entries
     this.graphics = graphics
+    this.sequential = graphics || moves
     this.durationMs = entries.reduce((m, e) => Math.max(m, e.ms), 0)
   }
 
@@ -119,7 +131,7 @@ export class ReplayPlayer {
    * where the last window ended, or starts again when `fromMs` is zero.
    */
   async window(fromMs: number, toMs: number): Promise<ReplayRect[]> {
-    if (this.graphics) return this.compose(fromMs, toMs)
+    if (this.sequential) return this.compose(fromMs, toMs)
     const view = new DataView(this.buffer)
     const rects: ReplayRect[] = []
     for (let i = lowerBound(this.entries, fromMs); i < this.entries.length; i++) {
@@ -153,6 +165,12 @@ export class ReplayPlayer {
       if (e.kind === FRAME_BITMAP) {
         const r = await this.bitmap(view, e)
         this.draw({ x: r.x, y: r.y, width: r.bitmap.width, height: r.bitmap.height, bitmap: r.bitmap })
+        continue
+      }
+      if (e.kind === FRAME_COPY) {
+        const m = readMove(view, e.at)
+        drawMove(this.ctx!, this.screen!, m)
+        this.touch(m.x, m.y, m.width, m.height)
         continue
       }
       const length = view.getUint32(e.at + 4, true)
@@ -191,10 +209,15 @@ export class ReplayPlayer {
   private draw(r: DirtyRect) {
     this.ctx!.drawImage(r.bitmap, r.x, r.y)
     r.bitmap.close()
-    const left = Math.max(0, r.x)
-    const top = Math.max(0, r.y)
-    const right = Math.min(this.width, r.x + r.width)
-    const bottom = Math.min(this.height, r.y + r.height)
+    this.touch(r.x, r.y, r.width, r.height)
+  }
+
+  /** Adds a rectangle to what the next window answers with. */
+  private touch(x: number, y: number, width: number, height: number) {
+    const left = Math.max(0, x)
+    const top = Math.max(0, y)
+    const right = Math.min(this.width, x + width)
+    const bottom = Math.min(this.height, y + height)
     if (right <= left || bottom <= top) return
     const d = this.dirty
     this.dirty = d

@@ -33,6 +33,8 @@ type update struct {
 	video  int
 	rects  int
 	pixels int
+	// moves is how many scrolls of the screen's own pixels it held.
+	moves  int
 	decode time.Duration
 }
 
@@ -67,6 +69,9 @@ type Report struct {
 	// BusyVideoShare is the part of the busy window's bytes that were
 	// H.264 pictures rather than exact tiles.
 	BusyVideoShare float64
+	// BusyMovesPerSec is how many moves (scrolls the browser drew from its
+	// own pixels) arrived a second.
+	BusyMovesPerSec float64
 
 	// LinkKbit is the link the drill pretended to be behind (-link), or 0
 	// for the one it really has.
@@ -206,6 +211,7 @@ func measure(ctx context.Context, c *websocket.Conn, send func(any), busyFor tim
 		if total := sum(busy, func(u update) int { return u.bytes }); total > 0 {
 			r.BusyVideoShare = float64(sum(busy, func(u update) int { return u.video })) / float64(total)
 		}
+		r.BusyMovesPerSec = float64(sum(busy, func(u update) int { return u.moves })) / secs
 		var gaps []float64
 		for i := 1; i < len(busy); i++ {
 			gaps = append(gaps, ms(busy[i].at.Sub(busy[i-1].at)))
@@ -278,6 +284,10 @@ func (m *meter) read() {
 				if p[0] == rdp.FrameGraphics {
 					u.pixels += pictureArea(p[rdp.FrameHeaderSize : rdp.FrameHeaderSize+n])
 				}
+			case rdp.FrameCopy:
+				u.moves++
+				u.rects++
+				u.pixels += w * h
 			case rdp.FrameClosed:
 				m.errs <- fmt.Errorf("the desktop closed")
 				return

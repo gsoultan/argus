@@ -238,3 +238,17 @@ live view and the browser decoder are unchanged. Ctrl+Alt+Del becomes
 unset. A console session change (sign-out) gets a new helper. Session and
 account are checked on a schedule independent of NextBitmaps calls: a
 per-call timer never fired on a busy screen.
+
+Scrolls as moves (2026-11-21): the helper keeps a maphash of every row of
+every 64px column (`internal/agent/screen_scroll.go`); when ≥8 tiles change it
+votes on a vertical shift and sends tiles that match the old screen at that
+shift as `rdp.FrameCopy` (kind 9, 12 bytes, int16 dy at [10:12]) before the
+frame's tiles, ordered so none reads where an earlier one wrote. Recorded as
+standalone ScrBlt primary orders (`internal/rdp/scrblt.go`) in a Fast-Path
+orders update; replay decodes them back to FrameCopy and draws sequentially.
+Only when the browser says `scroll: true` in logon (→ `DesktopOpen.Scroll` →
+helper `--scroll`); none within 1.2 s of a video picture (the browser may still
+be decoding it). Test `screen_scroll_test.go` checks the simulated browser
+ends each frame pixel-exact; a scrolled 1280x720 frame went ~560 KB → 16–64 KB.
+CI measures every session type at 1 Mbit/s as well as 2 (`measure_link ... 1000`,
+deskdrill `-scroll`), the owner's target being smooth and sharp at 1 Mbit/s.

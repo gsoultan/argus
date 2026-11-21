@@ -138,6 +138,7 @@ const bitmapDataHeader = 18
 
 // FastPathBitmaps packs rectangles into Fast-Path bitmap update PDUs, as a
 // Remote Desktop server sends them, each under the protocol's size limit.
+// Moves among them (Copy) become orders updates, in order (FastPathCopies).
 // A rectangle too large for one PDU on its own is left out; CompressRect on
 // 64-pixel tiles never makes one.
 func FastPathBitmaps(bitmaps []Bitmap) [][]byte {
@@ -150,7 +151,20 @@ func FastPathBitmaps(bitmaps []Bitmap) [][]byte {
 		}
 		group, size = group[:0], fastPathOverhead
 	}
-	for _, b := range bitmaps {
+	for i := 0; i < len(bitmaps); i++ {
+		b := bitmaps[i]
+		if b.Copy {
+			// Moves go as orders, in their place among the rectangles: what
+			// comes after a scroll is drawn over what it moved.
+			flush()
+			j := i
+			for j < len(bitmaps) && bitmaps[j].Copy {
+				j++
+			}
+			pdus = append(pdus, FastPathCopies(bitmaps[i:j])...)
+			i = j - 1
+			continue
+		}
 		n := bitmapDataHeader + len(b.Data)
 		if fastPathOverhead+n > maxFastPath {
 			continue

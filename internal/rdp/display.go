@@ -41,6 +41,9 @@ const (
 	// that understands it acknowledges it once that picture is drawn, which
 	// is how the agent knows to send the next one. See EncodeMark.
 	FrameMark uint8 = 8
+	// FrameCopy moves part of the screen the browser already has: see
+	// EncodeCopy.
+	FrameCopy uint8 = 9
 )
 
 // Fast-Path update codes (MS-RDPBCGR 2.2.9.1.2.1).
@@ -68,6 +71,9 @@ const updateTypeBitmap = 0x0001
 // keeps memory flat over a long session: the framebuffer lives in the browser,
 // and the gateway holds only whatever is in flight.
 func EncodeRect(r Rect) []byte {
+	if r.Copy {
+		return EncodeCopy(r.X, r.Y, r.Width, r.Height, r.SrcY)
+	}
 	out := make([]byte, FrameHeaderSize+len(r.Pixels))
 	out[0] = FrameBitmap
 	binary.LittleEndian.PutUint16(out[2:4], uint16(r.X))
@@ -93,6 +99,9 @@ func EncodeRect(r Rect) []byte {
 // padding keeps every following frame four-byte aligned, which the worker
 // relies on for raw RGBA frames sharing a message with these.
 func EncodeBitmap(b Bitmap) []byte {
+	if b.Copy {
+		return EncodeCopy(b.X, b.Y, b.Width, b.Height, b.SrcY)
+	}
 	padded := (len(b.Data) + 3) &^ 3
 	out := make([]byte, FrameHeaderSize+padded)
 	out[0] = FrameEncoded
@@ -107,6 +116,44 @@ func EncodeBitmap(b Bitmap) []byte {
 	binary.LittleEndian.PutUint16(out[10:12], uint16(len(b.Data)))
 	copy(out[FrameHeaderSize:], b.Data)
 	return out
+}
+
+// EncodeCopy serialises a move of the screen's own pixels: the rectangle
+// (x, srcY, width, height) as the browser has it now, drawn at (x, y). It is
+// how a scroll reaches the browser as a few bytes instead of the screenful
+// it moved. Only up and down: a screen scrolls that way, and the source's x
+// is the destination's.
+//
+//	offset 0   type        FrameCopy
+//	       2   x, y, width, height  (uint16 LE each): where it goes
+//	      10   dy          srcY - y (int16 LE)
+//
+// Twelve bytes and nothing after, so a reader that does not know the kind
+// skips it whole.
+func EncodeCopy(x, y, width, height, srcY int) []byte {
+	out := make([]byte, FrameHeaderSize)
+	out[0] = FrameCopy
+	binary.LittleEndian.PutUint16(out[2:4], uint16(x))
+	binary.LittleEndian.PutUint16(out[4:6], uint16(y))
+	binary.LittleEndian.PutUint16(out[6:8], uint16(width))
+	binary.LittleEndian.PutUint16(out[8:10], uint16(height))
+	binary.LittleEndian.PutUint16(out[10:12], uint16(int16(srcY-y)))
+	return out
+}
+
+// ParseCopy reads a FrameCopy back as a Bitmap.
+func ParseCopy(f []byte) (Bitmap, bool) {
+	if len(f) < FrameHeaderSize || f[0] != FrameCopy {
+		return Bitmap{}, false
+	}
+	b := Bitmap{
+		X: int(binary.LittleEndian.Uint16(f[2:4])), Y: int(binary.LittleEndian.Uint16(f[4:6])),
+		Width: int(binary.LittleEndian.Uint16(f[6:8])), Height: int(binary.LittleEndian.Uint16(f[8:10])),
+		Copy: true,
+	}
+	b.SrcX = b.X
+	b.SrcY = b.Y + int(int16(binary.LittleEndian.Uint16(f[10:12])))
+	return b, true
 }
 
 // EncodeControl serialises a frame that carries no pixels.
@@ -225,6 +272,14 @@ func (r *Reassembler) FeedBitmaps(pdu []byte) ([]Bitmap, error) {
 		if compressed || (code != fastPathUpdateBitmap && code != fastPathUpdateOrders &&
 			code != fastPathUpdateSurface) {
 			r.buf = r.buf[:0]
+			continue
+		}
+		if code == fastPathUpdateOrders {
+			if fragmentation == fragSingle {
+				if copies := parseScrBlts(data); len(copies) > 0 {
+					return copies, nil
+				}
+			}
 			continue
 		}
 		if code != fastPathUpdateBitmap {
