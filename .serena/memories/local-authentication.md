@@ -51,7 +51,7 @@ this finished a shape that was designed for rather than adding a new one.
   before and still verifies. Rollback-safe on purpose: a version reads sealed
   values from start, but only writes them and seals the old ones
   (`StartSealingMFA`) after serving 15 minutes, past the console update's
-  90 s health wait. Migration 102 is marked breaking for going back after
+  90 s health wait. Migration 103 is marked breaking for going back after
   that. `argus-control rekey` moves them to the new key before storing orders
   (`ResealMFASecrets`, idempotent, undone on failure). One that cannot be
   opened reads as "" so no code verifies: recovery code or reset-mfa.

@@ -31,7 +31,7 @@ import (
 // version reads a sealed secret as a wrong one: everyone's codes would stop
 // working. So this version reads sealed secrets from the moment it starts,
 // and only begins writing them, and sealing the ones already stored, once it
-// has been serving for a while (StartSealingMFA). Migration 102 marks the
+// has been serving for a while (StartSealingMFA). Migration 103 marks the
 // release as one a version from before cannot simply go back over: the way
 // back from then is the backup the update takes, which holds the secrets as
 // they were.
