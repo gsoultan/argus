@@ -49,8 +49,17 @@ console-only (old, misconfigured or forged): it is written as a critical
 Version skew: an old daemon never sends a Decision; the shim waits
 `decisionWait` (2s) and records. An error or a closed socket is fail-closed.
 
-Known gap: the collector socket is 0666, so a local user can fabricate
-`start` messages and with them audit entries.
+The collector socket is 0666, so the start message is the recorded user's
+word. `checkShimClaim` (`internal/agent/shim_peer.go`) holds it to the
+kernel's: SO_PEERCRED on Linux, LOCAL_PEERCRED/LOCAL_PEERPID on macOS. The
+pid must be the connecting process (0, unmapped in another pid namespace, is
+not checked) and the account a local account with the connecting uid, or
+`uid:<n>`; an account missing from the local passwd (a directory user) passes
+unless the uid is a local account's. A peer with the agent's own euid is not
+checked, which is also why the package tests (same uid) need no stub; tests of
+the check set `Collector.PeerOf`. Windows: the socket is in the protected state
+dir, so it is not checked; other platforms refuse. `ClientAddr` (from
+SSH_CONNECTION) is still the shim's word.
 
 ## Gateway
 

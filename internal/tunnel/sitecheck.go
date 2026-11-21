@@ -151,14 +151,24 @@ type SiteResult struct {
 	From         string     `json:"from,omitempty"`
 }
 
-// blockedAddr is an address a website check never connects to: link-local
-// covers the cloud metadata services (169.254.169.254, fd00:ec2::254 is
-// unique-local and allowed, as any private site is), whose answers are
-// credentials, not websites.
+// blockedAddr is an address a website check never connects to: the cloud
+// metadata services, whose answers are credentials, not websites. Link-local
+// covers most of them (169.254.169.254 on AWS, GCP, Azure and Oracle). Two
+// are not link-local and are named: AWS's IPv6 endpoint, fd00:ec2::254, is
+// unique-local, which any other private site may be; Alibaba Cloud's,
+// 100.100.100.200, is in the shared address space. A check's keyword is an
+// oracle for the body, so reaching one of them would let a page's text be
+// read out a guess at a time.
 func blockedAddr(a netip.Addr) bool {
 	a = a.Unmap()
 	return a.IsLinkLocalUnicast() || a.IsLinkLocalMulticast() || a.IsMulticast() ||
-		a.IsUnspecified() || a.IsInterfaceLocalMulticast()
+		a.IsUnspecified() || a.IsInterfaceLocalMulticast() || metadataAddrs[a]
+}
+
+// metadataAddrs are the metadata services outside link-local.
+var metadataAddrs = map[netip.Addr]bool{
+	netip.MustParseAddr("fd00:ec2::254"):   true,
+	netip.MustParseAddr("100.100.100.200"): true,
 }
 
 // siteProxy is the environment's proxy, except for a blocked address

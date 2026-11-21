@@ -28,9 +28,12 @@ This is the shutdown that happens most often -- once per host, per upgrade.
 // The socket lives under a short path on purpose: a unix socket address is
 // capped near 104 bytes, and t.TempDir() on macOS is long enough on its own to
 // push past it. The failure is a bare "invalid argument" on dial.
-func testCollector(t *testing.T) (*Collector, string) {
+func testCollector(t *testing.T, setup ...func(*Collector)) (*Collector, string) {
 	t.Helper()
 	c := NewCollector(t.TempDir(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for _, f := range setup {
+		f(c)
+	}
 
 	sockDir, err := os.MkdirTemp(shortTempRoot, "argus")
 	if err != nil {

@@ -34,6 +34,10 @@ type Collector struct {
 	// against authorized_keys. Empty is the system's.
 	PasswdFile string
 
+	// PeerOf stands in for asking the kernel who connected (tests); nil
+	// asks the kernel. See checkShimClaim.
+	PeerOf func(net.Conn) (ShimPeer, error)
+
 	mu       sync.Mutex
 	active   map[string]*activeSession
 	listener net.Listener
@@ -601,6 +605,15 @@ func (c *Collector) handle(conn net.Conn) {
 			// the socket is open to every local user, and a claim of having
 			// come through Argus is not something to take from one of them.
 			m.Origin = Direct
+			// And the account and process it names are the ones the kernel
+			// says connected: the message is written by the account being
+			// recorded, which could otherwise claim to be anyone.
+			if err := c.checkShimClaim(conn, m); err != nil {
+				c.log.Warn("refused a login whose start message does not match who connected",
+					"principal", m.Principal, "pid", m.PID, "client", m.ClientAddr, "error", err)
+				_ = json.NewEncoder(conn).Encode(Ack{Error: "refused: " + err.Error()})
+				return
+			}
 			// How it signed in, checked against authorized_keys here rather
 			// than taken from the shim.
 			m.Auth = c.loginAuth(m)
