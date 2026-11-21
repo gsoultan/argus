@@ -2,11 +2,17 @@ package control
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -98,9 +104,15 @@ type WebsiteCheck struct {
 	Paused         bool     `json:"paused"`
 	// Telegram is default (follow the Websites setting), off, or chats:
 	// its own bot (TelegramBot) and some of that bot's chats.
-	Telegram      string    `json:"telegram"`
-	TelegramBot   string    `json:"telegramBot"`
-	TelegramChats []string  `json:"telegramChats"`
+	Telegram      string   `json:"telegram"`
+	TelegramBot   string   `json:"telegramBot"`
+	TelegramChats []string `json:"telegramChats"`
+	// What the check sends: Method (GET unless set), Body, and headers. Only
+	// the headers' names leave the console; their values are sealed.
+	Method        string   `json:"method"`
+	Body          string   `json:"body"`
+	HeaderNames   []string `json:"headerNames"`
+	headersSealed []byte
 	CreatedBy     string    `json:"createdBy"`
 	CreatedAt     time.Time `json:"createdAt"`
 	UpdatedAt     time.Time `json:"updatedAt"`
@@ -164,6 +176,24 @@ type WebsiteInput struct {
 	Telegram       string   `json:"telegram"`
 	TelegramBot    string   `json:"telegramBot"`
 	TelegramChats  []string `json:"telegramChats"`
+	Method         string   `json:"method"`
+	Body           string   `json:"body"`
+	// Headers replaces the saved headers; nil keeps them as they are.
+	Headers []WebsiteHeaderInput `json:"headers"`
+
+	// Filled by the API (prepareWebsiteRequest): the headers in the clear,
+	// to validate and test with, and as they are stored.
+	headers       []tunnel.SiteHeader
+	headerNames   []string
+	headersSealed []byte
+}
+
+// WebsiteHeaderInput is one header in the form. Keep sends the value saved
+// for that name, which the console never sees again.
+type WebsiteHeaderInput struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+	Keep  bool   `json:"keep"`
 }
 
 // ErrInvalidWebsite is an input refused, with why.
@@ -228,6 +258,16 @@ func (in *WebsiteInput) normalise() error {
 	if len(in.TelegramChats) > 20 {
 		return ErrInvalidWebsite{"choose at most 20 Telegram chats"}
 	}
+	in.Method = strings.ToUpper(strings.TrimSpace(in.Method))
+	if in.Method == "" {
+		in.Method = http.MethodGet
+	}
+	if strings.TrimSpace(in.Body) == "" {
+		in.Body = ""
+	}
+	if in.headerNames == nil {
+		in.headerNames = []string{}
+	}
 	g := in.grant()
 	if err := g.Validate(); err != nil {
 		return ErrInvalidWebsite{err.Error()}
@@ -257,29 +297,160 @@ func cleanChats(in []string) []string {
 }
 
 func (in WebsiteInput) grant() tunnel.GrantSite {
-	return tunnel.GrantSite{URL: in.URL, Status: in.ExpectStatus, Keyword: in.Keyword, TimeoutSec: in.TimeoutSeconds}
+	return tunnel.GrantSite{URL: in.URL, Status: in.ExpectStatus, Keyword: in.Keyword, TimeoutSec: in.TimeoutSeconds,
+		Method: sentMethod(in.Method), Body: in.Body, Headers: in.headers}
 }
 
-func (c WebsiteCheck) grant() tunnel.GrantSite {
-	return tunnel.GrantSite{URL: c.URL, Status: c.ExpectStatus, Keyword: c.Keyword, TimeoutSec: c.TimeoutSeconds}
+// sentMethod leaves GET out of a grant, so a plain check's grant is what it
+// always was.
+func sentMethod(m string) string {
+	if m == http.MethodGet {
+		return ""
+	}
+	return m
+}
+
+/* ── What a check sends ─────────────────────────────────────────────────── */
+
+func (a *API) websiteKey(ctx context.Context) ([]byte, error) {
+	if a.Tunnels == nil || a.Tunnels.GrantKey == nil {
+		return nil, ErrInvalidWebsite{"this control plane cannot keep header values safe: set signing_secret in its configuration, or send no headers"}
+	}
+	sum := sha256.Sum256(append([]byte("argus website headers v1\x00"), a.Tunnels.grantKeyFor(ctx).Seed()...))
+	return sum[:], nil
+}
+
+func (a *API) sealWebsiteHeaders(ctx context.Context, hs []tunnel.SiteHeader) ([]byte, error) {
+	if len(hs) == 0 {
+		return nil, nil
+	}
+	key, err := a.websiteKey(ctx)
+	if err != nil {
+		return nil, err
+	}
+	plain, _ := json.Marshal(hs)
+	block, _ := aes.NewCipher(key)
+	gcm, _ := cipher.NewGCM(block)
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
+	return gcm.Seal(nonce, nonce, plain, []byte("website-headers")), nil
+}
+
+// errWebsiteHeaders is headers that were saved but cannot be read now.
+var errWebsiteHeaders = errors.New("the check's request headers cannot be read; was signing_secret changed? Enter their values again")
+
+func (a *API) openWebsiteHeaders(ctx context.Context, sealed []byte) ([]tunnel.SiteHeader, error) {
+	if len(sealed) == 0 {
+		return nil, nil
+	}
+	key, err := a.websiteKey(ctx)
+	if err != nil {
+		return nil, errWebsiteHeaders
+	}
+	block, _ := aes.NewCipher(key)
+	gcm, _ := cipher.NewGCM(block)
+	if len(sealed) < gcm.NonceSize() {
+		return nil, errWebsiteHeaders
+	}
+	plain, err := gcm.Open(nil, sealed[:gcm.NonceSize()], sealed[gcm.NonceSize():], []byte("website-headers"))
+	if err != nil {
+		return nil, errWebsiteHeaders
+	}
+	var hs []tunnel.SiteHeader
+	if err := json.Unmarshal(plain, &hs); err != nil {
+		return nil, errWebsiteHeaders
+	}
+	return hs, nil
+}
+
+// websiteGrant is what a round fetches, its headers opened.
+func (a *API) websiteGrant(ctx context.Context, c WebsiteCheck) (tunnel.GrantSite, error) {
+	hs, err := a.openWebsiteHeaders(ctx, c.headersSealed)
+	g := tunnel.GrantSite{URL: c.URL, Status: c.ExpectStatus, Keyword: c.Keyword, TimeoutSec: c.TimeoutSeconds,
+		Method: sentMethod(c.Method), Body: c.Body, Headers: hs}
+	return g, err
+}
+
+// prepareWebsiteRequest works out the headers a saved check will send: the
+// form's, with a kept one taking the value saved before under its name. nil
+// Headers keeps them all. before is nil for a new check.
+func (a *API) prepareWebsiteRequest(ctx context.Context, in *WebsiteInput, before *WebsiteCheck) error {
+	var saved []tunnel.SiteHeader
+	if before != nil && len(before.headersSealed) > 0 && (in.Headers == nil || slices.ContainsFunc(in.Headers, func(h WebsiteHeaderInput) bool { return h.Keep })) {
+		var err error
+		if saved, err = a.openWebsiteHeaders(ctx, before.headersSealed); err != nil {
+			return ErrInvalidWebsite{err.Error()}
+		}
+	}
+	var hs []tunnel.SiteHeader
+	if in.Headers == nil {
+		hs = saved
+	} else {
+		left := map[string][]string{}
+		for _, h := range saved {
+			k := http.CanonicalHeaderKey(h.Name)
+			left[k] = append(left[k], h.Value)
+		}
+		for _, h := range in.Headers {
+			name := strings.TrimSpace(h.Name)
+			if name == "" && h.Value == "" && !h.Keep {
+				continue
+			}
+			if err := tunnel.ValidSiteHeaderName(name); err != nil {
+				return ErrInvalidWebsite{err.Error()}
+			}
+			v := h.Value
+			if h.Keep {
+				k := http.CanonicalHeaderKey(name)
+				if len(left[k]) == 0 {
+					return ErrInvalidWebsite{"enter a value for " + name}
+				}
+				v, left[k] = left[k][0], left[k][1:]
+			} else if strings.TrimSpace(v) == "" {
+				return ErrInvalidWebsite{"enter a value for " + name}
+			}
+			hs = append(hs, tunnel.SiteHeader{Name: name, Value: v})
+		}
+	}
+	in.headers = hs
+	in.headerNames = []string{}
+	for _, h := range hs {
+		in.headerNames = append(in.headerNames, h.Name)
+	}
+	in.headersSealed = nil
+	if before != nil && in.Headers == nil {
+		in.headersSealed = before.headersSealed
+		return nil
+	}
+	sealed, err := a.sealWebsiteHeaders(ctx, hs)
+	if err != nil {
+		return err
+	}
+	in.headersSealed = sealed
+	return nil
 }
 
 /* ── Store ───────────────────────────────────────────────────────────────── */
 
 const websiteCols = `id::text, name, url, expect_status, keyword, every_seconds, timeout_seconds,
-	confirm_from::text[], paused, telegram, telegram_bot, telegram_chats, created_by, created_at, updated_at, state, state_since, failing_rounds,
+	confirm_from::text[], paused, telegram, telegram_bot, telegram_chats, method, request_body, header_names, headers_sealed, created_by, created_at, updated_at, state, state_since, failing_rounds,
 	last_at, last_ms, last_status, last_detail, last_outcome, cert_not_after`
 
 func scanWebsite(row pgx.Row) (WebsiteCheck, error) {
 	var c WebsiteCheck
 	err := row.Scan(&c.ID, &c.Name, &c.URL, &c.ExpectStatus, &c.Keyword, &c.EverySeconds, &c.TimeoutSeconds,
-		&c.ConfirmFrom, &c.Paused, &c.Telegram, &c.TelegramBot, &c.TelegramChats, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt, &c.State, &c.StateSince,
+		&c.ConfirmFrom, &c.Paused, &c.Telegram, &c.TelegramBot, &c.TelegramChats, &c.Method, &c.Body, &c.HeaderNames, &c.headersSealed, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt, &c.State, &c.StateSince,
 		&c.FailingRounds, &c.LastAt, &c.LastMS, &c.LastStatus, &c.LastDetail, &c.LastOutcome, &c.CertNotAfter)
 	if c.ConfirmFrom == nil {
 		c.ConfirmFrom = []string{}
 	}
 	if c.TelegramChats == nil {
 		c.TelegramChats = []string{}
+	}
+	if c.HeaderNames == nil {
+		c.HeaderNames = []string{}
 	}
 	c.ConfirmHost = []string{}
 	return c, err
@@ -343,10 +514,10 @@ func (s *Store) CreateWebsiteCheck(ctx context.Context, in WebsiteInput, by stri
 	}
 	return scanWebsite(s.db(ctx).QueryRow(ctx, `INSERT INTO website_checks
 		(name, url, expect_status, keyword, every_seconds, timeout_seconds, confirm_from, paused, created_by,
-		 telegram, telegram_chats, telegram_bot)
-		VALUES ($1, $2, $3, $4, $5, $6, $7::uuid[], $8, $9, $10, $11, $12) RETURNING `+websiteCols,
+		 telegram, telegram_chats, telegram_bot, method, request_body, header_names, headers_sealed)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::uuid[], $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING `+websiteCols,
 		in.Name, in.URL, in.ExpectStatus, in.Keyword, in.EverySeconds, in.TimeoutSeconds, in.ConfirmFrom, in.Paused,
-		strings.ToLower(by), in.Telegram, in.TelegramChats, in.TelegramBot))
+		strings.ToLower(by), in.Telegram, in.TelegramChats, in.TelegramBot, in.Method, in.Body, in.headerNames, in.headersSealed))
 }
 
 // UpdateWebsiteCheck changes a check. A changed address starts over: its
@@ -368,14 +539,15 @@ func (s *Store) UpdateWebsiteCheck(ctx context.Context, id string, in WebsiteInp
 	defer func() { _ = tx.Rollback(ctx) }()
 	after, err = scanWebsite(tx.QueryRow(ctx, `UPDATE website_checks SET name = $2, url = $3, expect_status = $4,
 		keyword = $5, every_seconds = $6, timeout_seconds = $7, confirm_from = $8::uuid[], paused = $9,
-		telegram = $10, telegram_chats = $11, telegram_bot = $12, updated_at = now(),
+		telegram = $10, telegram_chats = $11, telegram_bot = $12, method = $13, request_body = $14,
+		header_names = $15, headers_sealed = $16, updated_at = now(),
 		state = CASE WHEN url <> $3 THEN 'pending' ELSE state END,
 		state_since = CASE WHEN url <> $3 THEN NULL ELSE state_since END,
 		failing_rounds = CASE WHEN url <> $3 THEN 0 ELSE failing_rounds END,
 		next_at = CASE WHEN url <> $3 OR (paused AND NOT $9) THEN now() ELSE next_at END
 		WHERE id::text = $1 RETURNING `+websiteCols,
 		id, in.Name, in.URL, in.ExpectStatus, in.Keyword, in.EverySeconds, in.TimeoutSeconds, in.ConfirmFrom, in.Paused,
-		in.Telegram, in.TelegramChats, in.TelegramBot))
+		in.Telegram, in.TelegramChats, in.TelegramBot, in.Method, in.Body, in.headerNames, in.headersSealed))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return before, after, ErrNoWebsite
 	}
@@ -798,8 +970,14 @@ func (a *API) runWebsiteRound(ctx context.Context, c WebsiteCheck) {
 
 // websiteRound asks the four questions for one round.
 func (a *API) websiteRound(ctx context.Context, c WebsiteCheck) websiteRoundResult {
-	g := c.grant()
 	r := websiteRoundResult{At: time.Now().UTC()}
+	g, err := a.websiteGrant(ctx, c)
+	if err != nil {
+		// Not the site's failure: sending the request without its headers
+		// would be checking something else.
+		r.Outcome, r.Detail = RoundUnknown, "Argus could not check: "+err.Error()
+		return r
+	}
 	var res tunnel.SiteResult
 	for try := 0; ; try++ {
 		res = a.probeSite(ctx, g)
@@ -1043,6 +1221,10 @@ func (a *API) siteFromServer(ctx context.Context, hostname string, g tunnel.Gran
 		}
 		if err := json.Unmarshal(p, &op.res); err != nil {
 			op.err = "its agent's answer could not be read"
+		} else if g.HasRequest() && op.res.Method == "" {
+			// It sent a plain GET, which is not this check.
+			op.res = tunnel.SiteResult{}
+			op.err = "its agent is too old to send this check's request; update it from its Settings tab"
 		}
 		return op
 	}

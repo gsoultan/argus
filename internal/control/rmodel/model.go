@@ -2584,6 +2584,10 @@ type WebsiteCheck struct {
 	CertNotAfter   *time.Time
 	NextAt         time.Time
 	LeaseUntil     *time.Time
+	Method         string
+	RequestBody    string
+	HeaderNames    []string
+	HeadersSealed  []byte
 }
 
 func (m *WebsiteCheck) Schema(t *storm.Table) {
@@ -2613,6 +2617,12 @@ func (m *WebsiteCheck) Schema(t *storm.Table) {
 	t.Index(&m.NextAt).Where("NOT paused").Named("website_checks_due")
 	t.Col(&m.TelegramBot).Default("''::text")
 	t.CheckNamed("website_checks_telegram_bot_check", "length(telegram_bot) <= 40")
+	t.Col(&m.Method).Default("'GET'::text")
+	t.CheckNamed("website_checks_method_check", "method = ANY (ARRAY['GET'::text, 'HEAD'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text])")
+	t.Col(&m.RequestBody).Default("''::text")
+	t.CheckNamed("website_checks_request_body_check", "length(request_body) <= 65536")
+	t.Col(&m.HeaderNames).Default("'{}'::text[]")
+	t.CheckNamed("website_checks_header_names_check", "cardinality(header_names) <= 20")
 }
 
 // WebsiteRound is table website_rounds: one round of a check, for uptime.

@@ -46,6 +46,10 @@ type Row struct {
 	CertNotAfter   runtime.Null[time.Time]
 	NextAt         time.Time
 	LeaseUntil     runtime.Null[time.Time]
+	Method         string
+	RequestBody    string
+	HeaderNames    []string
+	HeadersSealed  []byte
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -84,7 +88,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 26
+const nCols = 30
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -94,12 +98,13 @@ type Query struct {
 	nt   uint8
 	top  uint8 // top-level conjuncts, ANDed at compile time
 
-	strs                 [6]string
-	nums                 [6]int64
-	raws                 [4][16]byte
-	tims                 [4]time.Time
-	bools                [4]bool
-	ns, nn, nr, ntm, nbo uint8
+	strs                      [6]string
+	nums                      [6]int64
+	raws                      [4][16]byte
+	tims                      [4]time.Time
+	bools                     [4]bool
+	byts                      [2][]byte
+	ns, nn, nr, ntm, nbo, nby uint8
 
 	anyRaw          [3][][16]byte
 	anyStr          [3][]string
@@ -367,6 +372,27 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.tims[q.ntm] = r.LeaseUntil.V
 		q.ntm++
+	case 26:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.Method
+		q.ns++
+	case 27:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.RequestBody
+		q.ns++
+	case 29:
+		if int(q.nby) >= len(q.byts) {
+			q.over = true
+			return
+		}
+		q.byts[q.nby] = r.HeadersSealed
+		q.nby++
 	}
 }
 
@@ -519,6 +545,7 @@ type Pred struct {
 	raw    [16]byte
 	tim    time.Time
 	bol    bool
+	byt    []byte
 	anyRaw [][16]byte
 	anyStr []string
 	anyI32 []int32
@@ -561,6 +588,10 @@ var (
 	CertNotAfter   = NullTimeCol{23}
 	NextAt         = TimeCol{24}
 	LeaseUntil     = NullTimeCol{25}
+	Method         = TextCol{26}
+	RequestBody    = TextCol{27}
+	HeaderNames    = TextArrayCol{28}
+	HeadersSealed  = NullBytesCol{29}
 )
 
 // UUIDCol addresses a uuid column.
@@ -776,6 +807,23 @@ func (h NullInt32Col) In(v ...int32) Pred { return Pred{col: h.c, op: opIn, anyI
 func (h NullInt32Col) NotIn(v ...int32) Pred { return Pred{col: h.c, op: opNotIn, anyI32: v} }
 func (h NullInt32Col) IsNull() Pred          { return Pred{col: h.c, op: opIsNull} }
 func (h NullInt32Col) IsNotNull() Pred       { return Pred{col: h.c, op: opIsNotNull} }
+
+// NullBytesCol addresses a bytea column.
+type NullBytesCol struct{ c uint8 }
+
+func (h NullBytesCol) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
+func (h NullBytesCol) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
+func (h NullBytesCol) AscNullsFirst() Sort {
+	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
+}
+func (h NullBytesCol) DescNullsLast() Sort {
+	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
+}
+
+func (h NullBytesCol) Eq(v []byte) Pred    { return Pred{col: h.c, op: opEq, byt: v} }
+func (h NullBytesCol) NotEq(v []byte) Pred { return Pred{col: h.c, op: opNotEq, byt: v} }
+func (h NullBytesCol) IsNull() Pred        { return Pred{col: h.c, op: opIsNull} }
+func (h NullBytesCol) IsNotNull() Pred     { return Pred{col: h.c, op: opIsNotNull} }
 
 // Where applies predicates, ANDed together.
 func (q Query) Where(ps ...Pred) Query {
@@ -1044,6 +1092,27 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 26:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 27:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 28:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1221,6 +1290,27 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.tims[q.ntm] = p.tim
 		q.ntm++
+	case 26:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 27:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 29:
+		if int(q.nby) >= 2 {
+			q.over = true
+			return
+		}
+		q.byts[q.nby] = p.byt
+		q.nby++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1443,8 +1533,39 @@ func (q Query) LeaseUntilLt(v time.Time) Query          { return q.Where(LeaseUn
 func (q Query) LeaseUntilLte(v time.Time) Query         { return q.Where(LeaseUntil.Lte(v)) }
 func (q Query) LeaseUntilIsNull() Query                 { return q.Where(LeaseUntil.IsNull()) }
 func (q Query) LeaseUntilIsNotNull() Query              { return q.Where(LeaseUntil.IsNotNull()) }
+func (q Query) MethodEq(v string) Query                 { return q.Where(Method.Eq(v)) }
+func (q Query) MethodNotEq(v string) Query              { return q.Where(Method.NotEq(v)) }
+func (q Query) MethodGt(v string) Query                 { return q.Where(Method.Gt(v)) }
+func (q Query) MethodGte(v string) Query                { return q.Where(Method.Gte(v)) }
+func (q Query) MethodLt(v string) Query                 { return q.Where(Method.Lt(v)) }
+func (q Query) MethodLte(v string) Query                { return q.Where(Method.Lte(v)) }
+func (q Query) MethodEqLower(v string) Query            { return q.Where(Method.EqLower(v)) }
+func (q Query) MethodLike(v string) Query               { return q.Where(Method.Like(v)) }
+func (q Query) MethodILike(v string) Query              { return q.Where(Method.ILike(v)) }
+func (q Query) MethodIn(v ...string) Query              { return q.Where(Method.In(v...)) }
+func (q Query) MethodNotIn(v ...string) Query           { return q.Where(Method.NotIn(v...)) }
+func (q Query) RequestBodyEq(v string) Query            { return q.Where(RequestBody.Eq(v)) }
+func (q Query) RequestBodyNotEq(v string) Query         { return q.Where(RequestBody.NotEq(v)) }
+func (q Query) RequestBodyGt(v string) Query            { return q.Where(RequestBody.Gt(v)) }
+func (q Query) RequestBodyGte(v string) Query           { return q.Where(RequestBody.Gte(v)) }
+func (q Query) RequestBodyLt(v string) Query            { return q.Where(RequestBody.Lt(v)) }
+func (q Query) RequestBodyLte(v string) Query           { return q.Where(RequestBody.Lte(v)) }
+func (q Query) RequestBodyEqLower(v string) Query       { return q.Where(RequestBody.EqLower(v)) }
+func (q Query) RequestBodyLike(v string) Query          { return q.Where(RequestBody.Like(v)) }
+func (q Query) RequestBodyILike(v string) Query         { return q.Where(RequestBody.ILike(v)) }
+func (q Query) RequestBodyIn(v ...string) Query         { return q.Where(RequestBody.In(v...)) }
+func (q Query) RequestBodyNotIn(v ...string) Query      { return q.Where(RequestBody.NotIn(v...)) }
+func (q Query) HeaderNamesContains(v ...string) Query   { return q.Where(HeaderNames.Contains(v...)) }
+func (q Query) HeaderNamesContainedBy(v ...string) Query {
+	return q.Where(HeaderNames.ContainedBy(v...))
+}
+func (q Query) HeaderNamesOverlaps(v ...string) Query { return q.Where(HeaderNames.Overlaps(v...)) }
+func (q Query) HeadersSealedEq(v []byte) Query        { return q.Where(HeadersSealed.Eq(v)) }
+func (q Query) HeadersSealedNotEq(v []byte) Query     { return q.Where(HeadersSealed.NotEq(v)) }
+func (q Query) HeadersSealedIsNull() Query            { return q.Where(HeadersSealed.IsNull()) }
+func (q Query) HeadersSealedIsNotNull() Query         { return q.Where(HeadersSealed.IsNotNull()) }
 
-const selectPrefix = `SELECT "id", "created_at", "updated_at", "name", "url", "expect_status", "keyword", "every_seconds", "timeout_seconds", "confirm_from", "paused", "telegram", "telegram_bot", "telegram_chats", "created_by", "state", "state_since", "failing_rounds", "last_at", "last_ms", "last_status", "last_detail", "last_outcome", "cert_not_after", "next_at", "lease_until" FROM "website_checks"`
+const selectPrefix = `SELECT "id", "created_at", "updated_at", "name", "url", "expect_status", "keyword", "every_seconds", "timeout_seconds", "confirm_from", "paused", "telegram", "telegram_bot", "telegram_chats", "created_by", "state", "state_since", "failing_rounds", "last_at", "last_ms", "last_status", "last_detail", "last_outcome", "cert_not_after", "next_at", "lease_until", "method", "request_body", "header_names", "headers_sealed" FROM "website_checks"`
 const countPrefix = `SELECT count(*) FROM "website_checks"`
 const existsPrefix = `SELECT 1 FROM "website_checks"`
 const existsSuffix = ` LIMIT 1`
@@ -1637,6 +1758,30 @@ var orderTable = [nCols][4]string{
 		"\"lease_until\" ASC NULLS FIRST",
 		"\"lease_until\" DESC NULLS LAST",
 	},
+	{ // method
+		"\"method\"",
+		"\"method\" DESC",
+		"\"method\" ASC NULLS FIRST",
+		"\"method\" DESC NULLS LAST",
+	},
+	{ // request_body
+		"\"request_body\"",
+		"\"request_body\" DESC",
+		"\"request_body\" ASC NULLS FIRST",
+		"\"request_body\" DESC NULLS LAST",
+	},
+	{ // header_names
+		"\"header_names\"",
+		"\"header_names\" DESC",
+		"\"header_names\" ASC NULLS FIRST",
+		"\"header_names\" DESC NULLS LAST",
+	},
+	{ // headers_sealed
+		"\"headers_sealed\"",
+		"\"headers_sealed\" DESC",
+		"\"headers_sealed\" ASC NULLS FIRST",
+		"\"headers_sealed\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1668,6 +1813,10 @@ var identTable = [nCols]string{
 	"\"cert_not_after\"",
 	"\"next_at\"",
 	"\"lease_until\"",
+	"\"method\"",
+	"\"request_body\"",
+	"\"header_names\"",
+	"\"headers_sealed\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1700,7 +1849,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [26][28]runtime.Frag{
+var fragTable = [30][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -2481,6 +2630,126 @@ var fragTable = [26][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // method
+		{}, // opNone
+		{A: "\"method\" = $", B: ""},
+		{A: "\"method\" <> $", B: ""},
+		{A: "\"method\" > $", B: ""},
+		{A: "\"method\" >= $", B: ""},
+		{A: "\"method\" < $", B: ""},
+		{A: "\"method\" <= $", B: ""},
+		{A: "lower(\"method\") = lower($", B: ")"},
+		{A: "\"method\" LIKE $", B: ""},
+		{A: "\"method\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"method\" = ANY($", B: ")"},
+		{A: "\"method\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // request_body
+		{}, // opNone
+		{A: "\"request_body\" = $", B: ""},
+		{A: "\"request_body\" <> $", B: ""},
+		{A: "\"request_body\" > $", B: ""},
+		{A: "\"request_body\" >= $", B: ""},
+		{A: "\"request_body\" < $", B: ""},
+		{A: "\"request_body\" <= $", B: ""},
+		{A: "lower(\"request_body\") = lower($", B: ")"},
+		{A: "\"request_body\" LIKE $", B: ""},
+		{A: "\"request_body\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"request_body\" = ANY($", B: ")"},
+		{A: "\"request_body\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // header_names
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"header_names\" @> $", B: ""},
+		{A: "\"header_names\" <@ $", B: ""},
+		{A: "\"header_names\" && $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // headers_sealed
+		{}, // opNone
+		{A: "\"headers_sealed\" = $", B: ""},
+		{A: "\"headers_sealed\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"headers_sealed\" IS NULL", B: ""},
+		{A: "\"headers_sealed\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -2670,6 +2939,13 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.CertNotAfter = runtime.Nullable(rv[23], runtime.Timestamptz)
 	r.NextAt = runtime.Timestamptz(rv[24])
 	r.LeaseUntil = runtime.Nullable(rv[25], runtime.Timestamptz)
+	r.Method = sl.Str(rv[26])
+	r.RequestBody = sl.Str(rv[27])
+	r.HeaderNames, decErr = runtime.TextArray(rv[28], sl)
+	if decErr != nil {
+		return decErr
+	}
+	r.HeadersSealed = runtime.Bytes(rv[29])
 	return decErr
 }
 
@@ -2680,6 +2956,7 @@ type binder struct {
 	raws   [4][16]byte
 	tims   [4]time.Time
 	bools  [4]bool
+	byts   [2][]byte
 	anyRaw [3][][16]byte
 	anyStr [3][]string
 	anyI32 [3][]int32
@@ -2724,7 +3001,7 @@ func putBinder(b *binder) {
 // Count and Exists stop here: their statements carry no LIMIT or OFFSET.
 func (q Query) bindPreds(b *binder) []any {
 	v := b.vals[:0]
-	var ns, nn, nr, ntm, nbo, nar, nas, nai32 uint8
+	var ns, nn, nr, ntm, nbo, nby, nar, nas, nai32 uint8
 	for i := uint8(0); i < q.nt; i++ {
 		t := q.toks[i]
 		// KLeaf binds a predicate's value; KCol binds a keyset cursor's.
@@ -2809,6 +3086,18 @@ func (q Query) bindPreds(b *binder) []any {
 				v = append(v, &b.anyStr[nas])
 				nas++
 			case 22:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 26:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 27:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 28:
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
@@ -2912,6 +3201,18 @@ func (q Query) bindPreds(b *binder) []any {
 			b.tims[ntm] = q.tims[ntm]
 			v = append(v, &b.tims[ntm])
 			ntm++
+		case 26:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 27:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 29:
+			b.byts[nby] = q.byts[nby]
+			v = append(v, &b.byts[nby])
+			nby++
 		}
 	}
 	b.vals = v
@@ -3049,7 +3350,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "website_checks" ("id", "created_at", "updated_at", "name", "url", "expect_status", "keyword", "every_seconds", "timeout_seconds", "confirm_from", "paused", "telegram", "telegram_bot", "telegram_chats", "created_by", "state", "state_since", "failing_rounds", "last_at", "last_ms", "last_status", "last_detail", "last_outcome", "cert_not_after", "next_at", "lease_until") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26) RETURNING "id", "created_at", "updated_at", "name", "url", "expect_status", "keyword", "every_seconds", "timeout_seconds", "confirm_from", "paused", "telegram", "telegram_bot", "telegram_chats", "created_by", "state", "state_since", "failing_rounds", "last_at", "last_ms", "last_status", "last_detail", "last_outcome", "cert_not_after", "next_at", "lease_until"`
+const insertSQL = `INSERT INTO "website_checks" ("id", "created_at", "updated_at", "name", "url", "expect_status", "keyword", "every_seconds", "timeout_seconds", "confirm_from", "paused", "telegram", "telegram_bot", "telegram_chats", "created_by", "state", "state_since", "failing_rounds", "last_at", "last_ms", "last_status", "last_detail", "last_outcome", "cert_not_after", "next_at", "lease_until", "method", "request_body", "header_names", "headers_sealed") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30) RETURNING "id", "created_at", "updated_at", "name", "url", "expect_status", "keyword", "every_seconds", "timeout_seconds", "confirm_from", "paused", "telegram", "telegram_bot", "telegram_chats", "created_by", "state", "state_since", "failing_rounds", "last_at", "last_ms", "last_status", "last_detail", "last_outcome", "cert_not_after", "next_at", "lease_until", "method", "request_body", "header_names", "headers_sealed"`
 
 const updatePrefix = `UPDATE "website_checks" SET `
 const deletePrefix = `DELETE FROM "website_checks"`
@@ -3081,9 +3382,13 @@ const (
 	dCertNotAfter   uint64 = 1 << 21
 	dNextAt         uint64 = 1 << 22
 	dLeaseUntil     uint64 = 1 << 23
+	dMethod         uint64 = 1 << 24
+	dRequestBody    uint64 = 1 << 25
+	dHeaderNames    uint64 = 1 << 26
+	dHeadersSealed  uint64 = 1 << 27
 )
 
-const nUpdatable = 24
+const nUpdatable = 28
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -3111,6 +3416,10 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"cert_not_after\" = $", B: ""},  // cert_not_after
 	{A: "\"next_at\" = $", B: ""},         // next_at
 	{A: "\"lease_until\" = $", B: ""},     // lease_until
+	{A: "\"method\" = $", B: ""},          // method
+	{A: "\"request_body\" = $", B: ""},    // request_body
+	{A: "\"header_names\" = $", B: ""},    // header_names
+	{A: "\"headers_sealed\" = $", B: ""},  // headers_sealed
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -3141,6 +3450,10 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{A: "\"cert_not_after\" = now()", B: ""}, // cert_not_after = the database's clock
 	{A: "\"next_at\" = now()", B: ""},        // next_at = the database's clock
 	{A: "\"lease_until\" = now()", B: ""},    // lease_until = the database's clock
+	{},                                       // method has no server-side form
+	{},                                       // request_body has no server-side form
+	{},                                       // header_names has no server-side form
+	{},                                       // headers_sealed has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -3178,9 +3491,13 @@ const (
 	iCertNotAfter   uint64 = 1 << 23
 	iNextAt         uint64 = 1 << 24
 	iLeaseUntil     uint64 = 1 << 25
+	iMethod         uint64 = 1 << 26
+	iRequestBody    uint64 = 1 << 27
+	iHeaderNames    uint64 = 1 << 28
+	iHeadersSealed  uint64 = 1 << 29
 )
 
-const nInsertable = 26
+const nInsertable = 30
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -3210,6 +3527,10 @@ var insCols = [nInsertable]string{
 	"\"cert_not_after\"",
 	"\"next_at\"",
 	"\"lease_until\"",
+	"\"method\"",
+	"\"request_body\"",
+	"\"header_names\"",
+	"\"headers_sealed\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -3218,7 +3539,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"website_checks\""
-const insReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"name\", \"url\", \"expect_status\", \"keyword\", \"every_seconds\", \"timeout_seconds\", \"confirm_from\", \"paused\", \"telegram\", \"telegram_bot\", \"telegram_chats\", \"created_by\", \"state\", \"state_since\", \"failing_rounds\", \"last_at\", \"last_ms\", \"last_status\", \"last_detail\", \"last_outcome\", \"cert_not_after\", \"next_at\", \"lease_until\""
+const insReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"name\", \"url\", \"expect_status\", \"keyword\", \"every_seconds\", \"timeout_seconds\", \"confirm_from\", \"paused\", \"telegram\", \"telegram_bot\", \"telegram_chats\", \"created_by\", \"state\", \"state_since\", \"failing_rounds\", \"last_at\", \"last_ms\", \"last_status\", \"last_detail\", \"last_outcome\", \"cert_not_after\", \"next_at\", \"lease_until\", \"method\", \"request_body\", \"header_names\", \"headers_sealed\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -3237,7 +3558,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"name\", \"url\", \"expect_status\", \"keyword\", \"every_seconds\", \"timeout_seconds\", \"confirm_from\", \"paused\", \"telegram\", \"telegram_bot\", \"telegram_chats\", \"created_by\", \"state\", \"state_since\", \"failing_rounds\", \"last_at\", \"last_ms\", \"last_status\", \"last_detail\", \"last_outcome\", \"cert_not_after\", \"next_at\", \"lease_until\""
+const updReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"name\", \"url\", \"expect_status\", \"keyword\", \"every_seconds\", \"timeout_seconds\", \"confirm_from\", \"paused\", \"telegram\", \"telegram_bot\", \"telegram_chats\", \"created_by\", \"state\", \"state_since\", \"failing_rounds\", \"last_at\", \"last_ms\", \"last_status\", \"last_detail\", \"last_outcome\", \"cert_not_after\", \"next_at\", \"lease_until\", \"method\", \"request_body\", \"header_names\", \"headers_sealed\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -3603,6 +3924,30 @@ func (m *Mut) SetLeaseUntilNull() {
 	m.expr &^= dLeaseUntil
 }
 
+func (m *Mut) SetMethod(v string) {
+	m.row.Method = v
+	m.dirty |= dMethod
+	m.expr &^= dMethod
+}
+
+func (m *Mut) SetRequestBody(v string) {
+	m.row.RequestBody = v
+	m.dirty |= dRequestBody
+	m.expr &^= dRequestBody
+}
+
+func (m *Mut) SetHeaderNames(v []string) {
+	m.row.HeaderNames = v
+	m.dirty |= dHeaderNames
+	m.expr &^= dHeaderNames
+}
+
+func (m *Mut) SetHeadersSealed(v []byte) {
+	m.row.HeadersSealed = v
+	m.dirty |= dHeadersSealed
+	m.expr &^= dHeadersSealed
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -3868,6 +4213,26 @@ func (n *Ins) SetLeaseUntilNull() {
 	n.set |= iLeaseUntil
 }
 
+func (n *Ins) SetMethod(v string) {
+	n.row.Method = v
+	n.set |= iMethod
+}
+
+func (n *Ins) SetRequestBody(v string) {
+	n.row.RequestBody = v
+	n.set |= iRequestBody
+}
+
+func (n *Ins) SetHeaderNames(v []string) {
+	n.row.HeaderNames = v
+	n.set |= iHeaderNames
+}
+
+func (n *Ins) SetHeadersSealed(v []byte) {
+	n.row.HeadersSealed = v
+	n.set |= iHeadersSealed
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -3917,7 +4282,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 24)
+	set := make([]string, 0, 28)
 	switch i {
 	case 0:
 		if mask&(1<<2) != 0 {
@@ -3991,6 +4356,18 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<25) != 0 {
 			set = append(set, "lease_until")
+		}
+		if mask&(1<<26) != 0 {
+			set = append(set, "method")
+		}
+		if mask&(1<<27) != 0 {
+			set = append(set, "request_body")
+		}
+		if mask&(1<<28) != 0 {
+			set = append(set, "header_names")
+		}
+		if mask&(1<<29) != 0 {
+			set = append(set, "headers_sealed")
 		}
 	}
 	return set
@@ -4086,6 +4463,10 @@ var assignFor = map[string]string{
 	"cert_not_after":  "\"cert_not_after\" = EXCLUDED.\"cert_not_after\"",
 	"next_at":         "\"next_at\" = EXCLUDED.\"next_at\"",
 	"lease_until":     "\"lease_until\" = EXCLUDED.\"lease_until\"",
+	"method":          "\"method\" = EXCLUDED.\"method\"",
+	"request_body":    "\"request_body\" = EXCLUDED.\"request_body\"",
+	"header_names":    "\"header_names\" = EXCLUDED.\"header_names\"",
+	"headers_sealed":  "\"headers_sealed\" = EXCLUDED.\"headers_sealed\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -4188,6 +4569,14 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.NextAt)
 		case 25:
 			args = append(args, n.row.LeaseUntil.Arg())
+		case 26:
+			args = append(args, n.row.Method)
+		case 27:
+			args = append(args, n.row.RequestBody)
+		case 28:
+			args = append(args, n.row.HeaderNames)
+		case 29:
+			args = append(args, n.row.HeadersSealed)
 		}
 	}
 	var out Row
@@ -4225,7 +4614,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 26)
+	args := make([]any, 0, 30)
 	args = append(args, r.ID)
 	args = append(args, r.CreatedAt)
 	args = append(args, r.UpdatedAt)
@@ -4252,6 +4641,10 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.CertNotAfter.Arg())
 	args = append(args, r.NextAt)
 	args = append(args, r.LeaseUntil.Arg())
+	args = append(args, r.Method)
+	args = append(args, r.RequestBody)
+	args = append(args, r.HeaderNames)
+	args = append(args, r.HeadersSealed)
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -4304,13 +4697,17 @@ var copyCols = []string{
 	"cert_not_after",
 	"next_at",
 	"lease_until",
+	"method",
+	"request_body",
+	"header_names",
+	"headers_sealed",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [26]any
+	buf  [30]any
 }
 
 func (s *rowSource) Next() bool {
@@ -4354,6 +4751,10 @@ func (s *rowSource) Values() []any {
 	s.buf[23] = r.CertNotAfter.Ptr()
 	s.buf[24] = &r.NextAt
 	s.buf[25] = r.LeaseUntil.Ptr()
+	s.buf[26] = &r.Method
+	s.buf[27] = &r.RequestBody
+	s.buf[28] = &r.HeaderNames
+	s.buf[29] = &r.HeadersSealed
 	return s.buf[:]
 }
 
@@ -4410,8 +4811,12 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 23
 	mask |= 1 << 24
 	mask |= 1 << 25
+	mask |= 1 << 26
+	mask |= 1 << 27
+	mask |= 1 << 28
+	mask |= 1 << 29
 	st := stmtForInsertNoReturn(mask, 0, 0)
-	args := make([]any, 0, 26)
+	args := make([]any, 0, 30)
 	args = append(args, r.ID)
 	args = append(args, r.CreatedAt)
 	args = append(args, r.UpdatedAt)
@@ -4438,6 +4843,10 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.CertNotAfter.Arg())
 	args = append(args, r.NextAt)
 	args = append(args, r.LeaseUntil.Arg())
+	args = append(args, r.Method)
+	args = append(args, r.RequestBody)
+	args = append(args, r.HeaderNames)
+	args = append(args, r.HeadersSealed)
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -4523,6 +4932,14 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.NextAt)
 		case 25:
 			args = append(args, n.row.LeaseUntil.Arg())
+		case 26:
+			args = append(args, n.row.Method)
+		case 27:
+			args = append(args, n.row.RequestBody)
+		case 28:
+			args = append(args, n.row.HeaderNames)
+		case 29:
+			args = append(args, n.row.HeadersSealed)
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -4626,6 +5043,14 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.NextAt)
 		case 23:
 			args = append(args, m.row.LeaseUntil.Arg())
+		case 24:
+			args = append(args, m.row.Method)
+		case 25:
+			args = append(args, m.row.RequestBody)
+		case 26:
+			args = append(args, m.row.HeaderNames)
+		case 27:
+			args = append(args, m.row.HeadersSealed)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -4756,6 +5181,14 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.NextAt)
 		case 23:
 			args = append(args, m.row.LeaseUntil.Arg())
+		case 24:
+			args = append(args, m.row.Method)
+		case 25:
+			args = append(args, m.row.RequestBody)
+		case 26:
+			args = append(args, m.row.HeaderNames)
+		case 27:
+			args = append(args, m.row.HeadersSealed)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -4952,6 +5385,14 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.NextAt)
 		case 23:
 			args = append(args, m.row.LeaseUntil.Arg())
+		case 24:
+			args = append(args, m.row.Method)
+		case 25:
+			args = append(args, m.row.RequestBody)
+		case 26:
+			args = append(args, m.row.HeaderNames)
+		case 27:
+			args = append(args, m.row.HeadersSealed)
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

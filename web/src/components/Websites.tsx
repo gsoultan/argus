@@ -1,10 +1,10 @@
 import {
-  Alert, Badge, Box, Button, Drawer, Group, Modal, MultiSelect, NumberInput, Select, SimpleGrid, Skeleton, Stack, Switch,
-  Table, Text, TextInput, Tooltip, UnstyledButton,
+  ActionIcon, Alert, Badge, Box, Button, Drawer, Group, Modal, MultiSelect, NumberInput, PasswordInput, SegmentedControl, Select,
+  SimpleGrid, Skeleton, Stack, Switch, Table, Text, Textarea, TextInput, Tooltip, UnstyledButton,
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { IconBrandTelegram, IconPlus, IconRefresh, IconShieldCheck, IconWorld } from '@tabler/icons-react'
+import { IconBrandTelegram, IconPlus, IconRefresh, IconShieldCheck, IconWorld, IconX } from '@tabler/icons-react'
 import { useMemo, useState } from 'react'
 import { DataTable, EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page'
 import { assetName } from '~/lib/assetType'
@@ -15,9 +15,9 @@ import {
 } from '~/lib/telegram'
 import { assetsQuery, meQuery } from '~/lib/queries'
 import {
-  ago, certDaysLeft, testWebsiteAlert, formatDuration, formatUptime, outageMinutes, sliceRounds, stateLabel, testWebsite, useAddWebsite,
-  useChangeWebsite, useCheckWebsiteNow, useRemoveWebsite, websiteQuery, websitesQuery,
-  type SiteResult, type TelegramChoice, type WebsiteCheck, type WebsiteInput, type WebsiteRound,
+  ago, certDaysLeft, testWebsiteAlert, formatDuration, formatUptime, outageMinutes, requestSummary, sendsBody, sliceRounds, SITE_METHODS,
+  stateLabel, testWebsite, useAddWebsite, useChangeWebsite, useCheckWebsiteNow, useRemoveWebsite, websiteQuery, websitesQuery,
+  type HeaderInput, type SiteMethod, type SiteResult, type TelegramChoice, type WebsiteCheck, type WebsiteInput, type WebsiteRound,
 } from '~/lib/websites'
 import { FS, SP } from '~/theme'
 
@@ -225,6 +225,9 @@ function WebsiteDrawer({ id, canEdit, onClose, onEdit }: {
             <Text fw={600} size="sm" mb={SP.snug}>How it is checked</Text>
             <Stack gap={SP.tight}>
               <Text size={FS.body}>Every {c.everySeconds / 60} minute{c.everySeconds === 60 ? '' : 's'}, waiting up to {c.timeoutSeconds} seconds for an answer.</Text>
+              {requestSummary(c) && (
+                <Text size={FS.body}>Sends {requestSummary(c)}.{(c.headerNames ?? []).length > 0 ? ' Header values are kept encrypted and never shown.' : ''}</Text>
+              )}
               <Text size={FS.body}>{c.expectStatus ? `Must answer ${c.expectStatus}.` : 'Any answer below 400, after redirects, is up.'}{c.keyword ? ` The page must contain "${c.keyword}".` : ''}</Text>
               <Text size={FS.body}>{c.confirmHosts.length > 0
                 ? `Before calling it down, Argus asks ${c.confirmHosts.join(', ')} to check too.`
@@ -369,13 +372,27 @@ function inputOf(c: WebsiteCheck): WebsiteInput {
     name: c.name, url: c.url, expectStatus: c.expectStatus, keyword: c.keyword, everySeconds: c.everySeconds,
     timeoutSeconds: c.timeoutSeconds, confirmFrom: c.confirmFrom, paused: c.paused,
     telegram: c.telegram, telegramBot: c.telegramBot ?? '', telegramChats: c.telegramChats,
+    method: c.method || 'GET', body: c.body ?? '',
   }
 }
 
-const BLANK: WebsiteInput = { name: '', url: '', expectStatus: 0, keyword: '', everySeconds: 60, timeoutSeconds: 30, confirmFrom: [], paused: false, telegram: 'default', telegramBot: '', telegramChats: [] }
+const BLANK: WebsiteInput = {
+  name: '', url: '', expectStatus: 0, keyword: '', everySeconds: 60, timeoutSeconds: 30, confirmFrom: [], paused: false,
+  telegram: 'default', telegramBot: '', telegramChats: [], method: 'GET', body: '',
+}
+
+/** A header row in the form. saved: its value is the one already kept, unseen. */
+interface HeaderRow { name: string; value: string; saved: boolean }
+
+function headersOut(rows: HeaderRow[]): HeaderInput[] {
+  return rows.filter((r) => r.name.trim() || r.value)
+    .map((r) => (r.saved && !r.value ? { name: r.name.trim(), value: '', keep: true } : { name: r.name.trim(), value: r.value }))
+}
 
 function WebsiteForm({ check, onClose, onSaved }: { check?: WebsiteCheck; onClose: () => void; onSaved: (c: WebsiteCheck) => void }) {
   const [v, setV] = useState<WebsiteInput>(check ? inputOf(check) : BLANK)
+  const [rows, setRows] = useState<HeaderRow[]>((check?.headerNames ?? []).map((name) => ({ name, value: '', saved: true })))
+  const [showRequest, setShowRequest] = useState(() => !!check && requestSummary(check) !== '')
   const [tested, setTested] = useState<SiteResult | null>(null)
   const [testing, setTesting] = useState(false)
   const add = useAddWebsite()
@@ -386,8 +403,11 @@ function WebsiteForm({ check, onClose, onSaved }: { check?: WebsiteCheck; onClos
   const set = <K extends keyof WebsiteInput>(k: K, val: WebsiteInput[K]) => { setV((p) => ({ ...p, [k]: val })); setTested(null) }
   const saving = add.isPending || change.isPending
 
+  const setRow = (i: number, r: Partial<HeaderRow>) => { setRows((p) => p.map((x, j) => (j === i ? { ...x, ...r } : x))); setTested(null) }
+  const input = (): WebsiteInput => ({ ...v, body: sendsBody(v.method) ? v.body : '', headers: headersOut(rows) })
+
   const save = async () => {
-    const c = check ? await change.mutateAsync({ id: check.id, input: v }) : await add.mutateAsync(v)
+    const c = check ? await change.mutateAsync({ id: check.id, input: input() }) : await add.mutateAsync(input())
     onSaved(c)
   }
 
@@ -411,8 +431,23 @@ function WebsiteForm({ check, onClose, onSaved }: { check?: WebsiteCheck; onClos
           <NumberInput label="Expected status" placeholder="Any below 400" min={100} max={599} value={v.expectStatus || ''}
             onChange={(x) => set('expectStatus', Number(x) || 0)} />
           <TextInput label="Page must contain" placeholder="Optional word or phrase" value={v.keyword} maxLength={200}
+            disabled={v.method === 'HEAD'} description={v.method === 'HEAD' ? 'A HEAD request gets no page to look in.' : undefined}
             onChange={(e) => set('keyword', e.currentTarget.value)} />
         </SimpleGrid>
+        {showRequest ? (
+          <RequestFields method={v.method} body={v.body} rows={rows}
+            onMethod={(m) => setV((p) => ({ ...p, method: m, keyword: m === 'HEAD' ? '' : p.keyword }))}
+            onBody={(b) => set('body', b)} onRow={setRow}
+            onAdd={() => setRows((p) => [...p, { name: '', value: '', saved: false }])}
+            onRemove={(i) => { setRows((p) => p.filter((_, j) => j !== i)); setTested(null) }} />
+        ) : (
+          <Group>
+            <Button variant="subtle" size="compact-sm" leftSection={<IconPlus size={14} />} onClick={() => setShowRequest(true)}>
+              Send a method, headers or a body
+            </Button>
+            <Text size={FS.meta} c="dimmed">For an endpoint that wants a POST or a key. Otherwise Argus sends a plain GET.</Text>
+          </Group>
+        )}
         <TelegramFields value={v.telegram} bot={v.telegramBot} chats={v.telegramChats}
           onChange={(telegram, telegramBot, telegramChats) => setV((p) => ({ ...p, telegram, telegramBot, telegramChats }))} />
         {check && (
@@ -430,7 +465,7 @@ function WebsiteForm({ check, onClose, onSaved }: { check?: WebsiteCheck; onClos
           <Button variant="default" loading={testing} disabled={!v.url.trim()}
             onClick={() => {
               setTesting(true)
-              void run(async () => setTested(await testWebsite(v)), { failure: 'Could not test' }).finally(() => setTesting(false))
+              void run(async () => setTested(await testWebsite(input(), check?.id)), { failure: 'Could not test' }).finally(() => setTesting(false))
             }}>
             Test now
           </Button>
@@ -447,6 +482,59 @@ function WebsiteForm({ check, onClose, onSaved }: { check?: WebsiteCheck; onClos
         </Group>
       </Stack>
     </Modal>
+  )
+}
+
+/** The request a check sends: method, headers, body. */
+function RequestFields({ method, body, rows, onMethod, onBody, onRow, onAdd, onRemove }: {
+  method: SiteMethod
+  body: string
+  rows: HeaderRow[]
+  onMethod: (m: SiteMethod) => void
+  onBody: (b: string) => void
+  onRow: (i: number, r: Partial<HeaderRow>) => void
+  onAdd: () => void
+  onRemove: (i: number) => void
+}) {
+  return (
+    <Stack gap="xs">
+      <Box>
+        <Text size="sm" fw={500} mb={4} id="request-method">Request</Text>
+        <SegmentedControl aria-labelledby="request-method" size="xs" value={method}
+          data={SITE_METHODS.map((m) => ({ value: m, label: m }))} onChange={(m) => onMethod(m as SiteMethod)} />
+      </Box>
+      <Box>
+        <Text size="sm" fw={500}>Headers</Text>
+        <Text size={FS.meta} c="dimmed" mb={4}>
+          Values are encrypted and never shown again; a saved one is sent until you type a new one. They go only to this
+          address's host, never to one it redirects to.
+        </Text>
+        <Stack gap={6}>
+          {rows.map((r, i) => (
+            <Group key={i} gap="xs" wrap="nowrap" align="flex-start">
+              <TextInput aria-label={`Header ${i + 1} name`} placeholder="X-Api-Key" value={r.name} style={{ flex: 2, minWidth: 0 }}
+                disabled={r.saved && !r.value} onChange={(e) => onRow(i, { name: e.currentTarget.value })} />
+              <PasswordInput aria-label={`Header ${i + 1} value`} style={{ flex: 3, minWidth: 0 }}
+                placeholder={r.saved ? 'Saved; type to replace' : 'Value'} value={r.value}
+                onChange={(e) => onRow(i, { value: e.currentTarget.value })} />
+              <ActionIcon variant="subtle" color="gray" mt={6} aria-label={`Remove header ${r.name || i + 1}`} onClick={() => onRemove(i)}>
+                <IconX size={16} />
+              </ActionIcon>
+            </Group>
+          ))}
+          <Group>
+            <Button variant="subtle" size="compact-sm" leftSection={<IconPlus size={14} />} onClick={onAdd} disabled={rows.length >= 20}>
+              Add header
+            </Button>
+          </Group>
+        </Stack>
+      </Box>
+      {sendsBody(method) && (
+        <Textarea label="Body" value={body} onChange={(e) => onBody(e.currentTarget.value)} autosize minRows={3} maxRows={10}
+          placeholder={'{"ping": true}'} styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }}
+          description="Sent as JSON when it starts with { or [, otherwise as text, unless a Content-Type header says otherwise. Everyone who can see this check can read it, so put keys in a header." />
+      )}
+    </Stack>
   )
 }
 

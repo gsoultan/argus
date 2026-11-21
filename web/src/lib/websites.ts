@@ -47,6 +47,11 @@ export interface WebsiteCheck {
   /** With chats: '' the default bot, 'platform', or one of the organization's bots. */
   telegramBot: string
   telegramChats: string[]
+  /** What the check sends. GET unless set. */
+  method: SiteMethod
+  body: string
+  /** The headers it sends, by name. Their values never come back. */
+  headerNames: string[]
   createdBy: string
   createdAt: string
   state: WebsiteState
@@ -91,6 +96,36 @@ export interface WebsiteInput {
   /** With chats: '' the default bot, 'platform', or one of the organization's bots. */
   telegramBot: string
   telegramChats: string[]
+  method: SiteMethod
+  body: string
+  /** Replaces the saved headers; left out, they are kept as they are. */
+  headers?: HeaderInput[]
+}
+
+export type SiteMethod = 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH'
+export const SITE_METHODS: SiteMethod[] = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH']
+
+/** keep sends the value saved under this name, which the console never sees. */
+export interface HeaderInput {
+  name: string
+  value: string
+  keep?: boolean
+}
+
+/** Whether a method sends a body. */
+export const sendsBody = (m: SiteMethod) => m === 'POST' || m === 'PUT' || m === 'PATCH'
+
+/** What a check sends, in a few words, or '' for a plain GET. */
+export function requestSummary(c: Pick<WebsiteCheck, 'method' | 'body' | 'headerNames'>): string {
+  const parts: string[] = []
+  const m = c.method || 'GET'
+  const names = c.headerNames ?? []
+  if (m !== 'GET' || c.body || names.length) parts.push(m)
+  if (c.body) parts.push('a body')
+  if (names.length) parts.push(names.length === 1 ? `the ${names[0]} header` : `${names.length} headers`)
+  const last = parts.pop()
+  if (last === undefined) return ''
+  return parts.length ? `${parts.join(', ')} and ${last}` : last
 }
 
 export type TelegramChoice = 'default' | 'off' | 'chats'
@@ -138,7 +173,8 @@ export const useCheckWebsiteNow = () =>
 export const testWebsiteAlert = (id: string) =>
   send<{ bot: string; chats: string[] }>('POST', `/api/v1/websites/${encodeURIComponent(id)}/test-alert`)
 
-export const testWebsite = (in_: WebsiteInput) => send<SiteResult>('POST', '/api/v1/websites/test', in_)
+export const testWebsite = (in_: WebsiteInput, id?: string) =>
+  send<SiteResult>('POST', `/api/v1/websites/test${id ? `?id=${encodeURIComponent(id)}` : ''}`, in_)
 
 /** "99.95%", "100%", or "—" when nothing was counted. Never rounds a gap up to 100. */
 export function formatUptime(v: number | null | undefined): string {

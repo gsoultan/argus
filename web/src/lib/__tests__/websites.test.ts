@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatDuration, formatUptime, sliceRounds, stateLabel, type WebsiteRound } from '~/lib/websites'
+import { formatDuration, formatUptime, requestSummary, sendsBody, SITE_METHODS, sliceRounds, stateLabel, type WebsiteRound } from '~/lib/websites'
 
 describe('websites', () => {
   it('never rounds a gap up to 100%', () => {
@@ -35,5 +35,22 @@ describe('websites', () => {
     expect(hit[0]!.outcome).toBe('down')
     expect(hit[0]!.ms).toBe(200)
     expect(hit[0]!.count).toBe(3)
+  })
+})
+
+describe('requestSummary', () => {
+  it('says nothing for a plain GET', () => {
+    expect(requestSummary({ method: 'GET', body: '', headerNames: [] })).toBe('')
+  })
+  it('names what is sent', () => {
+    expect(requestSummary({ method: 'POST', body: '{}', headerNames: ['X-Api-Key'] })).toBe('POST, a body and the X-Api-Key header')
+    expect(requestSummary({ method: 'GET', body: '', headerNames: ['A', 'B'] })).toBe('GET and 2 headers')
+    expect(requestSummary({ method: 'HEAD', body: '', headerNames: [] })).toBe('HEAD')
+  })
+})
+
+describe('sendsBody', () => {
+  it('is only POST, PUT and PATCH', () => {
+    expect(SITE_METHODS.filter(sendsBody)).toEqual(['POST', 'PUT', 'PATCH'])
   })
 })

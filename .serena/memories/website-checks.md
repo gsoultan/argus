@@ -58,3 +58,10 @@ per-check alert recipients, public status page.
 - The Websites feature's choice is the `website` row in `telegram_routes` (see telegram-bots.md). `website_alert_settings` is kept unused for rollback; migration 100 copied it over.
 - Per site: `website_checks.telegram` = default (follow the feature) | off | chats, with `telegram_bot` ('' default bot, 'platform', or a bot id) and `telegram_chats`.
 - POST /api/v1/websites/{id}/test-alert sends a test now through the resolved bot.
+
+## Request payload (migration 101)
+- A check sends `method` (GET default, HEAD, POST, PUT, PATCH), `request_body` (POST/PUT/PATCH only, ≤64 KB) and headers.
+- Header values are sealed in `headers_sealed` (AES-GCM, key sha256("argus website headers v1\0"+grant key seed), AAD "website-headers"); only `header_names` is returned. Input `headers: [{name, value, keep}]`; nil keeps all saved headers; `keep` reuses the saved value by name. Test-before-save takes `?id=` for kept values.
+- `tunnel.GrantSite` carries Method/Headers/Body; the probe drops the check's headers on a redirect to another host, refuses Host/Content-Length/etc, and sets JSON content type when the body starts with { or [.
+- `SiteResult.Method` is set by new probes; a confirming agent that answers without it (too old) is "could not be asked", never counted.
+- Headers that can't be opened (signing_secret changed) make the round "unknown", never down.

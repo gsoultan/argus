@@ -153,6 +153,15 @@ func (a *API) getWebsite(w http.ResponseWriter, r *http.Request) {
 // websiteSummary is a check's settings in words, for the audit log.
 func websiteSummary(c WebsiteCheck) string {
 	parts := []string{c.URL, fmt.Sprintf("every %d min", c.EverySeconds/60), fmt.Sprintf("timeout %ds", c.TimeoutSeconds)}
+	if c.Method != "" && c.Method != http.MethodGet {
+		parts = append(parts, "sends "+c.Method)
+	}
+	if c.Body != "" {
+		parts = append(parts, fmt.Sprintf("a %d-byte body", len(c.Body)))
+	}
+	if len(c.HeaderNames) > 0 {
+		parts = append(parts, "headers "+strings.Join(c.HeaderNames, ", "))
+	}
 	if c.ExpectStatus != 0 {
 		parts = append(parts, fmt.Sprintf("expects %d", c.ExpectStatus))
 	}
@@ -200,6 +209,10 @@ func (a *API) postWebsite(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := a.prepareWebsiteRequest(r.Context(), &in, nil); err != nil {
+		a.websiteErr(w, "add website check", err)
+		return
+	}
 	c, err := a.store.CreateWebsiteCheck(r.Context(), in, actor)
 	if err != nil {
 		a.websiteErr(w, "add website check", err)
@@ -219,6 +232,15 @@ func (a *API) putWebsite(w http.ResponseWriter, r *http.Request) {
 	var in WebsiteInput
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	saved, err := a.store.WebsiteCheck(r.Context(), r.PathValue("id"))
+	if err != nil {
+		a.websiteErr(w, "change website check", err)
+		return
+	}
+	if err := a.prepareWebsiteRequest(r.Context(), &in, &saved); err != nil {
+		a.websiteErr(w, "change website check", err)
 		return
 	}
 	before, after, err := a.store.UpdateWebsiteCheck(r.Context(), r.PathValue("id"), in)
@@ -260,7 +282,8 @@ func (a *API) postWebsiteCheckNow(w http.ResponseWriter, r *http.Request) {
 }
 
 // postWebsiteTest fetches an address once from this control server, for
-// the form's Test button. It saves nothing and asks no server.
+// the form's Test button. It saves nothing and asks no server. ?id= names
+// the check being edited, whose saved header values a kept header sends.
 func (a *API) postWebsiteTest(w http.ResponseWriter, r *http.Request) {
 	if _, ok := a.websiteAdmin(w, r); !ok {
 		return
@@ -269,6 +292,24 @@ func (a *API) postWebsiteTest(w http.ResponseWriter, r *http.Request) {
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	var before *WebsiteCheck
+	if id := r.URL.Query().Get("id"); id != "" {
+		c, err := a.store.WebsiteCheck(r.Context(), id)
+		if err != nil {
+			a.websiteErr(w, "test website", err)
+			return
+		}
+		before = &c
+	}
+	in.headersSealed = nil
+	if err := a.prepareWebsiteRequest(r.Context(), &in, before); err != nil {
+		var invalid ErrInvalidWebsite
+		// Testing needs no sealing: only a check that is kept does.
+		if !errors.As(err, &invalid) || before != nil || !strings.Contains(invalid.Reason, "signing_secret") {
+			a.websiteErr(w, "test website", err)
+			return
+		}
 	}
 	in.ConfirmFrom = nil
 	if err := in.normalise(); err != nil {

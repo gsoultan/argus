@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -27,7 +28,8 @@ called down when places other than Argus agree: a problem between Argus
 and the site, or on Argus's own network, is not the site being down.
 
 Both sides run ProbeSite, so "failed" means the same thing wherever it was
-seen. One GET, a fresh connection each time (keep-alive would hide a server
+seen. One request (a GET unless the check names another method, headers or
+a body to send), a fresh connection each time (keep-alive would hide a server
 that stopped accepting new ones), redirects followed up to five times, at
 most a megabyte of the body read, and only to look for the keyword. Nothing
 of the body leaves the machine that fetched it.
@@ -51,7 +53,62 @@ const (
 	siteRedirects = 5
 	// SiteKeywordMax bounds the word a check looks for.
 	SiteKeywordMax = 200
+	// SiteBodyMax bounds the body a check sends.
+	SiteBodyMax = 64 << 10
+	// SiteHeadersMax bounds how many headers a check sends.
+	SiteHeadersMax = 20
+	// SiteHeaderValueMax bounds one header's value.
+	SiteHeaderValueMax = 4096
 )
+
+// The methods a check may send. GET is the default; the rest are for
+// endpoints that only answer a request with something in it.
+var SiteMethods = []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch}
+
+// SiteHeader is one request header a check sends.
+type SiteHeader struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// siteHeaderReserved are headers the probe owns: the transport sets them, or
+// they would change what the connection is rather than what is asked.
+var siteHeaderReserved = map[string]bool{
+	"Host": true, "Content-Length": true, "Transfer-Encoding": true, "Connection": true,
+	"Upgrade": true, "Te": true, "Trailer": true, "Keep-Alive": true, "Expect": true,
+	"Proxy-Authorization": true, "Proxy-Connection": true,
+}
+
+// ValidSiteHeaderName is a header name a check may send.
+func ValidSiteHeaderName(name string) error {
+	if name == "" {
+		return errors.New("a header has no name")
+	}
+	if len(name) > 100 {
+		return errors.New("a header name is longer than 100 characters")
+	}
+	for _, r := range name {
+		if r > 126 || r <= 32 || strings.ContainsRune("()<>@,;:\\\"/[]?={}", r) {
+			return fmt.Errorf("%q is not a header name: use letters, digits and dashes", name)
+		}
+	}
+	if siteHeaderReserved[http.CanonicalHeaderKey(name)] {
+		return fmt.Errorf("Argus sets %s itself", http.CanonicalHeaderKey(name))
+	}
+	return nil
+}
+
+// HasRequest is whether the check sends anything but a plain GET.
+func (g GrantSite) HasRequest() bool {
+	return (g.Method != "" && g.Method != http.MethodGet) || len(g.Headers) > 0 || g.Body != ""
+}
+
+func (g GrantSite) method() string {
+	if g.Method == "" {
+		return http.MethodGet
+	}
+	return g.Method
+}
 
 // What kind of failure a result is. The first three are the ones the
 // checking machine's own network can cause, so they are the ones that ask
@@ -82,6 +139,13 @@ type GrantSite struct {
 	Keyword string `json:"keyword,omitempty"`
 	// TimeoutSec is how long to wait; 0 is SiteTimeoutDefault.
 	TimeoutSec int `json:"timeoutSec,omitempty"`
+	// Method is the request's method; empty is GET.
+	Method string `json:"method,omitempty"`
+	// Headers are sent with the request, and only to the address's own host:
+	// a redirect to another host gets none of them.
+	Headers []SiteHeader `json:"headers,omitempty"`
+	// Body is sent with a POST, PUT or PATCH.
+	Body string `json:"body,omitempty"`
 }
 
 // ValidSiteURL is an http or https address with a host and no user name
@@ -126,6 +190,33 @@ func (g *GrantSite) Validate() error {
 	if g.TimeoutSec < 0 || g.TimeoutSec > SiteTimeoutMax {
 		return fmt.Errorf("the timeout must be at most %d seconds", SiteTimeoutMax)
 	}
+	if g.Method != "" && !slices.Contains(SiteMethods, g.Method) {
+		return errors.New("the method must be GET, HEAD, POST, PUT or PATCH")
+	}
+	m := g.method()
+	if m == http.MethodHead && g.Keyword != "" {
+		return errors.New("a HEAD request has no page to look for a word in: choose GET or POST, or clear the word")
+	}
+	if g.Body != "" && m != http.MethodPost && m != http.MethodPut && m != http.MethodPatch {
+		return errors.New("only a POST, PUT or PATCH request sends a body")
+	}
+	if len(g.Body) > SiteBodyMax {
+		return fmt.Errorf("the body is longer than %d KB", SiteBodyMax>>10)
+	}
+	if len(g.Headers) > SiteHeadersMax {
+		return fmt.Errorf("send at most %d headers", SiteHeadersMax)
+	}
+	for _, h := range g.Headers {
+		if err := ValidSiteHeaderName(h.Name); err != nil {
+			return err
+		}
+		if len(h.Value) > SiteHeaderValueMax {
+			return fmt.Errorf("the value of %s is longer than %d characters", h.Name, SiteHeaderValueMax)
+		}
+		if strings.ContainsAny(h.Value, "\r\n\x00") {
+			return fmt.Errorf("the value of %s has a line break in it", h.Name)
+		}
+	}
 	return nil
 }
 
@@ -149,6 +240,10 @@ type SiteResult struct {
 	// CertNotAfter is when the site's certificate ends, for https.
 	CertNotAfter *time.Time `json:"certNotAfter,omitempty"`
 	From         string     `json:"from,omitempty"`
+	// Method is the method this probe sent. An agent from before checks could
+	// send anything but a GET leaves it out, which is how argus-control knows
+	// not to count its answer for a check that sends more.
+	Method string `json:"method,omitempty"`
 }
 
 // blockedAddr is an address a website check never connects to: the cloud
@@ -237,9 +332,21 @@ func (p SiteProbe) Probe(ctx context.Context, g GrantSite) SiteResult {
 		if req.URL.Scheme != "https" && req.URL.Scheme != "http" {
 			return errors.New("redirected to an address that is not a website")
 		}
+		// The check's own headers are for the address it names. They often
+		// carry a key, and a redirect elsewhere is not who it was given to.
+		if !strings.EqualFold(req.URL.Host, via[0].URL.Host) {
+			for _, h := range g.Headers {
+				req.Header.Del(h.Name)
+			}
+		}
 		return nil
 	}}
-	req, err := http.NewRequestWithContext(cctx, http.MethodGet, g.URL, nil)
+	res.Method = g.method()
+	var send io.Reader
+	if g.Body != "" {
+		send = strings.NewReader(g.Body)
+	}
+	req, err := http.NewRequestWithContext(cctx, res.Method, g.URL, send)
 	if err != nil {
 		res.Fail, res.Detail = SiteFailBlocked, "the address is not valid"
 		return res
@@ -250,6 +357,24 @@ func (p SiteProbe) Probe(ctx context.Context, g GrantSite) SiteResult {
 	}
 	req.Header.Set("User-Agent", ua)
 	req.Header.Set("Cache-Control", "no-cache")
+	// A check's own header replaces the probe's (a User-Agent an API insists
+	// on); a name given twice is sent twice.
+	set := map[string]bool{}
+	for _, h := range g.Headers {
+		if k := http.CanonicalHeaderKey(h.Name); !set[k] {
+			set[k] = true
+			req.Header.Set(h.Name, h.Value)
+			continue
+		}
+		req.Header.Add(h.Name, h.Value)
+	}
+	if g.Body != "" && req.Header.Get("Content-Type") == "" {
+		ct := "text/plain; charset=utf-8"
+		if b := strings.TrimSpace(g.Body); strings.HasPrefix(b, "{") || strings.HasPrefix(b, "[") {
+			ct = "application/json"
+		}
+		req.Header.Set("Content-Type", ct)
+	}
 
 	start := time.Now()
 	resp, err := client.Do(req)

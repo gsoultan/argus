@@ -2,10 +2,12 @@ package tunnel
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 )
@@ -127,3 +129,72 @@ func TestSiteGrantValidate(t *testing.T) {
 }
 
 func mustAddr(s string) netip.Addr { return netip.MustParseAddr(s) }
+
+func TestSiteProbeSendsTheRequest(t *testing.T) {
+	type seen struct {
+		method, body, key, ct, ua string
+	}
+	got := make(chan seen, 4)
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- seen{method: r.Method, key: r.Header.Get("X-Api-Key")}
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer other.Close()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got <- seen{method: r.Method, body: string(b), key: r.Header.Get("X-Api-Key"), ct: r.Header.Get("Content-Type"), ua: r.Header.Get("User-Agent")}
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+	mux.HandleFunc("/away", func(w http.ResponseWriter, r *http.Request) {
+		got <- seen{method: r.Method, key: r.Header.Get("X-Api-Key")}
+		http.Redirect(w, r, strings.Replace(other.URL, "127.0.0.1", "localhost", 1)+"/x", http.StatusFound)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	p := SiteProbe{}
+	ctx := context.Background()
+
+	g := GrantSite{URL: srv.URL + "/health", Method: http.MethodPost, Body: `{"ping":1}`, Keyword: `"ok"`,
+		Headers: []SiteHeader{{Name: "X-Api-Key", Value: "s3cret"}, {Name: "user-agent", Value: "Uptime/1"}}}
+	if r := p.Probe(ctx, g); !r.OK || r.Method != http.MethodPost {
+		t.Fatalf("a POST with a body to an endpoint that wants one is up: %+v", r)
+	}
+	s := <-got
+	if s.method != "POST" || s.body != `{"ping":1}` || s.key != "s3cret" || s.ct != "application/json" || s.ua != "Uptime/1" {
+		t.Errorf("the endpoint got the method, body, headers and a JSON content type: %+v", s)
+	}
+	if r := p.Probe(ctx, GrantSite{URL: srv.URL + "/health"}); r.OK || r.Method != http.MethodGet {
+		t.Errorf("a plain GET is still a GET, and says so: %+v", r)
+	}
+	<-got
+
+	// Headers go only to the address's own host.
+	if r := p.Probe(ctx, GrantSite{URL: srv.URL + "/away", Headers: []SiteHeader{{Name: "X-Api-Key", Value: "s3cret"}}}); !r.OK {
+		t.Fatalf("the redirect is followed: %+v", r)
+	}
+	if first, then := <-got, <-got; first.key != "s3cret" || then.key != "" {
+		t.Errorf("a redirect to another host gets none of the check's headers: first %+v, then %+v", first, then)
+	}
+
+	for _, bad := range []GrantSite{
+		{URL: srv.URL, Method: "DELETE"},
+		{URL: srv.URL, Method: http.MethodHead, Keyword: "x"},
+		{URL: srv.URL, Body: "x"},
+		{URL: srv.URL, Method: http.MethodPost, Headers: []SiteHeader{{Name: "Host", Value: "evil"}}},
+		{URL: srv.URL, Method: http.MethodPost, Headers: []SiteHeader{{Name: "X-A", Value: "a\r\nX-B: b"}}},
+		{URL: srv.URL, Method: http.MethodPost, Headers: []SiteHeader{{Name: "Bad Name", Value: "a"}}},
+		{URL: srv.URL, Method: http.MethodPost, Body: strings.Repeat("x", SiteBodyMax+1)},
+	} {
+		if err := bad.Validate(); err == nil {
+			t.Errorf("refused: %+v", bad.Method)
+		}
+	}
+	if !(GrantSite{Method: "POST"}).HasRequest() || (GrantSite{Method: "GET"}).HasRequest() || !(GrantSite{Headers: []SiteHeader{{Name: "A"}}}).HasRequest() {
+		t.Error("HasRequest is anything but a plain GET")
+	}
+}
