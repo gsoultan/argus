@@ -94,6 +94,23 @@ func TestSiteCheckRefusesMetadataAddresses(t *testing.T) {
 	if !blockedAddr(mustAddr("169.254.169.254")) || !blockedAddr(mustAddr("::ffff:169.254.169.254")) || blockedAddr(mustAddr("10.1.2.3")) {
 		t.Error("link-local, including IPv4-mapped, is blocked; private is not")
 	}
+	// The metadata services outside link-local. Root cause of the gap: the
+	// rule was link-local only, and AWS's IPv6 endpoint and Alibaba's are not.
+	for _, a := range []string{"fd00:ec2::254", "100.100.100.200", "::ffff:100.100.100.200"} {
+		if !blockedAddr(mustAddr(a)) {
+			t.Errorf("%s is a metadata service and is not blocked", a)
+		}
+	}
+	for _, a := range []string{"fd00:ec2::253", "100.100.100.201", "fd12:3456::1"} {
+		if blockedAddr(mustAddr(a)) {
+			t.Errorf("%s is an ordinary private address and is blocked", a)
+		}
+	}
+	for _, u := range []string{"http://[fd00:ec2::254]/latest/meta-data/", "http://100.100.100.200/latest/meta-data/"} {
+		if err := ValidSiteURL(u); err == nil {
+			t.Errorf("accepted %q", u)
+		}
+	}
 }
 
 func TestSiteGrantValidate(t *testing.T) {
