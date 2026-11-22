@@ -45,6 +45,16 @@ this finished a shape that was designed for rather than adding a new one.
   wrote over `totp_secret` and cleared `mfa_enrolled_at`, so a stolen session
   could switch the second factor off with one request. `/auth/mfa/enrol` now
   also demands the password, and the current code when one is enrolled.
+- **Authenticator secrets are sealed at rest** (`mfa_seal.go`, 2026-11):
+  AES-256-GCM under `MFAKeyFromSecret(signing_secret)`, stored as
+  `sealed:v1:<base64>` in the same text columns; an unprefixed value is from
+  before and still verifies. Rollback-safe on purpose: a version reads sealed
+  values from start, but only writes them and seals the old ones
+  (`StartSealingMFA`) after serving 15 minutes, past the console update's
+  90 s health wait. Migration 103 is marked breaking for going back after
+  that. `argus-control rekey` moves them to the new key before storing orders
+  (`ResealMFASecrets`, idempotent, undone on failure). One that cannot be
+  opened reads as "" so no code verifies: recovery code or reset-mfa.
 - **A cookie is checked against the account on every request**
   (`session_gate.go`, `Store.SessionState`): disabled, revoked by id
   (`revoked_sessions`), or issued before `users.sessions_valid_after`, and the

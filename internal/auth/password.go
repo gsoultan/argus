@@ -22,7 +22,7 @@ import (
 //
 // Parameters follow the OWASP recommendation for argon2id: 19 MiB, two passes,
 // one lane. They are stored in the hash string rather than assumed, so raising
-// them later re-hashes on next sign-in instead of invalidating every password.
+// them later does not invalidate every password stored under the old ones.
 
 const (
 	argonThreads = 1

@@ -123,6 +123,11 @@ func runRekey(configPath string, args []string) error {
 		return err
 	}
 	defer done()
+	cfg, err := loadConfig(configPath)
+	if err != nil {
+		return err
+	}
+	oldSecret := cfg.SigningSecret
 
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
@@ -135,11 +140,32 @@ func runRekey(configPath string, args []string) error {
 	if err := writeAtomic(staged, []byte(secret+"\n"), 0o600); err != nil {
 		return fmt.Errorf("cannot write the new signing secret: %w", err)
 	}
+	// Authenticator secrets are sealed with a key derived from the signing
+	// secret, so they move with it and nobody enrols their authenticator
+	// again. Moved before any order is stored, and moved back if anything
+	// after fails, so a failed rekey leaves everything under the old secret.
+	oldKey, newKey := control.MFAKeyFromSecret(oldSecret), control.MFAKeyFromSecret(secret)
+	undo := func(cause error) error {
+		_ = os.Remove(staged)
+		if oldKey == nil {
+			return cause
+		}
+		store.SetMFAKey(newKey)
+		if _, err := store.ResealMFASecrets(ctx, oldKey); err != nil {
+			return fmt.Errorf("%w; and the authenticator secrets could not be moved back (%v): "+
+				"run rekey again, or reset the second factor of anyone who cannot sign in", cause, err)
+		}
+		return cause
+	}
+	if oldKey != nil {
+		if _, err := store.ResealMFASecrets(ctx, newKey); err != nil {
+			return undo(fmt.Errorf("cannot move the authenticator secrets to the new key: %w", err))
+		}
+	}
 	now := time.Now()
 	n, err := store.Rekey(ctx, recovery, secret, now)
 	if err != nil {
-		_ = os.Remove(staged)
-		return err
+		return undo(err)
 	}
 	kept := secretPath + ".before-rekey-" + now.UTC().Format("20060102T150405Z")
 	if err := os.Rename(secretPath, kept); err != nil {
@@ -158,6 +184,7 @@ func runRekey(configPath string, args []string) error {
 		tunnel.RecoveryFingerprint(recovery.Public().(ed25519.PublicKey)))
 	fmt.Println("Now:")
 	fmt.Println("  1. Copy the new secret to every other control server, then restart argus-control on each.")
+	fmt.Println("     Authenticator codes were moved to the new secret and work again once each is restarted.")
 	fmt.Println("  2. Servers move to the new key at their next check-in, within a minute of reaching it.")
 	fmt.Println("  3. Everyone signs in again: the secret also signs console sessions.")
 	fmt.Println("  4. Keep the old secret: database backups made before now are opened with it.")
@@ -206,5 +233,8 @@ func openStore(configPath string) (*control.Store, context.Context, func(), erro
 		return nil, nil, nil, fmt.Errorf("open store: %w", err)
 	}
 	ctx = control.PlatformContext(ctx)
+	// The recovery commands read and write accounts too, so they hold the
+	// key the running control plane seals authenticator secrets with.
+	store.SetMFAKey(control.MFAKeyFromSecret(cfg.SigningSecret))
 	return store, ctx, func() { store.Close(); cancel() }, nil
 }
