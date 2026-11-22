@@ -1,7 +1,7 @@
 import { Badge, Box, Button, Card, Flex, Group, Stack, Text, ThemeIcon, Tooltip } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import {
-  IconArrowsSplit, IconDatabaseMinus, IconDatabasePlus, IconCircleMinus, IconStack3, IconBox, IconBoxOff, IconHeartbeat, IconStack2, IconTargetArrow, IconCamera, IconReceipt, IconCirclePlus, IconDeviceFloppy, IconHistory, IconLink, IconLinkOff, IconLock, IconLockOpen, IconMoon, IconPhoto, IconPlayerPlay,
+  IconArrowsSplit, IconCloudLock, IconDatabaseMinus, IconDatabasePlus, IconCircleMinus, IconStack3, IconBox, IconBoxOff, IconHeartbeat, IconStack2, IconTargetArrow, IconCamera, IconReceipt, IconCirclePlus, IconDeviceFloppy, IconHistory, IconLink, IconLinkOff, IconLock, IconLockOpen, IconMoon, IconPhoto, IconPlayerPlay,
   IconPlayerStop, IconPlugConnected, IconPlugConnectedX, IconRefresh, IconResize, IconSettings, IconShield, IconShieldPlus, IconTag, IconTrash, IconWorld,
 } from '@tabler/icons-react'
 import { EmptyState } from '~/components/page'
@@ -28,6 +28,7 @@ const ICON: Record<CloudAction, typeof IconTrash> = {
   'target-group-create': IconTargetArrow, 'health-check': IconHeartbeat, 'balancer-create': IconArrowsSplit, 'group-size': IconStack2,
   'scale-group-create': IconStack3, 'scale-group-change': IconStack3, 'scale-add': IconCirclePlus, 'scale-remove': IconCircleMinus,
   'replica-create': IconDatabasePlus, 'replica-remove': IconDatabaseMinus, 'read-endpoint': IconArrowsSplit,
+  'vpn-create': IconCloudLock,
 }
 const ICON_COLOR: Partial<Record<CloudAction, string>> = {
   launch: 'teal', remove: 'rose', stop: 'amber', hibernate: 'amber', 'volume-create': 'teal', 'address-allocate': 'teal',
@@ -35,7 +36,7 @@ const ICON_COLOR: Partial<Record<CloudAction, string>> = {
   'firewall-create': 'teal', 'firewall-delete': 'rose', 'target-deregister': 'amber',
   'capacity-create': 'teal', 'capacity-cancel': 'amber', 'ri-buy': 'rose', 'sp-buy': 'rose',
   'target-group-create': 'teal', 'balancer-create': 'teal', 'scale-group-create': 'teal', 'scale-add': 'teal', 'scale-remove': 'amber',
-  'replica-create': 'teal', 'replica-remove': 'rose',
+  'replica-create': 'teal', 'replica-remove': 'rose', 'vpn-create': 'teal',
 }
 
 /**

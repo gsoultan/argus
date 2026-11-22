@@ -415,11 +415,13 @@ export type CloudCapacityAction = 'capacity-create' | 'capacity-cancel' | 'ri-bu
 export type CloudBalancingAction = 'target-group-create' | 'health-check' | 'balancer-create' | 'group-size'
 export type CloudScaleAction = 'scale-group-create' | 'scale-group-change' | 'scale-add' | 'scale-remove'
 export type CloudReplicaAction = 'replica-create' | 'replica-remove'
+/** Making the cloud end of an IPsec link (AWS Site-to-Site VPN). */
+export type CloudVPNAction = 'vpn-create'
 
 /** Whether an action buys a one- or three-year commitment, which always needs someone else. */
 export const isBuy = (a: CloudAction) => a === 'ri-buy' || a === 'sp-buy'
 export type CloudAction = 'launch' | 'start' | 'stop' | 'hibernate' | 'reboot' | 'resize' | 'tags' | 'protect' | 'unprotect' | 'settings' | 'remove'
-  | CloudStorageAction | CloudNetworkAction | CloudCapacityAction | CloudBalancingAction | CloudScaleAction | CloudReplicaAction
+  | CloudStorageAction | CloudNetworkAction | CloudCapacityAction | CloudBalancingAction | CloudScaleAction | CloudReplicaAction | CloudVPNAction
   /** A database's read endpoint, where setting it waits for a second person (production). */
   | 'read-endpoint'
 export type CloudChangeState = 'awaiting_approval' | 'applying' | 'applied' | 'failed' | 'declined' | 'cancelled' | 'lapsed'
@@ -938,7 +940,7 @@ export const ACTION_LEVEL: Record<CloudAction, CloudChange['level']> = {
   'capacity-create': 'change', 'capacity-cancel': 'change', 'ri-buy': 'remove', 'sp-buy': 'remove',
   'target-group-create': 'change', 'health-check': 'change', 'balancer-create': 'change', 'group-size': 'change',
   'scale-group-create': 'change', 'scale-group-change': 'change', 'scale-add': 'change', 'scale-remove': 'change',
-  'replica-create': 'change', 'replica-remove': 'remove', 'read-endpoint': 'change',
+  'replica-create': 'change', 'replica-remove': 'remove', 'read-endpoint': 'change', 'vpn-create': 'change',
 }
 
 /** The permissions each storage change takes, as the manage role must grant them. */
@@ -965,6 +967,8 @@ export const ACTION_NEEDS: Partial<Record<CloudAction, string[]>> = {
   'scale-remove': ['elasticloadbalancing:DeregisterTargets', 'ec2:TerminateInstances'],
   'replica-create': ['rds:CreateDBInstanceReadReplica', 'rds:AddTagsToResource'],
   'replica-remove': ['rds:ModifyDBInstance', 'rds:DeleteDBInstance'],
+  'vpn-create': ['ec2:CreateCustomerGateway', 'ec2:CreateVpnGateway', 'ec2:AttachVpnGateway', 'ec2:CreateVpnConnection',
+    'ec2:CreateVpnConnectionRoute', 'ec2:EnableVgwRoutePropagation', 'ec2:CreateTags'],
 }
 
 /** The same for an Azure subscription's Argus manage role, in Azure's actions. */

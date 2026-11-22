@@ -130,6 +130,10 @@ func cloudVPN(v *NetworksView, it CloudItem) NetworkCloudVPN {
 			Title:  fmt.Sprintf("Cloud VPN %s is down (%s)", n.Name, where),
 			Detail: "No tunnel is up, so nothing crosses it. " + tunnelReasons(n.Tunnels)})
 	case cloud.VPNPartial:
+		if r.Tags[cloud.VPNLinkTag] != "" {
+			// Argus made it for one IPsec link, which uses one tunnel.
+			break
+		}
 		v.Problems = append(v.Problems, NetworkProblem{Severity: "warn", Kind: "cloud-vpn-partial", Key: key + "/partial",
 			Title: fmt.Sprintf("Cloud VPN %s has %d of %d tunnels up (%s)", n.Name, up, total, where),
 			Detail: "Traffic still flows, but there is no spare: if the tunnel that is up fails, the link is down. " +

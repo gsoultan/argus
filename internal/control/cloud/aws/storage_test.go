@@ -22,7 +22,7 @@ func TestMissingFromThePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(missing) != 43 || missing[0] != "ec2:ModifyInstanceMetadataOptions" {
+	if len(missing) != 49 || missing[0] != "ec2:ModifyInstanceMetadataOptions" {
 		t.Fatalf("missing: %v", missing)
 	}
 	now := `{"Statement":[{"Effect":"Allow","Action":["` + strings.Join(ManagePolicy, `","`) + `"]},` +
@@ -32,7 +32,7 @@ func TestMissingFromThePolicy(t *testing.T) {
 	}
 	// Every storage and network action's permissions are in the template.
 	p := &Provider{}
-	for _, a := range append(append([]cloud.Action(nil), cloud.StorageActions...), append(cloud.NetworkActions, cloud.ActionFloorCreate, cloud.ActionFloorPolicy, cloud.ActionReplicaCreate, cloud.ActionReplicaRemove)...) {
+	for _, a := range append(append([]cloud.Action(nil), cloud.StorageActions...), append(cloud.NetworkActions, cloud.ActionFloorCreate, cloud.ActionFloorPolicy, cloud.ActionReplicaCreate, cloud.ActionReplicaRemove, cloud.ActionVPNCreate)...) {
 		for _, need := range p.Needs(a) {
 			found := false
 			for _, have := range append(append([]string(nil), ManagePolicy...), ManageTagged...) {

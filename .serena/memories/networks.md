@@ -123,5 +123,12 @@ links, staff VPN).
   (`ipsec.link.key_shown`). Ciphers: strong (aes256gcm16/ecp384) or
   compatible (aes256-sha256-modp2048). The cloud end is matched to a known
   cloud VPN tunnel by outside address (`matchCloudEnds`), so its state
-  shows. Problems: ipsec-down, ipsec-undone. Creating cloud gateways through
-  the cloud APIs is not built yet.
+  shows. Problems: ipsec-down, ipsec-undone.
+- Making the AWS end (cloud_vpn_routes.go, migration 111, action
+  `vpn-create`, Change level): customer gateway (reused by IP), the VPC's
+  VGW (made + attached if none), Site-to-Site VPN with static routing, one
+  range per side, the link's ciphers and a fresh key on both tunnels, route
+  propagation optional. The key is made at apply time and never in the
+  change. Then a pending IPsec link to tunnel 1 is asked for as the change's
+  requester. Connections tagged `argus:ipsec-link` are not flagged as
+  partial (tunnel 2 unused by design). Azure/GCP gateways not built.

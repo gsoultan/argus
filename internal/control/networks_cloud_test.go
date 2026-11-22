@@ -50,6 +50,14 @@ func TestCloudVPNsAreJudged(t *testing.T) {
 	if v.Problems[0].Severity != "down" {
 		t.Errorf("down not first: %+v", v.Problems)
 	}
+
+	// A connection Argus made for one IPsec link uses one tunnel by design.
+	half.Tags = map[string]string{cloud.VPNLinkTag: "dc"}
+	v = buildNetworks(nil, now)
+	addCloudNetworks(&v, []CloudItem{{AccountID: "a2", Provider: "aws", AccountName: "data", Resource: half}}, nil, now)
+	if _, ok := problemKinds(v)["cloud-vpn-partial"]; ok {
+		t.Errorf("one tunnel of a link's connection judged partial: %+v", v.Problems)
+	}
 }
 
 func TestCloudflareTunnelsMatchServers(t *testing.T) {

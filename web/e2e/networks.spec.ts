@@ -238,6 +238,45 @@ test('networks: IPsec links show both ends and the key only on request', async (
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/networks-new-ipsec-link.png` })
 })
 
+test('networks: Argus makes the AWS end of a link, with its price, as a cloud change', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await signIn(page)
+  await page.route('**/api/v1/cloud/accounts', (r) => r.fulfill({ json: { bases: [], accounts: [{
+    id: 'ca1', provider: 'aws', accountId: '412788931204', name: 'payments-prod', access: 'manage', environment: 'production',
+    regions: ['ap-southeast-3'], manageMissing: [], counts: {}, syncErrors: {},
+  }] } }))
+  await page.route(/\/api\/v1\/cloud\/resources\?kind=network/, (r) => r.fulfill({ json: { items: [{
+    accountId: 'ca1', provider: 'aws', accountName: 'payments-prod', environment: 'production', seenAt: ago(2),
+    resource: { kind: 'network', id: 'vpc-0abc1234', name: 'prod-vpc', region: 'ap-southeast-3', state: 'available', size: '10.30.0.0/16' },
+  }] } }))
+  let asked: Record<string, unknown> | null = null
+  await page.route('**/api/v1/cloud/changes', async (r) => {
+    if (r.request().method() !== 'POST') return r.fulfill({ json: { changes: [] } })
+    asked = r.request().postDataJSON()
+    await r.fulfill({ status: 202, json: { id: 'c1', state: 'awaiting_approval', action: 'vpn-create', summary: 'Make the AWS Site-to-Site VPN "Jakarta office"' } })
+  })
+  await page.goto('/networks')
+  await page.getByRole('button', { name: 'Make one in AWS' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Make the AWS end of a link' })
+  await expect(dialog.getByTestId('vpn-cost')).toContainText('US$0.05 an hour')
+  await dialog.getByLabel('Name', { exact: true }).fill('Jakarta office')
+  await dialog.getByRole('combobox', { name: 'VPC', exact: true }).click()
+  await page.getByRole('option', { name: /prod-vpc/ }).click()
+  await dialog.getByRole('combobox', { name: 'Your server' }).click()
+  await page.getByRole('option').first().click()
+  await dialog.getByLabel('Its public address').fill('10.0.0.9')
+  await expect(dialog.getByText('Its public IPv4 address, as AWS sees it')).toBeVisible()
+  await dialog.getByLabel('Its public address').fill('36.72.1.9')
+  await dialog.getByLabel('Range behind your server').fill('192.168.10.0/24')
+  await expect(dialog.getByText('Empty for all of 10.30.0.0/16')).toBeVisible()
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/networks-make-aws-vpn.png` })
+  await dialog.getByRole('textbox', { name: 'Why' }).fill('The Jakarta office needs the payments VPC')
+  await dialog.getByRole('button', { name: 'Ask for approval' }).click()
+  await expect(dialog).toBeHidden()
+  expect(asked).toMatchObject({ accountId: 'ca1', region: 'ap-southeast-3', action: 'vpn-create',
+    spec: { name: 'Jakarta office', network: 'vpc-0abc1234', serverAddress: '36.72.1.9', serverRange: '192.168.10.0/24', ciphers: 'strong', propagate: true } })
+})
+
 test('networks: on a phone', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await signIn(page)

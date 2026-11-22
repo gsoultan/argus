@@ -1,6 +1,6 @@
 import { Alert, Badge, Button, Checkbox, CopyButton, Group, Modal, PasswordInput, Radio, SegmentedControl, Select, Stack, Text, TextInput, Tooltip } from '@mantine/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { IconCheck, IconCloudLock, IconCopy, IconKey, IconPencil, IconPlus, IconTrash, IconX } from '@tabler/icons-react'
+import { IconCheck, IconCloudLock, IconCloudPlus, IconCopy, IconKey, IconPencil, IconPlus, IconTrash, IconX } from '@tabler/icons-react'
 import { useMemo, useState } from 'react'
 import { AloneOr, ApproveOwn } from '~/components/ApproveOwn'
 import { AnchorLink } from '~/components/links'
@@ -13,6 +13,7 @@ import {
   WG_MEMBER_STATE, type IPsecDraft, type IPsecLink, type IPsecProposals,
 } from '~/lib/networks'
 import { assetsQuery } from '~/lib/queries'
+import { MakeAWSVPN, useAWSManage } from './NetworksCloudVPN'
 import { FS, SP } from '~/theme'
 
 /*
@@ -32,11 +33,18 @@ const ranges = (s: string) => s.split(/[\s,]+/).map((x) => x.trim()).filter(Bool
 export function IPsecLinksCard({ canManage, me }: { canManage: boolean; me?: string }) {
   const { data, isLoading } = useQuery({ ...ipsecLinksQuery(), enabled: isConfigured() })
   const [editing, setEditing] = useState<IPsecLink | 'new' | null>(null)
+  const [making, setMaking] = useState(false)
+  const aws = useAWSManage()
   const links = data ?? []
   return (
     <SectionCard title="Links to clouds and offices" icon={IconCloudLock} iconColor="sky"
       description="IPsec links from one of your servers to an AWS, Azure or Google Cloud VPN gateway, or to an office firewall. Argus sets up strongSwan on the server; every change waits for another admin."
-      action={canManage && <Button size="xs" variant="default" leftSection={<IconPlus size={14} />} onClick={() => setEditing('new')}>New link</Button>}>
+      action={canManage && (
+        <Group gap="xs">
+          {aws && <Button size="xs" variant="subtle" leftSection={<IconCloudPlus size={14} />} onClick={() => setMaking(true)}>Make one in AWS</Button>}
+          <Button size="xs" variant="default" leftSection={<IconPlus size={14} />} onClick={() => setEditing('new')}>New link</Button>
+        </Group>
+      )}>
       {isLoading ? null : links.length === 0 ? (
         <EmptyState icon={IconCloudLock} title="No IPsec links yet."
           description="Link an office or data centre server to a cloud network: make the VPN connection in the cloud, then give Argus its tunnel address and key." />
@@ -44,6 +52,7 @@ export function IPsecLinksCard({ canManage, me }: { canManage: boolean; me?: str
         <Stack gap="lg">{links.map((l) => <Link key={l.id} l={l} canManage={canManage} me={me} onEdit={() => setEditing(l)} />)}</Stack>
       )}
       {editing && <LinkEditor l={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}
+      {making && <MakeAWSVPN onClose={() => setMaking(false)} />}
     </SectionCard>
   )
 }
@@ -164,7 +173,7 @@ function LinkEditor({ l, onClose }: { l: IPsecLink | null; onClose: () => void }
             First make the VPN connection in the cloud, with this server's public address as the customer or peer gateway and static routing to the
             ranges on this side. In AWS that is a customer gateway and a Site-to-Site VPN connection; in Azure a local network gateway and a
             connection; in Google Cloud a peer VPN gateway and a tunnel. Then give its tunnel address below. A cloud VPN in a connected account is
-            matched by that address, so its tunnel state shows here.
+            matched by that address, so its tunnel state shows here. For an AWS VPC with no VPN yet, Make one in AWS does all of this for you.
           </Text>
         </Alert>
         <TextInput label="Name" placeholder="Jakarta office to AWS" value={name} onChange={(e) => setName(e.currentTarget.value)} maxLength={80} />
