@@ -117,6 +117,9 @@ export function WebsitesPage({ openId }: { openId?: string }) {
   )
 }
 
+/** What sectionsOf needs of a check, of any kind. */
+type Sectioned = Pick<WebsiteCheck, 'state' | 'paused' | 'groupId'>
+
 const SEVERITY: Record<string, number> = { down: 0, unknown: 1, pending: 2, up: 3, paused: 4, empty: 5 }
 
 /**
@@ -125,9 +128,9 @@ const SEVERITY: Record<string, number> = { down: 0, unknown: 1, pending: 2, up: 
  * Checks in no group come last. An empty group is shown to admins only, so
  * they can fill it.
  */
-export function sectionsOf(list: WebsiteCheck[], groups: CheckGroup[], showEmpty: boolean): { group?: CheckGroup; checks: WebsiteCheck[] }[] {
-  const rank = (c: WebsiteCheck) => SEVERITY[c.paused ? 'paused' : c.state] ?? 9
-  const byState = (a: WebsiteCheck, b: WebsiteCheck) => rank(a) - rank(b)
+export function sectionsOf<C extends Sectioned>(list: C[], groups: CheckGroup[], showEmpty: boolean): { group?: CheckGroup; checks: C[] }[] {
+  const rank = (c: C) => SEVERITY[c.paused ? 'paused' : c.state] ?? 9
+  const byState = (a: C, b: C) => rank(a) - rank(b)
   const known = new Set(groups.map((g) => g.id))
   const out = groups
     .map((g) => ({ group: g, checks: list.filter((c) => c.groupId === g.id).sort(byState) }))
@@ -137,7 +140,7 @@ export function sectionsOf(list: WebsiteCheck[], groups: CheckGroup[], showEmpty
   return loose.length > 0 ? [...out, { checks: loose }] : out
 }
 
-function RollUpBadge({ list }: { list: WebsiteCheck[] }) {
+export function RollUpBadge({ list }: { list: Pick<WebsiteCheck, 'state' | 'paused' | 'failingRounds'>[] }) {
   const r = rollUp(list)
   if (r === 'empty') return null
   const n = list.filter((c) => !c.paused && c.state === 'down').length
@@ -146,7 +149,7 @@ function RollUpBadge({ list }: { list: WebsiteCheck[] }) {
   return <Badge size="sm" color={color} variant={r === 'down' ? 'filled' : 'light'}>{label}</Badge>
 }
 
-function GroupMenu({ group, onShare, onRename }: { group: CheckGroup; onShare: () => void; onRename: () => void }) {
+export function GroupMenu({ group, onShare, onRename }: { group: CheckGroup; onShare: () => void; onRename: () => void }) {
   const remove = useRemoveCheckGroup()
   const [asking, setAsking] = useState(false)
   return (
@@ -228,13 +231,13 @@ function WebsiteRow({ c, onOpen }: { c: WebsiteCheck; onOpen: () => void }) {
   )
 }
 
-function UptimeText({ v }: { v: number | null }) {
+export function UptimeText({ v }: { v: number | null }) {
   const color = v == null ? 'dimmed' : v >= 99.9 ? undefined : v >= 99 ? 'amber' : 'rose'
   return <Text size="sm" c={color} fw={v != null && v < 99 ? 600 : undefined}>{formatUptime(v)}</Text>
 }
 
 /** How sure "Down" is, in the words the alert uses. */
-function HowSure() {
+export function HowSure() {
   return (
     <SectionCard title="How Argus makes sure a site is really down" icon={IconShieldCheck} iconColor="teal">
       <Stack gap={SP.cozy}>
@@ -415,7 +418,7 @@ function WebsiteDrawer({ id, canEdit, groups, onClose, onEdit }: {
   )
 }
 
-function Figure({ label, value, warn = false }: { label: string; value: string; warn?: boolean }) {
+export function Figure({ label, value, warn = false }: { label: string; value: string; warn?: boolean }) {
   return (
     <Box>
       <Text size={FS.micro} c="dimmed">{label}</Text>
@@ -441,7 +444,7 @@ const OUTCOME_WORD: Record<WebsiteRound['outcome'], string> = {
  * slow, coloured by the worst thing that happened in it, so a two-minute
  * outage still shows on a phone.
  */
-function RoundStrip({ rounds }: { rounds: WebsiteRound[] }) {
+export function RoundStrip({ rounds }: { rounds: WebsiteRound[] }) {
   const slices = useMemo(() => sliceRounds(rounds, 96), [rounds])
   const upMs = slices.flatMap((s) => (s?.ms != null ? [s.ms] : []))
   const max = Math.max(200, ...upMs)
@@ -489,7 +492,7 @@ function RoundStrip({ rounds }: { rounds: WebsiteRound[] }) {
   )
 }
 
-function RemoveButton({ name, onRemove }: { name: string; onRemove: () => void }) {
+export function RemoveButton({ name, onRemove }: { name: string; onRemove: () => void }) {
   const [asking, setAsking] = useState(false)
   return (
     <>

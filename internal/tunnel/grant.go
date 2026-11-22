@@ -74,6 +74,9 @@ type Grant struct {
 	// Site is the website a website check may fetch; nil for every other
 	// service.
 	Site *GrantSite `json:"site,omitempty"`
+	// Check is the Monitoring attempt a checkrun grant allows; nil for every
+	// other service.
+	Check *GrantCheck `json:"check,omitempty"`
 	// Logons is what a logons grant may ask; nil for every other service.
 	Logons *GrantLogons `json:"logons,omitempty"`
 	// Ask is who must be asked or told at a workstation before a terminal,

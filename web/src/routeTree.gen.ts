@@ -17,6 +17,7 @@ import { Route as AuditRouteImport } from './routes/audit'
 import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as CoverageRouteImport } from './routes/coverage'
 import { Route as MineRouteImport } from './routes/mine'
+import { Route as NetworkDevicesRouteImport } from './routes/network-devices'
 import { Route as RequestsRouteImport } from './routes/requests'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SetupRouteImport } from './routes/setup'
@@ -80,6 +81,11 @@ const CoverageRoute = CoverageRouteImport.update({
 const MineRoute = MineRouteImport.update({
   id: '/mine',
   path: '/mine',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const NetworkDevicesRoute = NetworkDevicesRouteImport.update({
+  id: '/network-devices',
+  path: '/network-devices',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RequestsRoute = RequestsRouteImport.update({
@@ -212,6 +218,7 @@ export interface FileRoutesByFullPath {
   '/connect': typeof ConnectRoute
   '/coverage': typeof CoverageRoute
   '/mine': typeof MineRoute
+  '/network-devices': typeof NetworkDevicesRoute
   '/requests': typeof RequestsRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
@@ -246,6 +253,7 @@ export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
   '/coverage': typeof CoverageRoute
   '/mine': typeof MineRoute
+  '/network-devices': typeof NetworkDevicesRoute
   '/requests': typeof RequestsRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
@@ -281,6 +289,7 @@ export interface FileRoutesById {
   '/connect': typeof ConnectRoute
   '/coverage': typeof CoverageRoute
   '/mine': typeof MineRoute
+  '/network-devices': typeof NetworkDevicesRoute
   '/requests': typeof RequestsRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
@@ -317,6 +326,7 @@ export interface FileRouteTypes {
     | '/connect'
     | '/coverage'
     | '/mine'
+    | '/network-devices'
     | '/requests'
     | '/settings'
     | '/setup'
@@ -351,6 +361,7 @@ export interface FileRouteTypes {
     | '/connect'
     | '/coverage'
     | '/mine'
+    | '/network-devices'
     | '/requests'
     | '/settings'
     | '/setup'
@@ -385,6 +396,7 @@ export interface FileRouteTypes {
     | '/connect'
     | '/coverage'
     | '/mine'
+    | '/network-devices'
     | '/requests'
     | '/settings'
     | '/setup'
@@ -420,6 +432,7 @@ export interface RootRouteChildren {
   ConnectRoute: typeof ConnectRoute
   CoverageRoute: typeof CoverageRoute
   MineRoute: typeof MineRoute
+  NetworkDevicesRoute: typeof NetworkDevicesRoute
   RequestsRoute: typeof RequestsRoute
   SettingsRoute: typeof SettingsRoute
   SetupRoute: typeof SetupRoute
@@ -502,6 +515,13 @@ declare module '@tanstack/react-router' {
       path: '/mine'
       fullPath: '/mine'
       preLoaderRoute: typeof MineRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/network-devices': {
+      id: '/network-devices'
+      path: '/network-devices'
+      fullPath: '/network-devices'
+      preLoaderRoute: typeof NetworkDevicesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/requests': {
@@ -684,6 +704,7 @@ const rootRouteChildren: RootRouteChildren = {
   ConnectRoute: ConnectRoute,
   CoverageRoute: CoverageRoute,
   MineRoute: MineRoute,
+  NetworkDevicesRoute: NetworkDevicesRoute,
   RequestsRoute: RequestsRoute,
   SettingsRoute: SettingsRoute,
   SetupRoute: SetupRoute,

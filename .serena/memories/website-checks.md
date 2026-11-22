@@ -81,3 +81,12 @@ per-check alert recipients, public status page.
 - Going down also raises a person alert for each non-fleet watcher (same subject, so coming back up closes it).
 - `/auth/me` has `seesChecks`; the sidebar shows Websites to non-fleet roles only when it is true, and `/websites` uses `guardChecks`.
 - The "checks" access kind (label Monitoring) lists them in what a person can reach.
+
+## Network devices over SNMP (migration 105, network_devices.go)
+- A device is a `checks` row with `kind = 'snmp'`. Settings JSON: host, port, version (v3 default, v2c), user, authProto, privProto, watch [{index,name}]. Community / v3 passwords are sealed in `secrets_sealed` (key sha256("argus network device secrets v1\0"+grant key seed), AAD "network-device-secrets"); `hasSecret` only. On an edit an empty credential keeps the saved one, but only when version and user (and that protocol) are unchanged.
+- `confirm_from` (1–3 servers) is who reads it: control never reaches the device. Each server's agent is asked at once over the generic `checkrun` tunnel service (tunnel/checkrun.go: `GrantCheck{Kind, SNMP}` → one `AttemptResult` frame 'g'). An agent that answers "unknown service"/"unknown check kind" is "needs updating", which makes the round unknown, never down.
+- Any server's OK is up (partial if an earlier one got no answer). Otherwise "fail": no answer, refused credentials, or a watched interface not up. Two rounds make it down, through the shared `recordCheckRound(ctx,id,r,lastData)`.
+- `checks.last_data` holds `DeviceInfo` (sysName/Descr/Location, uptime, interfaces with bit rates from counter deltas). Uptime going back more than 60 s is a restart: a warning alert ("X restarted"), not an outage; rates are skipped across it.
+- Alerts use kind `website`, subject `device:<id>`, link `/network-devices?device=<id>`, and the Websites Telegram route.
+- Generic now: `Store.CheckNow`, `SetCheckPaused`, `CheckLabel`; viewers and group moves work for any kind. Tests stub agents with `api.deviceAsk`.
+- Console: `/network-devices` (guardChecks), components/NetworkDevices.tsx, lib/networkDevices.ts; reuses Websites' sectionsOf, RoundStrip, GroupMenu, etc.

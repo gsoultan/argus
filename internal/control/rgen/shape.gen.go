@@ -300,6 +300,7 @@ func _assertCheckShape(m m0.Check) {
 		m.NextAt,
 		m.LeaseUntil,
 		m.Group,
+		m.LastData,
 	}
 }
 

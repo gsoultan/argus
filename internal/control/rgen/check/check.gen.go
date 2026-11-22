@@ -47,6 +47,7 @@ type Row struct {
 	NextAt         time.Time
 	LeaseUntil     runtime.Null[time.Time]
 	GroupID        runtime.Null[[16]byte]
+	LastData       runtime.JSON
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -85,7 +86,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 27
+const nCols = 28
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -567,6 +568,7 @@ var (
 	NextAt         = TimeCol{24}
 	LeaseUntil     = NullTimeCol{25}
 	GroupID        = NullUUIDCol{26}
+	LastData       = JSONCol{27}
 )
 
 // UUIDCol addresses a uuid column.
@@ -1109,6 +1111,13 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyRaw[q.nar] = p.anyRaw
 			q.nar++
+		case 27:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1293,6 +1302,13 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.raws[q.nr] = p.raw
 		q.nr++
+	case 27:
+		if int(q.njs) >= 2 {
+			q.over = true
+			return
+		}
+		q.jsns[q.njs] = p.jsn
+		q.njs++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1393,125 +1409,129 @@ func (q Query) TelegramChatsContains(v ...string) Query { return q.Where(Telegra
 func (q Query) TelegramChatsContainedBy(v ...string) Query {
 	return q.Where(TelegramChats.ContainedBy(v...))
 }
-func (q Query) TelegramChatsOverlaps(v ...string) Query { return q.Where(TelegramChats.Overlaps(v...)) }
-func (q Query) CreatedByEq(v string) Query              { return q.Where(CreatedBy.Eq(v)) }
-func (q Query) CreatedByNotEq(v string) Query           { return q.Where(CreatedBy.NotEq(v)) }
-func (q Query) CreatedByGt(v string) Query              { return q.Where(CreatedBy.Gt(v)) }
-func (q Query) CreatedByGte(v string) Query             { return q.Where(CreatedBy.Gte(v)) }
-func (q Query) CreatedByLt(v string) Query              { return q.Where(CreatedBy.Lt(v)) }
-func (q Query) CreatedByLte(v string) Query             { return q.Where(CreatedBy.Lte(v)) }
-func (q Query) CreatedByEqLower(v string) Query         { return q.Where(CreatedBy.EqLower(v)) }
-func (q Query) CreatedByLike(v string) Query            { return q.Where(CreatedBy.Like(v)) }
-func (q Query) CreatedByILike(v string) Query           { return q.Where(CreatedBy.ILike(v)) }
-func (q Query) CreatedByIn(v ...string) Query           { return q.Where(CreatedBy.In(v...)) }
-func (q Query) CreatedByNotIn(v ...string) Query        { return q.Where(CreatedBy.NotIn(v...)) }
-func (q Query) StateEq(v string) Query                  { return q.Where(State.Eq(v)) }
-func (q Query) StateNotEq(v string) Query               { return q.Where(State.NotEq(v)) }
-func (q Query) StateGt(v string) Query                  { return q.Where(State.Gt(v)) }
-func (q Query) StateGte(v string) Query                 { return q.Where(State.Gte(v)) }
-func (q Query) StateLt(v string) Query                  { return q.Where(State.Lt(v)) }
-func (q Query) StateLte(v string) Query                 { return q.Where(State.Lte(v)) }
-func (q Query) StateEqLower(v string) Query             { return q.Where(State.EqLower(v)) }
-func (q Query) StateLike(v string) Query                { return q.Where(State.Like(v)) }
-func (q Query) StateILike(v string) Query               { return q.Where(State.ILike(v)) }
-func (q Query) StateIn(v ...string) Query               { return q.Where(State.In(v...)) }
-func (q Query) StateNotIn(v ...string) Query            { return q.Where(State.NotIn(v...)) }
-func (q Query) StateSinceEq(v time.Time) Query          { return q.Where(StateSince.Eq(v)) }
-func (q Query) StateSinceNotEq(v time.Time) Query       { return q.Where(StateSince.NotEq(v)) }
-func (q Query) StateSinceGt(v time.Time) Query          { return q.Where(StateSince.Gt(v)) }
-func (q Query) StateSinceGte(v time.Time) Query         { return q.Where(StateSince.Gte(v)) }
-func (q Query) StateSinceLt(v time.Time) Query          { return q.Where(StateSince.Lt(v)) }
-func (q Query) StateSinceLte(v time.Time) Query         { return q.Where(StateSince.Lte(v)) }
-func (q Query) StateSinceIsNull() Query                 { return q.Where(StateSince.IsNull()) }
-func (q Query) StateSinceIsNotNull() Query              { return q.Where(StateSince.IsNotNull()) }
-func (q Query) FailingRoundsEq(v int32) Query           { return q.Where(FailingRounds.Eq(v)) }
-func (q Query) FailingRoundsNotEq(v int32) Query        { return q.Where(FailingRounds.NotEq(v)) }
-func (q Query) FailingRoundsGt(v int32) Query           { return q.Where(FailingRounds.Gt(v)) }
-func (q Query) FailingRoundsGte(v int32) Query          { return q.Where(FailingRounds.Gte(v)) }
-func (q Query) FailingRoundsLt(v int32) Query           { return q.Where(FailingRounds.Lt(v)) }
-func (q Query) FailingRoundsLte(v int32) Query          { return q.Where(FailingRounds.Lte(v)) }
-func (q Query) FailingRoundsIn(v ...int32) Query        { return q.Where(FailingRounds.In(v...)) }
-func (q Query) FailingRoundsNotIn(v ...int32) Query     { return q.Where(FailingRounds.NotIn(v...)) }
-func (q Query) LastAtEq(v time.Time) Query              { return q.Where(LastAt.Eq(v)) }
-func (q Query) LastAtNotEq(v time.Time) Query           { return q.Where(LastAt.NotEq(v)) }
-func (q Query) LastAtGt(v time.Time) Query              { return q.Where(LastAt.Gt(v)) }
-func (q Query) LastAtGte(v time.Time) Query             { return q.Where(LastAt.Gte(v)) }
-func (q Query) LastAtLt(v time.Time) Query              { return q.Where(LastAt.Lt(v)) }
-func (q Query) LastAtLte(v time.Time) Query             { return q.Where(LastAt.Lte(v)) }
-func (q Query) LastAtIsNull() Query                     { return q.Where(LastAt.IsNull()) }
-func (q Query) LastAtIsNotNull() Query                  { return q.Where(LastAt.IsNotNull()) }
-func (q Query) LastMsEq(v int32) Query                  { return q.Where(LastMs.Eq(v)) }
-func (q Query) LastMsNotEq(v int32) Query               { return q.Where(LastMs.NotEq(v)) }
-func (q Query) LastMsGt(v int32) Query                  { return q.Where(LastMs.Gt(v)) }
-func (q Query) LastMsGte(v int32) Query                 { return q.Where(LastMs.Gte(v)) }
-func (q Query) LastMsLt(v int32) Query                  { return q.Where(LastMs.Lt(v)) }
-func (q Query) LastMsLte(v int32) Query                 { return q.Where(LastMs.Lte(v)) }
-func (q Query) LastMsIn(v ...int32) Query               { return q.Where(LastMs.In(v...)) }
-func (q Query) LastMsNotIn(v ...int32) Query            { return q.Where(LastMs.NotIn(v...)) }
-func (q Query) LastMsIsNull() Query                     { return q.Where(LastMs.IsNull()) }
-func (q Query) LastMsIsNotNull() Query                  { return q.Where(LastMs.IsNotNull()) }
-func (q Query) LastStatusEq(v int32) Query              { return q.Where(LastStatus.Eq(v)) }
-func (q Query) LastStatusNotEq(v int32) Query           { return q.Where(LastStatus.NotEq(v)) }
-func (q Query) LastStatusGt(v int32) Query              { return q.Where(LastStatus.Gt(v)) }
-func (q Query) LastStatusGte(v int32) Query             { return q.Where(LastStatus.Gte(v)) }
-func (q Query) LastStatusLt(v int32) Query              { return q.Where(LastStatus.Lt(v)) }
-func (q Query) LastStatusLte(v int32) Query             { return q.Where(LastStatus.Lte(v)) }
-func (q Query) LastStatusIn(v ...int32) Query           { return q.Where(LastStatus.In(v...)) }
-func (q Query) LastStatusNotIn(v ...int32) Query        { return q.Where(LastStatus.NotIn(v...)) }
-func (q Query) LastStatusIsNull() Query                 { return q.Where(LastStatus.IsNull()) }
-func (q Query) LastStatusIsNotNull() Query              { return q.Where(LastStatus.IsNotNull()) }
-func (q Query) LastDetailEq(v string) Query             { return q.Where(LastDetail.Eq(v)) }
-func (q Query) LastDetailNotEq(v string) Query          { return q.Where(LastDetail.NotEq(v)) }
-func (q Query) LastDetailGt(v string) Query             { return q.Where(LastDetail.Gt(v)) }
-func (q Query) LastDetailGte(v string) Query            { return q.Where(LastDetail.Gte(v)) }
-func (q Query) LastDetailLt(v string) Query             { return q.Where(LastDetail.Lt(v)) }
-func (q Query) LastDetailLte(v string) Query            { return q.Where(LastDetail.Lte(v)) }
-func (q Query) LastDetailEqLower(v string) Query        { return q.Where(LastDetail.EqLower(v)) }
-func (q Query) LastDetailLike(v string) Query           { return q.Where(LastDetail.Like(v)) }
-func (q Query) LastDetailILike(v string) Query          { return q.Where(LastDetail.ILike(v)) }
-func (q Query) LastDetailIn(v ...string) Query          { return q.Where(LastDetail.In(v...)) }
-func (q Query) LastDetailNotIn(v ...string) Query       { return q.Where(LastDetail.NotIn(v...)) }
-func (q Query) LastOutcomeEq(v string) Query            { return q.Where(LastOutcome.Eq(v)) }
-func (q Query) LastOutcomeNotEq(v string) Query         { return q.Where(LastOutcome.NotEq(v)) }
-func (q Query) LastOutcomeGt(v string) Query            { return q.Where(LastOutcome.Gt(v)) }
-func (q Query) LastOutcomeGte(v string) Query           { return q.Where(LastOutcome.Gte(v)) }
-func (q Query) LastOutcomeLt(v string) Query            { return q.Where(LastOutcome.Lt(v)) }
-func (q Query) LastOutcomeLte(v string) Query           { return q.Where(LastOutcome.Lte(v)) }
-func (q Query) LastOutcomeEqLower(v string) Query       { return q.Where(LastOutcome.EqLower(v)) }
-func (q Query) LastOutcomeLike(v string) Query          { return q.Where(LastOutcome.Like(v)) }
-func (q Query) LastOutcomeILike(v string) Query         { return q.Where(LastOutcome.ILike(v)) }
-func (q Query) LastOutcomeIn(v ...string) Query         { return q.Where(LastOutcome.In(v...)) }
-func (q Query) LastOutcomeNotIn(v ...string) Query      { return q.Where(LastOutcome.NotIn(v...)) }
-func (q Query) ExpiresAtEq(v time.Time) Query           { return q.Where(ExpiresAt.Eq(v)) }
-func (q Query) ExpiresAtNotEq(v time.Time) Query        { return q.Where(ExpiresAt.NotEq(v)) }
-func (q Query) ExpiresAtGt(v time.Time) Query           { return q.Where(ExpiresAt.Gt(v)) }
-func (q Query) ExpiresAtGte(v time.Time) Query          { return q.Where(ExpiresAt.Gte(v)) }
-func (q Query) ExpiresAtLt(v time.Time) Query           { return q.Where(ExpiresAt.Lt(v)) }
-func (q Query) ExpiresAtLte(v time.Time) Query          { return q.Where(ExpiresAt.Lte(v)) }
-func (q Query) ExpiresAtIsNull() Query                  { return q.Where(ExpiresAt.IsNull()) }
-func (q Query) ExpiresAtIsNotNull() Query               { return q.Where(ExpiresAt.IsNotNull()) }
-func (q Query) NextAtEq(v time.Time) Query              { return q.Where(NextAt.Eq(v)) }
-func (q Query) NextAtNotEq(v time.Time) Query           { return q.Where(NextAt.NotEq(v)) }
-func (q Query) NextAtGt(v time.Time) Query              { return q.Where(NextAt.Gt(v)) }
-func (q Query) NextAtGte(v time.Time) Query             { return q.Where(NextAt.Gte(v)) }
-func (q Query) NextAtLt(v time.Time) Query              { return q.Where(NextAt.Lt(v)) }
-func (q Query) NextAtLte(v time.Time) Query             { return q.Where(NextAt.Lte(v)) }
-func (q Query) LeaseUntilEq(v time.Time) Query          { return q.Where(LeaseUntil.Eq(v)) }
-func (q Query) LeaseUntilNotEq(v time.Time) Query       { return q.Where(LeaseUntil.NotEq(v)) }
-func (q Query) LeaseUntilGt(v time.Time) Query          { return q.Where(LeaseUntil.Gt(v)) }
-func (q Query) LeaseUntilGte(v time.Time) Query         { return q.Where(LeaseUntil.Gte(v)) }
-func (q Query) LeaseUntilLt(v time.Time) Query          { return q.Where(LeaseUntil.Lt(v)) }
-func (q Query) LeaseUntilLte(v time.Time) Query         { return q.Where(LeaseUntil.Lte(v)) }
-func (q Query) LeaseUntilIsNull() Query                 { return q.Where(LeaseUntil.IsNull()) }
-func (q Query) LeaseUntilIsNotNull() Query              { return q.Where(LeaseUntil.IsNotNull()) }
-func (q Query) GroupIDEq(v [16]byte) Query              { return q.Where(GroupID.Eq(v)) }
-func (q Query) GroupIDNotEq(v [16]byte) Query           { return q.Where(GroupID.NotEq(v)) }
-func (q Query) GroupIDIn(v ...[16]byte) Query           { return q.Where(GroupID.In(v...)) }
-func (q Query) GroupIDNotIn(v ...[16]byte) Query        { return q.Where(GroupID.NotIn(v...)) }
-func (q Query) GroupIDIsNull() Query                    { return q.Where(GroupID.IsNull()) }
-func (q Query) GroupIDIsNotNull() Query                 { return q.Where(GroupID.IsNotNull()) }
+func (q Query) TelegramChatsOverlaps(v ...string) Query  { return q.Where(TelegramChats.Overlaps(v...)) }
+func (q Query) CreatedByEq(v string) Query               { return q.Where(CreatedBy.Eq(v)) }
+func (q Query) CreatedByNotEq(v string) Query            { return q.Where(CreatedBy.NotEq(v)) }
+func (q Query) CreatedByGt(v string) Query               { return q.Where(CreatedBy.Gt(v)) }
+func (q Query) CreatedByGte(v string) Query              { return q.Where(CreatedBy.Gte(v)) }
+func (q Query) CreatedByLt(v string) Query               { return q.Where(CreatedBy.Lt(v)) }
+func (q Query) CreatedByLte(v string) Query              { return q.Where(CreatedBy.Lte(v)) }
+func (q Query) CreatedByEqLower(v string) Query          { return q.Where(CreatedBy.EqLower(v)) }
+func (q Query) CreatedByLike(v string) Query             { return q.Where(CreatedBy.Like(v)) }
+func (q Query) CreatedByILike(v string) Query            { return q.Where(CreatedBy.ILike(v)) }
+func (q Query) CreatedByIn(v ...string) Query            { return q.Where(CreatedBy.In(v...)) }
+func (q Query) CreatedByNotIn(v ...string) Query         { return q.Where(CreatedBy.NotIn(v...)) }
+func (q Query) StateEq(v string) Query                   { return q.Where(State.Eq(v)) }
+func (q Query) StateNotEq(v string) Query                { return q.Where(State.NotEq(v)) }
+func (q Query) StateGt(v string) Query                   { return q.Where(State.Gt(v)) }
+func (q Query) StateGte(v string) Query                  { return q.Where(State.Gte(v)) }
+func (q Query) StateLt(v string) Query                   { return q.Where(State.Lt(v)) }
+func (q Query) StateLte(v string) Query                  { return q.Where(State.Lte(v)) }
+func (q Query) StateEqLower(v string) Query              { return q.Where(State.EqLower(v)) }
+func (q Query) StateLike(v string) Query                 { return q.Where(State.Like(v)) }
+func (q Query) StateILike(v string) Query                { return q.Where(State.ILike(v)) }
+func (q Query) StateIn(v ...string) Query                { return q.Where(State.In(v...)) }
+func (q Query) StateNotIn(v ...string) Query             { return q.Where(State.NotIn(v...)) }
+func (q Query) StateSinceEq(v time.Time) Query           { return q.Where(StateSince.Eq(v)) }
+func (q Query) StateSinceNotEq(v time.Time) Query        { return q.Where(StateSince.NotEq(v)) }
+func (q Query) StateSinceGt(v time.Time) Query           { return q.Where(StateSince.Gt(v)) }
+func (q Query) StateSinceGte(v time.Time) Query          { return q.Where(StateSince.Gte(v)) }
+func (q Query) StateSinceLt(v time.Time) Query           { return q.Where(StateSince.Lt(v)) }
+func (q Query) StateSinceLte(v time.Time) Query          { return q.Where(StateSince.Lte(v)) }
+func (q Query) StateSinceIsNull() Query                  { return q.Where(StateSince.IsNull()) }
+func (q Query) StateSinceIsNotNull() Query               { return q.Where(StateSince.IsNotNull()) }
+func (q Query) FailingRoundsEq(v int32) Query            { return q.Where(FailingRounds.Eq(v)) }
+func (q Query) FailingRoundsNotEq(v int32) Query         { return q.Where(FailingRounds.NotEq(v)) }
+func (q Query) FailingRoundsGt(v int32) Query            { return q.Where(FailingRounds.Gt(v)) }
+func (q Query) FailingRoundsGte(v int32) Query           { return q.Where(FailingRounds.Gte(v)) }
+func (q Query) FailingRoundsLt(v int32) Query            { return q.Where(FailingRounds.Lt(v)) }
+func (q Query) FailingRoundsLte(v int32) Query           { return q.Where(FailingRounds.Lte(v)) }
+func (q Query) FailingRoundsIn(v ...int32) Query         { return q.Where(FailingRounds.In(v...)) }
+func (q Query) FailingRoundsNotIn(v ...int32) Query      { return q.Where(FailingRounds.NotIn(v...)) }
+func (q Query) LastAtEq(v time.Time) Query               { return q.Where(LastAt.Eq(v)) }
+func (q Query) LastAtNotEq(v time.Time) Query            { return q.Where(LastAt.NotEq(v)) }
+func (q Query) LastAtGt(v time.Time) Query               { return q.Where(LastAt.Gt(v)) }
+func (q Query) LastAtGte(v time.Time) Query              { return q.Where(LastAt.Gte(v)) }
+func (q Query) LastAtLt(v time.Time) Query               { return q.Where(LastAt.Lt(v)) }
+func (q Query) LastAtLte(v time.Time) Query              { return q.Where(LastAt.Lte(v)) }
+func (q Query) LastAtIsNull() Query                      { return q.Where(LastAt.IsNull()) }
+func (q Query) LastAtIsNotNull() Query                   { return q.Where(LastAt.IsNotNull()) }
+func (q Query) LastMsEq(v int32) Query                   { return q.Where(LastMs.Eq(v)) }
+func (q Query) LastMsNotEq(v int32) Query                { return q.Where(LastMs.NotEq(v)) }
+func (q Query) LastMsGt(v int32) Query                   { return q.Where(LastMs.Gt(v)) }
+func (q Query) LastMsGte(v int32) Query                  { return q.Where(LastMs.Gte(v)) }
+func (q Query) LastMsLt(v int32) Query                   { return q.Where(LastMs.Lt(v)) }
+func (q Query) LastMsLte(v int32) Query                  { return q.Where(LastMs.Lte(v)) }
+func (q Query) LastMsIn(v ...int32) Query                { return q.Where(LastMs.In(v...)) }
+func (q Query) LastMsNotIn(v ...int32) Query             { return q.Where(LastMs.NotIn(v...)) }
+func (q Query) LastMsIsNull() Query                      { return q.Where(LastMs.IsNull()) }
+func (q Query) LastMsIsNotNull() Query                   { return q.Where(LastMs.IsNotNull()) }
+func (q Query) LastStatusEq(v int32) Query               { return q.Where(LastStatus.Eq(v)) }
+func (q Query) LastStatusNotEq(v int32) Query            { return q.Where(LastStatus.NotEq(v)) }
+func (q Query) LastStatusGt(v int32) Query               { return q.Where(LastStatus.Gt(v)) }
+func (q Query) LastStatusGte(v int32) Query              { return q.Where(LastStatus.Gte(v)) }
+func (q Query) LastStatusLt(v int32) Query               { return q.Where(LastStatus.Lt(v)) }
+func (q Query) LastStatusLte(v int32) Query              { return q.Where(LastStatus.Lte(v)) }
+func (q Query) LastStatusIn(v ...int32) Query            { return q.Where(LastStatus.In(v...)) }
+func (q Query) LastStatusNotIn(v ...int32) Query         { return q.Where(LastStatus.NotIn(v...)) }
+func (q Query) LastStatusIsNull() Query                  { return q.Where(LastStatus.IsNull()) }
+func (q Query) LastStatusIsNotNull() Query               { return q.Where(LastStatus.IsNotNull()) }
+func (q Query) LastDetailEq(v string) Query              { return q.Where(LastDetail.Eq(v)) }
+func (q Query) LastDetailNotEq(v string) Query           { return q.Where(LastDetail.NotEq(v)) }
+func (q Query) LastDetailGt(v string) Query              { return q.Where(LastDetail.Gt(v)) }
+func (q Query) LastDetailGte(v string) Query             { return q.Where(LastDetail.Gte(v)) }
+func (q Query) LastDetailLt(v string) Query              { return q.Where(LastDetail.Lt(v)) }
+func (q Query) LastDetailLte(v string) Query             { return q.Where(LastDetail.Lte(v)) }
+func (q Query) LastDetailEqLower(v string) Query         { return q.Where(LastDetail.EqLower(v)) }
+func (q Query) LastDetailLike(v string) Query            { return q.Where(LastDetail.Like(v)) }
+func (q Query) LastDetailILike(v string) Query           { return q.Where(LastDetail.ILike(v)) }
+func (q Query) LastDetailIn(v ...string) Query           { return q.Where(LastDetail.In(v...)) }
+func (q Query) LastDetailNotIn(v ...string) Query        { return q.Where(LastDetail.NotIn(v...)) }
+func (q Query) LastOutcomeEq(v string) Query             { return q.Where(LastOutcome.Eq(v)) }
+func (q Query) LastOutcomeNotEq(v string) Query          { return q.Where(LastOutcome.NotEq(v)) }
+func (q Query) LastOutcomeGt(v string) Query             { return q.Where(LastOutcome.Gt(v)) }
+func (q Query) LastOutcomeGte(v string) Query            { return q.Where(LastOutcome.Gte(v)) }
+func (q Query) LastOutcomeLt(v string) Query             { return q.Where(LastOutcome.Lt(v)) }
+func (q Query) LastOutcomeLte(v string) Query            { return q.Where(LastOutcome.Lte(v)) }
+func (q Query) LastOutcomeEqLower(v string) Query        { return q.Where(LastOutcome.EqLower(v)) }
+func (q Query) LastOutcomeLike(v string) Query           { return q.Where(LastOutcome.Like(v)) }
+func (q Query) LastOutcomeILike(v string) Query          { return q.Where(LastOutcome.ILike(v)) }
+func (q Query) LastOutcomeIn(v ...string) Query          { return q.Where(LastOutcome.In(v...)) }
+func (q Query) LastOutcomeNotIn(v ...string) Query       { return q.Where(LastOutcome.NotIn(v...)) }
+func (q Query) ExpiresAtEq(v time.Time) Query            { return q.Where(ExpiresAt.Eq(v)) }
+func (q Query) ExpiresAtNotEq(v time.Time) Query         { return q.Where(ExpiresAt.NotEq(v)) }
+func (q Query) ExpiresAtGt(v time.Time) Query            { return q.Where(ExpiresAt.Gt(v)) }
+func (q Query) ExpiresAtGte(v time.Time) Query           { return q.Where(ExpiresAt.Gte(v)) }
+func (q Query) ExpiresAtLt(v time.Time) Query            { return q.Where(ExpiresAt.Lt(v)) }
+func (q Query) ExpiresAtLte(v time.Time) Query           { return q.Where(ExpiresAt.Lte(v)) }
+func (q Query) ExpiresAtIsNull() Query                   { return q.Where(ExpiresAt.IsNull()) }
+func (q Query) ExpiresAtIsNotNull() Query                { return q.Where(ExpiresAt.IsNotNull()) }
+func (q Query) NextAtEq(v time.Time) Query               { return q.Where(NextAt.Eq(v)) }
+func (q Query) NextAtNotEq(v time.Time) Query            { return q.Where(NextAt.NotEq(v)) }
+func (q Query) NextAtGt(v time.Time) Query               { return q.Where(NextAt.Gt(v)) }
+func (q Query) NextAtGte(v time.Time) Query              { return q.Where(NextAt.Gte(v)) }
+func (q Query) NextAtLt(v time.Time) Query               { return q.Where(NextAt.Lt(v)) }
+func (q Query) NextAtLte(v time.Time) Query              { return q.Where(NextAt.Lte(v)) }
+func (q Query) LeaseUntilEq(v time.Time) Query           { return q.Where(LeaseUntil.Eq(v)) }
+func (q Query) LeaseUntilNotEq(v time.Time) Query        { return q.Where(LeaseUntil.NotEq(v)) }
+func (q Query) LeaseUntilGt(v time.Time) Query           { return q.Where(LeaseUntil.Gt(v)) }
+func (q Query) LeaseUntilGte(v time.Time) Query          { return q.Where(LeaseUntil.Gte(v)) }
+func (q Query) LeaseUntilLt(v time.Time) Query           { return q.Where(LeaseUntil.Lt(v)) }
+func (q Query) LeaseUntilLte(v time.Time) Query          { return q.Where(LeaseUntil.Lte(v)) }
+func (q Query) LeaseUntilIsNull() Query                  { return q.Where(LeaseUntil.IsNull()) }
+func (q Query) LeaseUntilIsNotNull() Query               { return q.Where(LeaseUntil.IsNotNull()) }
+func (q Query) GroupIDEq(v [16]byte) Query               { return q.Where(GroupID.Eq(v)) }
+func (q Query) GroupIDNotEq(v [16]byte) Query            { return q.Where(GroupID.NotEq(v)) }
+func (q Query) GroupIDIn(v ...[16]byte) Query            { return q.Where(GroupID.In(v...)) }
+func (q Query) GroupIDNotIn(v ...[16]byte) Query         { return q.Where(GroupID.NotIn(v...)) }
+func (q Query) GroupIDIsNull() Query                     { return q.Where(GroupID.IsNull()) }
+func (q Query) GroupIDIsNotNull() Query                  { return q.Where(GroupID.IsNotNull()) }
+func (q Query) LastDataContains(v runtime.JSON) Query    { return q.Where(LastData.Contains(v)) }
+func (q Query) LastDataContainedBy(v runtime.JSON) Query { return q.Where(LastData.ContainedBy(v)) }
+func (q Query) LastDataHasAnyKey(v ...string) Query      { return q.Where(LastData.HasAnyKey(v...)) }
+func (q Query) LastDataHasAllKeys(v ...string) Query     { return q.Where(LastData.HasAllKeys(v...)) }
 
-const selectPrefix = `SELECT "id", "created_at", "updated_at", "kind", "name", "settings", "secrets_sealed", "every_seconds", "timeout_seconds", "confirm_from", "paused", "telegram", "telegram_bot", "telegram_chats", "created_by", "state", "state_since", "failing_rounds", "last_at", "last_ms", "last_status", "last_detail", "last_outcome", "expires_at", "next_at", "lease_until", "group_id" FROM "checks"`
+const selectPrefix = `SELECT "id", "created_at", "updated_at", "kind", "name", "settings", "secrets_sealed", "every_seconds", "timeout_seconds", "confirm_from", "paused", "telegram", "telegram_bot", "telegram_chats", "created_by", "state", "state_since", "failing_rounds", "last_at", "last_ms", "last_status", "last_detail", "last_outcome", "expires_at", "next_at", "lease_until", "group_id", "last_data" FROM "checks"`
 const countPrefix = `SELECT count(*) FROM "checks"`
 const existsPrefix = `SELECT 1 FROM "checks"`
 const existsSuffix = ` LIMIT 1`
@@ -1710,6 +1730,12 @@ var orderTable = [nCols][4]string{
 		"\"group_id\" ASC NULLS FIRST",
 		"\"group_id\" DESC NULLS LAST",
 	},
+	{ // last_data
+		"\"last_data\"",
+		"\"last_data\" DESC",
+		"\"last_data\" ASC NULLS FIRST",
+		"\"last_data\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1742,6 +1768,7 @@ var identTable = [nCols]string{
 	"\"next_at\"",
 	"\"lease_until\"",
 	"\"group_id\"",
+	"\"last_data\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1774,7 +1801,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [27][28]runtime.Frag{
+var fragTable = [28][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -2585,6 +2612,36 @@ var fragTable = [27][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // last_data
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"last_data\" @> $", B: ""},
+		{A: "\"last_data\" <@ $", B: ""},
+		{A: "\"last_data\" ?| $", B: ""},
+		{A: "\"last_data\" ?& $", B: ""},
+		{},
+		{},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -2775,6 +2832,7 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.NextAt = runtime.Timestamptz(rv[24])
 	r.LeaseUntil = runtime.Nullable(rv[25], runtime.Timestamptz)
 	r.GroupID = runtime.Nullable(rv[26], runtime.UUID)
+	r.LastData = runtime.JSON(runtime.JSONB(rv[27], sl))
 	return decErr
 }
 
@@ -2919,6 +2977,10 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyRaw[nar] = q.anyRaw[nar]
 				v = append(v, &b.anyRaw[nar])
 				nar++
+			case 27:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -3023,6 +3085,10 @@ func (q Query) bindPreds(b *binder) []any {
 			b.raws[nr] = q.raws[nr]
 			v = append(v, &b.raws[nr])
 			nr++
+		case 27:
+			b.jsns[njs] = q.jsns[njs]
+			v = append(v, &b.jsns[njs])
+			njs++
 		}
 	}
 	b.vals = v
@@ -3160,7 +3226,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "checks" ("id", "created_at", "updated_at", "kind", "name", "settings", "secrets_sealed", "every_seconds", "timeout_seconds", "confirm_from", "paused", "telegram", "telegram_bot", "telegram_chats", "created_by", "state", "state_since", "failing_rounds", "last_at", "last_ms", "last_status", "last_detail", "last_outcome", "expires_at", "next_at", "lease_until", "group_id") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27) RETURNING "id", "created_at", "updated_at", "kind", "name", "settings", "secrets_sealed", "every_seconds", "timeout_seconds", "confirm_from", "paused", "telegram", "telegram_bot", "telegram_chats", "created_by", "state", "state_since", "failing_rounds", "last_at", "last_ms", "last_status", "last_detail", "last_outcome", "expires_at", "next_at", "lease_until", "group_id"`
+const insertSQL = `INSERT INTO "checks" ("id", "created_at", "updated_at", "kind", "name", "settings", "secrets_sealed", "every_seconds", "timeout_seconds", "confirm_from", "paused", "telegram", "telegram_bot", "telegram_chats", "created_by", "state", "state_since", "failing_rounds", "last_at", "last_ms", "last_status", "last_detail", "last_outcome", "expires_at", "next_at", "lease_until", "group_id", "last_data") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28) RETURNING "id", "created_at", "updated_at", "kind", "name", "settings", "secrets_sealed", "every_seconds", "timeout_seconds", "confirm_from", "paused", "telegram", "telegram_bot", "telegram_chats", "created_by", "state", "state_since", "failing_rounds", "last_at", "last_ms", "last_status", "last_detail", "last_outcome", "expires_at", "next_at", "lease_until", "group_id", "last_data"`
 
 const updatePrefix = `UPDATE "checks" SET `
 const deletePrefix = `DELETE FROM "checks"`
@@ -3193,9 +3259,10 @@ const (
 	dNextAt         uint64 = 1 << 22
 	dLeaseUntil     uint64 = 1 << 23
 	dGroupID        uint64 = 1 << 24
+	dLastData       uint64 = 1 << 25
 )
 
-const nUpdatable = 25
+const nUpdatable = 26
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -3224,6 +3291,7 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"next_at\" = $", B: ""},         // next_at
 	{A: "\"lease_until\" = $", B: ""},     // lease_until
 	{A: "\"group_id\" = $", B: ""},        // group_id
+	{A: "\"last_data\" = $", B: ""},       // last_data
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -3255,6 +3323,7 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{A: "\"next_at\" = now()", B: ""},     // next_at = the database's clock
 	{A: "\"lease_until\" = now()", B: ""}, // lease_until = the database's clock
 	{},                                    // group_id has no server-side form
+	{},                                    // last_data has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -3293,9 +3362,10 @@ const (
 	iNextAt         uint64 = 1 << 24
 	iLeaseUntil     uint64 = 1 << 25
 	iGroupID        uint64 = 1 << 26
+	iLastData       uint64 = 1 << 27
 )
 
-const nInsertable = 27
+const nInsertable = 28
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -3326,6 +3396,7 @@ var insCols = [nInsertable]string{
 	"\"next_at\"",
 	"\"lease_until\"",
 	"\"group_id\"",
+	"\"last_data\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -3334,7 +3405,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"checks\""
-const insReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"kind\", \"name\", \"settings\", \"secrets_sealed\", \"every_seconds\", \"timeout_seconds\", \"confirm_from\", \"paused\", \"telegram\", \"telegram_bot\", \"telegram_chats\", \"created_by\", \"state\", \"state_since\", \"failing_rounds\", \"last_at\", \"last_ms\", \"last_status\", \"last_detail\", \"last_outcome\", \"expires_at\", \"next_at\", \"lease_until\", \"group_id\""
+const insReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"kind\", \"name\", \"settings\", \"secrets_sealed\", \"every_seconds\", \"timeout_seconds\", \"confirm_from\", \"paused\", \"telegram\", \"telegram_bot\", \"telegram_chats\", \"created_by\", \"state\", \"state_since\", \"failing_rounds\", \"last_at\", \"last_ms\", \"last_status\", \"last_detail\", \"last_outcome\", \"expires_at\", \"next_at\", \"lease_until\", \"group_id\", \"last_data\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -3353,7 +3424,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"kind\", \"name\", \"settings\", \"secrets_sealed\", \"every_seconds\", \"timeout_seconds\", \"confirm_from\", \"paused\", \"telegram\", \"telegram_bot\", \"telegram_chats\", \"created_by\", \"state\", \"state_since\", \"failing_rounds\", \"last_at\", \"last_ms\", \"last_status\", \"last_detail\", \"last_outcome\", \"expires_at\", \"next_at\", \"lease_until\", \"group_id\""
+const updReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"kind\", \"name\", \"settings\", \"secrets_sealed\", \"every_seconds\", \"timeout_seconds\", \"confirm_from\", \"paused\", \"telegram\", \"telegram_bot\", \"telegram_chats\", \"created_by\", \"state\", \"state_since\", \"failing_rounds\", \"last_at\", \"last_ms\", \"last_status\", \"last_detail\", \"last_outcome\", \"expires_at\", \"next_at\", \"lease_until\", \"group_id\", \"last_data\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -3723,6 +3794,12 @@ func (m *Mut) SetGroupIDNull() {
 	m.expr &^= dGroupID
 }
 
+func (m *Mut) SetLastData(v runtime.JSON) {
+	m.row.LastData = v
+	m.dirty |= dLastData
+	m.expr &^= dLastData
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -3984,6 +4061,11 @@ func (n *Ins) SetGroupIDNull() {
 	n.set |= iGroupID
 }
 
+func (n *Ins) SetLastData(v runtime.JSON) {
+	n.row.LastData = v
+	n.set |= iLastData
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -4033,7 +4115,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 25)
+	set := make([]string, 0, 26)
 	switch i {
 	case 0:
 		if mask&(1<<2) != 0 {
@@ -4110,6 +4192,9 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<26) != 0 {
 			set = append(set, "group_id")
+		}
+		if mask&(1<<27) != 0 {
+			set = append(set, "last_data")
 		}
 	}
 	return set
@@ -4204,6 +4289,7 @@ var assignFor = map[string]string{
 	"next_at":         "\"next_at\" = EXCLUDED.\"next_at\"",
 	"lease_until":     "\"lease_until\" = EXCLUDED.\"lease_until\"",
 	"group_id":        "\"group_id\" = EXCLUDED.\"group_id\"",
+	"last_data":       "\"last_data\" = EXCLUDED.\"last_data\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -4308,6 +4394,8 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.LeaseUntil.Arg())
 		case 26:
 			args = append(args, n.row.GroupID.Arg())
+		case 27:
+			args = append(args, n.row.LastData)
 		}
 	}
 	var out Row
@@ -4345,7 +4433,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 27)
+	args := make([]any, 0, 28)
 	args = append(args, r.ID)
 	args = append(args, r.CreatedAt)
 	args = append(args, r.UpdatedAt)
@@ -4373,6 +4461,7 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.NextAt)
 	args = append(args, r.LeaseUntil.Arg())
 	args = append(args, r.GroupID.Arg())
+	args = append(args, r.LastData)
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -4426,13 +4515,14 @@ var copyCols = []string{
 	"next_at",
 	"lease_until",
 	"group_id",
+	"last_data",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [27]any
+	buf  [28]any
 }
 
 func (s *rowSource) Next() bool {
@@ -4477,6 +4567,7 @@ func (s *rowSource) Values() []any {
 	s.buf[24] = &r.NextAt
 	s.buf[25] = r.LeaseUntil.Ptr()
 	s.buf[26] = r.GroupID.Ptr()
+	s.buf[27] = &r.LastData
 	return s.buf[:]
 }
 
@@ -4534,8 +4625,9 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 24
 	mask |= 1 << 25
 	mask |= 1 << 26
+	mask |= 1 << 27
 	st := stmtForInsertNoReturn(mask, 0, 0)
-	args := make([]any, 0, 27)
+	args := make([]any, 0, 28)
 	args = append(args, r.ID)
 	args = append(args, r.CreatedAt)
 	args = append(args, r.UpdatedAt)
@@ -4563,6 +4655,7 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.NextAt)
 	args = append(args, r.LeaseUntil.Arg())
 	args = append(args, r.GroupID.Arg())
+	args = append(args, r.LastData)
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -4650,6 +4743,8 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.LeaseUntil.Arg())
 		case 26:
 			args = append(args, n.row.GroupID.Arg())
+		case 27:
+			args = append(args, n.row.LastData)
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -4755,6 +4850,8 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.LeaseUntil.Arg())
 		case 24:
 			args = append(args, m.row.GroupID.Arg())
+		case 25:
+			args = append(args, m.row.LastData)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -4887,6 +4984,8 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.LeaseUntil.Arg())
 		case 24:
 			args = append(args, m.row.GroupID.Arg())
+		case 25:
+			args = append(args, m.row.LastData)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -5085,6 +5184,8 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.LeaseUntil.Arg())
 		case 24:
 			args = append(args, m.row.GroupID.Arg())
+		case 25:
+			args = append(args, m.row.LastData)
 		}
 	}
 	args = append(args, q.bindPreds(b)...)
