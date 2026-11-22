@@ -76,6 +76,7 @@ func _assertAgentShape(m m0.Agent) {
 		m.DisksScanID,
 		m.DisksScanAt,
 		m.DisksRescan,
+		m.Vpn,
 	}
 }
 

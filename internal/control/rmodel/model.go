@@ -107,6 +107,9 @@ type Agent struct {
 	DisksScanID *string
 	DisksScanAt *time.Time
 	DisksRescan bool
+	// Vpn is the server's VPN links, as its agent last reported them
+	// (migration 106).
+	Vpn *storm.JSON
 }
 
 func (m *Agent) Schema(t *storm.Table) {
@@ -127,6 +130,7 @@ func (m *Agent) Schema(t *storm.Table) {
 	t.Col(&m.ExecReason).Default("''::text")
 	t.Index(storm.Desc(&m.LastSeenAt)).Where("(matched_asset = false) AND (enrollment_state = 'unreviewed'::text)").Named("agents_unreviewed_idx")
 	t.Index(&m.Hostname).Where("exec_tracing").Named("agents_exec_tracing_idx")
+	t.CheckNamed("agents_vpn_check", "((vpn IS NULL) OR (octet_length((vpn)::text) <= 400000))")
 }
 
 // AgentEnrollmentToken is table agent_enrollment_tokens: a short-lived,

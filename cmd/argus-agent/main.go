@@ -1031,13 +1031,50 @@ func runDaemon(args []string) int {
 	var (
 		lastFacts []byte
 		lastSent  time.Time
+		// The VPN loop reads cloudflared's port from the last application
+		// scan, and the facts pass sends the VPN loop's last scan.
+		vpnMu        sync.Mutex
+		vpnListeners []agent.Listener
+		vpnLast      agent.VPNScan
+		vpnState     string
 	)
+	// VPN links on their own, one-minute loop: a link going down should reach
+	// the console in about a minute, so a change of up or down asks for a
+	// facts pass at once. Byte counters and handshake times alone do not.
+	go loop(log, "vpn links", time.Minute, stop, func() {
+		vpnMu.Lock()
+		ls := vpnListeners
+		vpnMu.Unlock()
+		scan := agent.DiscoverVPN(ctx, ls)
+		state := scan.State(time.Now())
+		vpnMu.Lock()
+		changed := state != vpnState
+		vpnLast, vpnState = scan, state
+		vpnMu.Unlock()
+		if changed {
+			select {
+			case factsNow <- struct{}{}:
+			default:
+			}
+		}
+	})
 	go loopOrNow(log, "host facts", 10*time.Minute, stop, factsNow, func() {
 		f := agent.Discover(agent.DefaultDiscoverConfig())
 		apps := agent.DiscoverApps(ctx)
 		sys := agent.DiscoverSystem()
 		writeJSON(*stateDir+"/facts.json", f, log)
 		writeJSON(*stateDir+"/applications.json", apps, log)
+		vpnMu.Lock()
+		first := vpnListeners == nil
+		vpnListeners = apps.Listeners
+		vpn, vpnNow := vpnLast, vpnState
+		vpnMu.Unlock()
+		if first {
+			// The first pass runs before the VPN loop has a port to ask
+			// cloudflared on.
+			vpn = agent.DiscoverVPN(ctx, apps.Listeners)
+			vpnNow = vpn.State(time.Now())
+		}
 
 		report := map[string]any{
 			"hostname":     f.Hostname,
@@ -1049,11 +1086,13 @@ func runDaemon(args []string) int {
 			"accounts":     f.Accounts,
 			"applications": apps,
 			"system":       sys,
+			"vpn":          vpn,
 		}
-		// Compared without the scan time, which differs every run.
+		// Compared without the scan time, which differs every run, and with
+		// the VPN's up-or-down state rather than its counters.
 		probe := apps
 		probe.CheckedAt = time.Time{}
-		fingerprint, _ := json.Marshal([]any{f, probe, sys})
+		fingerprint, _ := json.Marshal([]any{f, probe, sys, vpnNow})
 		if bytes.Equal(fingerprint, lastFacts) && time.Since(lastSent) < time.Hour {
 			return
 		}
