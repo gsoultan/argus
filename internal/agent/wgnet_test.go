@@ -377,3 +377,64 @@ func TestWGNetsIPsecBeat(t *testing.T) {
 		t.Fatal("the key is in the beat")
 	}
 }
+
+func staffSpec() WGNetSpec {
+	k := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	return WGNetSpec{ID: "0b6f4b1e-8f7e-4f3a-9a37-3c1f6c2b9d10", Name: "Staff", Iface: "argus0a1b2c", Address: "10.77.0.1/24",
+		ListenPort: 51900, Forward: true, Peers: []WGNetPeer{{PublicKey: k, AllowedIPs: []string{"10.77.0.5/32"}}, {PublicKey: k, AllowedIPs: []string{"10.77.0.6/32"}}},
+		Staff: &WGStaff{Rules: []WGStaffRule{{From: "10.77.0.5/32", To: []string{"10.88.0.0/24", "192.168.10.0/24"}},
+			{From: "10.77.0.6/32", To: []string{"10.88.0.0/24"}, Logins: true}}, Internet: []string{"10.77.0.6/32"}}}
+}
+
+// A staff hub's file carries its filtering as one nft table that comes and
+// goes with the interface: SSH and RDP refused where logins are not
+// allowed, the internet only for full-traffic devices, the rest refused,
+// and the hub itself closed but for replies and ping.
+func TestWGStaffConfig(t *testing.T) {
+	s := staffSpec()
+	if err := validWGNetSpec(s, nil); err != nil {
+		t.Fatal(err)
+	}
+	c := wgConfig(s, "PRIV")
+	for _, want := range []string{
+		"PostUp = nft 'add table inet argus_argus0a1b2c ; delete table inet argus_argus0a1b2c ; add table inet argus_argus0a1b2c ;",
+		`ip saddr 10.77.0.5 ip daddr { 10.88.0.0/24, 192.168.10.0/24 } tcp dport { 22, 3389 } reject with tcp reset`,
+		`ip saddr 10.77.0.5 ip daddr { 10.88.0.0/24, 192.168.10.0/24 } accept`,
+		`ip saddr 10.77.0.6 ip daddr { 10.88.0.0/24 } accept`,
+		`ip saddr { 10.77.0.6 } ip daddr != { 10.0.0.0/8, 100.64.0.0/10, 172.16.0.0/12, 192.168.0.0/16 } accept`,
+		`add rule inet argus_argus0a1b2c fwd iifname "argus0a1b2c" reject`,
+		`add rule inet argus_argus0a1b2c inbound iifname "argus0a1b2c" drop`,
+		`ip saddr 10.77.0.0/24 oifname != "argus0a1b2c" masquerade'`,
+		"PostDown = nft delete table inet argus_argus0a1b2c",
+		"ufw route allow in on argus0a1b2c",
+	} {
+		if !strings.Contains(c, want) {
+			t.Errorf("missing %q in\n%s", want, c)
+		}
+	}
+	if strings.Contains(c, "10.77.0.6 ip daddr { 10.88.0.0/24 } tcp dport") {
+		t.Error("logins refused for a device whose team allows them")
+	}
+	if strings.Count(c, "\nPostUp = nft") != 1 || strings.Contains(strings.Split(c, "[Peer]")[0], "\n\n'") {
+		t.Errorf("the nft script is not one line:\n%s", c)
+	}
+}
+
+func TestWGStaffRefuses(t *testing.T) {
+	for name, f := range map[string]func(*WGNetSpec){
+		"outside the network": func(s *WGNetSpec) { s.Staff.Rules[0].From = "10.78.0.5/32" },
+		"not one address":     func(s *WGNetSpec) { s.Staff.Rules[0].From = "10.77.0.0/24" },
+		"public reach":        func(s *WGNetSpec) { s.Staff.Rules[0].To = []string{"8.8.8.0/24"} },
+		"text in a range":     func(s *WGNetSpec) { s.Staff.Rules[0].To = []string{"10.0.0.0/8 ; flush ruleset"} },
+		"internet outside":    func(s *WGNetSpec) { s.Staff.Internet = []string{"1.1.1.1/32"} },
+		"no forwarding":       func(s *WGNetSpec) { s.Forward = false },
+	} {
+		s := staffSpec()
+		s.Staff = &WGStaff{Rules: append([]WGStaffRule(nil), s.Staff.Rules...), Internet: s.Staff.Internet}
+		s.Staff.Rules[0].To = append([]string(nil), s.Staff.Rules[0].To...)
+		f(&s)
+		if validWGNetSpec(s, nil) == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

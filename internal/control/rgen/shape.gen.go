@@ -1735,5 +1735,51 @@ func _assertWgNetworkShape(m m0.WgNetwork) {
 		m.ApprovedBy,
 		m.ApprovedAt,
 		m.Generation,
+		m.StaffDefault,
+		m.StaffDays,
+		m.StaffMfa,
+	}
+}
+
+// _assertWgStaffDeviceShape fails to compile if m0.WgStaffDevice gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertWgStaffDeviceShape(m m0.WgStaffDevice) {
+	type shape m0.WgStaffDevice
+	_ = shape{
+		m.ID,
+		m.Network,
+		m.UserEmail,
+		m.Name,
+		m.PublicKey,
+		m.Address,
+		m.CreatedAt,
+		m.ExpiresAt,
+	}
+}
+
+// _assertWgStaffGrantShape fails to compile if m0.WgStaffGrant gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertWgStaffGrantShape(m m0.WgStaffGrant) {
+	type shape m0.WgStaffGrant
+	_ = shape{
+		m.Network,
+		m.Team,
+		m.Ranges,
+		m.Logins,
+		m.UpdatedBy,
+		m.UpdatedAt,
+	}
+}
+
+// _assertWgStaffModeShape fails to compile if m0.WgStaffMode gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertWgStaffModeShape(m m0.WgStaffMode) {
+	type shape m0.WgStaffMode
+	_ = shape{
+		m.Network,
+		m.UserEmail,
+		m.Mode,
+		m.SetBy,
+		m.SetAt,
 	}
 }

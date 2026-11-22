@@ -25,6 +25,7 @@ import { FS, SP } from '~/theme'
 const SHAPE: Record<WGShape, { label: string; hint: string }> = {
   mesh: { label: 'Mesh', hint: 'Every server reaches every other directly.' },
   hub: { label: 'Hub', hint: 'Servers reach each other through one hub. Use it when most servers cannot be reached from outside.' },
+  staff: { label: 'Staff VPN', hint: "People's devices reach what their teams are given, through one server." },
 }
 
 function draftWords(d: WGNetworkDraft): string {
@@ -34,7 +35,7 @@ function draftWords(d: WGNetworkDraft): string {
 export function ServerNetworksCard({ canManage, me }: { canManage: boolean; me?: string }) {
   const { data, isLoading } = useQuery({ ...wgNetworksQuery(), enabled: isConfigured() })
   const [editing, setEditing] = useState<WGNetwork | 'new' | null>(null)
-  const nets = data ?? []
+  const nets = (data ?? []).filter((n) => n.shape !== 'staff')
   return (
     <SectionCard title="Server networks" icon={IconShieldLock} iconColor="teal"
       description="WireGuard networks Argus sets up between your servers, on premises and in the cloud. Each server makes its own key, and every change waits for another admin."
@@ -67,7 +68,7 @@ function changeWords(n: WGNetwork, d: WGNetworkDraft): string {
   return parts.length ? parts.join(', ') : 'change server addresses or how they are reached'
 }
 
-function ServerNetwork({ n, canManage, me, onEdit }: { n: WGNetwork; canManage: boolean; me?: string; onEdit: () => void }) {
+export function ServerNetwork({ n, canManage, me, onEdit }: { n: WGNetwork; canManage: boolean; me?: string; onEdit: () => void }) {
   const qc = useQueryClient()
   const done = () => qc.invalidateQueries({ queryKey: ['networks'] })
   const approve = useMutation({ mutationFn: (confirm?: string) => approveWG(n.id, confirm), onSettled: done })
@@ -88,7 +89,7 @@ function ServerNetwork({ n, canManage, me, onEdit }: { n: WGNetwork; canManage: 
         </Group>
         {canManage && n.state === 'active' && !p && (
           <Group gap="xs">
-            <Button size="xs" variant="subtle" leftSection={<IconPencil size={14} />} onClick={onEdit}>Change</Button>
+            {n.shape !== 'staff' && <Button size="xs" variant="subtle" leftSection={<IconPencil size={14} />} onClick={onEdit}>Change</Button>}
             <Button size="xs" variant="subtle" color="rose" leftSection={<IconTrash size={14} />} onClick={() => setRemoving(true)}>Remove</Button>
           </Group>
         )}
@@ -128,7 +129,7 @@ function ServerNetwork({ n, canManage, me, onEdit }: { n: WGNetwork; canManage: 
                   <Text size={FS.body} ff="monospace">{m.address}</Text>
                   {m.routes && m.routes.length > 0 && <Text size={FS.meta} c="dimmed" ff="monospace">routes {m.routes.join(', ')}</Text>}
                 </Table.Td>
-                <Table.Td><Text size={FS.body}>{n.shape === 'hub' ? (m.hub ? 'Hub' : 'Spoke') : 'Member'}</Text></Table.Td>
+                <Table.Td><Text size={FS.body}>{n.shape !== 'mesh' ? (m.hub ? 'Hub' : 'Spoke') : 'Member'}</Text></Table.Td>
                 <Table.Td><Text size={FS.body} ff="monospace" c={m.endpoint ? undefined : 'dimmed'}>{m.endpoint ? `${m.endpoint}:${n.port}` : 'Dials out only'}</Text></Table.Td>
                 <Table.Td>
                   <Tooltip multiline w={300} label={m.message || st.hint}>

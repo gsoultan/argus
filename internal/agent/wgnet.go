@@ -79,6 +79,9 @@ type WGNetSpec struct {
 	// OpenPort asks for ListenPort/udp to be opened in ufw or firewalld.
 	OpenPort bool        `json:"open_port,omitempty"`
 	Peers    []WGNetPeer `json:"peers"`
+	// Staff makes it a staff VPN hub (wgstaff.go). Absent from a control
+	// plane older than it.
+	Staff *WGStaff `json:"staff,omitempty"`
 }
 
 // WGNetPeer is another member of the network.
@@ -159,7 +162,7 @@ const (
 	wgnetRunFile  = "wgnet-run.json"
 	wgnetTrial    = 2 * time.Minute
 	wgnetMaxNets  = 16
-	wgnetMaxPeers = 256
+	wgnetMaxPeers = 1000
 )
 
 var (
@@ -526,6 +529,12 @@ func validWGNetSpec(s WGNetSpec, avoid []netip.Addr) error {
 		return errors.New("too many peers")
 	}
 	network := addr.Masked()
+	if s.Staff != nil && !s.Forward {
+		return errors.New("a staff hub forwards")
+	}
+	if err := validWGStaff(s.Staff, network); err != nil {
+		return err
+	}
 	for _, p := range s.Peers {
 		if !validWGKey(p.PublicKey) {
 			return errors.New("malformed peer key")
@@ -646,6 +655,17 @@ func wgConfig(s WGNetSpec, privateKey string) string {
 	fmt.Fprintf(&b, "PrivateKey = %s\n", privateKey)
 	if s.Forward {
 		b.WriteString("PostUp = sysctl -q -w net.ipv4.ip_forward=1\n")
+	}
+	if s.Staff != nil {
+		if addr, err := netip.ParsePrefix(s.Address); err == nil {
+			up, down := wgStaffHooks(s.Iface, addr.Masked(), s.Staff)
+			for _, l := range up {
+				fmt.Fprintf(&b, "PostUp = %s\n", l)
+			}
+			for _, l := range down {
+				fmt.Fprintf(&b, "PostDown = %s\n", l)
+			}
+		}
 	}
 	for _, p := range s.Peers {
 		b.WriteString("\n[Peer]\n")

@@ -9,6 +9,7 @@ import { Figure } from '~/components/Websites'
 import { CloudflareCard, CloudVPNsCard } from '~/components/NetworksCloud'
 import { ServerNetworksCard } from '~/components/NetworksWireGuard'
 import { IPsecLinksCard } from '~/components/NetworksIPsec'
+import { StaffVPNCard } from '~/components/NetworksStaff'
 import { isConfigured } from '~/lib/live'
 import { meQuery } from '~/lib/queries'
 import { formatBytes, linksOf, networksQuery, PEER_STATE, type Link, type NetworkTunnel, type NetworksView } from '~/lib/networks'
@@ -48,6 +49,7 @@ export function NetworksPage() {
             <LinksCard links={links} loading={isLoading} />
             <ServerNetworksCard canManage={canManage} me={me?.email} />
             <IPsecLinksCard canManage={canManage} me={me?.email} />
+            <StaffVPNCard canManage={canManage} me={me?.email} />
             <CloudVPNsCard vpns={data?.cloudVpns ?? []} loading={isLoading} />
             <TunnelsCard tunnels={data?.tunnels ?? []} loading={isLoading} />
             <CloudflareCard accounts={data?.cloudflare ?? []} loading={isLoading} canManage={canManage} />

@@ -27,6 +27,7 @@ import type { UserRole } from '~/types/domain'
  *   server near them. Monitoring only: they are not Assets.
  * - **Networks**: VPN links and tunnels on the servers, as their agents see
  *   them. For whoever sees the whole fleet.
+ * - **My VPN**: your own devices on the staff VPN. For everyone.
  * - **Approvals**: everything waiting on a person. Logins straight to a server
  *   that the rule holds, root asked for, and access asked for. It is a menu
  *   item of its own, with a count, because someone is waiting at a terminal.
@@ -131,6 +132,12 @@ export const NAV_ITEMS: NavItem[] = [
     audience: 'fleet',
   },
   {
+    to: '/vpn',
+    label: 'My VPN',
+    icon: IconKey,
+    blurb: 'Your laptop and phone on the company VPN: add a device, renew it',
+  },
+  {
     to: '/approvals',
     label: 'Approvals',
     icon: IconClipboardCheck,
@@ -229,7 +236,7 @@ export function groupsFor(role: UserRole | undefined, seesChecks = false): NavGr
       { ...by('/websites'), label: 'Websites', ...(seesChecks ? { audience: undefined } : {}) },
       { ...by('/network-devices'), ...(seesChecks ? { audience: undefined } : {}) },
     ] },
-    { label: 'Networks', items: [{ ...by('/networks'), label: 'VPNs and tunnels' }] },
+    { label: 'Networks', items: [{ ...by('/networks'), label: 'VPNs and tunnels' }, by('/vpn')] },
     { label: 'Cloud', items: [
       { ...cloud, label: 'Overview' },
       { ...cloud, label: 'Resources', icon: IconBox, search: { tab: 'instances' },

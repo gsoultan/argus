@@ -20,22 +20,25 @@ var (
 // Row is what a full read returns: the model struct with relations
 // replaced by their scalar foreign keys and *T rewritten to Null[T].
 type Row struct {
-	ID          [16]byte
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	Name        string
-	Shape       string
-	Cidr        string
-	Port        int32
-	Iface       string
-	State       string
-	Pending     runtime.Null[runtime.JSON]
-	PendingBy   string
-	PendingAt   runtime.Null[time.Time]
-	RequestedBy string
-	ApprovedBy  string
-	ApprovedAt  runtime.Null[time.Time]
-	Generation  int32
+	ID           [16]byte
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	Name         string
+	Shape        string
+	Cidr         string
+	Port         int32
+	Iface        string
+	State        string
+	Pending      runtime.Null[runtime.JSON]
+	PendingBy    string
+	PendingAt    runtime.Null[time.Time]
+	RequestedBy  string
+	ApprovedBy   string
+	ApprovedAt   runtime.Null[time.Time]
+	Generation   int32
+	StaffDefault string
+	StaffDays    int32
+	StaffMfa     bool
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -74,7 +77,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 16
+const nCols = 19
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -84,12 +87,13 @@ type Query struct {
 	nt   uint8
 	top  uint8 // top-level conjuncts, ANDed at compile time
 
-	strs                 [6]string
-	nums                 [6]int64
-	raws                 [4][16]byte
-	tims                 [4]time.Time
-	jsns                 [2]runtime.JSON
-	ns, nn, nr, ntm, njs uint8
+	strs                      [6]string
+	nums                      [6]int64
+	raws                      [4][16]byte
+	tims                      [4]time.Time
+	bools                     [4]bool
+	jsns                      [2]runtime.JSON
+	ns, nn, nr, ntm, nbo, njs uint8
 
 	anyRaw          [3][][16]byte
 	anyStr          [3][]string
@@ -294,6 +298,27 @@ func (q *Query) cursor(col uint32, r Row) {
 		}
 		q.nums[q.nn] = int64(r.Generation)
 		q.nn++
+	case 16:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.StaffDefault
+		q.ns++
+	case 17:
+		if int(q.nn) >= len(q.nums) {
+			q.over = true
+			return
+		}
+		q.nums[q.nn] = int64(r.StaffDays)
+		q.nn++
+	case 18:
+		if int(q.nbo) >= len(q.bools) {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = r.StaffMfa
+		q.nbo++
 	}
 }
 
@@ -445,31 +470,43 @@ type Pred struct {
 	str    string
 	raw    [16]byte
 	tim    time.Time
+	bol    bool
 	jsn    runtime.JSON
 	anyRaw [][16]byte
 	anyStr []string
 	anyI32 []int32
 }
 
+// b2i lets a bool ride in the numeric slot of a Pred.
+func b2i(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 // Typed column handles. The type of the handle is what makes
 // Age.Like(...) fail to compile.
 var (
-	ID          = UUIDCol{0}
-	CreatedAt   = TimeCol{1}
-	UpdatedAt   = TimeCol{2}
-	Name        = TextCol{3}
-	Shape       = TextCol{4}
-	Cidr        = TextCol{5}
-	Port        = Int32Col{6}
-	Iface       = TextCol{7}
-	State       = TextCol{8}
-	Pending     = NullJSONCol{9}
-	PendingBy   = TextCol{10}
-	PendingAt   = NullTimeCol{11}
-	RequestedBy = TextCol{12}
-	ApprovedBy  = TextCol{13}
-	ApprovedAt  = NullTimeCol{14}
-	Generation  = Int32Col{15}
+	ID           = UUIDCol{0}
+	CreatedAt    = TimeCol{1}
+	UpdatedAt    = TimeCol{2}
+	Name         = TextCol{3}
+	Shape        = TextCol{4}
+	Cidr         = TextCol{5}
+	Port         = Int32Col{6}
+	Iface        = TextCol{7}
+	State        = TextCol{8}
+	Pending      = NullJSONCol{9}
+	PendingBy    = TextCol{10}
+	PendingAt    = NullTimeCol{11}
+	RequestedBy  = TextCol{12}
+	ApprovedBy   = TextCol{13}
+	ApprovedAt   = NullTimeCol{14}
+	Generation   = Int32Col{15}
+	StaffDefault = TextCol{16}
+	StaffDays    = Int32Col{17}
+	StaffMfa     = BoolCol{18}
 )
 
 // UUIDCol addresses a uuid column.
@@ -606,6 +643,21 @@ func (h NullTimeCol) Lt(v time.Time) Pred    { return Pred{col: h.c, op: opLt, t
 func (h NullTimeCol) Lte(v time.Time) Pred   { return Pred{col: h.c, op: opLte, tim: v} }
 func (h NullTimeCol) IsNull() Pred           { return Pred{col: h.c, op: opIsNull} }
 func (h NullTimeCol) IsNotNull() Pred        { return Pred{col: h.c, op: opIsNotNull} }
+
+// BoolCol addresses a bool column.
+type BoolCol struct{ c uint8 }
+
+func (h BoolCol) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
+func (h BoolCol) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
+func (h BoolCol) AscNullsFirst() Sort {
+	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
+}
+func (h BoolCol) DescNullsLast() Sort {
+	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
+}
+
+func (h BoolCol) Eq(v bool) Pred    { return Pred{col: h.c, op: opEq, bol: v} }
+func (h BoolCol) NotEq(v bool) Pred { return Pred{col: h.c, op: opNotEq, bol: v} }
 
 // Where applies predicates, ANDed together.
 func (q Query) Where(ps ...Pred) Query {
@@ -832,6 +884,20 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyI32[q.nai32] = p.anyI32
 			q.nai32++
+		case 16:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 17:
+			if int(q.nai32) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyI32[q.nai32] = p.anyI32
+			q.nai32++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -953,6 +1019,27 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.nums[q.nn] = p.num
 		q.nn++
+	case 16:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 17:
+		if int(q.nn) >= 6 {
+			q.over = true
+			return
+		}
+		q.nums[q.nn] = p.num
+		q.nn++
+	case 18:
+		if int(q.nbo) >= 4 {
+			q.over = true
+			return
+		}
+		q.bools[q.nbo] = p.bol
+		q.nbo++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1100,8 +1187,29 @@ func (q Query) GenerationLt(v int32) Query              { return q.Where(Generat
 func (q Query) GenerationLte(v int32) Query             { return q.Where(Generation.Lte(v)) }
 func (q Query) GenerationIn(v ...int32) Query           { return q.Where(Generation.In(v...)) }
 func (q Query) GenerationNotIn(v ...int32) Query        { return q.Where(Generation.NotIn(v...)) }
+func (q Query) StaffDefaultEq(v string) Query           { return q.Where(StaffDefault.Eq(v)) }
+func (q Query) StaffDefaultNotEq(v string) Query        { return q.Where(StaffDefault.NotEq(v)) }
+func (q Query) StaffDefaultGt(v string) Query           { return q.Where(StaffDefault.Gt(v)) }
+func (q Query) StaffDefaultGte(v string) Query          { return q.Where(StaffDefault.Gte(v)) }
+func (q Query) StaffDefaultLt(v string) Query           { return q.Where(StaffDefault.Lt(v)) }
+func (q Query) StaffDefaultLte(v string) Query          { return q.Where(StaffDefault.Lte(v)) }
+func (q Query) StaffDefaultEqLower(v string) Query      { return q.Where(StaffDefault.EqLower(v)) }
+func (q Query) StaffDefaultLike(v string) Query         { return q.Where(StaffDefault.Like(v)) }
+func (q Query) StaffDefaultILike(v string) Query        { return q.Where(StaffDefault.ILike(v)) }
+func (q Query) StaffDefaultIn(v ...string) Query        { return q.Where(StaffDefault.In(v...)) }
+func (q Query) StaffDefaultNotIn(v ...string) Query     { return q.Where(StaffDefault.NotIn(v...)) }
+func (q Query) StaffDaysEq(v int32) Query               { return q.Where(StaffDays.Eq(v)) }
+func (q Query) StaffDaysNotEq(v int32) Query            { return q.Where(StaffDays.NotEq(v)) }
+func (q Query) StaffDaysGt(v int32) Query               { return q.Where(StaffDays.Gt(v)) }
+func (q Query) StaffDaysGte(v int32) Query              { return q.Where(StaffDays.Gte(v)) }
+func (q Query) StaffDaysLt(v int32) Query               { return q.Where(StaffDays.Lt(v)) }
+func (q Query) StaffDaysLte(v int32) Query              { return q.Where(StaffDays.Lte(v)) }
+func (q Query) StaffDaysIn(v ...int32) Query            { return q.Where(StaffDays.In(v...)) }
+func (q Query) StaffDaysNotIn(v ...int32) Query         { return q.Where(StaffDays.NotIn(v...)) }
+func (q Query) StaffMfaEq(v bool) Query                 { return q.Where(StaffMfa.Eq(v)) }
+func (q Query) StaffMfaNotEq(v bool) Query              { return q.Where(StaffMfa.NotEq(v)) }
 
-const selectPrefix = `SELECT "id", "created_at", "updated_at", "name", "shape", "cidr", "port", "iface", "state", "pending", "pending_by", "pending_at", "requested_by", "approved_by", "approved_at", "generation" FROM "wg_networks"`
+const selectPrefix = `SELECT "id", "created_at", "updated_at", "name", "shape", "cidr", "port", "iface", "state", "pending", "pending_by", "pending_at", "requested_by", "approved_by", "approved_at", "generation", "staff_default", "staff_days", "staff_mfa" FROM "wg_networks"`
 const countPrefix = `SELECT count(*) FROM "wg_networks"`
 const existsPrefix = `SELECT 1 FROM "wg_networks"`
 const existsSuffix = ` LIMIT 1`
@@ -1234,6 +1342,24 @@ var orderTable = [nCols][4]string{
 		"\"generation\" ASC NULLS FIRST",
 		"\"generation\" DESC NULLS LAST",
 	},
+	{ // staff_default
+		"\"staff_default\"",
+		"\"staff_default\" DESC",
+		"\"staff_default\" ASC NULLS FIRST",
+		"\"staff_default\" DESC NULLS LAST",
+	},
+	{ // staff_days
+		"\"staff_days\"",
+		"\"staff_days\" DESC",
+		"\"staff_days\" ASC NULLS FIRST",
+		"\"staff_days\" DESC NULLS LAST",
+	},
+	{ // staff_mfa
+		"\"staff_mfa\"",
+		"\"staff_mfa\" DESC",
+		"\"staff_mfa\" ASC NULLS FIRST",
+		"\"staff_mfa\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1255,6 +1381,9 @@ var identTable = [nCols]string{
 	"\"approved_by\"",
 	"\"approved_at\"",
 	"\"generation\"",
+	"\"staff_default\"",
+	"\"staff_days\"",
+	"\"staff_mfa\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1287,7 +1416,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [16][28]runtime.Frag{
+var fragTable = [19][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -1768,6 +1897,96 @@ var fragTable = [16][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // staff_default
+		{}, // opNone
+		{A: "\"staff_default\" = $", B: ""},
+		{A: "\"staff_default\" <> $", B: ""},
+		{A: "\"staff_default\" > $", B: ""},
+		{A: "\"staff_default\" >= $", B: ""},
+		{A: "\"staff_default\" < $", B: ""},
+		{A: "\"staff_default\" <= $", B: ""},
+		{A: "lower(\"staff_default\") = lower($", B: ")"},
+		{A: "\"staff_default\" LIKE $", B: ""},
+		{A: "\"staff_default\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"staff_default\" = ANY($", B: ")"},
+		{A: "\"staff_default\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // staff_days
+		{}, // opNone
+		{A: "\"staff_days\" = $", B: ""},
+		{A: "\"staff_days\" <> $", B: ""},
+		{A: "\"staff_days\" > $", B: ""},
+		{A: "\"staff_days\" >= $", B: ""},
+		{A: "\"staff_days\" < $", B: ""},
+		{A: "\"staff_days\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"staff_days\" = ANY($", B: ")"},
+		{A: "\"staff_days\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
+	{ // staff_mfa
+		{}, // opNone
+		{A: "\"staff_mfa\" = $", B: ""},
+		{A: "\"staff_mfa\" <> $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -1940,6 +2159,9 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.ApprovedBy = sl.Str(rv[13])
 	r.ApprovedAt = runtime.Nullable(rv[14], runtime.Timestamptz)
 	r.Generation = runtime.Int4(rv[15])
+	r.StaffDefault = sl.Str(rv[16])
+	r.StaffDays = runtime.Int4(rv[17])
+	r.StaffMfa = runtime.Bool(rv[18])
 	return nil
 }
 
@@ -1949,6 +2171,7 @@ type binder struct {
 	nums   [6]int64
 	raws   [4][16]byte
 	tims   [4]time.Time
+	bools  [4]bool
 	jsns   [2]runtime.JSON
 	anyRaw [3][][16]byte
 	anyStr [3][]string
@@ -1994,7 +2217,7 @@ func putBinder(b *binder) {
 // Count and Exists stop here: their statements carry no LIMIT or OFFSET.
 func (q Query) bindPreds(b *binder) []any {
 	v := b.vals[:0]
-	var ns, nn, nr, ntm, njs, nar, nas, nai32 uint8
+	var ns, nn, nr, ntm, nbo, njs, nar, nas, nai32 uint8
 	for i := uint8(0); i < q.nt; i++ {
 		t := q.toks[i]
 		// KLeaf binds a predicate's value; KCol binds a keyset cursor's.
@@ -2055,6 +2278,14 @@ func (q Query) bindPreds(b *binder) []any {
 				v = append(v, &b.anyStr[nas])
 				nas++
 			case 15:
+				b.anyI32[nai32] = q.anyI32[nai32]
+				v = append(v, &b.anyI32[nai32])
+				nai32++
+			case 16:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 17:
 				b.anyI32[nai32] = q.anyI32[nai32]
 				v = append(v, &b.anyI32[nai32])
 				nai32++
@@ -2126,6 +2357,18 @@ func (q Query) bindPreds(b *binder) []any {
 			b.nums[nn] = q.nums[nn]
 			v = append(v, &b.nums[nn])
 			nn++
+		case 16:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 17:
+			b.nums[nn] = q.nums[nn]
+			v = append(v, &b.nums[nn])
+			nn++
+		case 18:
+			b.bools[nbo] = q.bools[nbo]
+			v = append(v, &b.bools[nbo])
+			nbo++
 		}
 	}
 	b.vals = v
@@ -2263,7 +2506,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "wg_networks" ("id", "created_at", "updated_at", "name", "shape", "cidr", "port", "iface", "state", "pending", "pending_by", "pending_at", "requested_by", "approved_by", "approved_at", "generation") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING "id", "created_at", "updated_at", "name", "shape", "cidr", "port", "iface", "state", "pending", "pending_by", "pending_at", "requested_by", "approved_by", "approved_at", "generation"`
+const insertSQL = `INSERT INTO "wg_networks" ("id", "created_at", "updated_at", "name", "shape", "cidr", "port", "iface", "state", "pending", "pending_by", "pending_at", "requested_by", "approved_by", "approved_at", "generation", "staff_default", "staff_days", "staff_mfa") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING "id", "created_at", "updated_at", "name", "shape", "cidr", "port", "iface", "state", "pending", "pending_by", "pending_at", "requested_by", "approved_by", "approved_at", "generation", "staff_default", "staff_days", "staff_mfa"`
 
 const updatePrefix = `UPDATE "wg_networks" SET `
 const deletePrefix = `DELETE FROM "wg_networks"`
@@ -2271,40 +2514,46 @@ const deletePrefix = `DELETE FROM "wg_networks"`
 // Dirty bits. One per updatable column; the set of them is an UPDATE's
 // identity, exactly as a token stream is a SELECT's.
 const (
-	dUpdatedAt   uint64 = 1 << 0
-	dName        uint64 = 1 << 1
-	dShape       uint64 = 1 << 2
-	dCidr        uint64 = 1 << 3
-	dPort        uint64 = 1 << 4
-	dIface       uint64 = 1 << 5
-	dState       uint64 = 1 << 6
-	dPending     uint64 = 1 << 7
-	dPendingBy   uint64 = 1 << 8
-	dPendingAt   uint64 = 1 << 9
-	dRequestedBy uint64 = 1 << 10
-	dApprovedBy  uint64 = 1 << 11
-	dApprovedAt  uint64 = 1 << 12
-	dGeneration  uint64 = 1 << 13
+	dUpdatedAt    uint64 = 1 << 0
+	dName         uint64 = 1 << 1
+	dShape        uint64 = 1 << 2
+	dCidr         uint64 = 1 << 3
+	dPort         uint64 = 1 << 4
+	dIface        uint64 = 1 << 5
+	dState        uint64 = 1 << 6
+	dPending      uint64 = 1 << 7
+	dPendingBy    uint64 = 1 << 8
+	dPendingAt    uint64 = 1 << 9
+	dRequestedBy  uint64 = 1 << 10
+	dApprovedBy   uint64 = 1 << 11
+	dApprovedAt   uint64 = 1 << 12
+	dGeneration   uint64 = 1 << 13
+	dStaffDefault uint64 = 1 << 14
+	dStaffDays    uint64 = 1 << 15
+	dStaffMfa     uint64 = 1 << 16
 )
 
-const nUpdatable = 14
+const nUpdatable = 17
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
-	{A: "\"updated_at\" = $", B: ""},   // updated_at
-	{A: "\"name\" = $", B: ""},         // name
-	{A: "\"shape\" = $", B: ""},        // shape
-	{A: "\"cidr\" = $", B: ""},         // cidr
-	{A: "\"port\" = $", B: ""},         // port
-	{A: "\"iface\" = $", B: ""},        // iface
-	{A: "\"state\" = $", B: ""},        // state
-	{A: "\"pending\" = $", B: ""},      // pending
-	{A: "\"pending_by\" = $", B: ""},   // pending_by
-	{A: "\"pending_at\" = $", B: ""},   // pending_at
-	{A: "\"requested_by\" = $", B: ""}, // requested_by
-	{A: "\"approved_by\" = $", B: ""},  // approved_by
-	{A: "\"approved_at\" = $", B: ""},  // approved_at
-	{A: "\"generation\" = $", B: ""},   // generation
+	{A: "\"updated_at\" = $", B: ""},    // updated_at
+	{A: "\"name\" = $", B: ""},          // name
+	{A: "\"shape\" = $", B: ""},         // shape
+	{A: "\"cidr\" = $", B: ""},          // cidr
+	{A: "\"port\" = $", B: ""},          // port
+	{A: "\"iface\" = $", B: ""},         // iface
+	{A: "\"state\" = $", B: ""},         // state
+	{A: "\"pending\" = $", B: ""},       // pending
+	{A: "\"pending_by\" = $", B: ""},    // pending_by
+	{A: "\"pending_at\" = $", B: ""},    // pending_at
+	{A: "\"requested_by\" = $", B: ""},  // requested_by
+	{A: "\"approved_by\" = $", B: ""},   // approved_by
+	{A: "\"approved_at\" = $", B: ""},   // approved_at
+	{A: "\"generation\" = $", B: ""},    // generation
+	{A: "\"staff_default\" = $", B: ""}, // staff_default
+	{A: "\"staff_days\" = $", B: ""},    // staff_days
+	{A: "\"staff_mfa\" = $", B: ""},     // staff_mfa
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -2325,6 +2574,9 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{},                                    // approved_by has no server-side form
 	{A: "\"approved_at\" = now()", B: ""}, // approved_at = the database's clock
 	{A: "\"generation\" = \"generation\" + 1", B: ""}, // generation = its own value plus one
+	{}, // staff_default has no server-side form
+	{A: "\"staff_days\" = \"staff_days\" + 1", B: ""}, // staff_days = its own value plus one
+	{}, // staff_mfa has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -2336,25 +2588,28 @@ var pkFrags = [1]runtime.Frag{
 // assigned, so every other column takes its database default — which is
 // the only way a DEFAULT gen_random_uuid() can ever fire.
 const (
-	iID          uint64 = 1 << 0
-	iCreatedAt   uint64 = 1 << 1
-	iUpdatedAt   uint64 = 1 << 2
-	iName        uint64 = 1 << 3
-	iShape       uint64 = 1 << 4
-	iCidr        uint64 = 1 << 5
-	iPort        uint64 = 1 << 6
-	iIface       uint64 = 1 << 7
-	iState       uint64 = 1 << 8
-	iPending     uint64 = 1 << 9
-	iPendingBy   uint64 = 1 << 10
-	iPendingAt   uint64 = 1 << 11
-	iRequestedBy uint64 = 1 << 12
-	iApprovedBy  uint64 = 1 << 13
-	iApprovedAt  uint64 = 1 << 14
-	iGeneration  uint64 = 1 << 15
+	iID           uint64 = 1 << 0
+	iCreatedAt    uint64 = 1 << 1
+	iUpdatedAt    uint64 = 1 << 2
+	iName         uint64 = 1 << 3
+	iShape        uint64 = 1 << 4
+	iCidr         uint64 = 1 << 5
+	iPort         uint64 = 1 << 6
+	iIface        uint64 = 1 << 7
+	iState        uint64 = 1 << 8
+	iPending      uint64 = 1 << 9
+	iPendingBy    uint64 = 1 << 10
+	iPendingAt    uint64 = 1 << 11
+	iRequestedBy  uint64 = 1 << 12
+	iApprovedBy   uint64 = 1 << 13
+	iApprovedAt   uint64 = 1 << 14
+	iGeneration   uint64 = 1 << 15
+	iStaffDefault uint64 = 1 << 16
+	iStaffDays    uint64 = 1 << 17
+	iStaffMfa     uint64 = 1 << 18
 )
 
-const nInsertable = 16
+const nInsertable = 19
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -2374,6 +2629,9 @@ var insCols = [nInsertable]string{
 	"\"approved_by\"",
 	"\"approved_at\"",
 	"\"generation\"",
+	"\"staff_default\"",
+	"\"staff_days\"",
+	"\"staff_mfa\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -2382,7 +2640,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"wg_networks\""
-const insReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"name\", \"shape\", \"cidr\", \"port\", \"iface\", \"state\", \"pending\", \"pending_by\", \"pending_at\", \"requested_by\", \"approved_by\", \"approved_at\", \"generation\""
+const insReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"name\", \"shape\", \"cidr\", \"port\", \"iface\", \"state\", \"pending\", \"pending_by\", \"pending_at\", \"requested_by\", \"approved_by\", \"approved_at\", \"generation\", \"staff_default\", \"staff_days\", \"staff_mfa\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -2401,7 +2659,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"name\", \"shape\", \"cidr\", \"port\", \"iface\", \"state\", \"pending\", \"pending_by\", \"pending_at\", \"requested_by\", \"approved_by\", \"approved_at\", \"generation\""
+const updReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"name\", \"shape\", \"cidr\", \"port\", \"iface\", \"state\", \"pending\", \"pending_by\", \"pending_at\", \"requested_by\", \"approved_by\", \"approved_at\", \"generation\", \"staff_default\", \"staff_days\", \"staff_mfa\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -2610,6 +2868,34 @@ func (m *Mut) IncGeneration() {
 	m.dirty &^= dGeneration
 }
 
+func (m *Mut) SetStaffDefault(v string) {
+	m.row.StaffDefault = v
+	m.dirty |= dStaffDefault
+	m.expr &^= dStaffDefault
+}
+
+func (m *Mut) SetStaffDays(v int32) {
+	m.row.StaffDays = v
+	m.dirty |= dStaffDays
+	m.expr &^= dStaffDays
+}
+
+// IncStaffDays adds one to the column's OWN value, in the database.
+//
+// Computing it in Go makes it a read-modify-write: two callers
+// who both read N both write N+1, and one increment is lost
+// with nothing to show that it happened.
+func (m *Mut) IncStaffDays() {
+	m.expr |= dStaffDays
+	m.dirty &^= dStaffDays
+}
+
+func (m *Mut) SetStaffMfa(v bool) {
+	m.row.StaffMfa = v
+	m.dirty |= dStaffMfa
+	m.expr &^= dStaffMfa
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -2772,6 +3058,37 @@ func (n *Ins) AddGenerationOnConflict(v int32) {
 	n.add |= iGeneration
 }
 
+func (n *Ins) SetStaffDefault(v string) {
+	n.row.StaffDefault = v
+	n.set |= iStaffDefault
+}
+
+func (n *Ins) SetStaffDays(v int32) {
+	n.row.StaffDays = v
+	n.set |= iStaffDays
+	n.add &^= iStaffDays
+}
+
+// AddStaffDaysOnConflict inserts v, or — when the insert conflicts and an
+// OnConflict… target updates the row already there — ADDS v to it:
+//
+//	"staff_days" = "wg_networks"."staff_days" + EXCLUDED."staff_days"
+//
+// The sum is the database's, in the same statement, so two writers
+// counting into one row both land. Reading the row, adding in Go and
+// upserting the total loses one of them, with nothing to show it.
+// Without an OnConflict target, or with DoNothing, it is SetStaffDays.
+func (n *Ins) AddStaffDaysOnConflict(v int32) {
+	n.row.StaffDays = v
+	n.set |= iStaffDays
+	n.add |= iStaffDays
+}
+
+func (n *Ins) SetStaffMfa(v bool) {
+	n.row.StaffMfa = v
+	n.set |= iStaffMfa
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -2823,7 +3140,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 14)
+	set := make([]string, 0, 17)
 	switch i {
 	case 0:
 		if mask&(1<<2) != 0 {
@@ -2868,6 +3185,15 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<15) != 0 {
 			set = append(set, "generation")
 		}
+		if mask&(1<<16) != 0 {
+			set = append(set, "staff_default")
+		}
+		if mask&(1<<17) != 0 {
+			set = append(set, "staff_days")
+		}
+		if mask&(1<<18) != 0 {
+			set = append(set, "staff_mfa")
+		}
 	case 1:
 		if mask&(1<<2) != 0 {
 			set = append(set, "updated_at")
@@ -2908,6 +3234,15 @@ func assignable(i uint8, mask uint64) []string {
 		if mask&(1<<15) != 0 {
 			set = append(set, "generation")
 		}
+		if mask&(1<<16) != 0 {
+			set = append(set, "staff_default")
+		}
+		if mask&(1<<17) != 0 {
+			set = append(set, "staff_days")
+		}
+		if mask&(1<<18) != 0 {
+			set = append(set, "staff_mfa")
+		}
 	case 2:
 		if mask&(1<<2) != 0 {
 			set = append(set, "updated_at")
@@ -2947,6 +3282,15 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<15) != 0 {
 			set = append(set, "generation")
+		}
+		if mask&(1<<16) != 0 {
+			set = append(set, "staff_default")
+		}
+		if mask&(1<<17) != 0 {
+			set = append(set, "staff_days")
+		}
+		if mask&(1<<18) != 0 {
+			set = append(set, "staff_mfa")
 		}
 	}
 	return set
@@ -3029,25 +3373,30 @@ func assignAdded(c string, add uint64) (string, bool) {
 		return "\"port\" = \"wg_networks\".\"port\" + EXCLUDED.\"port\"", add&iPort != 0
 	case "generation":
 		return "\"generation\" = \"wg_networks\".\"generation\" + EXCLUDED.\"generation\"", add&iGeneration != 0
+	case "staff_days":
+		return "\"staff_days\" = \"wg_networks\".\"staff_days\" + EXCLUDED.\"staff_days\"", add&iStaffDays != 0
 	}
 	return "", false
 }
 
 var assignFor = map[string]string{
-	"updated_at":   "\"updated_at\" = EXCLUDED.\"updated_at\"",
-	"name":         "\"name\" = EXCLUDED.\"name\"",
-	"shape":        "\"shape\" = EXCLUDED.\"shape\"",
-	"cidr":         "\"cidr\" = EXCLUDED.\"cidr\"",
-	"port":         "\"port\" = EXCLUDED.\"port\"",
-	"iface":        "\"iface\" = EXCLUDED.\"iface\"",
-	"state":        "\"state\" = EXCLUDED.\"state\"",
-	"pending":      "\"pending\" = EXCLUDED.\"pending\"",
-	"pending_by":   "\"pending_by\" = EXCLUDED.\"pending_by\"",
-	"pending_at":   "\"pending_at\" = EXCLUDED.\"pending_at\"",
-	"requested_by": "\"requested_by\" = EXCLUDED.\"requested_by\"",
-	"approved_by":  "\"approved_by\" = EXCLUDED.\"approved_by\"",
-	"approved_at":  "\"approved_at\" = EXCLUDED.\"approved_at\"",
-	"generation":   "\"generation\" = EXCLUDED.\"generation\"",
+	"updated_at":    "\"updated_at\" = EXCLUDED.\"updated_at\"",
+	"name":          "\"name\" = EXCLUDED.\"name\"",
+	"shape":         "\"shape\" = EXCLUDED.\"shape\"",
+	"cidr":          "\"cidr\" = EXCLUDED.\"cidr\"",
+	"port":          "\"port\" = EXCLUDED.\"port\"",
+	"iface":         "\"iface\" = EXCLUDED.\"iface\"",
+	"state":         "\"state\" = EXCLUDED.\"state\"",
+	"pending":       "\"pending\" = EXCLUDED.\"pending\"",
+	"pending_by":    "\"pending_by\" = EXCLUDED.\"pending_by\"",
+	"pending_at":    "\"pending_at\" = EXCLUDED.\"pending_at\"",
+	"requested_by":  "\"requested_by\" = EXCLUDED.\"requested_by\"",
+	"approved_by":   "\"approved_by\" = EXCLUDED.\"approved_by\"",
+	"approved_at":   "\"approved_at\" = EXCLUDED.\"approved_at\"",
+	"generation":    "\"generation\" = EXCLUDED.\"generation\"",
+	"staff_default": "\"staff_default\" = EXCLUDED.\"staff_default\"",
+	"staff_days":    "\"staff_days\" = EXCLUDED.\"staff_days\"",
+	"staff_mfa":     "\"staff_mfa\" = EXCLUDED.\"staff_mfa\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -3130,6 +3479,12 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.ApprovedAt.Arg())
 		case 15:
 			args = append(args, n.row.Generation)
+		case 16:
+			args = append(args, n.row.StaffDefault)
+		case 17:
+			args = append(args, n.row.StaffDays)
+		case 18:
+			args = append(args, n.row.StaffMfa)
 		}
 	}
 	var out Row
@@ -3167,7 +3522,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 16)
+	args := make([]any, 0, 19)
 	args = append(args, r.ID)
 	args = append(args, r.CreatedAt)
 	args = append(args, r.UpdatedAt)
@@ -3184,6 +3539,9 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.ApprovedBy)
 	args = append(args, r.ApprovedAt.Arg())
 	args = append(args, r.Generation)
+	args = append(args, r.StaffDefault)
+	args = append(args, r.StaffDays)
+	args = append(args, r.StaffMfa)
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -3226,13 +3584,16 @@ var copyCols = []string{
 	"approved_by",
 	"approved_at",
 	"generation",
+	"staff_default",
+	"staff_days",
+	"staff_mfa",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [16]any
+	buf  [19]any
 }
 
 func (s *rowSource) Next() bool {
@@ -3266,6 +3627,9 @@ func (s *rowSource) Values() []any {
 	s.buf[13] = &r.ApprovedBy
 	s.buf[14] = r.ApprovedAt.Ptr()
 	s.buf[15] = &r.Generation
+	s.buf[16] = &r.StaffDefault
+	s.buf[17] = &r.StaffDays
+	s.buf[18] = &r.StaffMfa
 	return s.buf[:]
 }
 
@@ -3312,8 +3676,11 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 13
 	mask |= 1 << 14
 	mask |= 1 << 15
+	mask |= 1 << 16
+	mask |= 1 << 17
+	mask |= 1 << 18
 	st := stmtForInsertNoReturn(mask, 0, 0)
-	args := make([]any, 0, 16)
+	args := make([]any, 0, 19)
 	args = append(args, r.ID)
 	args = append(args, r.CreatedAt)
 	args = append(args, r.UpdatedAt)
@@ -3330,6 +3697,9 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.ApprovedBy)
 	args = append(args, r.ApprovedAt.Arg())
 	args = append(args, r.Generation)
+	args = append(args, r.StaffDefault)
+	args = append(args, r.StaffDays)
+	args = append(args, r.StaffMfa)
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -3395,6 +3765,12 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.ApprovedAt.Arg())
 		case 15:
 			args = append(args, n.row.Generation)
+		case 16:
+			args = append(args, n.row.StaffDefault)
+		case 17:
+			args = append(args, n.row.StaffDays)
+		case 18:
+			args = append(args, n.row.StaffMfa)
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -3478,6 +3854,12 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.ApprovedAt.Arg())
 		case 13:
 			args = append(args, m.row.Generation)
+		case 14:
+			args = append(args, m.row.StaffDefault)
+		case 15:
+			args = append(args, m.row.StaffDays)
+		case 16:
+			args = append(args, m.row.StaffMfa)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -3588,6 +3970,12 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.ApprovedAt.Arg())
 		case 13:
 			args = append(args, m.row.Generation)
+		case 14:
+			args = append(args, m.row.StaffDefault)
+		case 15:
+			args = append(args, m.row.StaffDays)
+		case 16:
+			args = append(args, m.row.StaffMfa)
 		}
 	}
 	args = append(args, m.row.ID)
@@ -3764,6 +4152,12 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.ApprovedAt.Arg())
 		case 13:
 			args = append(args, m.row.Generation)
+		case 14:
+			args = append(args, m.row.StaffDefault)
+		case 15:
+			args = append(args, m.row.StaffDays)
+		case 16:
+			args = append(args, m.row.StaffMfa)
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

@@ -94,15 +94,22 @@ var accessKinds = []accessKind{
 		tables: []string{"check_viewers"},
 		list:   checkAccessItems,
 	},
+	{
+		kind: "vpn", label: "Staff VPN", give: "/networks",
+		empty:  "Nothing on the staff VPN. Give a team of theirs ranges under Staff VPN on Networks.",
+		tables: []string{"wg_staff_grants", "wg_staff_devices"},
+		list:   staffAccessItems,
+	},
 }
 
 // notGrantTables name people or teams without giving anyone access to
 // anything, and say why, so the test can tell them from a grant table that
 // was forgotten.
 var notGrantTables = map[string]string{
-	"team_members": "who is in a team; the kinds above read it to follow team grants",
-	"sessions":     "what someone did, not what they may do",
-	"users":        "the people themselves",
+	"team_members":   "who is in a team; the kinds above read it to follow team grants",
+	"sessions":       "what someone did, not what they may do",
+	"users":          "the people themselves",
+	"wg_staff_modes": "whether a person's VPN traffic goes all through it; a setting, not access",
 }
 
 // PersonAccess is every section for email, empty ones included, so the

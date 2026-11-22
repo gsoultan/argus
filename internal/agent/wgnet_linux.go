@@ -77,21 +77,23 @@ func wgRun(ctx context.Context, name string, args ...string) error {
 func (linuxWGNetOps) haveTools() bool {
 	_, err1 := exec.LookPath("wg-quick")
 	_, err2 := exec.LookPath("wg")
-	return err1 == nil && err2 == nil
+	// nft is for a staff hub's filtering (wgstaff.go).
+	_, err3 := exec.LookPath("nft")
+	return err1 == nil && err2 == nil && err3 == nil
 }
 
 func (linuxWGNetOps) install(ctx context.Context) error {
 	switch {
 	case wgHave("apt-get"):
-		return wgRun(ctx, "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "-q", "wireguard-tools")
+		return wgRun(ctx, "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "-q", "wireguard-tools", "nftables")
 	case wgHave("dnf"):
-		return wgRun(ctx, "dnf", "install", "-y", "-q", "wireguard-tools")
+		return wgRun(ctx, "dnf", "install", "-y", "-q", "wireguard-tools", "nftables")
 	case wgHave("yum"):
-		return wgRun(ctx, "yum", "install", "-y", "-q", "wireguard-tools")
+		return wgRun(ctx, "yum", "install", "-y", "-q", "wireguard-tools", "nftables")
 	case wgHave("zypper"):
-		return wgRun(ctx, "zypper", "--non-interactive", "install", "wireguard-tools")
+		return wgRun(ctx, "zypper", "--non-interactive", "install", "wireguard-tools", "nftables")
 	}
-	return errors.New("no package manager Argus knows; install wireguard-tools and try again")
+	return errors.New("no package manager Argus knows; install wireguard-tools and nftables and try again")
 }
 
 func wgHave(name string) bool { _, err := exec.LookPath(name); return err == nil }

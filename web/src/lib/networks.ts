@@ -270,7 +270,7 @@ export function formatBytes(n: number): string {
 
 /* ── Server networks (WireGuard set up through the agents) ────────────────── */
 
-export type WGShape = 'mesh' | 'hub'
+export type WGShape = 'mesh' | 'hub' | 'staff'
 export type WGMemberState = 'no-agent' | 'unsupported' | 'waiting-key' | 'applying' | 'trial' | 'applied' | 'failed' | 'rolled-back'
 
 export interface WGMember {
@@ -310,6 +310,8 @@ export interface WGNetwork {
   generation: number
   createdAt: string
   approveOwn?: boolean
+  /** A staff VPN's settings; only on shape staff. */
+  staff?: StaffPolicy
 }
 
 export const wgNetworksQuery = () =>
@@ -400,4 +402,53 @@ export const IPSEC_LINK: Record<string, { label: string; color: string }> = {
   up: { label: 'Up', color: 'teal' },
   down: { label: 'Down', color: 'rose' },
   unknown: { label: 'Not known', color: 'slate' },
+}
+
+/* ── The staff VPN (internal/control/wg_staff.go) ────────────────────────── */
+
+export type StaffMode = 'company' | 'full'
+export interface StaffPolicy { default: StaffMode; days: number; mfa: boolean }
+export interface StaffGrant { teamId: string; teamName: string; ranges: string[]; logins: boolean; updatedBy?: string; updatedAt: string }
+export interface StaffDevice {
+  id: string
+  networkId: string
+  userEmail: string
+  name: string
+  address: string
+  createdAt: string
+  expiresAt: string
+  expired?: boolean
+}
+export interface StaffVPN {
+  network: WGNetwork
+  /** The hub is up and has its key, so devices can be made. */
+  ready: boolean
+  devices: StaffDevice[]
+  grants?: StaffGrant[]
+  modes?: Record<string, StaffMode>
+  mine: { reach: string[]; logins: string[]; mode: StaffMode; needsCode: boolean; hasMfa: boolean }
+}
+export interface StaffProfile { device: StaffDevice; config: string; mode: StaffMode }
+
+export const staffVPNsQuery = () =>
+  queryOptions({
+    queryKey: ['networks', 'staff'] as const,
+    queryFn: () => get<{ vpns: StaffVPN[] }>('/api/v1/networks/staff').then((v) => v.vpns),
+    refetchInterval: 30_000,
+  })
+
+const staffPath = (tail: string) => `/api/v1/networks/staff${tail}`
+export const makeStaffDevice = (vpn: string, name: string, code?: string) =>
+  post<StaffProfile>(staffPath(`/${encodeURIComponent(vpn)}/devices`), { name, code })
+export const renewStaffDevice = (id: string, code?: string) => post<StaffDevice>(staffPath(`/devices/${encodeURIComponent(id)}/renew`), { code })
+export const removeStaffDevice = (id: string) => send<void>('DELETE', staffPath(`/devices/${encodeURIComponent(id)}`))
+export const setStaffPolicy = (vpn: string, p: StaffPolicy) => send<void>('PUT', staffPath(`/${encodeURIComponent(vpn)}/policy`), p)
+export const setStaffGrant = (vpn: string, team: string, ranges: string[], logins: boolean) =>
+  send<void>('PUT', staffPath(`/${encodeURIComponent(vpn)}/grants/${encodeURIComponent(team)}`), { ranges, logins })
+export const setStaffMode = (vpn: string, email: string, mode: StaffMode | '') =>
+  send<void>('PUT', staffPath(`/${encodeURIComponent(vpn)}/modes`), { email, mode })
+
+export const STAFF_MODE: Record<StaffMode, { label: string; hint: string }> = {
+  company: { label: 'Company only', hint: 'Only the ranges their teams reach go through the VPN; everything else goes out as usual.' },
+  full: { label: 'All traffic', hint: 'Everything goes through the VPN and out to the internet from its server.' },
 }

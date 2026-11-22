@@ -80,6 +80,8 @@ type WGNetwork struct {
 	// ApproveOwn is set for the person who asked when nobody else could
 	// approve the change.
 	ApproveOwn bool `json:"approveOwn,omitempty"`
+	// Staff is a staff VPN's policy (wg_staff.go); nil on other networks.
+	Staff *WGStaffPolicy `json:"staff,omitempty"`
 }
 
 // WGMember is an approved member and how it is doing.
@@ -198,7 +200,7 @@ func checkWGDraft(d *WGNetworkDraft, hosts map[string]string, taken wgTaken) err
 		return invalidWG("give the network a name of up to 80 letters, digits, spaces and . _ ( ) -")
 	}
 	switch d.Shape {
-	case "mesh", "hub":
+	case "mesh", "hub", wgShapeStaff:
 	default:
 		return invalidWG("the shape is mesh or hub")
 	}
@@ -229,7 +231,16 @@ func checkWGDraft(d *WGNetworkDraft, hosts map[string]string, taken wgTaken) err
 		}
 	}
 
-	if len(d.Members) < 2 {
+	if d.Shape == wgShapeStaff {
+		// One server, the hub; the other peers are people's devices.
+		if len(d.Members) != 1 {
+			return invalidWG("a staff VPN runs on one server")
+		}
+		d.Members[0].Hub = true
+		if len(d.Members[0].Routes) > 0 {
+			return invalidWG("a staff VPN reaches what its teams are given, not routes of its own")
+		}
+	} else if len(d.Members) < 2 {
 		return invalidWG("a network needs at least two servers")
 	}
 	if len(d.Members) > wgMaxMembers {
@@ -279,7 +290,11 @@ func checkWGDraft(d *WGNetworkDraft, hosts map[string]string, taken wgTaken) err
 			used[a] = true
 		}
 	}
-	if d.Shape == "hub" {
+	if d.Shape == wgShapeStaff {
+		if d.Members[0].Endpoint == "" {
+			return invalidWG("the staff VPN's server, %s, needs the public address people's devices reach it on", d.Members[0].Hostname)
+		}
+	} else if d.Shape == "hub" {
 		if hubs != 1 {
 			return invalidWG("a hub network has exactly one hub")
 		}
@@ -544,15 +559,19 @@ func (s *Store) wgHosts(ctx context.Context) (map[string]string, error) {
 /* ── The store ───────────────────────────────────────────────────────────── */
 
 const wgNetworkColumns = `id::text, name, shape, cidr, port, iface, state, pending, pending_by, pending_at,
-	requested_by, approved_by, approved_at, generation, created_at`
+	requested_by, approved_by, approved_at, generation, created_at, staff_default, staff_days, staff_mfa`
 
 func scanWGNetwork(row pgx.Row) (WGNetwork, error) {
 	var (
 		n       WGNetwork
 		pending []byte
+		policy  WGStaffPolicy
 	)
 	err := row.Scan(&n.ID, &n.Name, &n.Shape, &n.CIDR, &n.Port, &n.Iface, &n.State, &pending, &n.PendingBy, &n.PendingAt,
-		&n.RequestedBy, &n.ApprovedBy, &n.ApprovedAt, &n.Generation, &n.CreatedAt)
+		&n.RequestedBy, &n.ApprovedBy, &n.ApprovedAt, &n.Generation, &n.CreatedAt, &policy.Default, &policy.Days, &policy.MFA)
+	if n.Shape == wgShapeStaff {
+		n.Staff = &policy
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return n, ErrNoWGNetwork
 	}
@@ -832,6 +851,16 @@ type (
 		Forward    bool        `json:"forward,omitempty"`
 		OpenPort   bool        `json:"open_port,omitempty"`
 		Peers      []WGNetPeer `json:"peers"`
+		Staff      *WGStaff    `json:"staff,omitempty"`
+	}
+	WGStaff struct {
+		Rules    []WGStaffRule `json:"rules"`
+		Internet []string      `json:"internet,omitempty"`
+	}
+	WGStaffRule struct {
+		From   string   `json:"from"`
+		To     []string `json:"to"`
+		Logins bool     `json:"logins,omitempty"`
 	}
 	WGNetPeer struct {
 		PublicKey  string   `json:"public_key"`
@@ -932,7 +961,15 @@ func (s *Store) wgSpecsFor(ctx context.Context, asset string) ([]WGNetSpec, erro
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return buildWGSpecs(asset, in), nil
+	specs := buildWGSpecs(asset, in)
+	for i := range specs {
+		if specs[i].Forward && wgIsStaff(in, specs[i].ID) {
+			if err := s.addStaffHub(ctx, &specs[i]); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return specs, nil
 }
 
 // buildWGSpecs is what self should have for each network in rows: its own
@@ -961,7 +998,7 @@ func buildWGSpecs(self string, rows []wgMemberRow) []WGNetSpec {
 		if me == nil || err != nil {
 			continue
 		}
-		hubShape := ms[0].shape == "hub"
+		hubShape := ms[0].shape == "hub" || ms[0].shape == wgShapeStaff
 		// A spoke reaches every other spoke's site through the hub.
 		var spokeRoutes []string
 		for _, o := range ms {

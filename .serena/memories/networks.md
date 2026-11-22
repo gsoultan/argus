@@ -132,3 +132,15 @@ links, staff VPN).
   change. Then a pending IPsec link to tunnel 1 is asked for as the change's
   requester. Connections tagged `argus:ipsec-link` are not flagged as
   partial (tunnel 2 unused by design). Azure/GCP gateways not built.
+- Staff VPN (migration 112, wg_staff.go/wg_staff_routes.go, agent
+  wgstaff.go): shape `staff`, one hub member (forced hub, needs endpoint, no
+  routes). Hub filtering = nftables table `inet argus_<iface>` in the
+  interface's PostUp/PostDown (so trial/rollback cover it); masquerade out.
+  Teams get ranges in wg_staff_grants (+ `logins`: else tcp 22/3389 reset);
+  wg_staff_modes = per-person company|full over the VPN's staff_default.
+  Devices (wg_staff_devices, max 10/person, staff_days expiry, MFA code via
+  ConsumeTOTP when staff_mfa) get a keypair made on the control plane; the
+  private key is only in the one-time profile. Profile AllowedIPs fixed at
+  creation; hub enforces changes. Web: StaffVPNCard on /networks, My VPN at
+  /vpn (all roles, nav icon IconKey to stay inside the 323 kB first-visit
+  budget). Person access kind "vpn" reads grants + devices.

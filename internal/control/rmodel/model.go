@@ -1493,6 +1493,9 @@ func All() []any {
 		&WgNetwork{},
 		&WgMember{},
 		&IpsecLink{},
+		&WgStaffGrant{},
+		&WgStaffMode{},
+		&WgStaffDevice{},
 		&UIPreference{},
 		&Team{},
 		&TeamMember{},
@@ -2923,6 +2926,10 @@ type WgNetwork struct {
 	ApprovedBy  string
 	ApprovedAt  *time.Time
 	Generation  int32
+	// The staff VPN's policy (migration 112), on a network of shape staff.
+	StaffDefault string
+	StaffDays    int32
+	StaffMfa     bool
 }
 
 func (m *WgNetwork) Schema(t *storm.Table) {
@@ -2933,7 +2940,12 @@ func (m *WgNetwork) Schema(t *storm.Table) {
 	t.Col(&m.ApprovedBy).Default("''::text")
 	t.Col(&m.Generation).Default("0")
 	t.CheckNamed("wg_networks_name_check", "(length(name) >= 1) AND (length(name) <= 80)")
-	t.CheckNamed("wg_networks_shape_check", "shape = ANY (ARRAY['mesh'::text, 'hub'::text])")
+	t.CheckNamed("wg_networks_shape_check", "shape = ANY (ARRAY['mesh'::text, 'hub'::text, 'staff'::text])")
+	t.Col(&m.StaffDefault).Default("'company'::text")
+	t.Col(&m.StaffDays).Default("90")
+	t.Col(&m.StaffMfa).Default("true")
+	t.CheckNamed("wg_networks_staff_default_check", "staff_default = ANY (ARRAY['company'::text, 'full'::text])")
+	t.CheckNamed("wg_networks_staff_days_check", "(staff_days >= 1) AND (staff_days <= 365)")
 	t.CheckNamed("wg_networks_cidr_check", "length(cidr) <= 18")
 	t.CheckNamed("wg_networks_port_check", "(port >= 1024) AND (port <= 65535)")
 	t.CheckNamed("wg_networks_iface_check", "iface ~ '^argus[0-9a-f]{6}$'::text")
@@ -3017,4 +3029,81 @@ func (m *IpsecLink) Schema(t *storm.Table) {
 	t.CheckNamed("ipsec_links_proposals_check", "proposals = ANY (ARRAY['strong'::text, 'compatible'::text])")
 	t.CheckNamed("ipsec_links_state_check", "state = ANY (ARRAY['waiting'::text, 'active'::text])")
 	t.CheckNamed("ipsec_links_pending_check", "((pending IS NULL) OR (octet_length((pending)::text) <= 20000))")
+}
+
+// WgStaffGrant is table wg_staff_grants: what a team reaches through a
+// staff VPN, and whether direct SSH and RDP are allowed (wg_staff.go).
+type WgStaffGrant struct {
+	Network   WgNetwork
+	Team      Team
+	Ranges    []string
+	Logins    bool
+	UpdatedBy string
+	UpdatedAt time.Time
+}
+
+func (m *WgStaffGrant) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Network, &m.Team)
+	t.Col(&m.Network).ConstraintName("wg_staff_grants_network_id_fkey")
+	t.Col(&m.Network).OnDelete(storm.Cascade)
+	t.Col(&m.Network).NoIndex()
+	t.Col(&m.Team).ConstraintName("wg_staff_grants_team_id_fkey")
+	t.Col(&m.Team).OnDelete(storm.Cascade)
+	t.Col(&m.Team).NoIndex()
+	t.Index(&m.Team).Named("wg_staff_grants_team_id_idx")
+	t.Col(&m.Ranges).Default("'{}'::text[]")
+	t.Col(&m.Logins).Default("false")
+	t.Col(&m.UpdatedBy).Default("''::text")
+	t.Col(&m.UpdatedAt).Default("now()")
+	t.CheckNamed("wg_staff_grants_ranges_check", "cardinality(ranges) <= 32")
+}
+
+// WgStaffMode is table wg_staff_modes: a person's own traffic setting on
+// a staff VPN, over its default.
+type WgStaffMode struct {
+	Network   WgNetwork
+	UserEmail string
+	Mode      string
+	SetBy     string
+	SetAt     time.Time
+}
+
+func (m *WgStaffMode) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Network, &m.UserEmail)
+	t.Col(&m.Network).ConstraintName("wg_staff_modes_network_id_fkey")
+	t.Col(&m.Network).OnDelete(storm.Cascade)
+	t.Col(&m.Network).NoIndex()
+	t.Col(&m.SetBy).Default("''::text")
+	t.Col(&m.SetAt).Default("now()")
+	t.CheckNamed("wg_staff_modes_user_email_check", "(length(user_email) >= 3) AND (length(user_email) <= 320)")
+	t.CheckNamed("wg_staff_modes_mode_check", "mode = ANY (ARRAY['company'::text, 'full'::text])")
+}
+
+// WgStaffDevice is table wg_staff_devices: a device profile on a staff VPN.
+// Its private key went to its person once and was never kept.
+type WgStaffDevice struct {
+	ID        [16]byte
+	Network   WgNetwork
+	UserEmail string
+	Name      string
+	PublicKey string
+	Address   string
+	CreatedAt time.Time
+	ExpiresAt time.Time
+}
+
+func (m *WgStaffDevice) Schema(t *storm.Table) {
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Network).ConstraintName("wg_staff_devices_network_id_fkey")
+	t.Col(&m.Network).OnDelete(storm.Cascade)
+	t.Col(&m.Network).NoIndex()
+	t.Index(&m.Network).Named("wg_staff_devices_network_id_idx")
+	t.Index(&m.UserEmail).Named("wg_staff_devices_user_email_idx")
+	t.Col(&m.PublicKey).Unique()
+	t.Col(&m.Address).Unique()
+	t.Col(&m.CreatedAt).Default("now()")
+	t.CheckNamed("wg_staff_devices_user_email_check", "(length(user_email) >= 3) AND (length(user_email) <= 320)")
+	t.CheckNamed("wg_staff_devices_name_check", "(length(name) >= 1) AND (length(name) <= 60)")
+	t.CheckNamed("wg_staff_devices_public_key_check", "length(public_key) = 44")
+	t.CheckNamed("wg_staff_devices_address_check", "length(address) <= 15")
 }

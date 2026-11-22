@@ -277,6 +277,113 @@ test('networks: Argus makes the AWS end of a link, with its price, as a cloud ch
     spec: { name: 'Jakarta office', network: 'vpc-0abc1234', serverAddress: '36.72.1.9', serverRange: '192.168.10.0/24', ciphers: 'strong', propagate: true } })
 })
 
+const STAFF_NET = { id: 's1', name: 'Staff VPN', shape: 'staff', cidr: '10.66.0.0/22', port: 51900, iface: 'argus5e6f7a', state: 'active', generation: 4,
+  requestedBy: 'rina@northwind.id', approvedBy: 'dev@northwind.id', createdAt: ago(60 * 24 * 3), approvedAt: ago(60 * 24 * 3),
+  staff: { default: 'company', days: 90, mfa: true },
+  members: [{ assetId: 'a3', hostname: 'gw-jkt-01', address: '10.66.0.1', endpoint: 'vpn.northwind.id', hub: true, state: 'applied', at: ago(20) }] }
+const STAFF = { vpns: [{
+  network: STAFF_NET, ready: true,
+  devices: [
+    { id: 'd1', networkId: 's1', userEmail: 'dev@northwind.id', name: 'Work laptop', address: '10.66.0.2', createdAt: ago(60 * 24 * 10), expiresAt: new Date(now + 80 * 86_400_000).toISOString() },
+    { id: 'd2', networkId: 's1', userEmail: 'rina@northwind.id', name: 'Phone', address: '10.66.0.3', createdAt: ago(60 * 24 * 95), expiresAt: ago(60 * 24 * 5), expired: true },
+  ],
+  grants: [
+    { teamId: 'tm1', teamName: 'Platform', ranges: ['10.88.0.0/24', '192.168.10.0/24'], logins: false, updatedAt: ago(600) },
+    { teamId: 'tm2', teamName: 'Support', ranges: ['10.30.0.0/16'], logins: true, updatedAt: ago(300) },
+  ],
+  modes: { 'rina@northwind.id': 'full' },
+  mine: { reach: ['10.88.0.0/24', '192.168.10.0/24', '10.30.0.0/16'], logins: ['10.30.0.0/16'], mode: 'company', needsCode: true, hasMfa: true },
+}] }
+const CONF = `[Interface]
+PrivateKey = yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=
+Address = 10.66.0.4/32
+
+[Peer]
+PublicKey = xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=
+Endpoint = vpn.northwind.id:51900
+AllowedIPs = 10.66.0.0/22, 10.88.0.0/24, 192.168.10.0/24, 10.30.0.0/16
+PersistentKeepalive = 25
+`
+
+async function staffRoutes(page: Page) {
+  await page.route('**/api/v1/networks/staff', (r) => r.fulfill({ json: STAFF }))
+  await page.route('**/api/v1/teams', (r) => r.fulfill({ json: [
+    { id: 'tm1', name: 'Platform', members: [], servers: [], createdBy: 'dev@northwind.id', createdAt: ago(9000) },
+    { id: 'tm2', name: 'Support', members: [], servers: [], createdBy: 'dev@northwind.id', createdAt: ago(9000) },
+    { id: 'tm3', name: 'Finance', members: [], servers: [], createdBy: 'dev@northwind.id', createdAt: ago(9000) },
+  ] }))
+}
+
+test('networks: the staff VPN, what each team reaches, and that direct logins are not recorded', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await signIn(page)
+  await staffRoutes(page)
+  let grant: unknown
+  await page.route('**/api/v1/networks/staff/s1/grants/*', async (r) => { grant = r.request().postDataJSON(); await r.fulfill({ status: 204 }) })
+  await page.goto('/networks')
+  const vpn = page.getByTestId('staff-vpn')
+  await expect(vpn.getByTestId('wg-member')).toContainText('gw-jkt-01')
+  await expect(vpn.getByTestId('staff-grant')).toHaveCount(2)
+  await expect(vpn.getByTestId('staff-grant').filter({ hasText: 'Support' })).toContainText('Allowed, not recorded')
+  await expect(vpn.getByTestId('staff-grant').filter({ hasText: 'Platform' })).toContainText('Through Argus only')
+  await expect(vpn.getByTestId('staff-mode')).toContainText('rina@northwind.id')
+  await expect(vpn.getByTestId('staff-device').filter({ hasText: 'Phone' })).toContainText('Expired')
+  // The staff VPN is not listed again among the server networks.
+  await expect(page.getByTestId('wg-network').filter({ hasText: 'Staff VPN' })).toHaveCount(1)
+  if (SHOTS) await vpn.locator('xpath=ancestor::*[contains(@class,"mantine-Paper")][1]').screenshot({ path: `${SHOTS}/networks-staff-vpn.png` })
+
+  await vpn.getByRole('button', { name: 'Give a team access' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Give a team access' })
+  await dialog.getByRole('combobox', { name: 'Team' }).click()
+  await expect(page.getByRole('option')).toHaveCount(1)
+  await page.getByRole('option', { name: 'Finance' }).click()
+  await dialog.getByLabel('Ranges it reaches').fill('10.40.0.0/24, 10.41.0.0/24')
+  await dialog.getByLabel('Allow SSH and RDP straight to these servers').check()
+  await expect(dialog.getByTestId('staff-logins-note')).toContainText('not recorded')
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/networks-staff-grant.png` })
+  await dialog.getByRole('button', { name: 'Save' }).click()
+  await expect(dialog).toBeHidden()
+  expect(grant).toEqual({ ranges: ['10.40.0.0/24', '10.41.0.0/24'], logins: true })
+})
+
+test('my vpn: a device profile is shown once, with a QR code, after an authenticator code', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await signIn(page)
+  await staffRoutes(page)
+  let asked: unknown
+  await page.route('**/api/v1/networks/staff/s1/devices', async (r) => {
+    asked = r.request().postDataJSON()
+    await r.fulfill({ json: { mode: 'company', config: CONF, device: { id: 'd3', networkId: 's1', userEmail: 'dev@northwind.id', name: 'Home desktop',
+      address: '10.66.0.4', createdAt: ago(0), expiresAt: new Date(now + 90 * 86_400_000).toISOString() } } })
+  })
+  await page.goto('/')
+  await page.getByRole('link', { name: 'My VPN' }).first().click()
+  await expect(page).toHaveURL(/\/vpn$/)
+  const card = page.getByTestId('my-vpn')
+  await expect(card).toContainText('Company only')
+  await expect(card).toContainText('SSH and RDP straight to 10.30.0.0/16 is allowed, and is not recorded by Argus')
+  await expect(card.getByTestId('my-device')).toHaveCount(1)
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/my-vpn.png` })
+
+  await card.getByRole('button', { name: 'Add a device' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Add a device' })
+  await dialog.getByLabel('Device').fill('Home desktop')
+  await expect(dialog.getByRole('button', { name: 'Make the profile' })).toBeDisabled()
+  await dialog.getByLabel('Code from your authenticator app').fill('123456')
+  await dialog.getByRole('button', { name: 'Make the profile' }).click()
+  const made = page.getByRole('dialog', { name: 'Home desktop is ready' })
+  await expect(made.getByTestId('staff-profile')).toContainText('only time the profile is shown')
+  await expect(made.getByRole('img', { name: 'QR code of the VPN profile' })).toBeVisible()
+  await expect(made.getByRole('button', { name: 'Scan or download it first' })).toBeDisabled()
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/my-vpn-profile.png` })
+  const dl = page.waitForEvent('download')
+  await made.getByRole('button', { name: /^Download/ }).click()
+  expect((await dl).suggestedFilename()).toBe('Home-desktop.conf')
+  await made.getByRole('button', { name: 'Done' }).click()
+  await expect(made).toBeHidden()
+  expect(asked).toEqual({ name: 'Home desktop', code: '123456' })
+})
+
 test('networks: on a phone', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await signIn(page)
