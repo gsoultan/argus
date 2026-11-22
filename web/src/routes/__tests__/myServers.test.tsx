@@ -235,11 +235,12 @@ describe('the menu follows the role', () => {
   }
 
   // Asked for in so many words: an ordinary user's console is their servers,
-  // the databases and message brokers they were given, and what they did on them.
-  it('shows a member Home, Assets, Databases, Brokers and My sessions', async () => {
+  // the databases and message brokers they were given, their own devices on the
+  // staff VPN, and what they did on them.
+  it('shows a member Home, Assets, Databases, Brokers, My VPN and My sessions', async () => {
     signedInAs('operator')
     await renderRoute('/assets')
-    expect(await menu()).toEqual(['Home', 'Assets', 'Databases', 'Brokers', 'My sessions'])
+    expect(await menu()).toEqual(['Home', 'Assets', 'Databases', 'Brokers', 'My VPN', 'My sessions'])
     expect(screen.queryByRole('button', { name: /search/i })).not.toBeInTheDocument()
   })
 
@@ -247,13 +248,13 @@ describe('the menu follows the role', () => {
   it('adds Approvals for an approver', async () => {
     signedInAs('approver')
     await renderRoute('/assets')
-    expect(await menu()).toEqual(['Home', 'Approvals', 'Assets', 'Databases', 'Brokers', 'My sessions'])
+    expect(await menu()).toEqual(['Home', 'Approvals', 'Assets', 'Databases', 'Brokers', 'My VPN', 'My sessions'])
   })
 
   it('shows an administrator the whole menu', async () => {
     signedInAs('admin')
     await renderRoute('/assets')
-    expect(await menu()).toEqual(['Home', 'Approvals', 'Assets', 'Databases', 'Brokers', 'Websites', 'Network devices', 'VPNs and tunnels',
+    expect(await menu()).toEqual(['Home', 'Approvals', 'Assets', 'Databases', 'Brokers', 'Websites', 'Network devices', 'VPNs and tunnels', 'My VPN',
       'Overview', 'Resources', 'Costs', 'Schedules', 'Console access', 'People', 'Teams', 'Sessions', 'Audit log'])
   })
 
