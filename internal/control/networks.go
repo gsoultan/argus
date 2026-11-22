@@ -323,7 +323,7 @@ func buildNetworks(in []networkRow, now time.Time) NetworksView {
 				// nothing for it.
 				if !a.Running && a.Kind != "wireguard" && !quiet {
 					v.Problems = append(v.Problems, NetworkProblem{Severity: "warn", Kind: "stopped",
-						Key: problemKey("stopped", r.assetID, a.Kind+"/"+a.Unit+"/"+a.Container),
+						Key:     problemKey("stopped", r.assetID, a.Kind+"/"+a.Unit+"/"+a.Container),
 						AssetID: r.assetID, Hostname: r.hostname,
 						Title:  fmt.Sprintf("%s is installed but not running on %s", name, r.hostname),
 						Detail: "Installed, with no process or service running. If it should be connected, start it; if not, remove it."})
@@ -347,7 +347,7 @@ func buildNetworks(in []networkRow, now time.Time) NetworksView {
 				TxBytes: wi.TxBytes, Peers: []NetworkPeer{}, PeersKnown: srv.WGTool}
 			if !wi.Up && !quiet {
 				v.Problems = append(v.Problems, NetworkProblem{Severity: "down", Kind: "interface-down",
-					Key: problemKey("interface-down", r.assetID, wi.Name),
+					Key:     problemKey("interface-down", r.assetID, wi.Name),
 					AssetID: r.assetID, Hostname: r.hostname,
 					Title:  fmt.Sprintf("WireGuard %s is down on %s", wi.Name, r.hostname),
 					Detail: "The interface exists but is not up, so none of its peers can be reached."})
@@ -379,7 +379,7 @@ func buildNetworks(in []networkRow, now time.Time) NetworksView {
 							roughDuration(scan.CheckedAt.Sub(*np.LatestHandshake)))
 					}
 					v.Problems = append(v.Problems, NetworkProblem{Severity: "down", Kind: "peer-down",
-						Key: problemKey("peer-down", r.assetID, wi.Name+"/"+p.PublicKey),
+						Key:     problemKey("peer-down", r.assetID, wi.Name+"/"+p.PublicKey),
 						AssetID: r.assetID, Hostname: r.hostname,
 						Title:  fmt.Sprintf("%s on %s cannot reach %s", wi.Name, r.hostname, other),
 						Detail: detail})
@@ -404,13 +404,13 @@ func buildNetworks(in []networkRow, now time.Time) NetworksView {
 					detail = "cloudflared's health check: " + c.Error + "."
 				}
 				v.Problems = append(v.Problems, NetworkProblem{Severity: "down", Kind: "tunnel-down",
-					Key: problemKey("tunnel-down", r.assetID, c.Metrics),
+					Key:     problemKey("tunnel-down", r.assetID, c.Metrics),
 					AssetID: r.assetID, Hostname: r.hostname,
 					Title: fmt.Sprintf("Cloudflare Tunnel on %s is not connected", r.hostname), Detail: detail})
 			}
 			if t.State == "up" && c.ReadyConnections < 2 {
 				v.Problems = append(v.Problems, NetworkProblem{Severity: "warn", Kind: "tunnel-thin",
-					Key: problemKey("tunnel-thin", r.assetID, c.Metrics),
+					Key:     problemKey("tunnel-thin", r.assetID, c.Metrics),
 					AssetID: r.assetID, Hostname: r.hostname,
 					Title:  fmt.Sprintf("Cloudflare Tunnel on %s has one connection", r.hostname),
 					Detail: "cloudflared normally keeps four connections to two Cloudflare locations. With one, a single failure takes it offline."})
@@ -420,7 +420,7 @@ func buildNetworks(in []networkRow, now time.Time) NetworksView {
 
 		if quiet && (len(scan.WireGuard) > 0 || len(scan.Cloudflared) > 0) {
 			v.Problems = append(v.Problems, NetworkProblem{Severity: "warn", Kind: "agent-quiet",
-				Key: problemKey("agent-quiet", r.assetID, ""),
+				Key:     problemKey("agent-quiet", r.assetID, ""),
 				AssetID: r.assetID, Hostname: r.hostname,
 				Title:  fmt.Sprintf("%s's links are not known right now", r.hostname),
 				Detail: "Its agent has not checked in for over 5 minutes, so its VPN links are shown as last reported."})

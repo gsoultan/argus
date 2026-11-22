@@ -3,8 +3,8 @@ package control
 import (
 	"bytes"
 	"context"
-	"log/slog"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
