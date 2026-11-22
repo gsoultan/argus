@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -17,6 +18,9 @@ import (
 )
 
 const testNet = "11111111-2222-4333-8444-555555555555"
+
+// testAvoid is where the control plane is, for the tests.
+var testAvoid = []netip.Addr{netip.MustParseAddr("10.20.1.5")}
 
 func testKey(t *testing.T) string {
 	t.Helper()
@@ -53,8 +57,9 @@ func TestWGNetSpecRefuses(t *testing.T) {
 	for name, change := range map[string]func(*WGNetSpec){
 		"foreign interface":   func(s *WGNetSpec) { s.Iface = "wg0" },
 		"default route":       func(s *WGNetSpec) { s.Peers[0].AllowedIPs = []string{"0.0.0.0/0"} },
-		"outside the range":   func(s *WGNetSpec) { s.Peers[0].AllowedIPs = []string{"192.168.1.0/24"} },
-		"wider than range":    func(s *WGNetSpec) { s.Peers[0].AllowedIPs = []string{"10.88.0.0/16"} },
+		"public range":        func(s *WGNetSpec) { s.Peers[0].AllowedIPs = []string{"203.0.113.0/24"} },
+		"control plane":       func(s *WGNetSpec) { s.Peers[0].AllowedIPs = []string{"10.20.0.0/16"} },
+		"wider than private":  func(s *WGNetSpec) { s.Peers[0].AllowedIPs = []string{"10.0.0.0/7"} },
 		"newline in endpoint": func(s *WGNetSpec) { s.Peers[0].Endpoint = "1.2.3.4:51820\nPostUp = rm -rf /" },
 		"newline in name":     func(s *WGNetSpec) { s.Name = "x\nPostUp = id" },
 		"bad key":             func(s *WGNetSpec) { s.Peers[0].PublicKey = "abc" },
@@ -63,12 +68,18 @@ func TestWGNetSpecRefuses(t *testing.T) {
 	} {
 		s := testSpec(t)
 		change(&s)
-		if validWGNetSpec(s) == nil {
+		if validWGNetSpec(s, testAvoid) == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
-	if err := validWGNetSpec(testSpec(t)); err != nil {
+	if err := validWGNetSpec(testSpec(t), testAvoid); err != nil {
 		t.Fatalf("a good spec refused: %v", err)
+	}
+	// A site link: a peer carries the office LAN behind it.
+	s := testSpec(t)
+	s.Peers[0].AllowedIPs = append(s.Peers[0].AllowedIPs, "192.168.10.0/24")
+	if err := validWGNetSpec(s, testAvoid); err != nil {
+		t.Fatalf("a site's LAN refused: %v", err)
 	}
 }
 
@@ -241,5 +252,14 @@ func TestWGNetsRefuseABadSpec(t *testing.T) {
 	w.Handle(context.Background(), &WGNetOrders{Networks: []WGNetSpec{s}})
 	if len(p.launched) != 0 || len(w.Beat().Keys) != 0 {
 		t.Fatal("acted on a spec that routes everything")
+	}
+}
+
+func TestControlAddrs(t *testing.T) {
+	if got := ControlAddrs("https://10.20.1.5:8443")(); len(got) != 1 || got[0] != netip.MustParseAddr("10.20.1.5") {
+		t.Fatalf("%v", got)
+	}
+	if got := ControlAddrs("")(); got != nil {
+		t.Fatalf("%v", got)
 	}
 }

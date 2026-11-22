@@ -323,6 +323,8 @@ func runDaemon(args []string) int {
 	disks := agent.NewDisks(*stateDir, exe, log)
 	// WireGuard networks between servers: the same, from the same binary.
 	wgnets := agent.NewWGNets(*stateDir, exe, log)
+	// No peer may carry the control plane's address.
+	wgnets.Avoid = agent.ControlAddrs(*controlURL)
 	updater.Marker = agent.UpdateMarkerPath(*socket)
 	var (
 		openStreams atomic.Int64

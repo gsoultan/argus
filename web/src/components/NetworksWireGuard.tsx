@@ -28,7 +28,7 @@ const SHAPE: Record<WGShape, { label: string; hint: string }> = {
 }
 
 function draftWords(d: WGNetworkDraft): string {
-  return `${SHAPE[d.shape].label} · ${d.cidr} · UDP ${d.port} · ${d.members.map((m) => `${m.hostname ?? m.assetId} ${m.address ?? ''}${m.hub ? ' (hub)' : ''}`).join(', ')}`
+  return `${SHAPE[d.shape].label} · ${d.cidr} · UDP ${d.port} · ${d.members.map((m) => `${m.hostname ?? m.assetId} ${m.address ?? ''}${m.hub ? ' (hub)' : ''}${m.routes?.length ? ` routing ${m.routes.join(', ')}` : ''}`).join(', ')}`
 }
 
 export function ServerNetworksCard({ canManage, me }: { canManage: boolean; me?: string }) {
@@ -124,7 +124,10 @@ function ServerNetwork({ n, canManage, me, onEdit }: { n: WGNetwork; canManage: 
             return (
               <Table.Tr key={m.assetId} data-testid="wg-member">
                 <Table.Td><AnchorLink to="/assets/$assetId" params={{ assetId: m.assetId }} size={FS.body}>{m.hostname}</AnchorLink></Table.Td>
-                <Table.Td><Text size={FS.body} ff="monospace">{m.address}</Text></Table.Td>
+                <Table.Td>
+                  <Text size={FS.body} ff="monospace">{m.address}</Text>
+                  {m.routes && m.routes.length > 0 && <Text size={FS.meta} c="dimmed" ff="monospace">routes {m.routes.join(', ')}</Text>}
+                </Table.Td>
                 <Table.Td><Text size={FS.body}>{n.shape === 'hub' ? (m.hub ? 'Hub' : 'Spoke') : 'Member'}</Text></Table.Td>
                 <Table.Td><Text size={FS.body} ff="monospace" c={m.endpoint ? undefined : 'dimmed'}>{m.endpoint ? `${m.endpoint}:${n.port}` : 'Dials out only'}</Text></Table.Td>
                 <Table.Td>
@@ -176,6 +179,9 @@ function suggestRange(taken: WGNetwork[]): string {
   return ''
 }
 
+/** A member as the editor holds it: the ranges as typed. */
+type EditMember = WGMemberDraft & { routesText?: string }
+
 function NetworkEditor({ n, taken, onClose }: { n: WGNetwork | null; taken: WGNetwork[]; onClose: () => void }) {
   const qc = useQueryClient()
   const { data: assets } = useQuery(assetsQuery())
@@ -184,7 +190,7 @@ function NetworkEditor({ n, taken, onClose }: { n: WGNetwork | null; taken: WGNe
   const [shape, setShape] = useState<WGShape>(n?.shape ?? 'mesh')
   const [cidr, setCidr] = useState(n?.cidr ?? suggestRange(taken))
   const [port, setPort] = useState<number>(n?.port ?? 51820)
-  const [members, setMembers] = useState<WGMemberDraft[]>(n?.members.map((m) => ({ assetId: m.assetId, hostname: m.hostname, address: m.address, hub: m.hub, endpoint: m.endpoint })) ?? [])
+  const [members, setMembers] = useState<EditMember[]>(n?.members.map((m) => ({ assetId: m.assetId, hostname: m.hostname, address: m.address, hub: m.hub, endpoint: m.endpoint, routesText: (m.routes ?? []).join(', ') })) ?? [])
   const [reachable, setReachable] = useState(false)
   const save = useMutation({
     mutationFn: (d: WGNetworkDraft) => (n ? askWGChange(n.id, d) : askWGNetwork(d)),
@@ -192,11 +198,13 @@ function NetworkEditor({ n, taken, onClose }: { n: WGNetwork | null; taken: WGNe
   })
   const pick = (ids: string[]) =>
     setMembers(ids.map((id) => members.find((m) => m.assetId === id) ?? { assetId: id, hostname: servers.find((s) => s.id === id)?.hostname, endpoint: '' }))
-  const setM = (id: string, change: Partial<WGMemberDraft>) => setMembers(members.map((m) => (m.assetId === id ? { ...m, ...change } : m)))
+  const setM = (id: string, change: Partial<EditMember>) => setMembers(members.map((m) => (m.assetId === id ? { ...m, ...change } : m)))
   const submit = () =>
     void run(() => save.mutateAsync({
       name: name.trim(), shape, cidr: cidr.trim(), port,
-      members: members.map((m) => ({ assetId: m.assetId, address: m.address?.trim() || undefined, hub: shape === 'hub' && !!m.hub, endpoint: m.endpoint?.trim() || undefined })),
+      members: members.map((m) => ({ assetId: m.assetId, address: m.address?.trim() || undefined, hub: shape === 'hub' && !!m.hub, endpoint: m.endpoint?.trim() || undefined,
+        routes: (m.routesText ?? '').split(/[\s,]+/).filter(Boolean),
+      })),
     }), { failure: 'Not asked', success: ['Asked', 'It waits for another admin to approve. Nothing changes on the servers before then.'] }).then((ok) => { if (ok) onClose() })
   return (
     <Modal opened onClose={onClose} title={n ? `Change ${n.name}` : 'New server network'} size="xl">
@@ -217,7 +225,7 @@ function NetworkEditor({ n, taken, onClose }: { n: WGNetwork | null; taken: WGNe
         {members.length > 0 && (
           <Table withTableBorder>
             <Table.Thead><Table.Tr>
-              <Table.Th>Server</Table.Th><Table.Th>Address in the range</Table.Th><Table.Th>Reached at</Table.Th>{shape === 'hub' && <Table.Th>Hub</Table.Th>}
+              <Table.Th>Server</Table.Th><Table.Th>Address in the range</Table.Th><Table.Th>Reached at</Table.Th><Table.Th>Site behind it</Table.Th>{shape === 'hub' && <Table.Th>Hub</Table.Th>}
             </Table.Tr></Table.Thead>
             <Table.Tbody>
               {members.map((m) => {
@@ -230,6 +238,10 @@ function NetworkEditor({ n, taken, onClose }: { n: WGNetwork | null; taken: WGNe
                       <TextInput size="xs" placeholder={server?.address ? `e.g. ${server.address}` : 'Public IP or hostname'} value={m.endpoint ?? ''}
                         onChange={(e) => setM(m.assetId, { endpoint: e.currentTarget.value })} aria-label={`Address others reach ${m.hostname} on`} />
                     </Table.Td>
+                    <Table.Td>
+                      <TextInput size="xs" placeholder="None" value={m.routesText ?? ''} onChange={(e) => setM(m.assetId, { routesText: e.currentTarget.value })}
+                        aria-label={`Ranges ${m.hostname} routes`} />
+                    </Table.Td>
                     {shape === 'hub' && <Table.Td><Radio checked={!!m.hub} onChange={() => setMembers(members.map((x) => ({ ...x, hub: x.assetId === m.assetId })))} aria-label={`${m.hostname} is the hub`} /></Table.Td>}
                   </Table.Tr>
                 )
@@ -241,6 +253,15 @@ function NetworkEditor({ n, taken, onClose }: { n: WGNetwork | null; taken: WGNe
           "Reached at" is the address the other servers dial, without the port. Leave it empty for a server behind NAT that only dials out:
           {shape === 'mesh' ? ' in a mesh, at most one server may do that.' : ' every spoke can, but the hub needs one.'} Argus opens the UDP port in ufw or firewalld on servers that are reached; open it in your cloud's security group or firewall too.
         </Text>
+        {members.some((m) => (m.routesText ?? '').trim()) && (
+          <Alert color="sky" p="xs" data-testid="wg-site-note">
+            <Text size={FS.meta}>
+              A server with a site behind it routes that range for the others, so it becomes the site's gateway. For the way back, the site needs a
+              route to {cidr || 'this range'} through that server: on your office router, or in the cloud's route table. In AWS also turn off the
+              instance's source/destination check; in Azure turn on IP forwarding on its network interface; in Google Cloud create it with IP forwarding.
+            </Text>
+          </Alert>
+        )}
         <Checkbox checked={reachable} onChange={(e) => setReachable(e.currentTarget.checked)}
           label="I understand each server applies this on a 2-minute trial and undoes it if it can no longer reach Argus" />
         <Text size={FS.meta} c="dimmed"><AloneOr kind="runs" what="this network">Another admin approves it before any server changes.</AloneOr></Text>

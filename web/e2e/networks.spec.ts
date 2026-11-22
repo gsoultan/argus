@@ -78,7 +78,7 @@ const WG = {
     { id: 'w1', name: 'Database mesh', shape: 'mesh', cidr: '10.88.0.0/24', port: 51820, iface: 'argus1a2b3c', state: 'active', generation: 2,
       requestedBy: 'rina@northwind.id', approvedBy: 'dev@northwind.id', createdAt: ago(60 * 24), approvedAt: ago(60),
       members: [
-        { assetId: 'a1', hostname: 'db-prod-01', address: '10.88.0.1', endpoint: '203.0.113.7', state: 'applied', at: ago(58) },
+        { assetId: 'a1', hostname: 'db-prod-01', address: '10.88.0.1', endpoint: '203.0.113.7', routes: ['192.168.10.0/24'], state: 'applied', at: ago(58) },
         { assetId: 'a2', hostname: 'db-prod-02', address: '10.88.0.2', endpoint: '20.1.2.3', state: 'applied', at: ago(57) },
         { assetId: 'a3', hostname: 'gw-jkt-01', address: '10.88.0.3', state: 'rolled-back', at: ago(55), message: 'the server did not reach Argus within 2 minutes of the change, so it was undone' },
       ],
@@ -163,6 +163,7 @@ test('networks: server networks wait for a second admin and show what each serve
   await expect(mesh.getByTestId('wg-member')).toHaveCount(3)
   await expect(mesh.getByTestId('wg-member').filter({ hasText: 'gw-jkt-01' })).toContainText('Undone')
   await expect(mesh.getByTestId('wg-member').filter({ hasText: 'gw-jkt-01' })).toContainText('Dials out only')
+  await expect(mesh.getByTestId('wg-member').filter({ hasText: 'db-prod-01' })).toContainText('routes 192.168.10.0/24')
   // Someone else's change: approve it here.
   await expect(mesh.getByTestId('wg-pending')).toContainText('rina@northwind.id asks to take out gw-jkt-01')
   await expect(mesh.getByRole('button', { name: 'Approve' })).toBeVisible()
@@ -184,6 +185,9 @@ test('networks: server networks wait for a second admin and show what each serve
   await page.getByRole('option').nth(0).click()
   await page.getByRole('option').nth(1).click()
   await dialog.getByText('Shape').click()
+  await expect(dialog.getByTestId('wg-site-note')).toHaveCount(0)
+  await dialog.getByRole('textbox', { name: /^Ranges .* routes$/ }).first().fill('192.168.10.0/24')
+  await expect(dialog.getByTestId('wg-site-note')).toContainText('route to 10.88.0.0/24 through that server')
   await expect(dialog.getByRole('button', { name: 'Ask for approval' })).toBeDisabled()
   await dialog.getByLabel(/2-minute trial/).check()
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/networks-new-server-network.png` })

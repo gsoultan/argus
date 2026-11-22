@@ -66,6 +66,34 @@ func TestCheckWGDraft(t *testing.T) {
 		}
 	}
 
+	// Site links: the ranges behind a member.
+	for name, c := range map[string]struct {
+		routes []string
+		want   string
+	}{
+		"public":        {[]string{"8.8.8.0/24"}, "not a private range"},
+		"own range":     {[]string{"10.88.0.0/16"}, "overlaps the network's own range"},
+		"not the start": {[]string{"192.168.10.5/24"}, "did you mean 192.168.10.0/24"},
+		"holds b":       {[]string{"172.20.0.0/16"}, "db2 is inside 172.20.0.0/16"},
+		"argus network": {[]string{"10.99.0.0/24"}, "overlaps the Argus network"},
+	} {
+		d := good()
+		d.Members[0].Routes = c.routes
+		tk := wgTaken{own: taken.own, ranges: []wgRange{{netip.MustParsePrefix("10.99.0.0/24"), "the Argus network x"}}}
+		if err := checkWGDraft(&d, hosts, tk); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("routes %s: %v", name, err)
+		}
+	}
+	d = good()
+	d.Members[0].Routes, d.Members[2].Routes = []string{" 192.168.10.0/24 ", ""}, []string{"192.168.10.128/25"}
+	if err := checkWGDraft(&d, hosts, wgTaken{}); err == nil || !strings.Contains(err.Error(), "both route") {
+		t.Errorf("two members routing one range: %v", err)
+	}
+	d.Members[2].Routes = []string{"10.30.0.0/16"}
+	if err := checkWGDraft(&d, hosts, wgTaken{}); err != nil || d.Members[0].Routes[0] != "192.168.10.0/24" || len(d.Members[0].Routes) != 1 {
+		t.Errorf("site link: %v %v", err, d.Members[0].Routes)
+	}
+
 	// A hub network: a spoke may only dial out.
 	d = good()
 	d.Shape, d.Members[0].Hub, d.Members[2].Endpoint = "hub", true, ""
@@ -104,6 +132,24 @@ func TestBuildWGSpecs(t *testing.T) {
 	s = buildWGSpecs("h", hub)
 	if !s[0].Forward || !s[0].OpenPort || len(s[0].Peers) != 2 || s[0].Peers[1].AllowedIPs[0] != "10.88.0.3/32" {
 		t.Errorf("hub: %+v", s[0])
+	}
+	// Sites behind members: the office behind s1, the VPC behind the hub.
+	hub[0].routes, hub[1].routes = []string{"10.30.0.0/16"}, []string{"192.168.10.0/24"}
+	s = buildWGSpecs("s2", hub)
+	if got := strings.Join(s[0].Peers[0].AllowedIPs, " "); got != "10.88.0.0/24 10.30.0.0/16 192.168.10.0/24" || s[0].Forward {
+		t.Errorf("s2 reaches both sites through the hub: %s", got)
+	}
+	s = buildWGSpecs("s1", hub)
+	if !s[0].Forward {
+		t.Error("a site gateway does not forward")
+	}
+	s = buildWGSpecs("h", hub)
+	if got := strings.Join(s[0].Peers[0].AllowedIPs, " "); got != "10.88.0.2/32 192.168.10.0/24" {
+		t.Errorf("the hub reaches s1's office: %s", got)
+	}
+	mesh[0].routes = []string{"192.168.10.0/24"}
+	if s := buildWGSpecs("b", mesh); strings.Join(s[0].Peers[0].AllowedIPs, " ") != "10.88.0.1/32 192.168.10.0/24" {
+		t.Errorf("mesh site: %+v", s[0].Peers)
 	}
 	if s := buildWGSpecs("nobody", hub); len(s) != 0 {
 		t.Errorf("a server outside the network got %+v", s)
@@ -166,7 +212,7 @@ func TestWGNetworkRoutes(t *testing.T) {
 	_ = e.s.pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action LIKE 'wireguard.network.%' AND target = 'wireguard network db mesh'`).Scan(&auditsBefore)
 
 	body := `{"name":"db mesh","shape":"mesh","cidr":"10.77.0.0/24","members":[{"assetId":"` + a.ID +
-		`","endpoint":"203.0.113.7"},{"assetId":"` + b.ID + `"}]}`
+		`","endpoint":"203.0.113.7","routes":["192.168.50.0/24"]},{"assetId":"` + b.ID + `"}]}`
 	if w := do(t, e.h, http.MethodPost, "/api/v1/networks/wireguard", "auditor-token", body); w.Code != http.StatusForbidden {
 		t.Errorf("an auditor asked for a network: %d", w.Code)
 	}
@@ -205,7 +251,8 @@ func TestWGNetworkRoutes(t *testing.T) {
 	}
 	e.beat(t, credA, a.Hostname, &WGNetBeat{Supported: true, Keys: map[string]string{n.ID: wgTestKey(1)}})
 	o = e.beat(t, credB, b.Hostname, &WGNetBeat{Supported: true, Keys: map[string]string{n.ID: wgTestKey(2)}})
-	if len(o.Networks) != 1 || len(o.Networks[0].Peers) != 1 || o.Networks[0].Peers[0].Endpoint != "203.0.113.7:51820" {
+	if len(o.Networks) != 1 || len(o.Networks[0].Peers) != 1 || o.Networks[0].Peers[0].Endpoint != "203.0.113.7:51820" ||
+		strings.Join(o.Networks[0].Peers[0].AllowedIPs, " ") != "10.77.0.1/32 192.168.50.0/24" {
 		t.Fatalf("b: %+v", o)
 	}
 	o = e.beat(t, credA, a.Hostname, beat)

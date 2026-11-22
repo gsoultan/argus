@@ -107,3 +107,10 @@ links, staff VPN).
   must sit inside the network range, so the control-plane route never moves.
 - Network watch only manages alerts whose subject starts `network:`; the
   "change was undone" alert is plain news.
+- Site links (migration 109): `wg_members.routes` are private ranges behind a
+  member (office LAN, VPC). Peers add them to AllowedIPs; a member with routes
+  forwards. The agent now accepts AllowedIPs inside the network range OR a
+  private range, never one holding the control plane's address
+  (`WGNets.Avoid` = `agent.ControlAddrs(controlURL)`, also carried in the
+  plan for the helper). Return routes on the site's router / cloud route
+  table are the admin's (the console says so).

@@ -27,6 +27,7 @@ type Row struct {
 	Endpoint  string
 	PublicKey string
 	KeyAt     runtime.Null[time.Time]
+	Routes    []string
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -65,7 +66,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 7
+const nCols = 8
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -374,6 +375,7 @@ func (q Query) stream(buf *[21]runtime.Tok) []runtime.Tok {
 type Pred struct {
 	col    uint8
 	op     runtime.Op
+	num    int64
 	str    string
 	raw    [16]byte
 	tim    time.Time
@@ -400,6 +402,7 @@ var (
 	Endpoint  = TextCol{4}
 	PublicKey = TextCol{5}
 	KeyAt     = NullTimeCol{6}
+	Routes    = TextArrayCol{7}
 )
 
 // UUIDCol addresses a uuid column.
@@ -486,6 +489,35 @@ func (h NullTimeCol) Lt(v time.Time) Pred    { return Pred{col: h.c, op: opLt, t
 func (h NullTimeCol) Lte(v time.Time) Pred   { return Pred{col: h.c, op: opLte, tim: v} }
 func (h NullTimeCol) IsNull() Pred           { return Pred{col: h.c, op: opIsNull} }
 func (h NullTimeCol) IsNotNull() Pred        { return Pred{col: h.c, op: opIsNotNull} }
+
+// TextArrayCol addresses a text[] column.
+type TextArrayCol struct{ c uint8 }
+
+func (h TextArrayCol) Asc() Sort  { return Sort(runtime.MakeOrder(runtime.Asc, uint32(h.c))) }
+func (h TextArrayCol) Desc() Sort { return Sort(runtime.MakeOrder(runtime.Desc, uint32(h.c))) }
+func (h TextArrayCol) AscNullsFirst() Sort {
+	return Sort(runtime.MakeOrder(runtime.AscNullsFirst, uint32(h.c)))
+}
+func (h TextArrayCol) DescNullsLast() Sort {
+	return Sort(runtime.MakeOrder(runtime.DescNullsLast, uint32(h.c)))
+}
+
+// Contains is `@>`: every element of v is in the column.
+// An empty v is true for every row — every array contains
+// the empty one.
+func (h TextArrayCol) Contains(v ...string) Pred {
+	return Pred{col: h.c, op: opArrayContains, anyStr: v}
+}
+
+// ContainedBy is `<@`: every element of the column is in v.
+func (h TextArrayCol) ContainedBy(v ...string) Pred {
+	return Pred{col: h.c, op: opArrayContainedBy, anyStr: v}
+}
+
+// Overlaps is `&&`: the column and v share an element.
+func (h TextArrayCol) Overlaps(v ...string) Pred {
+	return Pred{col: h.c, op: opArrayOverlaps, anyStr: v}
+}
 
 // Where applies predicates, ANDed together.
 func (q Query) Where(ps ...Pred) Query {
@@ -663,6 +695,13 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 7:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -726,59 +765,62 @@ func (q *Query) leaf(p Pred) {
 }
 
 // Chained predicate sugar. Identical to Where(Col.Op(v)).
-func (q Query) NetworkIDEq(v [16]byte) Query       { return q.Where(NetworkID.Eq(v)) }
-func (q Query) NetworkIDNotEq(v [16]byte) Query    { return q.Where(NetworkID.NotEq(v)) }
-func (q Query) NetworkIDIn(v ...[16]byte) Query    { return q.Where(NetworkID.In(v...)) }
-func (q Query) NetworkIDNotIn(v ...[16]byte) Query { return q.Where(NetworkID.NotIn(v...)) }
-func (q Query) AssetIDEq(v [16]byte) Query         { return q.Where(AssetID.Eq(v)) }
-func (q Query) AssetIDNotEq(v [16]byte) Query      { return q.Where(AssetID.NotEq(v)) }
-func (q Query) AssetIDIn(v ...[16]byte) Query      { return q.Where(AssetID.In(v...)) }
-func (q Query) AssetIDNotIn(v ...[16]byte) Query   { return q.Where(AssetID.NotIn(v...)) }
-func (q Query) AddressEq(v string) Query           { return q.Where(Address.Eq(v)) }
-func (q Query) AddressNotEq(v string) Query        { return q.Where(Address.NotEq(v)) }
-func (q Query) AddressGt(v string) Query           { return q.Where(Address.Gt(v)) }
-func (q Query) AddressGte(v string) Query          { return q.Where(Address.Gte(v)) }
-func (q Query) AddressLt(v string) Query           { return q.Where(Address.Lt(v)) }
-func (q Query) AddressLte(v string) Query          { return q.Where(Address.Lte(v)) }
-func (q Query) AddressEqLower(v string) Query      { return q.Where(Address.EqLower(v)) }
-func (q Query) AddressLike(v string) Query         { return q.Where(Address.Like(v)) }
-func (q Query) AddressILike(v string) Query        { return q.Where(Address.ILike(v)) }
-func (q Query) AddressIn(v ...string) Query        { return q.Where(Address.In(v...)) }
-func (q Query) AddressNotIn(v ...string) Query     { return q.Where(Address.NotIn(v...)) }
-func (q Query) HubEq(v bool) Query                 { return q.Where(Hub.Eq(v)) }
-func (q Query) HubNotEq(v bool) Query              { return q.Where(Hub.NotEq(v)) }
-func (q Query) EndpointEq(v string) Query          { return q.Where(Endpoint.Eq(v)) }
-func (q Query) EndpointNotEq(v string) Query       { return q.Where(Endpoint.NotEq(v)) }
-func (q Query) EndpointGt(v string) Query          { return q.Where(Endpoint.Gt(v)) }
-func (q Query) EndpointGte(v string) Query         { return q.Where(Endpoint.Gte(v)) }
-func (q Query) EndpointLt(v string) Query          { return q.Where(Endpoint.Lt(v)) }
-func (q Query) EndpointLte(v string) Query         { return q.Where(Endpoint.Lte(v)) }
-func (q Query) EndpointEqLower(v string) Query     { return q.Where(Endpoint.EqLower(v)) }
-func (q Query) EndpointLike(v string) Query        { return q.Where(Endpoint.Like(v)) }
-func (q Query) EndpointILike(v string) Query       { return q.Where(Endpoint.ILike(v)) }
-func (q Query) EndpointIn(v ...string) Query       { return q.Where(Endpoint.In(v...)) }
-func (q Query) EndpointNotIn(v ...string) Query    { return q.Where(Endpoint.NotIn(v...)) }
-func (q Query) PublicKeyEq(v string) Query         { return q.Where(PublicKey.Eq(v)) }
-func (q Query) PublicKeyNotEq(v string) Query      { return q.Where(PublicKey.NotEq(v)) }
-func (q Query) PublicKeyGt(v string) Query         { return q.Where(PublicKey.Gt(v)) }
-func (q Query) PublicKeyGte(v string) Query        { return q.Where(PublicKey.Gte(v)) }
-func (q Query) PublicKeyLt(v string) Query         { return q.Where(PublicKey.Lt(v)) }
-func (q Query) PublicKeyLte(v string) Query        { return q.Where(PublicKey.Lte(v)) }
-func (q Query) PublicKeyEqLower(v string) Query    { return q.Where(PublicKey.EqLower(v)) }
-func (q Query) PublicKeyLike(v string) Query       { return q.Where(PublicKey.Like(v)) }
-func (q Query) PublicKeyILike(v string) Query      { return q.Where(PublicKey.ILike(v)) }
-func (q Query) PublicKeyIn(v ...string) Query      { return q.Where(PublicKey.In(v...)) }
-func (q Query) PublicKeyNotIn(v ...string) Query   { return q.Where(PublicKey.NotIn(v...)) }
-func (q Query) KeyAtEq(v time.Time) Query          { return q.Where(KeyAt.Eq(v)) }
-func (q Query) KeyAtNotEq(v time.Time) Query       { return q.Where(KeyAt.NotEq(v)) }
-func (q Query) KeyAtGt(v time.Time) Query          { return q.Where(KeyAt.Gt(v)) }
-func (q Query) KeyAtGte(v time.Time) Query         { return q.Where(KeyAt.Gte(v)) }
-func (q Query) KeyAtLt(v time.Time) Query          { return q.Where(KeyAt.Lt(v)) }
-func (q Query) KeyAtLte(v time.Time) Query         { return q.Where(KeyAt.Lte(v)) }
-func (q Query) KeyAtIsNull() Query                 { return q.Where(KeyAt.IsNull()) }
-func (q Query) KeyAtIsNotNull() Query              { return q.Where(KeyAt.IsNotNull()) }
+func (q Query) NetworkIDEq(v [16]byte) Query        { return q.Where(NetworkID.Eq(v)) }
+func (q Query) NetworkIDNotEq(v [16]byte) Query     { return q.Where(NetworkID.NotEq(v)) }
+func (q Query) NetworkIDIn(v ...[16]byte) Query     { return q.Where(NetworkID.In(v...)) }
+func (q Query) NetworkIDNotIn(v ...[16]byte) Query  { return q.Where(NetworkID.NotIn(v...)) }
+func (q Query) AssetIDEq(v [16]byte) Query          { return q.Where(AssetID.Eq(v)) }
+func (q Query) AssetIDNotEq(v [16]byte) Query       { return q.Where(AssetID.NotEq(v)) }
+func (q Query) AssetIDIn(v ...[16]byte) Query       { return q.Where(AssetID.In(v...)) }
+func (q Query) AssetIDNotIn(v ...[16]byte) Query    { return q.Where(AssetID.NotIn(v...)) }
+func (q Query) AddressEq(v string) Query            { return q.Where(Address.Eq(v)) }
+func (q Query) AddressNotEq(v string) Query         { return q.Where(Address.NotEq(v)) }
+func (q Query) AddressGt(v string) Query            { return q.Where(Address.Gt(v)) }
+func (q Query) AddressGte(v string) Query           { return q.Where(Address.Gte(v)) }
+func (q Query) AddressLt(v string) Query            { return q.Where(Address.Lt(v)) }
+func (q Query) AddressLte(v string) Query           { return q.Where(Address.Lte(v)) }
+func (q Query) AddressEqLower(v string) Query       { return q.Where(Address.EqLower(v)) }
+func (q Query) AddressLike(v string) Query          { return q.Where(Address.Like(v)) }
+func (q Query) AddressILike(v string) Query         { return q.Where(Address.ILike(v)) }
+func (q Query) AddressIn(v ...string) Query         { return q.Where(Address.In(v...)) }
+func (q Query) AddressNotIn(v ...string) Query      { return q.Where(Address.NotIn(v...)) }
+func (q Query) HubEq(v bool) Query                  { return q.Where(Hub.Eq(v)) }
+func (q Query) HubNotEq(v bool) Query               { return q.Where(Hub.NotEq(v)) }
+func (q Query) EndpointEq(v string) Query           { return q.Where(Endpoint.Eq(v)) }
+func (q Query) EndpointNotEq(v string) Query        { return q.Where(Endpoint.NotEq(v)) }
+func (q Query) EndpointGt(v string) Query           { return q.Where(Endpoint.Gt(v)) }
+func (q Query) EndpointGte(v string) Query          { return q.Where(Endpoint.Gte(v)) }
+func (q Query) EndpointLt(v string) Query           { return q.Where(Endpoint.Lt(v)) }
+func (q Query) EndpointLte(v string) Query          { return q.Where(Endpoint.Lte(v)) }
+func (q Query) EndpointEqLower(v string) Query      { return q.Where(Endpoint.EqLower(v)) }
+func (q Query) EndpointLike(v string) Query         { return q.Where(Endpoint.Like(v)) }
+func (q Query) EndpointILike(v string) Query        { return q.Where(Endpoint.ILike(v)) }
+func (q Query) EndpointIn(v ...string) Query        { return q.Where(Endpoint.In(v...)) }
+func (q Query) EndpointNotIn(v ...string) Query     { return q.Where(Endpoint.NotIn(v...)) }
+func (q Query) PublicKeyEq(v string) Query          { return q.Where(PublicKey.Eq(v)) }
+func (q Query) PublicKeyNotEq(v string) Query       { return q.Where(PublicKey.NotEq(v)) }
+func (q Query) PublicKeyGt(v string) Query          { return q.Where(PublicKey.Gt(v)) }
+func (q Query) PublicKeyGte(v string) Query         { return q.Where(PublicKey.Gte(v)) }
+func (q Query) PublicKeyLt(v string) Query          { return q.Where(PublicKey.Lt(v)) }
+func (q Query) PublicKeyLte(v string) Query         { return q.Where(PublicKey.Lte(v)) }
+func (q Query) PublicKeyEqLower(v string) Query     { return q.Where(PublicKey.EqLower(v)) }
+func (q Query) PublicKeyLike(v string) Query        { return q.Where(PublicKey.Like(v)) }
+func (q Query) PublicKeyILike(v string) Query       { return q.Where(PublicKey.ILike(v)) }
+func (q Query) PublicKeyIn(v ...string) Query       { return q.Where(PublicKey.In(v...)) }
+func (q Query) PublicKeyNotIn(v ...string) Query    { return q.Where(PublicKey.NotIn(v...)) }
+func (q Query) KeyAtEq(v time.Time) Query           { return q.Where(KeyAt.Eq(v)) }
+func (q Query) KeyAtNotEq(v time.Time) Query        { return q.Where(KeyAt.NotEq(v)) }
+func (q Query) KeyAtGt(v time.Time) Query           { return q.Where(KeyAt.Gt(v)) }
+func (q Query) KeyAtGte(v time.Time) Query          { return q.Where(KeyAt.Gte(v)) }
+func (q Query) KeyAtLt(v time.Time) Query           { return q.Where(KeyAt.Lt(v)) }
+func (q Query) KeyAtLte(v time.Time) Query          { return q.Where(KeyAt.Lte(v)) }
+func (q Query) KeyAtIsNull() Query                  { return q.Where(KeyAt.IsNull()) }
+func (q Query) KeyAtIsNotNull() Query               { return q.Where(KeyAt.IsNotNull()) }
+func (q Query) RoutesContains(v ...string) Query    { return q.Where(Routes.Contains(v...)) }
+func (q Query) RoutesContainedBy(v ...string) Query { return q.Where(Routes.ContainedBy(v...)) }
+func (q Query) RoutesOverlaps(v ...string) Query    { return q.Where(Routes.Overlaps(v...)) }
 
-const selectPrefix = `SELECT "network_id", "asset_id", "address", "hub", "endpoint", "public_key", "key_at" FROM "wg_members"`
+const selectPrefix = `SELECT "network_id", "asset_id", "address", "hub", "endpoint", "public_key", "key_at", "routes" FROM "wg_members"`
 const countPrefix = `SELECT count(*) FROM "wg_members"`
 const existsPrefix = `SELECT 1 FROM "wg_members"`
 const existsSuffix = ` LIMIT 1`
@@ -857,6 +899,12 @@ var orderTable = [nCols][4]string{
 		"\"key_at\" ASC NULLS FIRST",
 		"\"key_at\" DESC NULLS LAST",
 	},
+	{ // routes
+		"\"routes\"",
+		"\"routes\" DESC",
+		"\"routes\" ASC NULLS FIRST",
+		"\"routes\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -869,6 +917,7 @@ var identTable = [nCols]string{
 	"\"endpoint\"",
 	"\"public_key\"",
 	"\"key_at\"",
+	"\"routes\"",
 }
 
 var lowering = runtime.Lowering{
@@ -901,7 +950,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [7][28]runtime.Frag{
+var fragTable = [8][28]runtime.Frag{
 	{ // network_id
 		{}, // opNone
 		{A: "\"network_id\" = $", B: ""},
@@ -1112,6 +1161,36 @@ var fragTable = [7][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // routes
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"routes\" @> $", B: ""},
+		{A: "\"routes\" <@ $", B: ""},
+		{A: "\"routes\" && $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -1269,6 +1348,7 @@ func Scan(rv [][]byte, r *Row, sl *runtime.Slab) error { return scan(rv, r, sl) 
 // numeric past 18 significant digits, or a NaN. Those must not become a
 // plausible zero, and a row scanner is the last place that can tell.
 func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
+	var decErr error
 	copy(r.NetworkID[:], rv[0])
 	copy(r.AssetID[:], rv[1])
 	r.Address = sl.Str(rv[2])
@@ -1276,7 +1356,11 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.Endpoint = sl.Str(rv[4])
 	r.PublicKey = sl.Str(rv[5])
 	r.KeyAt = runtime.Nullable(rv[6], runtime.Timestamptz)
-	return nil
+	r.Routes, decErr = runtime.TextArray(rv[7], sl)
+	if decErr != nil {
+		return decErr
+	}
+	return decErr
 }
 
 type binder struct {
@@ -1358,6 +1442,10 @@ func (q Query) bindPreds(b *binder) []any {
 				v = append(v, &b.anyStr[nas])
 				nas++
 			case 5:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 7:
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
@@ -1530,7 +1618,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "wg_members" ("network_id", "asset_id", "address", "hub", "endpoint", "public_key", "key_at") VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING "network_id", "asset_id", "address", "hub", "endpoint", "public_key", "key_at"`
+const insertSQL = `INSERT INTO "wg_members" ("network_id", "asset_id", "address", "hub", "endpoint", "public_key", "key_at", "routes") VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING "network_id", "asset_id", "address", "hub", "endpoint", "public_key", "key_at", "routes"`
 
 const updatePrefix = `UPDATE "wg_members" SET `
 const deletePrefix = `DELETE FROM "wg_members"`
@@ -1543,9 +1631,10 @@ const (
 	dEndpoint  uint64 = 1 << 2
 	dPublicKey uint64 = 1 << 3
 	dKeyAt     uint64 = 1 << 4
+	dRoutes    uint64 = 1 << 5
 )
 
-const nUpdatable = 5
+const nUpdatable = 6
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -1554,6 +1643,7 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"endpoint\" = $", B: ""},   // endpoint
 	{A: "\"public_key\" = $", B: ""}, // public_key
 	{A: "\"key_at\" = $", B: ""},     // key_at
+	{A: "\"routes\" = $", B: ""},     // routes
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -1565,6 +1655,7 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{},                               // endpoint has no server-side form
 	{},                               // public_key has no server-side form
 	{A: "\"key_at\" = now()", B: ""}, // key_at = the database's clock
+	{},                               // routes has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -1584,9 +1675,10 @@ const (
 	iEndpoint  uint64 = 1 << 4
 	iPublicKey uint64 = 1 << 5
 	iKeyAt     uint64 = 1 << 6
+	iRoutes    uint64 = 1 << 7
 )
 
-const nInsertable = 7
+const nInsertable = 8
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -1597,6 +1689,7 @@ var insCols = [nInsertable]string{
 	"\"endpoint\"",
 	"\"public_key\"",
 	"\"key_at\"",
+	"\"routes\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -1605,7 +1698,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"wg_members\""
-const insReturning = " RETURNING \"network_id\", \"asset_id\", \"address\", \"hub\", \"endpoint\", \"public_key\", \"key_at\""
+const insReturning = " RETURNING \"network_id\", \"asset_id\", \"address\", \"hub\", \"endpoint\", \"public_key\", \"key_at\", \"routes\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -1624,7 +1717,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"network_id\", \"asset_id\", \"address\", \"hub\", \"endpoint\", \"public_key\", \"key_at\""
+const updReturning = " RETURNING \"network_id\", \"asset_id\", \"address\", \"hub\", \"endpoint\", \"public_key\", \"key_at\", \"routes\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -1722,6 +1815,12 @@ func (m *Mut) SetKeyAtNull() {
 	m.expr &^= dKeyAt
 }
 
+func (m *Mut) SetRoutes(v []string) {
+	m.row.Routes = v
+	m.dirty |= dRoutes
+	m.expr &^= dRoutes
+}
+
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
 // column including the primary key and Immutable ones — supplying your
 // own id is legitimate, changing it later is not.
@@ -1789,6 +1888,11 @@ func (n *Ins) SetKeyAtNull() {
 	n.set |= iKeyAt
 }
 
+func (n *Ins) SetRoutes(v []string) {
+	n.row.Routes = v
+	n.set |= iRoutes
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -1834,7 +1938,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 5)
+	set := make([]string, 0, 6)
 	switch i {
 	case 0:
 		if mask&(1<<2) != 0 {
@@ -1851,6 +1955,9 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<6) != 0 {
 			set = append(set, "key_at")
+		}
+		if mask&(1<<7) != 0 {
+			set = append(set, "routes")
 		}
 	}
 	return set
@@ -1905,6 +2012,7 @@ var assignFor = map[string]string{
 	"endpoint":   "\"endpoint\" = EXCLUDED.\"endpoint\"",
 	"public_key": "\"public_key\" = EXCLUDED.\"public_key\"",
 	"key_at":     "\"key_at\" = EXCLUDED.\"key_at\"",
+	"routes":     "\"routes\" = EXCLUDED.\"routes\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -1962,6 +2070,8 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.PublicKey)
 		case 6:
 			args = append(args, n.row.KeyAt.Arg())
+		case 7:
+			args = append(args, n.row.Routes)
 		}
 	}
 	var out Row
@@ -1999,7 +2109,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 7)
+	args := make([]any, 0, 8)
 	args = append(args, r.NetworkID)
 	args = append(args, r.AssetID)
 	args = append(args, r.Address)
@@ -2007,6 +2117,7 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.Endpoint)
 	args = append(args, r.PublicKey)
 	args = append(args, r.KeyAt.Arg())
+	args = append(args, r.Routes)
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -2040,13 +2151,14 @@ var copyCols = []string{
 	"endpoint",
 	"public_key",
 	"key_at",
+	"routes",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [7]any
+	buf  [8]any
 }
 
 func (s *rowSource) Next() bool {
@@ -2071,6 +2183,7 @@ func (s *rowSource) Values() []any {
 	s.buf[4] = &r.Endpoint
 	s.buf[5] = &r.PublicKey
 	s.buf[6] = r.KeyAt.Ptr()
+	s.buf[7] = &r.Routes
 	return s.buf[:]
 }
 
@@ -2108,8 +2221,9 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 4
 	mask |= 1 << 5
 	mask |= 1 << 6
+	mask |= 1 << 7
 	st := stmtForInsertNoReturn(mask, 0)
-	args := make([]any, 0, 7)
+	args := make([]any, 0, 8)
 	args = append(args, r.NetworkID)
 	args = append(args, r.AssetID)
 	args = append(args, r.Address)
@@ -2117,6 +2231,7 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.Endpoint)
 	args = append(args, r.PublicKey)
 	args = append(args, r.KeyAt.Arg())
+	args = append(args, r.Routes)
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -2164,6 +2279,8 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.PublicKey)
 		case 6:
 			args = append(args, n.row.KeyAt.Arg())
+		case 7:
+			args = append(args, n.row.Routes)
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -2220,6 +2337,8 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.PublicKey)
 		case 4:
 			args = append(args, m.row.KeyAt.Arg())
+		case 5:
+			args = append(args, m.row.Routes)
 		}
 	}
 	args = append(args, m.row.NetworkID)
@@ -2313,6 +2432,8 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.PublicKey)
 		case 4:
 			args = append(args, m.row.KeyAt.Arg())
+		case 5:
+			args = append(args, m.row.Routes)
 		}
 	}
 	args = append(args, m.row.NetworkID)
@@ -2472,6 +2593,8 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.PublicKey)
 		case 4:
 			args = append(args, m.row.KeyAt.Arg())
+		case 5:
+			args = append(args, m.row.Routes)
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

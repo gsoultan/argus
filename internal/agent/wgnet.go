@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -53,8 +54,11 @@ What it will not do:
   - Touch an interface it did not make. Its interfaces are named argus and
     six hex digits, and only files of that name are written or removed.
   - Route everything through a network. A peer's allowed addresses must be
-    inside the network's own range, so the agent's own connection to the
-    control plane, and the server's default route, never move into it.
+    inside the network's own range, or a private range behind a site's
+    gateway (a site link: an office LAN, a cloud VPC). Never the default
+    route, never a public range, and never a range holding the control
+    plane's address, so the agent's own connection to Argus never moves
+    into a network it manages.
   - Read or report a private key, its own or another's.
 */
 
@@ -133,7 +137,9 @@ type WGNetBeat struct {
 
 // WGNetPlan is what the helper is handed.
 type WGNetPlan struct {
-	Run      WGNetRun    `json:"run"`
+	Run WGNetRun `json:"run"`
+	// Avoid is the control plane's addresses, which no peer may carry.
+	Avoid    []string    `json:"avoid,omitempty"`
 	StateDir string      `json:"state_dir"`
 	Networks []WGNetSpec `json:"networks"`
 	// TrialSeconds is how long the helper waits to hear the change did not
@@ -168,6 +174,9 @@ type WGNets struct {
 	Log      *slog.Logger
 	// Changed is called when there is something new to report.
 	Changed func()
+	// Avoid is the control plane's addresses: a peer carrying one would
+	// move the agent's own connection into the network. Nil when unknown.
+	Avoid func() []netip.Addr
 
 	platform wgnetPlatform
 	now      func() time.Time
@@ -250,8 +259,9 @@ func (w *WGNets) Handle(ctx context.Context, o *WGNetOrders) {
 		w.Log.Error("wireguard: refusing more networks than an agent sets up", "count", len(specs))
 		return
 	}
+	avoid := w.avoid()
 	for _, s := range specs {
-		if err := validWGNetSpec(s); err != nil {
+		if err := validWGNetSpec(s, avoid); err != nil {
 			w.Log.Error("wireguard: refusing the console's networks", "network", s.ID, "error", err)
 			return
 		}
@@ -290,6 +300,13 @@ func (w *WGNets) Handle(ctx context.Context, o *WGNetOrders) {
 	w.startLocked(ctx, specs, want)
 }
 
+func (w *WGNets) avoid() []netip.Addr {
+	if w.Avoid == nil {
+		return nil
+	}
+	return w.Avoid()
+}
+
 func (w *WGNets) changedAsync() {
 	if w.Changed != nil {
 		go w.Changed()
@@ -319,6 +336,9 @@ func (w *WGNets) startLocked(ctx context.Context, specs []WGNetSpec, want string
 	run.Unit = "argus-wgnet-" + strings.ReplaceAll(id, "-", "")[:20]
 	planPath := filepath.Join(dir, "plan-"+id+".json")
 	plan := WGNetPlan{Run: run, StateDir: w.StateDir, Networks: specs, TrialSeconds: int(wgnetTrial / time.Second)}
+	for _, a := range w.avoid() {
+		plan.Avoid = append(plan.Avoid, a.String())
+	}
 	if err := writeFileAtomic(planPath, mustJSON(plan), 0o600); err != nil {
 		fail("cannot prepare the change: " + err.Error())
 		return
@@ -448,7 +468,7 @@ func (w *WGNets) follow() bool {
 
 // validWGNetSpec refuses anything that could reach outside the network or
 // into the file's syntax.
-func validWGNetSpec(s WGNetSpec) error {
+func validWGNetSpec(s WGNetSpec, avoid []netip.Addr) error {
 	if !reUUIDish.MatchString(s.ID) {
 		return errors.New("malformed network id")
 	}
@@ -491,14 +511,72 @@ func validWGNetSpec(s WGNetSpec) error {
 			if err != nil || !pfx.Addr().Is4() {
 				return fmt.Errorf("allowed range %q is not IPv4", a)
 			}
-			// Inside the network's own range only: never the default route,
-			// never the control plane's address.
-			if pfx.Bits() < network.Bits() || !network.Contains(pfx.Addr()) {
-				return fmt.Errorf("allowed range %s is outside the network %s", a, network)
+			// Inside the network's own range, or a private range a site
+			// gateway routes: never the default route, never public.
+			inside := pfx.Bits() >= network.Bits() && network.Contains(pfx.Addr())
+			if !inside && !wgPrivateRange(pfx) {
+				return fmt.Errorf("allowed range %s is outside the network %s and not a private range", a, network)
+			}
+			for _, c := range avoid {
+				if pfx.Contains(c) {
+					return fmt.Errorf("allowed range %s holds the control plane's address %s", a, c)
+				}
 			}
 		}
 	}
 	return nil
+}
+
+var wgPrivateRanges = []netip.Prefix{
+	netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("172.16.0.0/12"),
+	netip.MustParsePrefix("192.168.0.0/16"), netip.MustParsePrefix("100.64.0.0/10"),
+}
+
+// wgPrivateRange is a range wholly inside one private block.
+func wgPrivateRange(p netip.Prefix) bool {
+	for _, b := range wgPrivateRanges {
+		if p.Bits() >= b.Bits() && b.Contains(p.Addr()) {
+			return true
+		}
+	}
+	return false
+}
+
+// ControlAddrs resolves the control plane's host from its URL, at most
+// every ten minutes, for WGNets.Avoid. On a lookup that fails it keeps the
+// addresses it last had.
+func ControlAddrs(controlURL string) func() []netip.Addr {
+	var (
+		mu   sync.Mutex
+		at   time.Time
+		last []netip.Addr
+	)
+	host := controlURL
+	if u, err := url.Parse(controlURL); err == nil && u.Hostname() != "" {
+		host = u.Hostname()
+	}
+	return func() []netip.Addr {
+		mu.Lock()
+		defer mu.Unlock()
+		if host == "" || time.Since(at) < 10*time.Minute && last != nil {
+			return last
+		}
+		if a, err := netip.ParseAddr(host); err == nil {
+			last, at = []netip.Addr{a.Unmap()}, time.Now()
+			return last
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip4", host)
+		if err == nil && len(ips) > 0 {
+			last = last[:0:0]
+			for _, ip := range ips {
+				last = append(last, ip.Unmap())
+			}
+			at = time.Now()
+		}
+		return last
+	}
 }
 
 func validWGKey(k string) bool {

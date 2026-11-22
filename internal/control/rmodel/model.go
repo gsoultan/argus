@@ -2950,6 +2950,9 @@ type WgMember struct {
 	Endpoint  string
 	PublicKey string
 	KeyAt     *time.Time
+	// Routes are the private ranges behind it that it routes for the
+	// others: a site link (migration 109).
+	Routes []string
 }
 
 func (m *WgMember) Schema(t *storm.Table) {
@@ -2967,4 +2970,6 @@ func (m *WgMember) Schema(t *storm.Table) {
 	t.CheckNamed("wg_members_address_check", "length(address) <= 15")
 	t.CheckNamed("wg_members_endpoint_check", "length(endpoint) <= 253")
 	t.CheckNamed("wg_members_public_key_check", "length(public_key) <= 44")
+	t.Col(&m.Routes).Default("'{}'::text[]")
+	t.CheckNamed("wg_members_routes_check", "cardinality(routes) <= 16")
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -112,8 +113,14 @@ func waitWGNetConfirm(ctx context.Context, plan WGNetPlan) bool {
 // applyWGNet makes the server's Argus interfaces what the plan says, waits
 // for the change to be confirmed, and undoes it if it is not.
 func applyWGNet(ctx context.Context, ops wgnetOps, plan WGNetPlan, confirmed func(context.Context) bool) (string, string) {
+	var avoid []netip.Addr
+	for _, a := range plan.Avoid {
+		if ip, err := netip.ParseAddr(a); err == nil {
+			avoid = append(avoid, ip)
+		}
+	}
 	for _, s := range plan.Networks {
-		if err := validWGNetSpec(s); err != nil {
+		if err := validWGNetSpec(s, avoid); err != nil {
 			return WGNetFailed, "refused: " + err.Error()
 		}
 	}

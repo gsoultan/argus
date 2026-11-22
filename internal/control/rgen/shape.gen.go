@@ -1688,6 +1688,7 @@ func _assertWgMemberShape(m m0.WgMember) {
 		m.Endpoint,
 		m.PublicKey,
 		m.KeyAt,
+		m.Routes,
 	}
 }
 

@@ -279,13 +279,15 @@ export interface WGMember {
   address: string
   hub?: boolean
   endpoint?: string
+  /** Private ranges behind it that it routes for the others: a site link. */
+  routes?: string[]
   publicKey?: string
   state: WGMemberState
   message?: string
   at?: string
 }
 
-export interface WGMemberDraft { assetId: string; hostname?: string; address?: string; hub?: boolean; endpoint?: string }
+export interface WGMemberDraft { assetId: string; hostname?: string; address?: string; hub?: boolean; endpoint?: string; routes?: string[] }
 
 export interface WGNetworkDraft { name: string; shape: WGShape; cidr: string; port: number; members: WGMemberDraft[]; remove?: boolean }
 

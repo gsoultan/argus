@@ -33,6 +33,11 @@ An admin draws a network on the Networks page: a name, a range such as
     has one peer, the hub, carrying the whole range; the hub has every
     spoke and forwards between them.
 
+Either shape can link sites: a member may route private ranges behind it
+(an office LAN, a cloud VPC), and the others reach them through it. The
+member forwards, and the console says what the site's own router or the
+cloud's route table needs for the way back.
+
 Nothing reaches a server until a second admin approves it, and every later
 change (members, range, port, removing it) waits the same way: the draft is
 kept in pending and only an approved network is sent to agents. When nobody
@@ -79,12 +84,14 @@ type WGNetwork struct {
 
 // WGMember is an approved member and how it is doing.
 type WGMember struct {
-	AssetID   string `json:"assetId"`
-	Hostname  string `json:"hostname"`
-	Address   string `json:"address"`
-	Hub       bool   `json:"hub,omitempty"`
-	Endpoint  string `json:"endpoint,omitempty"`
-	PublicKey string `json:"publicKey,omitempty"`
+	AssetID  string `json:"assetId"`
+	Hostname string `json:"hostname"`
+	Address  string `json:"address"`
+	Hub      bool   `json:"hub,omitempty"`
+	Endpoint string `json:"endpoint,omitempty"`
+	// Routes are the private ranges behind it that it routes for the others.
+	Routes    []string `json:"routes,omitempty"`
+	PublicKey string   `json:"publicKey,omitempty"`
 	// State is no-agent, unsupported, waiting-key, applying, trial,
 	// applied, failed or rolled-back.
 	State   string     `json:"state"`
@@ -105,11 +112,12 @@ type WGNetworkDraft struct {
 
 // WGMemberDraft is one server in a draft. Address is filled in when empty.
 type WGMemberDraft struct {
-	AssetID  string `json:"assetId"`
-	Hostname string `json:"hostname,omitempty"`
-	Address  string `json:"address,omitempty"`
-	Hub      bool   `json:"hub,omitempty"`
-	Endpoint string `json:"endpoint,omitempty"`
+	AssetID  string   `json:"assetId"`
+	Hostname string   `json:"hostname,omitempty"`
+	Address  string   `json:"address,omitempty"`
+	Hub      bool     `json:"hub,omitempty"`
+	Endpoint string   `json:"endpoint,omitempty"`
+	Routes   []string `json:"routes,omitempty"`
 }
 
 // ErrInvalidWGNetwork is a draft that cannot be set up, with why.
@@ -130,6 +138,7 @@ const (
 	wgMaxNetworks = 50
 	// wgKeepalive keeps a link through NAT open; WireGuard's own advice.
 	wgKeepalive = 25
+	wgMaxRoutes = 16
 )
 
 var (
@@ -292,6 +301,9 @@ func checkWGDraft(d *WGNetworkDraft, hosts map[string]string, taken wgTaken) err
 				quiet[0], quiet[1])
 		}
 	}
+	if err := checkWGRoutes(d, pfx, taken); err != nil {
+		return err
+	}
 	// Addresses for the members that left theirs out, in order.
 	next := first
 	for i := range d.Members {
@@ -306,6 +318,69 @@ func checkWGDraft(d *WGNetworkDraft, hosts map[string]string, taken wgTaken) err
 		}
 		used[next] = true
 		d.Members[i].Address = next.String()
+	}
+	return nil
+}
+
+// checkWGRoutes checks the ranges members route for the others: private,
+// not the network's own, not routed by two members, not another Argus
+// network, and not holding another member's own address (it would send
+// that member's own traffic into the tunnel).
+func checkWGRoutes(d *WGNetworkDraft, network netip.Prefix, taken wgTaken) error {
+	type owner struct {
+		p    netip.Prefix
+		host string
+	}
+	var all []owner
+	for i := range d.Members {
+		m := &d.Members[i]
+		if len(m.Routes) > wgMaxRoutes {
+			return invalidWG("%s routes more than %d ranges", m.Hostname, wgMaxRoutes)
+		}
+		clean := make([]string, 0, len(m.Routes))
+		for _, r := range m.Routes {
+			r = strings.TrimSpace(r)
+			if r == "" {
+				continue
+			}
+			p, err := netip.ParsePrefix(r)
+			if err != nil || !p.Addr().Is4() {
+				return invalidWG("%s: %q is not an IPv4 range such as 192.168.10.0/24", m.Hostname, r)
+			}
+			if p != p.Masked() {
+				return invalidWG("%s: %s is not the start of its range: did you mean %s?", m.Hostname, r, p.Masked())
+			}
+			if !slices.ContainsFunc(wgPrivate, func(b netip.Prefix) bool { return b.Bits() <= p.Bits() && b.Contains(p.Addr()) }) {
+				return invalidWG("%s: %s is not a private range; a site link carries private ranges only", m.Hostname, r)
+			}
+			if prefixesOverlap(p, network) {
+				return invalidWG("%s: %s overlaps the network's own range %s", m.Hostname, r, network)
+			}
+			for _, o := range all {
+				if prefixesOverlap(p, o.p) {
+					return invalidWG("%s and %s both route %s", o.host, m.Hostname, p)
+				}
+			}
+			for _, t := range taken.ranges {
+				if strings.HasPrefix(t.what, "the ") && prefixesOverlap(p, t.prefix) {
+					return invalidWG("%s: %s overlaps %s (%s)", m.Hostname, r, t.what, t.prefix)
+				}
+			}
+			for _, other := range d.Members {
+				if other.AssetID == m.AssetID {
+					continue
+				}
+				for _, own := range taken.own[other.AssetID] {
+					if p.Contains(own.Addr()) {
+						return invalidWG("%s is inside %s, which %s would route: it reaches that range directly, so leave it out of the network or route a narrower range",
+							other.Hostname, p, m.Hostname)
+					}
+				}
+			}
+			all = append(all, owner{p, m.Hostname})
+			clean = append(clean, p.String())
+		}
+		m.Routes = clean
 	}
 	return nil
 }
@@ -526,7 +601,7 @@ func (s *Store) WGNetworks(ctx context.Context) ([]WGNetwork, error) {
 		return []WGNetwork{}, nil
 	}
 	mrows, err := s.db(ctx).Query(ctx, `
-		SELECT m.network_id::text, m.asset_id::text, a.hostname, m.address, m.hub, m.endpoint, m.public_key, ag.wgnet_state
+		SELECT m.network_id::text, m.asset_id::text, a.hostname, m.address, m.hub, m.endpoint, m.routes, m.public_key, ag.wgnet_state
 		  FROM wg_members m JOIN assets a ON a.id = m.asset_id
 		  LEFT JOIN LATERAL (
 		       SELECT wgnet_state FROM agents g
@@ -544,7 +619,7 @@ func (s *Store) WGNetworks(ctx context.Context) ([]WGNetwork, error) {
 			m     WGMember
 			state []byte
 		)
-		if err := mrows.Scan(&netID, &m.AssetID, &m.Hostname, &m.Address, &m.Hub, &m.Endpoint, &m.PublicKey, &state); err != nil {
+		if err := mrows.Scan(&netID, &m.AssetID, &m.Hostname, &m.Address, &m.Hub, &m.Endpoint, &m.Routes, &m.PublicKey, &state); err != nil {
 			return nil, err
 		}
 		i, ok := byID[netID]
@@ -691,9 +766,9 @@ func (s *Store) ApproveWGNetwork(ctx context.Context, id, by string) (WGNetwork,
 	for _, m := range d.Members {
 		keep = append(keep, m.AssetID)
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO wg_members (network_id, asset_id, address, hub, endpoint) VALUES ($1, $2, $3, $4, $5)
-			ON CONFLICT (network_id, asset_id) DO UPDATE SET address = $3, hub = $4, endpoint = $5`,
-			id, m.AssetID, m.Address, m.Hub, m.Endpoint); err != nil {
+			INSERT INTO wg_members (network_id, asset_id, address, hub, endpoint, routes) VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT (network_id, asset_id) DO UPDATE SET address = $3, hub = $4, endpoint = $5, routes = $6`,
+			id, m.AssetID, m.Address, m.Hub, m.Endpoint, nonNilStrings(m.Routes)); err != nil {
 			return before, false, err
 		}
 	}
@@ -818,12 +893,13 @@ type wgMemberRow struct {
 	port                              int
 	asset, address, endpoint, key     string
 	hub                               bool
+	routes                            []string
 }
 
 // wgSpecsFor is every approved network asset is in, with all its members.
 func (s *Store) wgSpecsFor(ctx context.Context, asset string) ([]WGNetSpec, error) {
 	rows, err := s.db(ctx).Query(ctx, `
-		SELECT n.id::text, n.name, n.shape, n.cidr, n.port, n.iface, m.asset_id::text, m.address, m.endpoint, m.public_key, m.hub
+		SELECT n.id::text, n.name, n.shape, n.cidr, n.port, n.iface, m.asset_id::text, m.address, m.endpoint, m.public_key, m.hub, m.routes
 		  FROM wg_networks n JOIN wg_members m ON m.network_id = n.id
 		 WHERE n.state = 'active'
 		   AND n.id IN (SELECT network_id FROM wg_members WHERE asset_id = $1)
@@ -836,7 +912,7 @@ func (s *Store) wgSpecsFor(ctx context.Context, asset string) ([]WGNetSpec, erro
 	for rows.Next() {
 		var r wgMemberRow
 		if err := rows.Scan(&r.network, &r.name, &r.shape, &r.cidr, &r.port, &r.iface, &r.asset, &r.address, &r.endpoint,
-			&r.key, &r.hub); err != nil {
+			&r.key, &r.hub, &r.routes); err != nil {
 			return nil, err
 		}
 		in = append(in, r)
@@ -874,8 +950,15 @@ func buildWGSpecs(self string, rows []wgMemberRow) []WGNetSpec {
 			continue
 		}
 		hubShape := ms[0].shape == "hub"
+		// A spoke reaches every other spoke's site through the hub.
+		var spokeRoutes []string
+		for _, o := range ms {
+			if o.asset != self && !o.hub {
+				spokeRoutes = append(spokeRoutes, o.routes...)
+			}
+		}
 		spec := WGNetSpec{ID: id, Name: ms[0].name, Iface: ms[0].iface, Address: me.address + "/" + strconv.Itoa(pfx.Bits()),
-			ListenPort: me.port, Forward: hubShape && me.hub, OpenPort: me.endpoint != "", Peers: []WGNetPeer{}}
+			ListenPort: me.port, Forward: hubShape && me.hub || len(me.routes) > 0, OpenPort: me.endpoint != "", Peers: []WGNetPeer{}}
 		for _, o := range ms {
 			if o.asset == self || o.key == "" {
 				continue
@@ -884,9 +967,9 @@ func buildWGSpecs(self string, rows []wgMemberRow) []WGNetSpec {
 			if hubShape && !me.hub && !o.hub {
 				continue
 			}
-			p := WGNetPeer{PublicKey: o.key, AllowedIPs: []string{o.address + "/32"}}
+			p := WGNetPeer{PublicKey: o.key, AllowedIPs: append([]string{o.address + "/32"}, o.routes...)}
 			if hubShape && o.hub {
-				p.AllowedIPs = []string{pfx.String()}
+				p.AllowedIPs = append(append([]string{pfx.String()}, o.routes...), spokeRoutes...)
 			}
 			if o.endpoint != "" {
 				p.Endpoint = net.JoinHostPort(o.endpoint, strconv.Itoa(o.port))

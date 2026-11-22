@@ -118,6 +118,9 @@ func wgDraftSummary(d WGNetworkDraft) string {
 		if m.Hub {
 			h += " (hub)"
 		}
+		if len(m.Routes) > 0 {
+			h += " routing " + strings.Join(m.Routes, ", ")
+		}
 		hosts = append(hosts, h)
 	}
 	return fmt.Sprintf("%s network %s on UDP %d: %s", d.Shape, d.CIDR, d.Port, strings.Join(hosts, ", "))
