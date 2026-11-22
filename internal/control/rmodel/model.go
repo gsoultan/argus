@@ -110,6 +110,9 @@ type Agent struct {
 	// Vpn is the server's VPN links, as its agent last reported them
 	// (migration 106).
 	Vpn *storm.JSON
+	// WgnetState is whether the agent can set up WireGuard networks and
+	// how its last change went (migration 108).
+	WgnetState *storm.JSON
 }
 
 func (m *Agent) Schema(t *storm.Table) {
@@ -131,6 +134,7 @@ func (m *Agent) Schema(t *storm.Table) {
 	t.Index(storm.Desc(&m.LastSeenAt)).Where("(matched_asset = false) AND (enrollment_state = 'unreviewed'::text)").Named("agents_unreviewed_idx")
 	t.Index(&m.Hostname).Where("exec_tracing").Named("agents_exec_tracing_idx")
 	t.CheckNamed("agents_vpn_check", "((vpn IS NULL) OR (octet_length((vpn)::text) <= 400000))")
+	t.CheckNamed("agents_wgnet_state_check", "((wgnet_state IS NULL) OR (octet_length((wgnet_state)::text) <= 20000))")
 }
 
 // AgentEnrollmentToken is table agent_enrollment_tokens: a short-lived,
@@ -1486,6 +1490,8 @@ func All() []any {
 		&TelegramBot{},
 		&TelegramRoute{},
 		&CloudflareAccount{},
+		&WgNetwork{},
+		&WgMember{},
 		&UIPreference{},
 		&Team{},
 		&TeamMember{},
@@ -2895,4 +2901,70 @@ func (m *CheckOutage) Schema(t *storm.Table) {
 	t.Col(&m.Confirmed).Default("''::text")
 	t.Index(&m.Check, storm.Desc(&m.StartedAt)).Named("check_outages_check")
 	t.Index(&m.Check).Unique().Where("ended_at IS NULL").Named("check_outages_open")
+}
+
+// WgNetwork is table wg_networks: a WireGuard network between servers, set
+// up through their agents once a second admin approves it
+// (control/wg_networks.go).
+type WgNetwork struct {
+	storm.Model
+
+	Name        string
+	Shape       string
+	Cidr        string
+	Port        int32
+	Iface       string
+	State       string
+	Pending     *storm.JSON
+	PendingBy   string
+	PendingAt   *time.Time
+	RequestedBy string
+	ApprovedBy  string
+	ApprovedAt  *time.Time
+	Generation  int32
+}
+
+func (m *WgNetwork) Schema(t *storm.Table) {
+	t.Col(&m.Name).Unique()
+	t.Col(&m.Iface).Unique()
+	t.Col(&m.State).Default("'waiting'::text")
+	t.Col(&m.PendingBy).Default("''::text")
+	t.Col(&m.ApprovedBy).Default("''::text")
+	t.Col(&m.Generation).Default("0")
+	t.CheckNamed("wg_networks_name_check", "(length(name) >= 1) AND (length(name) <= 80)")
+	t.CheckNamed("wg_networks_shape_check", "shape = ANY (ARRAY['mesh'::text, 'hub'::text])")
+	t.CheckNamed("wg_networks_cidr_check", "length(cidr) <= 18")
+	t.CheckNamed("wg_networks_port_check", "(port >= 1024) AND (port <= 65535)")
+	t.CheckNamed("wg_networks_iface_check", "iface ~ '^argus[0-9a-f]{6}$'::text")
+	t.CheckNamed("wg_networks_state_check", "state = ANY (ARRAY['waiting'::text, 'active'::text])")
+	t.CheckNamed("wg_networks_pending_check", "((pending IS NULL) OR (octet_length((pending)::text) <= 100000))")
+}
+
+// WgMember is table wg_members: an approved member of a WireGuard network,
+// with the public key its agent reported.
+type WgMember struct {
+	Network   WgNetwork
+	Asset     Asset
+	Address   string
+	Hub       bool
+	Endpoint  string
+	PublicKey string
+	KeyAt     *time.Time
+}
+
+func (m *WgMember) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Network, &m.Asset)
+	t.Col(&m.Network).ConstraintName("wg_members_network_id_fkey")
+	t.Col(&m.Network).OnDelete(storm.Cascade)
+	t.Col(&m.Network).NoIndex()
+	t.Col(&m.Asset).ConstraintName("wg_members_asset_id_fkey")
+	t.Col(&m.Asset).OnDelete(storm.Cascade)
+	t.Col(&m.Asset).NoIndex()
+	t.Index(&m.Asset).Named("wg_members_asset_id_idx")
+	t.Col(&m.Hub).Default("false")
+	t.Col(&m.Endpoint).Default("''::text")
+	t.Col(&m.PublicKey).Default("''::text")
+	t.CheckNamed("wg_members_address_check", "length(address) <= 15")
+	t.CheckNamed("wg_members_endpoint_check", "length(endpoint) <= 253")
+	t.CheckNamed("wg_members_public_key_check", "length(public_key) <= 44")
 }

@@ -83,3 +83,27 @@ links, staff VPN).
   `network:<problem key>`, and closes it with "Back up" when the key is gone.
   A key's asset whose agent is quiet is neither raised nor closed. Warnings
   stay on the page only.
+
+## Server networks: WireGuard set up through agents (wg_networks.go, agent/wgnet*.go)
+
+- Tables `wg_networks` + `wg_members` (migration 108), `agents.wgnet_state`.
+  Shapes: mesh (peers carry /32s) and hub (spoke's one peer is the hub with
+  the whole range; the hub forwards). Interface `argus` + 6 hex of the id.
+- Every change (create, change, remove) is a draft in `pending`; nothing
+  reaches an agent until another admin approves (self-approval rule from
+  self_approval.go with runDeciders). Approval re-checks clashes.
+- Clash check: other Argus networks (and their drafts), non-Argus WireGuard
+  addresses from agent scans, cloud network/subnet `Size`, Cloudflare routes,
+  each member's own addresses, and the same UDP port on a member.
+- Heartbeat `wgnet`: agent sends public keys per network and its last run;
+  control answers the full set. nil (not empty) on read errors, so an agent
+  never tears networks down because the DB blinked. Peers appear once their
+  key is reported.
+- Agent: private key stays in `<state>/wgnet/<id>.key` (0600); helper
+  `argus-agent wgnet-apply` via systemd-run writes /etc/wireguard/argus*.conf,
+  wg-quick up, opens the port in ufw/firewalld, then waits up to 2 minutes for
+  the daemon to confirm a heartbeat got through (confirm-<run> file);
+  otherwise restores files/interfaces and closes ports it opened. AllowedIPs
+  must sit inside the network range, so the control-plane route never moves.
+- Network watch only manages alerts whose subject starts `network:`; the
+  "change was undone" alert is plain news.

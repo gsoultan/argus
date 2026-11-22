@@ -7,6 +7,7 @@ import { DataTable, EmptyState, PageBody, PageHeader, SectionCard } from '~/comp
 import { relTime } from '~/components/primitives'
 import { Figure } from '~/components/Websites'
 import { CloudflareCard, CloudVPNsCard } from '~/components/NetworksCloud'
+import { ServerNetworksCard } from '~/components/NetworksWireGuard'
 import { isConfigured } from '~/lib/live'
 import { meQuery } from '~/lib/queries'
 import { formatBytes, linksOf, networksQuery, PEER_STATE, type Link, type NetworkTunnel, type NetworksView } from '~/lib/networks'
@@ -44,6 +45,7 @@ export function NetworksPage() {
             {data && <Figures data={data} links={links} />}
             {data && data.problems.length > 0 && <Problems data={data} />}
             <LinksCard links={links} loading={isLoading} />
+            <ServerNetworksCard canManage={canManage} me={me?.email} />
             <CloudVPNsCard vpns={data?.cloudVpns ?? []} loading={isLoading} />
             <TunnelsCard tunnels={data?.tunnels ?? []} loading={isLoading} />
             <CloudflareCard accounts={data?.cloudflare ?? []} loading={isLoading} canManage={canManage} />

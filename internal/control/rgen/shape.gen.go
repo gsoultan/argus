@@ -77,6 +77,7 @@ func _assertAgentShape(m m0.Agent) {
 		m.DisksScanAt,
 		m.DisksRescan,
 		m.Vpn,
+		m.WgnetState,
 	}
 }
 
@@ -1672,5 +1673,42 @@ func _assertWebsiteRoundShape(m m0.WebsiteRound) {
 		m.Ms,
 		m.Status,
 		m.Detail,
+	}
+}
+
+// _assertWgMemberShape fails to compile if m0.WgMember gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertWgMemberShape(m m0.WgMember) {
+	type shape m0.WgMember
+	_ = shape{
+		m.Network,
+		m.Asset,
+		m.Address,
+		m.Hub,
+		m.Endpoint,
+		m.PublicKey,
+		m.KeyAt,
+	}
+}
+
+// _assertWgNetworkShape fails to compile if m0.WgNetwork gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertWgNetworkShape(m m0.WgNetwork) {
+	type shape m0.WgNetwork
+	_ = shape{
+		m.Model,
+		m.Name,
+		m.Shape,
+		m.Cidr,
+		m.Port,
+		m.Iface,
+		m.State,
+		m.Pending,
+		m.PendingBy,
+		m.PendingAt,
+		m.RequestedBy,
+		m.ApprovedBy,
+		m.ApprovedAt,
+		m.Generation,
 	}
 }

@@ -267,3 +267,70 @@ export function formatBytes(n: number): string {
   while (v >= 1000 && i < units.length - 1) { v /= 1000; i++ }
   return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${units[i]}`
 }
+
+/* ── Server networks (WireGuard set up through the agents) ────────────────── */
+
+export type WGShape = 'mesh' | 'hub'
+export type WGMemberState = 'no-agent' | 'unsupported' | 'waiting-key' | 'applying' | 'trial' | 'applied' | 'failed' | 'rolled-back'
+
+export interface WGMember {
+  assetId: string
+  hostname: string
+  address: string
+  hub?: boolean
+  endpoint?: string
+  publicKey?: string
+  state: WGMemberState
+  message?: string
+  at?: string
+}
+
+export interface WGMemberDraft { assetId: string; hostname?: string; address?: string; hub?: boolean; endpoint?: string }
+
+export interface WGNetworkDraft { name: string; shape: WGShape; cidr: string; port: number; members: WGMemberDraft[]; remove?: boolean }
+
+export interface WGNetwork {
+  id: string
+  name: string
+  shape: WGShape
+  cidr: string
+  port: number
+  iface: string
+  /** waiting: never approved, on no server yet. */
+  state: 'waiting' | 'active'
+  members: WGMember[]
+  pending?: WGNetworkDraft
+  pendingBy?: string
+  pendingAt?: string
+  requestedBy: string
+  approvedBy?: string
+  approvedAt?: string
+  generation: number
+  createdAt: string
+  approveOwn?: boolean
+}
+
+export const wgNetworksQuery = () =>
+  queryOptions({
+    queryKey: ['networks', 'wireguard'] as const,
+    queryFn: () => get<{ networks: WGNetwork[] }>('/api/v1/networks/wireguard').then((v) => v.networks),
+    refetchInterval: 15_000,
+  })
+
+const wgPath = (id?: string, tail = '') => `/api/v1/networks/wireguard${id ? `/${encodeURIComponent(id)}` : ''}${tail}`
+export const askWGNetwork = (d: WGNetworkDraft) => post<WGNetwork>(wgPath(), d)
+export const askWGChange = (id: string, d: WGNetworkDraft) => send<WGNetwork>('PUT', wgPath(id), d)
+export const askWGRemove = (id: string) => send<WGNetwork>('DELETE', wgPath(id))
+export const approveWG = (id: string, confirmSelf?: string) => post<void>(wgPath(id, '/approve'), confirmSelf ? { confirmSelf } : {})
+export const declineWG = (id: string) => post<void>(wgPath(id, '/decline'), {})
+
+export const WG_MEMBER_STATE: Record<WGMemberState, { label: string; color: string; hint: string }> = {
+  'no-agent': { label: 'Agent too old', color: 'slate', hint: 'Its agent has not reported on server networks. Update the agent.' },
+  unsupported: { label: 'Not possible here', color: 'slate', hint: 'Networks are set up on Linux servers with systemd.' },
+  'waiting-key': { label: 'Making its key', color: 'sky', hint: 'The server makes its key on its next heartbeat. The private key never leaves it.' },
+  applying: { label: 'Setting up', color: 'sky', hint: 'The server is setting the network up.' },
+  trial: { label: 'On trial', color: 'sky', hint: 'Applied. The server keeps it once it has reached Argus through the change, within 2 minutes.' },
+  applied: { label: 'Applied', color: 'teal', hint: 'The server has the network as approved.' },
+  failed: { label: 'Failed', color: 'rose', hint: 'The server could not apply it.' },
+  'rolled-back': { label: 'Undone', color: 'rose', hint: 'The change was undone on the server, so it is as it was before.' },
+}

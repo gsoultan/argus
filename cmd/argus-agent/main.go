@@ -108,6 +108,14 @@ func main() {
 		plan := fs.String("plan", "", "the cleanup plan the daemon wrote")
 		_ = fs.Parse(os.Args[2:])
 		os.Exit(agent.RunLogsClean(*plan))
+	case "wgnet-apply":
+		// Run by the daemon in a unit of its own to set up the WireGuard
+		// networks the console asked for, on a trial it undoes unless the
+		// server still reaches Argus.
+		fs := flag.NewFlagSet("wgnet-apply", flag.ExitOnError)
+		plan := fs.String("plan", "", "the network plan the daemon wrote")
+		_ = fs.Parse(os.Args[2:])
+		os.Exit(agent.RunWGNetApply(*plan))
 	case "disks-scan":
 		// Run by the daemon outside its sandbox: each filesystem's stack and
 		// whether it can grow. Reads only.
@@ -313,6 +321,8 @@ func runDaemon(args []string) int {
 	logs := agent.NewLogs(*stateDir, exe, log)
 	// Growing disks: the same, from the same binary.
 	disks := agent.NewDisks(*stateDir, exe, log)
+	// WireGuard networks between servers: the same, from the same binary.
+	wgnets := agent.NewWGNets(*stateDir, exe, log)
 	updater.Marker = agent.UpdateMarkerPath(*socket)
 	var (
 		openStreams atomic.Int64
@@ -764,6 +774,7 @@ func runDaemon(args []string) int {
 		pkgBeat := pkgs.Beat()
 		logBeat := logs.Beat()
 		diskBeat := disks.Beat()
+		wgBeat := wgnets.Beat()
 		reply, ok := rep.HeartbeatWithReply(ctx, map[string]any{
 			"hostname":        hostname,
 			"version":         version,
@@ -784,6 +795,7 @@ func runDaemon(args []string) int {
 			"packages":          pkgBeat,
 			"logs":              logBeat,
 			"disks":             diskBeat,
+			"wgnet":             wgBeat,
 		})
 		// Orders signed with the fleet recovery key are checked against that
 		// key alone, before the gate: a rekey is what makes a reply signed
@@ -876,6 +888,16 @@ func runDaemon(args []string) int {
 				}
 			}
 			disks.Handle(ctx, diskOrders)
+			wgnets.Delivered(wgBeat)
+			var wgOrders *agent.WGNetOrders
+			if len(reply.Wgnet) > 0 && string(reply.Wgnet) != "null" {
+				wgOrders = &agent.WGNetOrders{}
+				if err := json.Unmarshal(reply.Wgnet, wgOrders); err != nil {
+					log.Error("wireguard: cannot read the console's orders", "error", err)
+					wgOrders = nil
+				}
+			}
+			wgnets.Handle(ctx, wgOrders)
 		}
 		// An update is acted on only when the reply arrived: silence from
 		// the control plane neither starts one nor takes one back.
@@ -1019,6 +1041,12 @@ func runDaemon(args []string) int {
 		}
 	}
 	go agent.Supervise(ctx, log, "disks", disks.Watch)
+	wgnets.Changed = func() {
+		if rep.Enabled() {
+			heartbeat()
+		}
+	}
+	go agent.Supervise(ctx, log, "wireguard networks", wgnets.Watch)
 
 	// Host facts on their own, slower loop. The inventory is hand-written, so
 	// "Argus covers all privileged access" is only checkable if hosts say what

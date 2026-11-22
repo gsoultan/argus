@@ -103,7 +103,7 @@ func networkAlertChanges(v NetworksView, open map[string]bool) (raise []NetworkP
 // openNetworkAlerts are the subjects of network alerts not yet closed.
 func (s *Store) openNetworkAlerts(ctx context.Context) (map[string]bool, error) {
 	rows, err := s.db(ctx).Query(ctx,
-		`SELECT DISTINCT subject FROM console_alerts WHERE kind = $1 AND closed_at IS NULL AND subject <> ''`, AlertNetwork)
+		`SELECT DISTINCT subject FROM console_alerts WHERE kind = $1 AND closed_at IS NULL AND subject LIKE 'network:%'`, AlertNetwork)
 	if err != nil {
 		return nil, err
 	}

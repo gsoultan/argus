@@ -73,6 +73,28 @@ const VIEW = {
   ],
 }
 
+const WG = {
+  networks: [
+    { id: 'w1', name: 'Database mesh', shape: 'mesh', cidr: '10.88.0.0/24', port: 51820, iface: 'argus1a2b3c', state: 'active', generation: 2,
+      requestedBy: 'rina@northwind.id', approvedBy: 'dev@northwind.id', createdAt: ago(60 * 24), approvedAt: ago(60),
+      members: [
+        { assetId: 'a1', hostname: 'db-prod-01', address: '10.88.0.1', endpoint: '203.0.113.7', state: 'applied', at: ago(58) },
+        { assetId: 'a2', hostname: 'db-prod-02', address: '10.88.0.2', endpoint: '20.1.2.3', state: 'applied', at: ago(57) },
+        { assetId: 'a3', hostname: 'gw-jkt-01', address: '10.88.0.3', state: 'rolled-back', at: ago(55), message: 'the server did not reach Argus within 2 minutes of the change, so it was undone' },
+      ],
+      pending: { name: 'Database mesh', shape: 'mesh', cidr: '10.88.0.0/24', port: 51820, members: [
+        { assetId: 'a1', hostname: 'db-prod-01', address: '10.88.0.1', endpoint: '203.0.113.7' },
+        { assetId: 'a2', hostname: 'db-prod-02', address: '10.88.0.2', endpoint: '20.1.2.3' }] },
+      pendingBy: 'rina@northwind.id', pendingAt: ago(5) },
+    { id: 'w2', name: 'Branch hub', shape: 'hub', cidr: '10.89.0.0/24', port: 51821, iface: 'argus9f8e7d', state: 'waiting', generation: 0,
+      requestedBy: 'dev@northwind.id', createdAt: ago(3), members: [], approveOwn: false,
+      pending: { name: 'Branch hub', shape: 'hub', cidr: '10.89.0.0/24', port: 51821, members: [
+        { assetId: 'a3', hostname: 'gw-jkt-01', address: '10.89.0.1', hub: true, endpoint: 'gw.northwind.id' },
+        { assetId: 'a4', hostname: 'legacy-01', address: '10.89.0.2' }] },
+      pendingBy: 'dev@northwind.id', pendingAt: ago(3) },
+  ],
+}
+
 async function signIn(page: Page) {
   await page.goto('/')
   await page.getByLabel(/^email$/i).fill('dev@northwind.id')
@@ -80,6 +102,10 @@ async function signIn(page: Page) {
   await page.getByRole('button', { name: /^sign in$/i }).click()
   await expect(page.getByRole('button', { name: /^sign in$/i })).toBeHidden()
   await page.route('**/api/v1/networks', (r) => r.fulfill({ json: VIEW }))
+  await page.route('**/api/v1/networks/wireguard', (r) => r.request().method() === 'GET'
+    ? r.fulfill({ json: WG })
+    : r.fulfill({ status: 400, json: { error: '10.88.0.0/24 overlaps the Argus network Database mesh (10.88.0.0/24): pick a range nothing else uses' } }))
+  await page.route('**/api/v1/networks/wireguard/*/approve', (r) => r.fulfill({ status: 204 }))
   await page.route('**/api/v1/networks/cloudflare', (r) => r.request().method() === 'GET'
     ? r.fulfill({ json: { accounts: [], canSave: true } })
     : r.fulfill({ status: 400, json: { error: 'Cloudflare refused the token: Cloudflare answered 403: Unauthorized. It needs Cloudflare Tunnel Read on this account' } }))
@@ -89,7 +115,7 @@ test('networks: links once each, down first, tunnels and software', async ({ pag
   await page.setViewportSize({ width: 1440, height: 1000 })
   await signIn(page)
   await page.goto('/networks')
-  await expect(page.getByRole('heading', { name: 'Networks' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Networks', exact: true })).toBeVisible()
   await expect(page.getByText('3 down')).toBeVisible()
   await expect(page.getByTestId('network-problem')).toHaveCount(6)
   // A problem off any server links to nothing.
@@ -126,6 +152,43 @@ test('networks: connecting a Cloudflare account says why a token is refused', as
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/networks-connect-cloudflare.png` })
   await dialog.getByRole('button', { name: 'Connect' }).click()
   await expect(page.getByText(/needs Cloudflare Tunnel Read/)).toBeVisible()
+  await expect(dialog).toBeVisible()
+})
+
+test('networks: server networks wait for a second admin and show what each server did', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await signIn(page)
+  await page.goto('/networks')
+  const mesh = page.getByTestId('wg-network').filter({ hasText: 'Database mesh' })
+  await expect(mesh.getByTestId('wg-member')).toHaveCount(3)
+  await expect(mesh.getByTestId('wg-member').filter({ hasText: 'gw-jkt-01' })).toContainText('Undone')
+  await expect(mesh.getByTestId('wg-member').filter({ hasText: 'gw-jkt-01' })).toContainText('Dials out only')
+  // Someone else's change: approve it here.
+  await expect(mesh.getByTestId('wg-pending')).toContainText('rina@northwind.id asks to take out gw-jkt-01')
+  await expect(mesh.getByRole('button', { name: 'Approve' })).toBeVisible()
+  // Your own, never approved: on no server yet, and you cannot approve it while someone else can.
+  const hub = page.getByTestId('wg-network').filter({ hasText: 'Branch hub' })
+  await expect(hub).toContainText('Waiting for approval')
+  await expect(hub.getByTestId('wg-member')).toHaveCount(0)
+  await expect(hub.getByTestId('wg-pending')).toContainText('gw-jkt-01 10.89.0.1 (hub)')
+  await expect(hub.getByRole('button', { name: 'Approve' })).toBeDisabled()
+  await expect(hub.getByRole('button', { name: 'Take back' })).toBeVisible()
+  if (SHOTS) await page.getByTestId('wg-network').first().locator('xpath=ancestor::*[contains(@class,"mantine-Paper")][1]').screenshot({ path: `${SHOTS}/networks-server-networks.png` })
+
+  await page.getByRole('button', { name: 'New network' }).click()
+  const dialog = page.getByRole('dialog', { name: 'New server network' })
+  await expect(dialog.getByLabel('Range')).toHaveValue('10.90.0.0/24')
+  await dialog.getByLabel('Name').fill('Office')
+  await dialog.getByLabel('Range').fill('10.88.0.0/24')
+  await dialog.getByRole('combobox', { name: 'Servers' }).click()
+  await page.getByRole('option').nth(0).click()
+  await page.getByRole('option').nth(1).click()
+  await dialog.getByText('Shape').click()
+  await expect(dialog.getByRole('button', { name: 'Ask for approval' })).toBeDisabled()
+  await dialog.getByLabel(/2-minute trial/).check()
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/networks-new-server-network.png` })
+  await dialog.getByRole('button', { name: 'Ask for approval' }).click()
+  await expect(page.getByText(/overlaps the Argus network Database mesh/)).toBeVisible()
   await expect(dialog).toBeVisible()
 })
 
