@@ -29,6 +29,7 @@ require (
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/golang-sql/sqlexp v0.1.0
 	github.com/google/uuid v1.6.0
+	github.com/gosnmp/gosnmp v1.43.2
 	github.com/gsoultan/gsmail v0.11.0
 	github.com/gsoultan/panmail-sdk v0.1.1
 	github.com/gsoultan/storm v1.4.0

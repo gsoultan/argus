@@ -155,8 +155,11 @@ const BUDGET_KB = {
    * its icon file and the folded rail its tooltip and count dot (Indicator);
    * the per-person layout choices (preferences.ts) are read by the shell so
    * the sidebar opens the way it was left. The Assets table is a lazy chunk.
+   * 321.6 kB with network devices (320.8 before, same build): the Monitoring
+   * entry and its router icon, and the route, its guard and its search rule
+   * in the route map. The page, its form and its queries are a route chunk.
    */
-  overview: 321,
+  overview: 322,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most
@@ -218,8 +221,9 @@ const BUDGET_KB = {
    * what each level grants), its release names, and [name] in the statement
    * classifier, which the recording's statement list shares.
    * 422.3 kB with the sidebar, the same shared weight as the overview.
+   * 423.5 kB with network devices, the same shared weight as the overview.
    */
-  sessionDetail: 423,
+  sessionDetail: 424,
 }
 
 /**

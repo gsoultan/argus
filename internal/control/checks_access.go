@@ -519,25 +519,26 @@ func (a *API) putCheckGroupOf(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	c, err := a.store.WebsiteCheck(r.Context(), r.PathValue("id"))
+	id := r.PathValue("id")
+	name, kind, err := a.store.CheckLabel(r.Context(), id)
 	if err != nil {
 		a.websiteErr(w, "move check", err)
 		return
 	}
-	if err := a.store.SetCheckGroup(r.Context(), c.ID, in.GroupID); err != nil {
+	if err := a.store.SetCheckGroup(r.Context(), id, in.GroupID); err != nil {
 		a.checkAccessErr(w, "move check", err)
 		return
 	}
-	detail := "Moved the check " + c.Name + " out of its group."
+	detail := "Moved the check " + name + " out of its group."
 	if in.GroupID != "" {
 		groups, _ := a.store.CheckGroups(r.Context())
 		for _, g := range groups {
 			if g.ID == in.GroupID {
-				detail = "Moved the check " + c.Name + " into the group " + g.Name + "."
+				detail = "Moved the check " + name + " into the group " + g.Name + "."
 			}
 		}
 	}
-	a.auditCheckAccess(r, "check.group.move", actor, "website "+c.Name, detail+" Whoever was given a group sees the checks in it.")
+	a.auditCheckAccess(r, "check.group.move", actor, checkTarget(name, kind), detail+" Whoever was given a group sees the checks in it.")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -587,12 +588,12 @@ func (a *API) putViewers(target string) http.HandlerFunc {
 		id := r.PathValue("id")
 		var what string
 		if target == "check" {
-			c, err := a.store.WebsiteCheck(r.Context(), id)
+			name, kind, err := a.store.CheckLabel(r.Context(), id)
 			if err != nil {
 				a.websiteErr(w, "who sees it", err)
 				return
 			}
-			what = "website " + c.Name
+			what = checkTarget(name, kind)
 		}
 		before, after, err := a.store.SetCheckViewers(r.Context(), target, id, in, actor)
 		if err != nil {

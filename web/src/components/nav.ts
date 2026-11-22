@@ -1,6 +1,6 @@
 import {
   IconBox, IconCalendarTime, IconCirclePlus, IconClipboardCheck, IconCloud, IconCoin, IconDatabase, IconFileText, IconHistory, IconHome,
-  IconInfoCircle, IconKey, IconServer2, IconSettings, IconStack2, IconUser, IconUsersGroup, IconWorld,
+  IconInfoCircle, IconKey, IconRouter, IconServer2, IconSettings, IconStack2, IconUser, IconUsersGroup, IconWorld,
   type IconProps,
 } from '@tabler/icons-react'
 import type { ComponentType } from 'react'
@@ -23,6 +23,8 @@ import type { UserRole } from '~/types/domain'
  *   instances have an Argus server. For whoever sees the whole fleet.
  * - **Websites**: whether each site is up, and its uptime. For whoever sees
  *   the whole fleet; admins add the addresses.
+ * - **Network devices**: switches, routers and the like, read over SNMP by a
+ *   server near them. Monitoring only: they are not Assets.
  * - **Approvals**: everything waiting on a person. Logins straight to a server
  *   that the rule holds, root asked for, and access asked for. It is a menu
  *   item of its own, with a count, because someone is waiting at a terminal.
@@ -110,6 +112,13 @@ export const NAV_ITEMS: NavItem[] = [
     label: 'Websites',
     icon: IconWorld,
     blurb: 'Is each website up, and its uptime; confirmed before anyone is told it is down',
+    audience: 'fleet',
+  },
+  {
+    to: '/network-devices',
+    label: 'Network devices',
+    icon: IconRouter,
+    blurb: 'Switches, routers, firewalls and printers over SNMP: up, restarted, and their interfaces',
     audience: 'fleet',
   },
   {
@@ -206,7 +215,10 @@ export function groupsFor(role: UserRole | undefined, seesChecks = false): NavGr
     { label: '', items: [by('/'), by('/approvals')] },
     { label: 'Connect', items: [by('/assets'), by('/databases'), by('/brokers')] },
     // Someone outside the fleet roles who was given a check sees it here.
-    { label: 'Monitoring', items: [{ ...by('/websites'), label: 'Websites', ...(seesChecks ? { audience: undefined } : {}) }] },
+    { label: 'Monitoring', items: [
+      { ...by('/websites'), label: 'Websites', ...(seesChecks ? { audience: undefined } : {}) },
+      { ...by('/network-devices'), ...(seesChecks ? { audience: undefined } : {}) },
+    ] },
     { label: 'Cloud', items: [
       { ...cloud, label: 'Overview' },
       { ...cloud, label: 'Resources', icon: IconBox, search: { tab: 'instances' },

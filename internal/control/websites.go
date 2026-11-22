@@ -660,21 +660,50 @@ type websiteTransition struct {
 // RecordWebsiteRound stores a round and moves the check's state, returning
 // a transition when it went down or came back.
 func (s *Store) RecordWebsiteRound(ctx context.Context, id string, r websiteRoundResult) (*websiteTransition, error) {
+	tr, err := s.recordCheckRound(ctx, id, r, nil)
+	if err != nil || tr == nil {
+		return nil, err
+	}
+	c, err := s.WebsiteCheck(ctx, id)
+	if errors.Is(err, ErrNoWebsite) {
+		return nil, nil // deleted just now
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &websiteTransition{WentDown: tr.WentDown, CameBack: tr.CameBack, Outage: tr.Outage, Recovered: tr.Recovered, Check: c}, nil
+}
+
+// checkTransition is a check of any kind going down or coming back.
+type checkTransition struct {
+	WentDown  bool
+	CameBack  bool
+	Outage    WebsiteOutage
+	Recovered time.Time
+}
+
+// recordCheckRound stores a round of a check of any kind and moves its
+// state: the two-round rule, outages and uptime are the same for every kind.
+// lastData, when given, is what the kind keeps from its last answer.
+func (s *Store) recordCheckRound(ctx context.Context, id string, r websiteRoundResult, lastData []byte) (*checkTransition, error) {
 	tx, err := s.db(ctx).Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	c, err := scanWebsite(tx.QueryRow(ctx, `SELECT `+websiteCols+` FROM checks WHERE id::text = $1 AND kind = 'website' FOR UPDATE`, id))
+	var state string
+	var since *time.Time
+	var failing, every int
+	err = tx.QueryRow(ctx, `SELECT state, state_since, failing_rounds, every_seconds FROM checks WHERE id::text = $1 FOR UPDATE`, id).
+		Scan(&state, &since, &failing, &every)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil // deleted while it was being checked
 	}
 	if err != nil {
 		return nil, err
 	}
-	state, since, failing := c.State, c.StateSince, c.FailingRounds
 	outcome := r.Outcome
-	var tr *websiteTransition
+	var tr *checkTransition
 	at := r.At
 
 	switch r.Outcome {
@@ -689,7 +718,7 @@ func (s *Store) RecordWebsiteRound(ctx context.Context, id string, r websiteRoun
 				return nil, err
 			}
 			if err == nil {
-				tr = &websiteTransition{CameBack: true, Outage: o, Recovered: at}
+				tr = &checkTransition{CameBack: true, Outage: o, Recovered: at}
 			}
 		}
 		// Failed rounds that were never confirmed were blips.
@@ -737,14 +766,14 @@ func (s *Store) RecordWebsiteRound(ctx context.Context, id string, r websiteRoun
 				return nil, err
 			}
 			state, since = "down", &first
-			tr = &websiteTransition{WentDown: true, Outage: o}
+			tr = &checkTransition{WentDown: true, Outage: o}
 		default:
 			outcome = RoundPending
 		}
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO check_rounds (check_id, at, secs, outcome, ms, status, detail)
 		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING`,
-		id, at, c.EverySeconds, outcome, r.MS, r.Status, clip(r.Detail, 500)); err != nil {
+		id, at, every, outcome, r.MS, r.Status, clip(r.Detail, 500)); err != nil {
 		return nil, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE checks SET state = $2, state_since = $3, failing_rounds = $4,
@@ -754,12 +783,13 @@ func (s *Store) RecordWebsiteRound(ctx context.Context, id string, r websiteRoun
 		WHERE id::text = $1`, id, state, since, failing, at, r.MS, r.Status, clip(r.Detail, 500), r.Cert, outcome); err != nil {
 		return nil, err
 	}
+	if lastData != nil {
+		if _, err := tx.Exec(ctx, `UPDATE checks SET last_data = $2 WHERE id::text = $1`, id, lastData); err != nil {
+			return nil, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
-	}
-	if tr != nil {
-		c.State, c.StateSince = state, since
-		tr.Check = c
 	}
 	return tr, nil
 }
@@ -922,6 +952,7 @@ func (a *API) RunWebsiteChecks(ctx context.Context) {
 		}
 		err := a.store.ForEachTenant(ctx, func(tctx context.Context, _ *Tenant) {
 			a.startDueWebsiteChecks(tctx)
+			a.startDueNetworkDevices(tctx)
 			if prune {
 				if err := a.store.pruneWebsiteRounds(tctx, now); err != nil {
 					a.log.Error("website rounds prune", "error", err)

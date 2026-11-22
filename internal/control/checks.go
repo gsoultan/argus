@@ -28,4 +28,5 @@ type checkKind struct {
 // checkKinds is every kind of check, in the order the console offers them.
 var checkKinds = []checkKind{
 	{Name: "website", Label: "Website"},
+	{Name: "snmp", Label: "Network device"},
 }

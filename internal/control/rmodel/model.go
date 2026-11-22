@@ -2739,6 +2739,7 @@ type Check struct {
 	NextAt         time.Time
 	LeaseUntil     *time.Time
 	Group          *CheckGroup
+	LastData       storm.JSON
 }
 
 func (m *Check) Schema(t *storm.Table) {
@@ -2757,9 +2758,11 @@ func (m *Check) Schema(t *storm.Table) {
 	t.Col(&m.NextAt).Default("now()")
 	t.Col(&m.Group).ConstraintName("checks_group_id_fkey")
 	t.Col(&m.Group).OnDelete(storm.SetNull)
+	t.Col(&m.LastData).Default("'{}'::jsonb")
 	t.CheckNamed("checks_confirm_from_check", "cardinality(confirm_from) <= 3")
 	t.CheckNamed("checks_every_seconds_check", "every_seconds = ANY (ARRAY[60, 300, 600])")
-	t.CheckNamed("checks_kind_check", "kind = 'website'::text")
+	t.CheckNamed("checks_kind_check", "kind = ANY (ARRAY['website'::text, 'snmp'::text])")
+	t.CheckNamed("checks_last_data_check", "(jsonb_typeof(last_data) = 'object'::text) AND (octet_length((last_data)::text) <= 400000)")
 	t.CheckNamed("checks_name_check", "(length(name) >= 1) AND (length(name) <= 100)")
 	t.CheckNamed("checks_settings_check", "(jsonb_typeof(settings) = 'object'::text) AND (octet_length((settings)::text) <= 80000)")
 	t.CheckNamed("checks_state_check", "state = ANY (ARRAY['pending'::text, 'up'::text, 'down'::text, 'unknown'::text])")

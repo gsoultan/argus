@@ -244,6 +244,7 @@ type API struct {
 	// websiteProbe and websiteAsk stand in for the network in tests.
 	websiteProbe func(ctx context.Context, g tunnel.GrantSite) tunnel.SiteResult
 	websiteAsk   func(ctx context.Context, host string, g tunnel.GrantSite) serverOpinion
+	deviceAsk    func(ctx context.Context, host string, g tunnel.GrantCheck) deviceOpinion
 
 	// Telegram for the organizations' own bots (telegram_bots.go):
 	// telegramSlots bounds the messages in flight; telegramClient and
@@ -371,6 +372,14 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/websites/{id}/check", a.postWebsiteCheckNow)
 	mux.HandleFunc("POST /api/v1/websites/{id}/test-alert", a.postWebsiteTestAlert)
 	mux.HandleFunc("POST /api/v1/websites/{id}/pause", a.postWebsitePause)
+	mux.HandleFunc("GET /api/v1/network-devices", a.getNetworkDevices)
+	mux.HandleFunc("POST /api/v1/network-devices", a.postNetworkDevice)
+	mux.HandleFunc("POST /api/v1/network-devices/test", a.postNetworkDeviceTest)
+	mux.HandleFunc("GET /api/v1/network-devices/{id}", a.getNetworkDevice)
+	mux.HandleFunc("PUT /api/v1/network-devices/{id}", a.putNetworkDevice)
+	mux.HandleFunc("DELETE /api/v1/network-devices/{id}", a.deleteNetworkDevice)
+	mux.HandleFunc("POST /api/v1/network-devices/{id}/check", a.postNetworkDeviceCheckNow)
+	mux.HandleFunc("POST /api/v1/network-devices/{id}/pause", a.postNetworkDevicePause)
 	mux.HandleFunc("GET /api/v1/check-groups", a.getCheckGroups)
 	mux.HandleFunc("POST /api/v1/check-groups", a.postCheckGroup)
 	mux.HandleFunc("PUT /api/v1/check-groups/{id}", a.putCheckGroup)

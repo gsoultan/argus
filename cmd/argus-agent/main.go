@@ -388,6 +388,12 @@ func runDaemon(args []string) int {
 			Log:      log,
 			Version:  version,
 		})
+		// A Monitoring check of something near this server, such as a switch
+		// read over SNMP, which argus-control cannot reach itself.
+		services[agent.CheckRunService] = agent.CheckRun(agent.CheckRunConfig{
+			Verifier: &tunnel.GrantVerifier{Host: hostname},
+			Log:      log,
+		})
 		services[agent.RedisService] = agent.Redis(agent.StoreConfig{
 			Verifier:   &tunnel.GrantVerifier{Host: hostname},
 			RecordDir:  *dir,
