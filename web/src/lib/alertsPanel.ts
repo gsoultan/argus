@@ -34,6 +34,9 @@ export const ALERT_KINDS: { kind: AlertKind; label: string; description: string;
   { kind: 'website', label: 'Websites',
     description: 'A website you check is down, confirmed by retries, Argus\'s own network and the servers chosen for it, and when it is back up.',
     who: 'Admins, auditors' },
+  { kind: 'network', label: 'VPNs and tunnels',
+    description: 'A WireGuard link between servers, a cloud VPN or a Cloudflare Tunnel goes down, and when it is back up.',
+    who: 'Admins, auditors' },
 ]
 
 /* ── Fixture ─────────────────────────────────────────────────────────────── */

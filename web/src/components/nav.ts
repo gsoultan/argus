@@ -1,6 +1,6 @@
 import {
   IconBox, IconCalendarTime, IconCirclePlus, IconClipboardCheck, IconCloud, IconCoin, IconDatabase, IconFileText, IconHistory, IconHome,
-  IconInfoCircle, IconKey, IconRouter, IconServer2, IconSettings, IconStack2, IconUser, IconUsersGroup, IconWorld,
+  IconInfoCircle, IconKey, IconRouter, IconTopologyStar3, IconServer2, IconSettings, IconStack2, IconUser, IconUsersGroup, IconWorld,
   type IconProps,
 } from '@tabler/icons-react'
 import type { ComponentType } from 'react'
@@ -25,6 +25,9 @@ import type { UserRole } from '~/types/domain'
  *   the whole fleet; admins add the addresses.
  * - **Network devices**: switches, routers and the like, read over SNMP by a
  *   server near them. Monitoring only: they are not Assets.
+ * - **Networks**: VPN links and tunnels on the servers, as their agents see
+ *   them. For whoever sees the whole fleet.
+ * - **My VPN**: your own devices on the staff VPN. For everyone.
  * - **Approvals**: everything waiting on a person. Logins straight to a server
  *   that the rule holds, root asked for, and access asked for. It is a menu
  *   item of its own, with a count, because someone is waiting at a terminal.
@@ -122,6 +125,19 @@ export const NAV_ITEMS: NavItem[] = [
     audience: 'fleet',
   },
   {
+    to: '/networks',
+    label: 'Networks',
+    icon: IconTopologyStar3,
+    blurb: 'VPN links and Cloudflare Tunnels on your servers: up or down, and what each carries',
+    audience: 'fleet',
+  },
+  {
+    to: '/vpn',
+    label: 'My VPN',
+    icon: IconKey,
+    blurb: 'Your laptop and phone on the company VPN: add a device, renew it',
+  },
+  {
     to: '/approvals',
     label: 'Approvals',
     icon: IconClipboardCheck,
@@ -202,6 +218,7 @@ export function isActive(pathname: string, to: string): boolean {
  *
  * - Connect: what you open a session to.
  * - Monitoring: is it up, and who is told when it is not.
+ * - Networks: VPN links and tunnels between servers, sites and clouds.
  * - Cloud: the connected cloud accounts.
  * - People: who can sign in, and the teams things are given to.
  * - Records: what happened: sessions and the audit log.
@@ -219,6 +236,7 @@ export function groupsFor(role: UserRole | undefined, seesChecks = false): NavGr
       { ...by('/websites'), label: 'Websites', ...(seesChecks ? { audience: undefined } : {}) },
       { ...by('/network-devices'), ...(seesChecks ? { audience: undefined } : {}) },
     ] },
+    { label: 'Networks', items: [{ ...by('/networks'), label: 'VPNs and tunnels' }, by('/vpn')] },
     { label: 'Cloud', items: [
       { ...cloud, label: 'Overview' },
       { ...cloud, label: 'Resources', icon: IconBox, search: { tab: 'instances' },

@@ -42,6 +42,7 @@ import (
 	"github.com/gsoultan/argus/internal/control/rgen/databaserestore"
 	"github.com/gsoultan/argus/internal/control/rgen/databasestatement"
 	"github.com/gsoultan/argus/internal/control/rgen/databasestatementitem"
+	"github.com/gsoultan/argus/internal/control/rgen/ipseclink"
 	"github.com/gsoultan/argus/internal/control/rgen/recoverycode"
 	"github.com/gsoultan/argus/internal/control/rgen/savedquery"
 	"github.com/gsoultan/argus/internal/control/rgen/scalegroup"
@@ -57,6 +58,11 @@ import (
 	"github.com/gsoultan/argus/internal/control/rgen/websitecheck"
 	"github.com/gsoultan/argus/internal/control/rgen/websiteoutage"
 	"github.com/gsoultan/argus/internal/control/rgen/websiteround"
+	"github.com/gsoultan/argus/internal/control/rgen/wgmember"
+	"github.com/gsoultan/argus/internal/control/rgen/wgnetwork"
+	"github.com/gsoultan/argus/internal/control/rgen/wgstaffdevice"
+	"github.com/gsoultan/argus/internal/control/rgen/wgstaffgrant"
+	"github.com/gsoultan/argus/internal/control/rgen/wgstaffmode"
 	"github.com/gsoultan/storm/runtime"
 )
 
@@ -81,67 +87,74 @@ var FlushOrder = map[string]int{
 	"cloud_keep_running":        13,
 	"cloud_resources":           14,
 	"cloud_schedules":           15,
-	"console_alert_prefs":       16,
-	"console_alerts":            17,
-	"databases":                 18,
-	"direct_login_requests":     19,
-	"disk_grow_rules":           20,
-	"disk_grow_runs":            21,
-	"gateway_policy":            22,
-	"host_key_pins":             23,
-	"log_cleanup_rules":         24,
-	"log_cleanup_runs":          25,
-	"package_runs":              26,
-	"package_update_rules":      27,
-	"redeemed_tickets":          28,
-	"revoked_sessions":          29,
-	"saved_queries":             30,
-	"scale_groups":              31,
-	"schema_migrations":         32,
-	"server_logins":             33,
-	"sessions":                  34,
-	"sign_in_devices":           35,
-	"software_files":            36,
-	"software_previews":         37,
-	"software_scripts":          38,
-	"teams":                     39,
-	"telegram_bots":             40,
-	"telegram_routes":           41,
-	"ui_preferences":            42,
-	"usage_history":             43,
-	"usage_hourly":              44,
-	"users":                     45,
-	"website_alert_settings":    46,
-	"website_checks":            47,
-	"website_outages":           48,
-	"website_rounds":            49,
-	"access_requests":           50,
-	"agent_enrollment_tokens":   51,
-	"asset_assignments":         52,
-	"asset_team_assignments":    53,
-	"check_outages":             54,
-	"check_rounds":              55,
-	"check_viewers":             56,
-	"cloud_access":              57,
-	"cloud_schedule_runs":       58,
-	"console_alert_reads":       59,
-	"database_access_rules":     60,
-	"database_assignments":      61,
-	"database_backup_schedules": 62,
-	"database_backups":          63,
-	"database_changes":          64,
-	"database_read_endpoints":   65,
-	"database_replicas":         66,
-	"database_restores":         67,
-	"database_statements":       68,
-	"recovery_codes":            69,
-	"scale_group_activity":      70,
-	"scale_group_members":       71,
-	"software_script_versions":  72,
-	"team_members":              73,
-	"agent_credentials":         74,
-	"database_backup_tests":     75,
-	"database_statement_items":  76,
+	"cloudflare_accounts":       16,
+	"console_alert_prefs":       17,
+	"console_alerts":            18,
+	"databases":                 19,
+	"direct_login_requests":     20,
+	"disk_grow_rules":           21,
+	"disk_grow_runs":            22,
+	"gateway_policy":            23,
+	"host_key_pins":             24,
+	"ipsec_links":               25,
+	"log_cleanup_rules":         26,
+	"log_cleanup_runs":          27,
+	"package_runs":              28,
+	"package_update_rules":      29,
+	"redeemed_tickets":          30,
+	"revoked_sessions":          31,
+	"saved_queries":             32,
+	"scale_groups":              33,
+	"schema_migrations":         34,
+	"server_logins":             35,
+	"sessions":                  36,
+	"sign_in_devices":           37,
+	"software_files":            38,
+	"software_previews":         39,
+	"software_scripts":          40,
+	"teams":                     41,
+	"telegram_bots":             42,
+	"telegram_routes":           43,
+	"ui_preferences":            44,
+	"usage_history":             45,
+	"usage_hourly":              46,
+	"users":                     47,
+	"website_alert_settings":    48,
+	"website_checks":            49,
+	"website_outages":           50,
+	"website_rounds":            51,
+	"wg_networks":               52,
+	"wg_staff_devices":          53,
+	"wg_staff_grants":           54,
+	"wg_staff_modes":            55,
+	"access_requests":           56,
+	"agent_enrollment_tokens":   57,
+	"asset_assignments":         58,
+	"asset_team_assignments":    59,
+	"check_outages":             60,
+	"check_rounds":              61,
+	"check_viewers":             62,
+	"cloud_access":              63,
+	"cloud_schedule_runs":       64,
+	"console_alert_reads":       65,
+	"database_access_rules":     66,
+	"database_assignments":      67,
+	"database_backup_schedules": 68,
+	"database_backups":          69,
+	"database_changes":          70,
+	"database_read_endpoints":   71,
+	"database_replicas":         72,
+	"database_restores":         73,
+	"database_statements":       74,
+	"recovery_codes":            75,
+	"scale_group_activity":      76,
+	"scale_group_members":       77,
+	"software_script_versions":  78,
+	"team_members":              79,
+	"wg_members":                80,
+	"agent_credentials":         81,
+	"database_backup_tests":     82,
+	"database_statement_items":  83,
 }
 
 // NewUnit stages writes across this context and flushes them in foreign-key
@@ -5528,6 +5541,121 @@ func (p DatabaseWithAssetQuery) All(ctx context.Context, ex runtime.Executor) ([
 	return out, nil
 }
 
+// IpsecLinkWithAssetRow is ipsec_links with its Asset loaded.
+type IpsecLinkWithAssetRow struct {
+	ipseclink.Row
+	Asset asset.Row
+}
+
+type IpsecLinkWithAssetQuery struct {
+	q ipseclink.Query
+}
+
+// IpsecLinkWithAsset starts the plan.
+func IpsecLinkWithAsset() IpsecLinkWithAssetQuery { return IpsecLinkWithAssetQuery{q: ipseclink.New()} }
+
+func (p IpsecLinkWithAssetQuery) Where(ps ...ipseclink.Pred) IpsecLinkWithAssetQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p IpsecLinkWithAssetQuery) WhereIf(cond bool, pr ipseclink.Pred) IpsecLinkWithAssetQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p IpsecLinkWithAssetQuery) Any(ps ...ipseclink.Pred) IpsecLinkWithAssetQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p IpsecLinkWithAssetQuery) Not(pr ipseclink.Pred) IpsecLinkWithAssetQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p IpsecLinkWithAssetQuery) NotAny(ps ...ipseclink.Pred) IpsecLinkWithAssetQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p IpsecLinkWithAssetQuery) Order(ts ...ipseclink.Sort) IpsecLinkWithAssetQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p IpsecLinkWithAssetQuery) Limit(n int64) IpsecLinkWithAssetQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p IpsecLinkWithAssetQuery) Offset(n int64) IpsecLinkWithAssetQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p IpsecLinkWithAssetQuery) After(r IpsecLinkWithAssetRow) IpsecLinkWithAssetQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p IpsecLinkWithAssetQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p IpsecLinkWithAssetQuery) All(ctx context.Context, ex runtime.Executor) ([]IpsecLinkWithAssetRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]IpsecLinkWithAssetRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = IpsecLinkWithAssetRow{Row: r}
+		key := r.AssetID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := asset.New().Unordered().
+		Where(asset.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.AssetID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "ipsec_links", "assets")
+		}
+		out[i].Asset = targets[j]
+	}
+	return out, nil
+}
+
 // RecoveryCodeWithUserRow is recovery_codes with its User loaded.
 type RecoveryCodeWithUserRow struct {
 	recoverycode.Row
@@ -6942,6 +7070,706 @@ func (p WebsiteRoundWithCheckQuery) All(ctx context.Context, ex runtime.Executor
 			return nil, fmt.Errorf("storm: %s references a missing %s row", "website_rounds", "website_checks")
 		}
 		out[i].Check = targets[j]
+	}
+	return out, nil
+}
+
+// WgMemberWithAssetRow is wg_members with its Asset loaded.
+type WgMemberWithAssetRow struct {
+	wgmember.Row
+	Asset asset.Row
+}
+
+type WgMemberWithAssetQuery struct {
+	q wgmember.Query
+}
+
+// WgMemberWithAsset starts the plan.
+func WgMemberWithAsset() WgMemberWithAssetQuery { return WgMemberWithAssetQuery{q: wgmember.New()} }
+
+func (p WgMemberWithAssetQuery) Where(ps ...wgmember.Pred) WgMemberWithAssetQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p WgMemberWithAssetQuery) WhereIf(cond bool, pr wgmember.Pred) WgMemberWithAssetQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p WgMemberWithAssetQuery) Any(ps ...wgmember.Pred) WgMemberWithAssetQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p WgMemberWithAssetQuery) Not(pr wgmember.Pred) WgMemberWithAssetQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p WgMemberWithAssetQuery) NotAny(ps ...wgmember.Pred) WgMemberWithAssetQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p WgMemberWithAssetQuery) Order(ts ...wgmember.Sort) WgMemberWithAssetQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p WgMemberWithAssetQuery) Limit(n int64) WgMemberWithAssetQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p WgMemberWithAssetQuery) Offset(n int64) WgMemberWithAssetQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p WgMemberWithAssetQuery) After(r WgMemberWithAssetRow) WgMemberWithAssetQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p WgMemberWithAssetQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p WgMemberWithAssetQuery) All(ctx context.Context, ex runtime.Executor) ([]WgMemberWithAssetRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]WgMemberWithAssetRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = WgMemberWithAssetRow{Row: r}
+		key := r.AssetID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := asset.New().Unordered().
+		Where(asset.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.AssetID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "wg_members", "assets")
+		}
+		out[i].Asset = targets[j]
+	}
+	return out, nil
+}
+
+// WgMemberWithNetworkRow is wg_members with its Network loaded.
+type WgMemberWithNetworkRow struct {
+	wgmember.Row
+	Network wgnetwork.Row
+}
+
+type WgMemberWithNetworkQuery struct {
+	q wgmember.Query
+}
+
+// WgMemberWithNetwork starts the plan.
+func WgMemberWithNetwork() WgMemberWithNetworkQuery {
+	return WgMemberWithNetworkQuery{q: wgmember.New()}
+}
+
+func (p WgMemberWithNetworkQuery) Where(ps ...wgmember.Pred) WgMemberWithNetworkQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p WgMemberWithNetworkQuery) WhereIf(cond bool, pr wgmember.Pred) WgMemberWithNetworkQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p WgMemberWithNetworkQuery) Any(ps ...wgmember.Pred) WgMemberWithNetworkQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p WgMemberWithNetworkQuery) Not(pr wgmember.Pred) WgMemberWithNetworkQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p WgMemberWithNetworkQuery) NotAny(ps ...wgmember.Pred) WgMemberWithNetworkQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p WgMemberWithNetworkQuery) Order(ts ...wgmember.Sort) WgMemberWithNetworkQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p WgMemberWithNetworkQuery) Limit(n int64) WgMemberWithNetworkQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p WgMemberWithNetworkQuery) Offset(n int64) WgMemberWithNetworkQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p WgMemberWithNetworkQuery) After(r WgMemberWithNetworkRow) WgMemberWithNetworkQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p WgMemberWithNetworkQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p WgMemberWithNetworkQuery) All(ctx context.Context, ex runtime.Executor) ([]WgMemberWithNetworkRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]WgMemberWithNetworkRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = WgMemberWithNetworkRow{Row: r}
+		key := r.NetworkID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := wgnetwork.New().Unordered().
+		Where(wgnetwork.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.NetworkID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "wg_members", "wg_networks")
+		}
+		out[i].Network = targets[j]
+	}
+	return out, nil
+}
+
+// WgStaffDeviceWithNetworkRow is wg_staff_devices with its Network loaded.
+type WgStaffDeviceWithNetworkRow struct {
+	wgstaffdevice.Row
+	Network wgnetwork.Row
+}
+
+type WgStaffDeviceWithNetworkQuery struct {
+	q wgstaffdevice.Query
+}
+
+// WgStaffDeviceWithNetwork starts the plan.
+func WgStaffDeviceWithNetwork() WgStaffDeviceWithNetworkQuery {
+	return WgStaffDeviceWithNetworkQuery{q: wgstaffdevice.New()}
+}
+
+func (p WgStaffDeviceWithNetworkQuery) Where(ps ...wgstaffdevice.Pred) WgStaffDeviceWithNetworkQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p WgStaffDeviceWithNetworkQuery) WhereIf(cond bool, pr wgstaffdevice.Pred) WgStaffDeviceWithNetworkQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p WgStaffDeviceWithNetworkQuery) Any(ps ...wgstaffdevice.Pred) WgStaffDeviceWithNetworkQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p WgStaffDeviceWithNetworkQuery) Not(pr wgstaffdevice.Pred) WgStaffDeviceWithNetworkQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p WgStaffDeviceWithNetworkQuery) NotAny(ps ...wgstaffdevice.Pred) WgStaffDeviceWithNetworkQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p WgStaffDeviceWithNetworkQuery) Order(ts ...wgstaffdevice.Sort) WgStaffDeviceWithNetworkQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p WgStaffDeviceWithNetworkQuery) Limit(n int64) WgStaffDeviceWithNetworkQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p WgStaffDeviceWithNetworkQuery) Offset(n int64) WgStaffDeviceWithNetworkQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p WgStaffDeviceWithNetworkQuery) After(r WgStaffDeviceWithNetworkRow) WgStaffDeviceWithNetworkQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p WgStaffDeviceWithNetworkQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p WgStaffDeviceWithNetworkQuery) All(ctx context.Context, ex runtime.Executor) ([]WgStaffDeviceWithNetworkRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]WgStaffDeviceWithNetworkRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = WgStaffDeviceWithNetworkRow{Row: r}
+		key := r.NetworkID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := wgnetwork.New().Unordered().
+		Where(wgnetwork.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.NetworkID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "wg_staff_devices", "wg_networks")
+		}
+		out[i].Network = targets[j]
+	}
+	return out, nil
+}
+
+// WgStaffGrantWithNetworkRow is wg_staff_grants with its Network loaded.
+type WgStaffGrantWithNetworkRow struct {
+	wgstaffgrant.Row
+	Network wgnetwork.Row
+}
+
+type WgStaffGrantWithNetworkQuery struct {
+	q wgstaffgrant.Query
+}
+
+// WgStaffGrantWithNetwork starts the plan.
+func WgStaffGrantWithNetwork() WgStaffGrantWithNetworkQuery {
+	return WgStaffGrantWithNetworkQuery{q: wgstaffgrant.New()}
+}
+
+func (p WgStaffGrantWithNetworkQuery) Where(ps ...wgstaffgrant.Pred) WgStaffGrantWithNetworkQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p WgStaffGrantWithNetworkQuery) WhereIf(cond bool, pr wgstaffgrant.Pred) WgStaffGrantWithNetworkQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p WgStaffGrantWithNetworkQuery) Any(ps ...wgstaffgrant.Pred) WgStaffGrantWithNetworkQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p WgStaffGrantWithNetworkQuery) Not(pr wgstaffgrant.Pred) WgStaffGrantWithNetworkQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p WgStaffGrantWithNetworkQuery) NotAny(ps ...wgstaffgrant.Pred) WgStaffGrantWithNetworkQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p WgStaffGrantWithNetworkQuery) Order(ts ...wgstaffgrant.Sort) WgStaffGrantWithNetworkQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p WgStaffGrantWithNetworkQuery) Limit(n int64) WgStaffGrantWithNetworkQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p WgStaffGrantWithNetworkQuery) Offset(n int64) WgStaffGrantWithNetworkQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p WgStaffGrantWithNetworkQuery) After(r WgStaffGrantWithNetworkRow) WgStaffGrantWithNetworkQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p WgStaffGrantWithNetworkQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p WgStaffGrantWithNetworkQuery) All(ctx context.Context, ex runtime.Executor) ([]WgStaffGrantWithNetworkRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]WgStaffGrantWithNetworkRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = WgStaffGrantWithNetworkRow{Row: r}
+		key := r.NetworkID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := wgnetwork.New().Unordered().
+		Where(wgnetwork.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.NetworkID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "wg_staff_grants", "wg_networks")
+		}
+		out[i].Network = targets[j]
+	}
+	return out, nil
+}
+
+// WgStaffGrantWithTeamRow is wg_staff_grants with its Team loaded.
+type WgStaffGrantWithTeamRow struct {
+	wgstaffgrant.Row
+	Team team.Row
+}
+
+type WgStaffGrantWithTeamQuery struct {
+	q wgstaffgrant.Query
+}
+
+// WgStaffGrantWithTeam starts the plan.
+func WgStaffGrantWithTeam() WgStaffGrantWithTeamQuery {
+	return WgStaffGrantWithTeamQuery{q: wgstaffgrant.New()}
+}
+
+func (p WgStaffGrantWithTeamQuery) Where(ps ...wgstaffgrant.Pred) WgStaffGrantWithTeamQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p WgStaffGrantWithTeamQuery) WhereIf(cond bool, pr wgstaffgrant.Pred) WgStaffGrantWithTeamQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p WgStaffGrantWithTeamQuery) Any(ps ...wgstaffgrant.Pred) WgStaffGrantWithTeamQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p WgStaffGrantWithTeamQuery) Not(pr wgstaffgrant.Pred) WgStaffGrantWithTeamQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p WgStaffGrantWithTeamQuery) NotAny(ps ...wgstaffgrant.Pred) WgStaffGrantWithTeamQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p WgStaffGrantWithTeamQuery) Order(ts ...wgstaffgrant.Sort) WgStaffGrantWithTeamQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p WgStaffGrantWithTeamQuery) Limit(n int64) WgStaffGrantWithTeamQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p WgStaffGrantWithTeamQuery) Offset(n int64) WgStaffGrantWithTeamQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p WgStaffGrantWithTeamQuery) After(r WgStaffGrantWithTeamRow) WgStaffGrantWithTeamQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p WgStaffGrantWithTeamQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p WgStaffGrantWithTeamQuery) All(ctx context.Context, ex runtime.Executor) ([]WgStaffGrantWithTeamRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]WgStaffGrantWithTeamRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = WgStaffGrantWithTeamRow{Row: r}
+		key := r.TeamID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := team.New().Unordered().
+		Where(team.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.TeamID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "wg_staff_grants", "teams")
+		}
+		out[i].Team = targets[j]
+	}
+	return out, nil
+}
+
+// WgStaffModeWithNetworkRow is wg_staff_modes with its Network loaded.
+type WgStaffModeWithNetworkRow struct {
+	wgstaffmode.Row
+	Network wgnetwork.Row
+}
+
+type WgStaffModeWithNetworkQuery struct {
+	q wgstaffmode.Query
+}
+
+// WgStaffModeWithNetwork starts the plan.
+func WgStaffModeWithNetwork() WgStaffModeWithNetworkQuery {
+	return WgStaffModeWithNetworkQuery{q: wgstaffmode.New()}
+}
+
+func (p WgStaffModeWithNetworkQuery) Where(ps ...wgstaffmode.Pred) WgStaffModeWithNetworkQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p WgStaffModeWithNetworkQuery) WhereIf(cond bool, pr wgstaffmode.Pred) WgStaffModeWithNetworkQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p WgStaffModeWithNetworkQuery) Any(ps ...wgstaffmode.Pred) WgStaffModeWithNetworkQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p WgStaffModeWithNetworkQuery) Not(pr wgstaffmode.Pred) WgStaffModeWithNetworkQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p WgStaffModeWithNetworkQuery) NotAny(ps ...wgstaffmode.Pred) WgStaffModeWithNetworkQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p WgStaffModeWithNetworkQuery) Order(ts ...wgstaffmode.Sort) WgStaffModeWithNetworkQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p WgStaffModeWithNetworkQuery) Limit(n int64) WgStaffModeWithNetworkQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p WgStaffModeWithNetworkQuery) Offset(n int64) WgStaffModeWithNetworkQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p WgStaffModeWithNetworkQuery) After(r WgStaffModeWithNetworkRow) WgStaffModeWithNetworkQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p WgStaffModeWithNetworkQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p WgStaffModeWithNetworkQuery) All(ctx context.Context, ex runtime.Executor) ([]WgStaffModeWithNetworkRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]WgStaffModeWithNetworkRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = WgStaffModeWithNetworkRow{Row: r}
+		key := r.NetworkID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := wgnetwork.New().Unordered().
+		Where(wgnetwork.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.NetworkID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "wg_staff_modes", "wg_networks")
+		}
+		out[i].Network = targets[j]
 	}
 	return out, nil
 }

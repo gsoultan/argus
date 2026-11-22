@@ -59,6 +59,8 @@ type Row struct {
 	DisksScanID     runtime.Null[string]
 	DisksScanAt     runtime.Null[time.Time]
 	DisksRescan     bool
+	Vpn             runtime.Null[runtime.JSON]
+	WgnetState      runtime.Null[runtime.JSON]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -97,7 +99,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 39
+const nCols = 41
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -585,6 +587,8 @@ var (
 	DisksScanID     = NullTextCol{36}
 	DisksScanAt     = NullTimeCol{37}
 	DisksRescan     = BoolCol{38}
+	Vpn             = NullJSONCol{39}
+	WgnetState      = NullJSONCol{40}
 )
 
 // TextCol addresses a text column.
@@ -1141,6 +1145,20 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 39:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 40:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1402,6 +1420,20 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.bools[q.nbo] = p.bol
 		q.nbo++
+	case 39:
+		if int(q.njs) >= 2 {
+			q.over = true
+			return
+		}
+		q.jsns[q.njs] = p.jsn
+		q.njs++
+	case 40:
+		if int(q.njs) >= 2 {
+			q.over = true
+			return
+		}
+		q.jsns[q.njs] = p.jsn
+		q.njs++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
@@ -1720,8 +1752,20 @@ func (q Query) DisksScanAtIsNull() Query                   { return q.Where(Disk
 func (q Query) DisksScanAtIsNotNull() Query                { return q.Where(DisksScanAt.IsNotNull()) }
 func (q Query) DisksRescanEq(v bool) Query                 { return q.Where(DisksRescan.Eq(v)) }
 func (q Query) DisksRescanNotEq(v bool) Query              { return q.Where(DisksRescan.NotEq(v)) }
+func (q Query) VpnContains(v runtime.JSON) Query           { return q.Where(Vpn.Contains(v)) }
+func (q Query) VpnContainedBy(v runtime.JSON) Query        { return q.Where(Vpn.ContainedBy(v)) }
+func (q Query) VpnHasAnyKey(v ...string) Query             { return q.Where(Vpn.HasAnyKey(v...)) }
+func (q Query) VpnHasAllKeys(v ...string) Query            { return q.Where(Vpn.HasAllKeys(v...)) }
+func (q Query) VpnIsNull() Query                           { return q.Where(Vpn.IsNull()) }
+func (q Query) VpnIsNotNull() Query                        { return q.Where(Vpn.IsNotNull()) }
+func (q Query) WgnetStateContains(v runtime.JSON) Query    { return q.Where(WgnetState.Contains(v)) }
+func (q Query) WgnetStateContainedBy(v runtime.JSON) Query { return q.Where(WgnetState.ContainedBy(v)) }
+func (q Query) WgnetStateHasAnyKey(v ...string) Query      { return q.Where(WgnetState.HasAnyKey(v...)) }
+func (q Query) WgnetStateHasAllKeys(v ...string) Query     { return q.Where(WgnetState.HasAllKeys(v...)) }
+func (q Query) WgnetStateIsNull() Query                    { return q.Where(WgnetState.IsNull()) }
+func (q Query) WgnetStateIsNotNull() Query                 { return q.Where(WgnetState.IsNotNull()) }
 
-const selectPrefix = `SELECT "hostname", "version", "last_seen_at", "active_sessions", "posture", "updated_at", "matched_asset", "fqdn", "machine_id", "os", "addresses", "accounts", "ssh_ports", "enrollment_state", "review_note", "reviewed_by", "reviewed_at", "first_seen_at", "exec_tracing", "exec_reason", "update_status", "applications", "system", "usage", "packages", "packages_state", "packages_check_id", "packages_check_at", "usage_at", "logs", "logs_state", "logs_scan_id", "logs_scan_at", "android_apps", "disks", "disks_state", "disks_scan_id", "disks_scan_at", "disks_rescan" FROM "agents"`
+const selectPrefix = `SELECT "hostname", "version", "last_seen_at", "active_sessions", "posture", "updated_at", "matched_asset", "fqdn", "machine_id", "os", "addresses", "accounts", "ssh_ports", "enrollment_state", "review_note", "reviewed_by", "reviewed_at", "first_seen_at", "exec_tracing", "exec_reason", "update_status", "applications", "system", "usage", "packages", "packages_state", "packages_check_id", "packages_check_at", "usage_at", "logs", "logs_state", "logs_scan_id", "logs_scan_at", "android_apps", "disks", "disks_state", "disks_scan_id", "disks_scan_at", "disks_rescan", "vpn", "wgnet_state" FROM "agents"`
 const countPrefix = `SELECT count(*) FROM "agents"`
 const existsPrefix = `SELECT 1 FROM "agents"`
 const existsSuffix = ` LIMIT 1`
@@ -1992,6 +2036,18 @@ var orderTable = [nCols][4]string{
 		"\"disks_rescan\" ASC NULLS FIRST",
 		"\"disks_rescan\" DESC NULLS LAST",
 	},
+	{ // vpn
+		"\"vpn\"",
+		"\"vpn\" DESC",
+		"\"vpn\" ASC NULLS FIRST",
+		"\"vpn\" DESC NULLS LAST",
+	},
+	{ // wgnet_state
+		"\"wgnet_state\"",
+		"\"wgnet_state\" DESC",
+		"\"wgnet_state\" ASC NULLS FIRST",
+		"\"wgnet_state\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -2036,6 +2092,8 @@ var identTable = [nCols]string{
 	"\"disks_scan_id\"",
 	"\"disks_scan_at\"",
 	"\"disks_rescan\"",
+	"\"vpn\"",
+	"\"wgnet_state\"",
 }
 
 var lowering = runtime.Lowering{
@@ -2068,7 +2126,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [39][28]runtime.Frag{
+var fragTable = [41][28]runtime.Frag{
 	{ // hostname
 		{}, // opNone
 		{A: "\"hostname\" = $", B: ""},
@@ -3239,6 +3297,66 @@ var fragTable = [39][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // vpn
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"vpn\" @> $", B: ""},
+		{A: "\"vpn\" <@ $", B: ""},
+		{A: "\"vpn\" ?| $", B: ""},
+		{A: "\"vpn\" ?& $", B: ""},
+		{A: "\"vpn\" IS NULL", B: ""},
+		{A: "\"vpn\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // wgnet_state
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"wgnet_state\" @> $", B: ""},
+		{A: "\"wgnet_state\" <@ $", B: ""},
+		{A: "\"wgnet_state\" ?| $", B: ""},
+		{A: "\"wgnet_state\" ?& $", B: ""},
+		{A: "\"wgnet_state\" IS NULL", B: ""},
+		{A: "\"wgnet_state\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -3443,6 +3561,8 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.DisksScanID = runtime.NullText(rv[36], sl)
 	r.DisksScanAt = runtime.Nullable(rv[37], runtime.Timestamptz)
 	r.DisksRescan = runtime.Bool(rv[38])
+	r.Vpn = runtime.NullJSON(rv[39], sl)
+	r.WgnetState = runtime.NullJSON(rv[40], sl)
 	return decErr
 }
 
@@ -3621,6 +3741,14 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 39:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 40:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -3769,6 +3897,14 @@ func (q Query) bindPreds(b *binder) []any {
 			b.bools[nbo] = q.bools[nbo]
 			v = append(v, &b.bools[nbo])
 			nbo++
+		case 39:
+			b.jsns[njs] = q.jsns[njs]
+			v = append(v, &b.jsns[njs])
+			njs++
+		case 40:
+			b.jsns[njs] = q.jsns[njs]
+			v = append(v, &b.jsns[njs])
+			njs++
 		}
 	}
 	b.vals = v

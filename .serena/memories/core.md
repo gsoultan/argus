@@ -58,6 +58,7 @@ enforces all of it and CI runs it by name.
 | [self-approval](self-approval.md) | Approvals: who decides, and when the person who asked may approve their own |
 | [website-checks](website-checks.md) | Websites: uptime checks, the four confirmations before "down", canaries, agent second opinions |
 | [telegram-bots](telegram-bots.md) | Organizations' own Telegram bots, sealed tokens, and which bot each kind of alert uses |
+| [networks](networks.md) | Networks: VPN links and Cloudflare Tunnels the agents report, how a link is judged, what the agent may read |
 
 ## Standing rules for this repo
 

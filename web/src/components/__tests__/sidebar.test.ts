@@ -11,10 +11,10 @@ import { cleanPrefs } from '~/lib/preferences'
 describe('the sidebar', () => {
   it('has every page an admin had in the old top bar', () => {
     const tos = new Set([...groupsFor('admin').flatMap((g) => g.items.map((i) => i.to)), ...bottomFor('admin').map((i) => i.to)])
-    for (const to of ['/', '/assets', '/databases', '/brokers', '/cloud', '/websites', '/approvals', '/teams', '/sessions', '/audit', '/settings', '/about']) {
+    for (const to of ['/', '/assets', '/databases', '/brokers', '/cloud', '/websites', '/networks', '/approvals', '/teams', '/sessions', '/audit', '/settings', '/about']) {
       expect(tos.has(to), to).toBe(true)
     }
-    expect(groupsFor('admin').map((g) => g.label)).toEqual(['', 'Connect', 'Monitoring', 'Cloud', 'People', 'Records'])
+    expect(groupsFor('admin').map((g) => g.label)).toEqual(['', 'Connect', 'Monitoring', 'Networks', 'Cloud', 'People', 'Records'])
   })
 
   it('gives every entry an icon', () => {

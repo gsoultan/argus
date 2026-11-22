@@ -406,12 +406,22 @@ func TestACancelledUploadWritesNothingAndIsAudited(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	time.Sleep(200 * time.Millisecond)
-	if _, err := os.Stat(target); !os.IsNotExist(err) {
-		t.Fatalf("a cancelled upload left the file behind: %v", err)
-	}
-	left, _ := os.ReadDir(dir)
-	if len(left) != 0 {
-		t.Fatalf("a cancelled upload left %d files in the folder", len(left))
+	// The partial file is removed as the upload unwinds, which can land a
+	// little after the audit entry on a busy machine: wait for it rather
+	// than for a fixed time.
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		_, statErr := os.Stat(target)
+		left, _ := os.ReadDir(dir)
+		if os.IsNotExist(statErr) && len(left) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			if !os.IsNotExist(statErr) {
+				t.Fatalf("a cancelled upload left the file behind: %v", statErr)
+			}
+			t.Fatalf("a cancelled upload left %d files in the folder", len(left))
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }

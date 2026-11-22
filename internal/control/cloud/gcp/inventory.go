@@ -30,16 +30,18 @@ const maxPages = 40
 
 // RegionalKinds and GlobalKinds are what a region, and "global", hold.
 var (
-	RegionalKinds = []cloud.Kind{cloud.KindInstance, cloud.KindVolume, cloud.KindSubnet, cloud.KindAddress}
+	RegionalKinds = []cloud.Kind{cloud.KindInstance, cloud.KindVolume, cloud.KindSubnet, cloud.KindAddress, cloud.KindVPN}
 	GlobalKinds   = []cloud.Kind{cloud.KindFirewall, cloud.KindNetwork, cloud.KindSnapshot, cloud.KindImage, cloud.KindAddress}
 )
 
 type projectInventory struct {
-	mu   sync.Mutex
-	at   time.Time
-	all  []cloud.Resource
-	err  error
-	read bool
+	mu  sync.Mutex
+	at  time.Time
+	all []cloud.Resource
+	err error
+	// missing are optional kinds the last read could not list.
+	missing []cloud.Kind
+	read    bool
 }
 
 // Inventory reads one region of a project, or "global".
@@ -66,10 +68,10 @@ func (p *Provider) Inventory(ctx context.Context, a cloud.Account, region string
 
 	pi.mu.Lock()
 	if !pi.read || time.Since(pi.at) > inventoryTTL {
-		pi.all, pi.err = p.readProject(ctx, t, a.AccountID)
+		pi.all, pi.missing, pi.err = p.readProject(ctx, t, a.AccountID)
 		pi.at, pi.read = time.Now(), true
 	}
-	all, rerr, at := pi.all, pi.err, pi.at
+	all, rerr, at, missing := pi.all, pi.err, pi.at, pi.missing
 	pi.mu.Unlock()
 	if rerr != nil {
 		return cloud.Snapshot{}, rerr
@@ -81,7 +83,7 @@ func (p *Provider) Inventory(ctx context.Context, a cloud.Account, region string
 	}
 	var read []cloud.Kind
 	for _, k := range kinds {
-		if slices.Contains(hold, k) {
+		if slices.Contains(hold, k) && !slices.Contains(missing, k) {
 			read = append(read, k)
 		}
 	}
@@ -164,10 +166,19 @@ type raw struct {
 	Denied []struct {
 		Protocol string `json:"IPProtocol"`
 	} `json:"denied"`
+	// VPN tunnels (sharedSecret is never read).
+	PeerIP              string   `json:"peerIp"`
+	DetailedStatus      string   `json:"detailedStatus"`
+	VPNGateway          string   `json:"vpnGateway"`
+	TargetVPNGateway    string   `json:"targetVpnGateway"`
+	PeerExternalGateway string   `json:"peerExternalGateway"`
+	PeerGCPGateway      string   `json:"peerGcpGateway"`
+	Router              string   `json:"router"`
+	RemoteSelector      []string `json:"remoteTrafficSelector"`
 }
 
 // readProject reads every kind in a project.
-func (p *Provider) readProject(ctx context.Context, t token, project string) ([]cloud.Resource, error) {
+func (p *Provider) readProject(ctx context.Context, t token, project string) ([]cloud.Resource, []cloud.Kind, error) {
 	base := p.ep.compute + "/compute/v1/projects/" + project
 	type list struct {
 		kind cloud.Kind
@@ -185,6 +196,7 @@ func (p *Provider) readProject(ctx context.Context, t token, project string) ([]
 		{cloud.KindFirewall, "/global/firewalls", ""},
 		{cloud.KindSnapshot, "/global/snapshots", ""},
 		{cloud.KindImage, "/global/images", ""},
+		{cloud.KindVPN, "/aggregated/vpnTunnels", "vpnTunnels"},
 	}
 	got := make([][]raw, len(lists))
 	errs := make([]error, len(lists))
@@ -197,8 +209,20 @@ func (p *Provider) readProject(ctx context.Context, t token, project string) ([]
 		}()
 	}
 	wg.Wait()
+	// VPN tunnels only add to the inventory: a role without
+	// compute.vpnTunnels.list still has the rest.
+	var missing []cloud.Kind
+	var tunnels []raw
+	for n, l := range lists {
+		if l.kind == cloud.KindVPN {
+			if errs[n] != nil {
+				missing = append(missing, cloud.KindVPN)
+			}
+			tunnels, got[n], errs[n] = got[n], nil, nil
+		}
+	}
 	if err := errors.Join(errs...); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// Everything refers to everything else by URL; Argus refers by id.
 	ids := map[string]cloud.Ref{}
@@ -238,7 +262,74 @@ func (p *Provider) readProject(ctx context.Context, t token, project string) ([]
 			out = append(out, res)
 		}
 	}
-	return out, nil
+	return append(out, vpnTunnels(tunnels)...), missing, nil
+}
+
+// vpnTunnels groups a project's tunnels into one connection per gateway and
+// peer, so HA VPN's two tunnels are one connection that can be "partial".
+func vpnTunnels(ts []raw) []cloud.Resource {
+	type group struct {
+		res     cloud.Resource
+		tunnels []cloud.Tunnel
+		remote  []string
+	}
+	var order []string
+	groups := map[string]*group{}
+	for _, r := range ts {
+		gw, vpnType := r.VPNGateway, "HA VPN"
+		if gw == "" {
+			gw, vpnType = r.TargetVPNGateway, "Classic VPN"
+		}
+		peer := r.PeerExternalGateway
+		if peer == "" {
+			peer = r.PeerGCPGateway
+		}
+		if peer == "" {
+			peer = r.PeerIP
+		}
+		key := last(gw)
+		if p := last(peer); p != "" {
+			key += "-to-" + p
+		}
+		g, ok := groups[key]
+		if !ok {
+			name := last(gw)
+			if p := last(peer); p != "" {
+				name += " to " + p
+			}
+			g = &group{res: cloud.Resource{Kind: cloud.KindVPN, ID: key, Name: name,
+				Region: last(r.Region), CreatedAt: created(r.CreationTimestamp), Tags: r.Labels,
+				Details: map[string]string{}}}
+			set(g.res.Details, cloud.DetailGateway, last(gw))
+			set(g.res.Details, cloud.DetailVPNType, vpnType)
+			set(g.res.Details, cloud.DetailRemoteAddress, r.PeerIP)
+			if r.Router != "" {
+				set(g.res.Details, cloud.DetailRouting, "bgp")
+			} else {
+				set(g.res.Details, cloud.DetailRouting, "static")
+			}
+			groups[key] = g
+			order = append(order, key)
+		}
+		why := r.Status
+		if r.DetailedStatus != "" {
+			why += " (" + r.DetailedStatus + ")"
+		}
+		g.tunnels = append(g.tunnels, cloud.Tunnel{Address: r.Name, Up: r.Status == "ESTABLISHED", Why: why})
+		for _, s := range r.RemoteSelector {
+			if s != "0.0.0.0/0" && !slices.Contains(g.remote, s) {
+				g.remote = append(g.remote, s)
+			}
+		}
+	}
+	out := make([]cloud.Resource, 0, len(order))
+	for _, k := range order {
+		g := groups[k]
+		set(g.res.Details, cloud.DetailRemoteNetworks, strings.Join(g.remote, ","))
+		cloud.SetTunnels(&g.res, g.tunnels)
+		out = append(out, g.res)
+	}
+	return out
 }
 
 // list reads every page of one list. An aggregated list has its items per

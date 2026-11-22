@@ -30,6 +30,9 @@ type HostFacts struct {
 	// AndroidApps is what is installed on a device. Nil from a server or an
 	// app older than app reporting, which leaves what the row holds.
 	AndroidApps *AndroidApps `json:"android_apps,omitempty"`
+	// VPN is the host's VPN links. Nil from an agent older than VPN
+	// discovery, which leaves what the row holds.
+	VPN *VPNScan `json:"vpn,omitempty"`
 }
 
 // DiscoveredHost is an agent reporting from somewhere the inventory has no
@@ -118,6 +121,14 @@ func (s *Store) RecordFacts(ctx context.Context, hostname string, f HostFacts) e
 		}
 		androidApps = b
 	}
+	var vpn []byte // nil keeps what the row holds, as for apps
+	if v := f.VPN.bounded(); v != nil {
+		b, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		vpn = b
+	}
 	tx, err := s.db(ctx).Begin(ctx)
 	if err != nil {
 		return err
@@ -125,8 +136,8 @@ func (s *Store) RecordFacts(ctx context.Context, hostname string, f HostFacts) e
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO agents (hostname, fqdn, machine_id, os, addresses, ssh_ports, accounts, applications, system, android_apps, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,now())
+		INSERT INTO agents (hostname, fqdn, machine_id, os, addresses, ssh_ports, accounts, applications, system, android_apps, vpn, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,now())
 		ON CONFLICT (hostname) DO UPDATE SET
 			fqdn       = COALESCE(NULLIF(EXCLUDED.fqdn,''), agents.fqdn),
 			machine_id = COALESCE(NULLIF(EXCLUDED.machine_id,''), agents.machine_id),
@@ -137,9 +148,10 @@ func (s *Store) RecordFacts(ctx context.Context, hostname string, f HostFacts) e
 			applications = COALESCE(EXCLUDED.applications, agents.applications),
 			system     = COALESCE(EXCLUDED.system, agents.system),
 			android_apps = COALESCE(EXCLUDED.android_apps, agents.android_apps),
+			vpn        = COALESCE(EXCLUDED.vpn, agents.vpn),
 			updated_at = now()`,
 		hostname, f.FQDN, f.MachineID, f.OS,
-		nonNilStrings(f.Addresses), nonNilInts(f.SSHPorts), nonNilStrings(f.Accounts), apps, system, androidApps); err != nil {
+		nonNilStrings(f.Addresses), nonNilInts(f.SSHPorts), nonNilStrings(f.Accounts), apps, system, androidApps, vpn); err != nil {
 		return err
 	}
 

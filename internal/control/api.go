@@ -252,6 +252,11 @@ type API struct {
 	telegramSlots  chan struct{}
 	telegramClient *http.Client
 	telegramAPI    string
+
+	// cloudflareHTTP and cloudflareBase stand in for Cloudflare's API in
+	// tests (cloudflare_accounts.go).
+	cloudflareHTTP *http.Client
+	cloudflareBase string
 }
 
 // SetThrottles enables per-client rate limiting.
@@ -545,6 +550,32 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/assets/{id}/server-logins", a.postServerLogin)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}/server-logins/{name}", a.deleteServerLogin)
 	mux.HandleFunc("GET /api/v1/assets/{id}/applications", a.getApplications)
+	mux.HandleFunc("GET /api/v1/networks", a.getNetworks)
+	mux.HandleFunc("GET /api/v1/networks/cloudflare", a.getCloudflareAccounts)
+	mux.HandleFunc("POST /api/v1/networks/cloudflare", a.postCloudflareAccount)
+	mux.HandleFunc("PUT /api/v1/networks/cloudflare/{id}", a.putCloudflareAccount)
+	mux.HandleFunc("DELETE /api/v1/networks/cloudflare/{id}", a.deleteCloudflareAccount)
+	mux.HandleFunc("POST /api/v1/networks/cloudflare/{id}/sync", a.postCloudflareSync)
+	mux.HandleFunc("GET /api/v1/networks/wireguard", a.getWGNetworks)
+	mux.HandleFunc("POST /api/v1/networks/wireguard", a.postWGNetwork)
+	mux.HandleFunc("PUT /api/v1/networks/wireguard/{id}", a.putWGNetwork)
+	mux.HandleFunc("DELETE /api/v1/networks/wireguard/{id}", a.deleteWGNetwork)
+	mux.HandleFunc("POST /api/v1/networks/wireguard/{id}/approve", a.postWGDecision(true))
+	mux.HandleFunc("POST /api/v1/networks/wireguard/{id}/decline", a.postWGDecision(false))
+	mux.HandleFunc("GET /api/v1/networks/ipsec", a.getIPsecLinks)
+	mux.HandleFunc("POST /api/v1/networks/ipsec", a.postIPsecLink)
+	mux.HandleFunc("PUT /api/v1/networks/ipsec/{id}", a.putIPsecLink)
+	mux.HandleFunc("DELETE /api/v1/networks/ipsec/{id}", a.deleteIPsecLink)
+	mux.HandleFunc("POST /api/v1/networks/ipsec/{id}/approve", a.postIPsecDecision(true))
+	mux.HandleFunc("POST /api/v1/networks/ipsec/{id}/decline", a.postIPsecDecision(false))
+	mux.HandleFunc("POST /api/v1/networks/ipsec/{id}/key", a.postIPsecKey)
+	mux.HandleFunc("GET /api/v1/networks/staff", a.getStaffVPNs)
+	mux.HandleFunc("POST /api/v1/networks/staff/{id}/devices", a.postStaffDevice)
+	mux.HandleFunc("POST /api/v1/networks/staff/devices/{id}/renew", a.postStaffRenew)
+	mux.HandleFunc("DELETE /api/v1/networks/staff/devices/{id}", a.deleteStaffDevice)
+	mux.HandleFunc("PUT /api/v1/networks/staff/{id}/policy", a.putStaffPolicy)
+	mux.HandleFunc("PUT /api/v1/networks/staff/{id}/grants/{team}", a.putStaffGrant)
+	mux.HandleFunc("PUT /api/v1/networks/staff/{id}/modes", a.putStaffMode)
 	mux.HandleFunc("GET /api/v1/assets/{id}/android-apps", a.getAndroidApps)
 	mux.HandleFunc("GET /api/v1/assets/{id}/system", a.getSystem)
 	mux.HandleFunc("GET /api/v1/assets/{id}/usage/live", a.getUsageLive)
@@ -1077,6 +1108,9 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// Disks is each filesystem's stack and how a grow it was sent is
 		// going. Absent from an agent older than disk growing.
 		Disks *DiskBeat `json:"disks"`
+		// Wgnet is this server's keys for its WireGuard networks and how
+		// its last change went. Absent from an agent older than them.
+		Wgnet *WGNetBeat `json:"wgnet"`
 		// RecoveryKey is the fingerprint of the fleet recovery key the
 		// agent holds, "" for none. Absent from an agent older than it.
 		RecoveryKey *string `json:"recovery_key"`
@@ -1202,6 +1236,10 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// Growing disks, likewise.
 		if o := a.heartbeatDisks(r.Context(), in.Hostname, in.Disks); o != nil {
 			reply["disks"] = o
+		}
+		// WireGuard networks, likewise.
+		if o := a.heartbeatWGNet(r.Context(), in.Hostname, in.Wgnet); o != nil {
+			reply["wgnet"] = o
 		}
 	}
 	if errors.Is(err, ErrAgentUnmatched) {

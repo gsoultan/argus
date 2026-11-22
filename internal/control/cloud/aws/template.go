@@ -33,6 +33,8 @@ var ReadPolicy = []string{
 // deleted), Auto Scaling group sizes, launch templates and Auto Scaling
 // groups for scale groups (made, never deleted) and their target-tracking
 // policy, RDS read replicas (made, and removed only through ManageTagged),
+// Site-to-Site VPN connections for IPsec links, with their customer and
+// virtual private gateways (made, never deleted),
 // capacity reservations, buying Reserved
 // Instances and Savings Plans (which Argus only does with a second person's
 // approval, every time), and nothing else. No
@@ -65,6 +67,8 @@ var ManagePolicy = []string{
 	"ec2:CreateLaunchTemplate", "autoscaling:CreateAutoScalingGroup", "autoscaling:CreateOrUpdateTags",
 	"autoscaling:PutScalingPolicy",
 	"rds:DescribeDBInstances", "rds:CreateDBInstanceReadReplica", "rds:AddTagsToResource",
+	"ec2:CreateCustomerGateway", "ec2:CreateVpnGateway", "ec2:AttachVpnGateway",
+	"ec2:CreateVpnConnection", "ec2:CreateVpnConnectionRoute", "ec2:EnableVgwRoutePropagation",
 }
 
 // ManageTagged is what the manage role may do only to an RDS database

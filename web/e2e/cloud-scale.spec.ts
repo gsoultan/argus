@@ -231,6 +231,8 @@ test('AWS decides: the wizard keeps the maximum under the cost cap, and the grou
   await page.getByRole('button', { name: 'Ask for approval' }).click()
   await expect.poll(() => got.body).toMatchObject({ action: 'scale-group-create', spec: { mode: 'aws', track: { metric: 'cpu', target: 55 },
     limits: { min: 2, max: 6, costCap: 450 } } })
+  // Asked, the wizard goes back to Scaling; let it land before going on.
+  await page.waitForURL(/\/cloud\?tab=scaling/)
 
   // A group AWS decides for: no adding by hand, and what AWS keeps.
   await page.route('**/api/v1/cloud/scale-groups/sg1', (r) => r.fulfill({ json: { ...DETAIL, mode: 'aws', awsTrack: { metric: 'cpu', target: 55 },

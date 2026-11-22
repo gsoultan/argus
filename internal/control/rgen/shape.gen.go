@@ -76,6 +76,8 @@ func _assertAgentShape(m m0.Agent) {
 		m.DisksScanID,
 		m.DisksScanAt,
 		m.DisksRescan,
+		m.Vpn,
+		m.WgnetState,
 	}
 }
 
@@ -568,6 +570,24 @@ func _assertCloudScheduleRunShape(m m0.CloudScheduleRun) {
 	}
 }
 
+// _assertCloudflareAccountShape fails to compile if m0.CloudflareAccount gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertCloudflareAccountShape(m m0.CloudflareAccount) {
+	type shape m0.CloudflareAccount
+	_ = shape{
+		m.Model,
+		m.Name,
+		m.AccountID,
+		m.TokenSealed,
+		m.TokenTail,
+		m.Snapshot,
+		m.SyncedAt,
+		m.LastError,
+		m.LastErrorAt,
+		m.CreatedBy,
+	}
+}
+
 // _assertConsoleAlertShape fails to compile if m0.ConsoleAlert gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertConsoleAlertShape(m m0.ConsoleAlert) {
@@ -995,6 +1015,30 @@ func _assertHostKeyPinShape(m m0.HostKeyPin) {
 		m.KeyType,
 		m.PinnedAt,
 		m.PinnedBy,
+	}
+}
+
+// _assertIpsecLinkShape fails to compile if m0.IpsecLink gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertIpsecLinkShape(m m0.IpsecLink) {
+	type shape m0.IpsecLink
+	_ = shape{
+		m.Model,
+		m.Name,
+		m.Conn,
+		m.Asset,
+		m.Peer,
+		m.LocalRanges,
+		m.RemoteRanges,
+		m.Proposals,
+		m.PskSealed,
+		m.State,
+		m.Pending,
+		m.PendingBy,
+		m.PendingAt,
+		m.RequestedBy,
+		m.ApprovedBy,
+		m.ApprovedAt,
 	}
 }
 
@@ -1653,5 +1697,89 @@ func _assertWebsiteRoundShape(m m0.WebsiteRound) {
 		m.Ms,
 		m.Status,
 		m.Detail,
+	}
+}
+
+// _assertWgMemberShape fails to compile if m0.WgMember gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertWgMemberShape(m m0.WgMember) {
+	type shape m0.WgMember
+	_ = shape{
+		m.Network,
+		m.Asset,
+		m.Address,
+		m.Hub,
+		m.Endpoint,
+		m.PublicKey,
+		m.KeyAt,
+		m.Routes,
+	}
+}
+
+// _assertWgNetworkShape fails to compile if m0.WgNetwork gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertWgNetworkShape(m m0.WgNetwork) {
+	type shape m0.WgNetwork
+	_ = shape{
+		m.Model,
+		m.Name,
+		m.Shape,
+		m.Cidr,
+		m.Port,
+		m.Iface,
+		m.State,
+		m.Pending,
+		m.PendingBy,
+		m.PendingAt,
+		m.RequestedBy,
+		m.ApprovedBy,
+		m.ApprovedAt,
+		m.Generation,
+		m.StaffDefault,
+		m.StaffDays,
+		m.StaffMfa,
+	}
+}
+
+// _assertWgStaffDeviceShape fails to compile if m0.WgStaffDevice gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertWgStaffDeviceShape(m m0.WgStaffDevice) {
+	type shape m0.WgStaffDevice
+	_ = shape{
+		m.ID,
+		m.Network,
+		m.UserEmail,
+		m.Name,
+		m.PublicKey,
+		m.Address,
+		m.CreatedAt,
+		m.ExpiresAt,
+	}
+}
+
+// _assertWgStaffGrantShape fails to compile if m0.WgStaffGrant gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertWgStaffGrantShape(m m0.WgStaffGrant) {
+	type shape m0.WgStaffGrant
+	_ = shape{
+		m.Network,
+		m.Team,
+		m.Ranges,
+		m.Logins,
+		m.UpdatedBy,
+		m.UpdatedAt,
+	}
+}
+
+// _assertWgStaffModeShape fails to compile if m0.WgStaffMode gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertWgStaffModeShape(m m0.WgStaffMode) {
+	type shape m0.WgStaffMode
+	_ = shape{
+		m.Network,
+		m.UserEmail,
+		m.Mode,
+		m.SetBy,
+		m.SetAt,
 	}
 }

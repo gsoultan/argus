@@ -108,6 +108,14 @@ func main() {
 		plan := fs.String("plan", "", "the cleanup plan the daemon wrote")
 		_ = fs.Parse(os.Args[2:])
 		os.Exit(agent.RunLogsClean(*plan))
+	case "wgnet-apply":
+		// Run by the daemon in a unit of its own to set up the WireGuard
+		// networks the console asked for, on a trial it undoes unless the
+		// server still reaches Argus.
+		fs := flag.NewFlagSet("wgnet-apply", flag.ExitOnError)
+		plan := fs.String("plan", "", "the network plan the daemon wrote")
+		_ = fs.Parse(os.Args[2:])
+		os.Exit(agent.RunWGNetApply(*plan))
 	case "disks-scan":
 		// Run by the daemon outside its sandbox: each filesystem's stack and
 		// whether it can grow. Reads only.
@@ -313,6 +321,10 @@ func runDaemon(args []string) int {
 	logs := agent.NewLogs(*stateDir, exe, log)
 	// Growing disks: the same, from the same binary.
 	disks := agent.NewDisks(*stateDir, exe, log)
+	// WireGuard networks between servers: the same, from the same binary.
+	wgnets := agent.NewWGNets(*stateDir, exe, log)
+	// No peer may carry the control plane's address.
+	wgnets.Avoid = agent.ControlAddrs(*controlURL)
 	updater.Marker = agent.UpdateMarkerPath(*socket)
 	var (
 		openStreams atomic.Int64
@@ -764,6 +776,7 @@ func runDaemon(args []string) int {
 		pkgBeat := pkgs.Beat()
 		logBeat := logs.Beat()
 		diskBeat := disks.Beat()
+		wgBeat := wgnets.Beat()
 		reply, ok := rep.HeartbeatWithReply(ctx, map[string]any{
 			"hostname":        hostname,
 			"version":         version,
@@ -784,6 +797,7 @@ func runDaemon(args []string) int {
 			"packages":          pkgBeat,
 			"logs":              logBeat,
 			"disks":             diskBeat,
+			"wgnet":             wgBeat,
 		})
 		// Orders signed with the fleet recovery key are checked against that
 		// key alone, before the gate: a rekey is what makes a reply signed
@@ -876,6 +890,16 @@ func runDaemon(args []string) int {
 				}
 			}
 			disks.Handle(ctx, diskOrders)
+			wgnets.Delivered(wgBeat)
+			var wgOrders *agent.WGNetOrders
+			if len(reply.Wgnet) > 0 && string(reply.Wgnet) != "null" {
+				wgOrders = &agent.WGNetOrders{}
+				if err := json.Unmarshal(reply.Wgnet, wgOrders); err != nil {
+					log.Error("wireguard: cannot read the console's orders", "error", err)
+					wgOrders = nil
+				}
+			}
+			wgnets.Handle(ctx, wgOrders)
 		}
 		// An update is acted on only when the reply arrived: silence from
 		// the control plane neither starts one nor takes one back.
@@ -1019,6 +1043,12 @@ func runDaemon(args []string) int {
 		}
 	}
 	go agent.Supervise(ctx, log, "disks", disks.Watch)
+	wgnets.Changed = func() {
+		if rep.Enabled() {
+			heartbeat()
+		}
+	}
+	go agent.Supervise(ctx, log, "wireguard networks", wgnets.Watch)
 
 	// Host facts on their own, slower loop. The inventory is hand-written, so
 	// "Argus covers all privileged access" is only checkable if hosts say what
@@ -1031,13 +1061,50 @@ func runDaemon(args []string) int {
 	var (
 		lastFacts []byte
 		lastSent  time.Time
+		// The VPN loop reads cloudflared's port from the last application
+		// scan, and the facts pass sends the VPN loop's last scan.
+		vpnMu        sync.Mutex
+		vpnListeners []agent.Listener
+		vpnLast      agent.VPNScan
+		vpnState     string
 	)
+	// VPN links on their own, one-minute loop: a link going down should reach
+	// the console in about a minute, so a change of up or down asks for a
+	// facts pass at once. Byte counters and handshake times alone do not.
+	go loop(log, "vpn links", time.Minute, stop, func() {
+		vpnMu.Lock()
+		ls := vpnListeners
+		vpnMu.Unlock()
+		scan := agent.DiscoverVPN(ctx, ls)
+		state := scan.State(time.Now())
+		vpnMu.Lock()
+		changed := state != vpnState
+		vpnLast, vpnState = scan, state
+		vpnMu.Unlock()
+		if changed {
+			select {
+			case factsNow <- struct{}{}:
+			default:
+			}
+		}
+	})
 	go loopOrNow(log, "host facts", 10*time.Minute, stop, factsNow, func() {
 		f := agent.Discover(agent.DefaultDiscoverConfig())
 		apps := agent.DiscoverApps(ctx)
 		sys := agent.DiscoverSystem()
 		writeJSON(*stateDir+"/facts.json", f, log)
 		writeJSON(*stateDir+"/applications.json", apps, log)
+		vpnMu.Lock()
+		first := vpnListeners == nil
+		vpnListeners = apps.Listeners
+		vpn, vpnNow := vpnLast, vpnState
+		vpnMu.Unlock()
+		if first {
+			// The first pass runs before the VPN loop has a port to ask
+			// cloudflared on.
+			vpn = agent.DiscoverVPN(ctx, apps.Listeners)
+			vpnNow = vpn.State(time.Now())
+		}
 
 		report := map[string]any{
 			"hostname":     f.Hostname,
@@ -1049,11 +1116,13 @@ func runDaemon(args []string) int {
 			"accounts":     f.Accounts,
 			"applications": apps,
 			"system":       sys,
+			"vpn":          vpn,
 		}
-		// Compared without the scan time, which differs every run.
+		// Compared without the scan time, which differs every run, and with
+		// the VPN's up-or-down state rather than its counters.
 		probe := apps
 		probe.CheckedAt = time.Time{}
-		fingerprint, _ := json.Marshal([]any{f, probe, sys})
+		fingerprint, _ := json.Marshal([]any{f, probe, sys, vpnNow})
 		if bytes.Equal(fingerprint, lastFacts) && time.Since(lastSent) < time.Hour {
 			return
 		}

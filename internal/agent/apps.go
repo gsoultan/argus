@@ -169,6 +169,23 @@ var appCatalogue = []appSpec{
 	{kind: "vault", name: "Vault", processes: []string{"vault"}, units: []string{"vault"}, images: []string{"vault"},
 		packages: regexp.MustCompile(`^vault$`)},
 	{kind: "minio", name: "MinIO", processes: []string{"minio"}, units: []string{"minio"}, images: []string{"minio"}},
+	// VPNs and tunnels. Found here like any application; vpn.go reads how
+	// their links are doing.
+	{kind: "wireguard", name: "WireGuard", units: []string{"wg-quick@*"},
+		packages: regexp.MustCompile(`^wireguard(-tools)?$`)},
+	{kind: "cloudflared", name: "Cloudflare Tunnel", processes: []string{"cloudflared"}, units: []string{"cloudflared*"},
+		images: []string{"cloudflared"}, packages: regexp.MustCompile(`^cloudflared$`)},
+	{kind: "warp", name: "Cloudflare WARP", processes: []string{"warp-svc"}, units: []string{"warp-svc"},
+		packages: regexp.MustCompile(`^cloudflare-warp$`)},
+	{kind: "openvpn", name: "OpenVPN", processes: []string{"openvpn"}, units: []string{"openvpn*"},
+		images: []string{"openvpn", "openvpn-as"}, packages: regexp.MustCompile(`^openvpn$`)},
+	{kind: "strongswan", name: "strongSwan (IPsec)", processes: []string{"charon", "charon-systemd"},
+		units: []string{"strongswan*"}, packages: regexp.MustCompile(`^strongswan(-starter|-charon|-swanctl)?$`)},
+	{kind: "libreswan", name: "Libreswan (IPsec)", processes: []string{"pluto"}, packages: regexp.MustCompile(`^libreswan$`)},
+	{kind: "tailscale", name: "Tailscale", processes: []string{"tailscaled"}, units: []string{"tailscaled"},
+		packages: regexp.MustCompile(`^tailscale$`)},
+	{kind: "zerotier", name: "ZeroTier", processes: []string{"zerotier-one"}, units: []string{"zerotier-one"},
+		packages: regexp.MustCompile(`^zerotier-one$`)},
 }
 
 func specOf(kind string) *appSpec {

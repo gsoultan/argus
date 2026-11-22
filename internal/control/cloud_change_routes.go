@@ -490,6 +490,9 @@ func (a *API) planChange(r *http.Request, m cloudManaged, actor string, in *clou
 	if isReplica(in.Action) {
 		return a.planReplica(r, m, in, ch)
 	}
+	if in.Action == cloud.ActionVPNCreate {
+		return a.planVPN(r, m, in, ch)
+	}
 	if cloud.IsBuy(in.Action) {
 		return a.planBuy(r, m, actor, in, ch)
 	}
@@ -1150,6 +1153,8 @@ func (a *API) applyCloudChange(r *http.Request, m cloudManaged, ch CloudChange) 
 			res, err = a.applyCapacity(ctx, m, ch)
 		} else if isReplica(ch.Action) {
 			res, err = a.applyReplica(ctx, m, ch)
+		} else if ch.Action == cloud.ActionVPNCreate {
+			res, err = a.applyVPN(ctx, r, m, ch)
 		} else if cloud.IsBuy(ch.Action) {
 			res, err = a.applyBuy(ctx, m, ch)
 		} else if cloud.IsBalancing(ch.Action) {

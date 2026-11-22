@@ -366,6 +366,8 @@ var actionNeeds = map[cloud.Action][]string{
 	cloud.ActionFloorPolicy:   {"autoscaling:PutScalingPolicy", "autoscaling:UpdateAutoScalingGroup"},
 	cloud.ActionReplicaCreate: {"rds:CreateDBInstanceReadReplica", "rds:AddTagsToResource"},
 	cloud.ActionReplicaRemove: {"rds:ModifyDBInstance", "rds:DeleteDBInstance"},
+	cloud.ActionVPNCreate: {"ec2:CreateCustomerGateway", "ec2:CreateVpnGateway", "ec2:AttachVpnGateway",
+		"ec2:CreateVpnConnection", "ec2:CreateVpnConnectionRoute", "ec2:EnableVgwRoutePropagation", "ec2:CreateTags"},
 }
 
 // Needs is the permissions an action takes.

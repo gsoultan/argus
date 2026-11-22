@@ -18,11 +18,13 @@ import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as CoverageRouteImport } from './routes/coverage'
 import { Route as MineRouteImport } from './routes/mine'
 import { Route as NetworkDevicesRouteImport } from './routes/network-devices'
+import { Route as NetworksRouteImport } from './routes/networks'
 import { Route as RequestsRouteImport } from './routes/requests'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as TeamsRouteImport } from './routes/teams'
 import { Route as UsersRouteImport } from './routes/users'
+import { Route as VpnRouteImport } from './routes/vpn'
 import { Route as WebsitesRouteImport } from './routes/websites'
 import { Route as AssetsIndexRouteImport } from './routes/assets.index'
 import { Route as AssetsAssetIdRouteImport } from './routes/assets.$assetId'
@@ -88,6 +90,11 @@ const NetworkDevicesRoute = NetworkDevicesRouteImport.update({
   path: '/network-devices',
   getParentRoute: () => rootRouteImport,
 } as any)
+const NetworksRoute = NetworksRouteImport.update({
+  id: '/networks',
+  path: '/networks',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const RequestsRoute = RequestsRouteImport.update({
   id: '/requests',
   path: '/requests',
@@ -111,6 +118,11 @@ const TeamsRoute = TeamsRouteImport.update({
 const UsersRoute = UsersRouteImport.update({
   id: '/users',
   path: '/users',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const VpnRoute = VpnRouteImport.update({
+  id: '/vpn',
+  path: '/vpn',
   getParentRoute: () => rootRouteImport,
 } as any)
 const WebsitesRoute = WebsitesRouteImport.update({
@@ -219,11 +231,13 @@ export interface FileRoutesByFullPath {
   '/coverage': typeof CoverageRoute
   '/mine': typeof MineRoute
   '/network-devices': typeof NetworkDevicesRoute
+  '/networks': typeof NetworksRoute
   '/requests': typeof RequestsRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/teams': typeof TeamsRoute
   '/users': typeof UsersRoute
+  '/vpn': typeof VpnRoute
   '/websites': typeof WebsitesRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
   '/assets/add': typeof AssetsAddRoute
@@ -254,11 +268,13 @@ export interface FileRoutesByTo {
   '/coverage': typeof CoverageRoute
   '/mine': typeof MineRoute
   '/network-devices': typeof NetworkDevicesRoute
+  '/networks': typeof NetworksRoute
   '/requests': typeof RequestsRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/teams': typeof TeamsRoute
   '/users': typeof UsersRoute
+  '/vpn': typeof VpnRoute
   '/websites': typeof WebsitesRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
   '/assets/add': typeof AssetsAddRoute
@@ -290,11 +306,13 @@ export interface FileRoutesById {
   '/coverage': typeof CoverageRoute
   '/mine': typeof MineRoute
   '/network-devices': typeof NetworkDevicesRoute
+  '/networks': typeof NetworksRoute
   '/requests': typeof RequestsRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/teams': typeof TeamsRoute
   '/users': typeof UsersRoute
+  '/vpn': typeof VpnRoute
   '/websites': typeof WebsitesRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
   '/assets/add': typeof AssetsAddRoute
@@ -327,11 +345,13 @@ export interface FileRouteTypes {
     | '/coverage'
     | '/mine'
     | '/network-devices'
+    | '/networks'
     | '/requests'
     | '/settings'
     | '/setup'
     | '/teams'
     | '/users'
+    | '/vpn'
     | '/websites'
     | '/assets/$assetId'
     | '/assets/add'
@@ -362,11 +382,13 @@ export interface FileRouteTypes {
     | '/coverage'
     | '/mine'
     | '/network-devices'
+    | '/networks'
     | '/requests'
     | '/settings'
     | '/setup'
     | '/teams'
     | '/users'
+    | '/vpn'
     | '/websites'
     | '/assets/$assetId'
     | '/assets/add'
@@ -397,11 +419,13 @@ export interface FileRouteTypes {
     | '/coverage'
     | '/mine'
     | '/network-devices'
+    | '/networks'
     | '/requests'
     | '/settings'
     | '/setup'
     | '/teams'
     | '/users'
+    | '/vpn'
     | '/websites'
     | '/assets/$assetId'
     | '/assets/add'
@@ -433,11 +457,13 @@ export interface RootRouteChildren {
   CoverageRoute: typeof CoverageRoute
   MineRoute: typeof MineRoute
   NetworkDevicesRoute: typeof NetworkDevicesRoute
+  NetworksRoute: typeof NetworksRoute
   RequestsRoute: typeof RequestsRoute
   SettingsRoute: typeof SettingsRoute
   SetupRoute: typeof SetupRoute
   TeamsRoute: typeof TeamsRoute
   UsersRoute: typeof UsersRoute
+  VpnRoute: typeof VpnRoute
   WebsitesRoute: typeof WebsitesRoute
   AssetsAssetIdRoute: typeof AssetsAssetIdRoute
   AssetsAddRoute: typeof AssetsAddRoute
@@ -524,6 +550,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof NetworkDevicesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/networks': {
+      id: '/networks'
+      path: '/networks'
+      fullPath: '/networks'
+      preLoaderRoute: typeof NetworksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/requests': {
       id: '/requests'
       path: '/requests'
@@ -557,6 +590,13 @@ declare module '@tanstack/react-router' {
       path: '/users'
       fullPath: '/users'
       preLoaderRoute: typeof UsersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/vpn': {
+      id: '/vpn'
+      path: '/vpn'
+      fullPath: '/vpn'
+      preLoaderRoute: typeof VpnRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/websites': {
@@ -705,11 +745,13 @@ const rootRouteChildren: RootRouteChildren = {
   CoverageRoute: CoverageRoute,
   MineRoute: MineRoute,
   NetworkDevicesRoute: NetworkDevicesRoute,
+  NetworksRoute: NetworksRoute,
   RequestsRoute: RequestsRoute,
   SettingsRoute: SettingsRoute,
   SetupRoute: SetupRoute,
   TeamsRoute: TeamsRoute,
   UsersRoute: UsersRoute,
+  VpnRoute: VpnRoute,
   WebsitesRoute: WebsitesRoute,
   AssetsAssetIdRoute: AssetsAssetIdRoute,
   AssetsAddRoute: AssetsAddRoute,
