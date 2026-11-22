@@ -42,6 +42,7 @@ import (
 	"github.com/gsoultan/argus/internal/control/rgen/databaserestore"
 	"github.com/gsoultan/argus/internal/control/rgen/databasestatement"
 	"github.com/gsoultan/argus/internal/control/rgen/databasestatementitem"
+	"github.com/gsoultan/argus/internal/control/rgen/ipseclink"
 	"github.com/gsoultan/argus/internal/control/rgen/recoverycode"
 	"github.com/gsoultan/argus/internal/control/rgen/savedquery"
 	"github.com/gsoultan/argus/internal/control/rgen/scalegroup"
@@ -92,61 +93,62 @@ var FlushOrder = map[string]int{
 	"disk_grow_runs":            22,
 	"gateway_policy":            23,
 	"host_key_pins":             24,
-	"log_cleanup_rules":         25,
-	"log_cleanup_runs":          26,
-	"package_runs":              27,
-	"package_update_rules":      28,
-	"redeemed_tickets":          29,
-	"revoked_sessions":          30,
-	"saved_queries":             31,
-	"scale_groups":              32,
-	"schema_migrations":         33,
-	"server_logins":             34,
-	"sessions":                  35,
-	"sign_in_devices":           36,
-	"software_files":            37,
-	"software_previews":         38,
-	"software_scripts":          39,
-	"teams":                     40,
-	"telegram_bots":             41,
-	"telegram_routes":           42,
-	"ui_preferences":            43,
-	"usage_history":             44,
-	"usage_hourly":              45,
-	"users":                     46,
-	"website_alert_settings":    47,
-	"website_checks":            48,
-	"website_outages":           49,
-	"website_rounds":            50,
-	"wg_networks":               51,
-	"access_requests":           52,
-	"agent_enrollment_tokens":   53,
-	"asset_assignments":         54,
-	"asset_team_assignments":    55,
-	"check_outages":             56,
-	"check_rounds":              57,
-	"check_viewers":             58,
-	"cloud_access":              59,
-	"cloud_schedule_runs":       60,
-	"console_alert_reads":       61,
-	"database_access_rules":     62,
-	"database_assignments":      63,
-	"database_backup_schedules": 64,
-	"database_backups":          65,
-	"database_changes":          66,
-	"database_read_endpoints":   67,
-	"database_replicas":         68,
-	"database_restores":         69,
-	"database_statements":       70,
-	"recovery_codes":            71,
-	"scale_group_activity":      72,
-	"scale_group_members":       73,
-	"software_script_versions":  74,
-	"team_members":              75,
-	"wg_members":                76,
-	"agent_credentials":         77,
-	"database_backup_tests":     78,
-	"database_statement_items":  79,
+	"ipsec_links":               25,
+	"log_cleanup_rules":         26,
+	"log_cleanup_runs":          27,
+	"package_runs":              28,
+	"package_update_rules":      29,
+	"redeemed_tickets":          30,
+	"revoked_sessions":          31,
+	"saved_queries":             32,
+	"scale_groups":              33,
+	"schema_migrations":         34,
+	"server_logins":             35,
+	"sessions":                  36,
+	"sign_in_devices":           37,
+	"software_files":            38,
+	"software_previews":         39,
+	"software_scripts":          40,
+	"teams":                     41,
+	"telegram_bots":             42,
+	"telegram_routes":           43,
+	"ui_preferences":            44,
+	"usage_history":             45,
+	"usage_hourly":              46,
+	"users":                     47,
+	"website_alert_settings":    48,
+	"website_checks":            49,
+	"website_outages":           50,
+	"website_rounds":            51,
+	"wg_networks":               52,
+	"access_requests":           53,
+	"agent_enrollment_tokens":   54,
+	"asset_assignments":         55,
+	"asset_team_assignments":    56,
+	"check_outages":             57,
+	"check_rounds":              58,
+	"check_viewers":             59,
+	"cloud_access":              60,
+	"cloud_schedule_runs":       61,
+	"console_alert_reads":       62,
+	"database_access_rules":     63,
+	"database_assignments":      64,
+	"database_backup_schedules": 65,
+	"database_backups":          66,
+	"database_changes":          67,
+	"database_read_endpoints":   68,
+	"database_replicas":         69,
+	"database_restores":         70,
+	"database_statements":       71,
+	"recovery_codes":            72,
+	"scale_group_activity":      73,
+	"scale_group_members":       74,
+	"software_script_versions":  75,
+	"team_members":              76,
+	"wg_members":                77,
+	"agent_credentials":         78,
+	"database_backup_tests":     79,
+	"database_statement_items":  80,
 }
 
 // NewUnit stages writes across this context and flushes them in foreign-key
@@ -5527,6 +5529,121 @@ func (p DatabaseWithAssetQuery) All(ctx context.Context, ex runtime.Executor) ([
 			// A foreign key pointing at a row that is not there. The database
 			// forbids it, so reaching this means the constraint was dropped.
 			return nil, fmt.Errorf("storm: %s references a missing %s row", "databases", "assets")
+		}
+		out[i].Asset = targets[j]
+	}
+	return out, nil
+}
+
+// IpsecLinkWithAssetRow is ipsec_links with its Asset loaded.
+type IpsecLinkWithAssetRow struct {
+	ipseclink.Row
+	Asset asset.Row
+}
+
+type IpsecLinkWithAssetQuery struct {
+	q ipseclink.Query
+}
+
+// IpsecLinkWithAsset starts the plan.
+func IpsecLinkWithAsset() IpsecLinkWithAssetQuery { return IpsecLinkWithAssetQuery{q: ipseclink.New()} }
+
+func (p IpsecLinkWithAssetQuery) Where(ps ...ipseclink.Pred) IpsecLinkWithAssetQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p IpsecLinkWithAssetQuery) WhereIf(cond bool, pr ipseclink.Pred) IpsecLinkWithAssetQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p IpsecLinkWithAssetQuery) Any(ps ...ipseclink.Pred) IpsecLinkWithAssetQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p IpsecLinkWithAssetQuery) Not(pr ipseclink.Pred) IpsecLinkWithAssetQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p IpsecLinkWithAssetQuery) NotAny(ps ...ipseclink.Pred) IpsecLinkWithAssetQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p IpsecLinkWithAssetQuery) Order(ts ...ipseclink.Sort) IpsecLinkWithAssetQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p IpsecLinkWithAssetQuery) Limit(n int64) IpsecLinkWithAssetQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p IpsecLinkWithAssetQuery) Offset(n int64) IpsecLinkWithAssetQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p IpsecLinkWithAssetQuery) After(r IpsecLinkWithAssetRow) IpsecLinkWithAssetQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p IpsecLinkWithAssetQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p IpsecLinkWithAssetQuery) All(ctx context.Context, ex runtime.Executor) ([]IpsecLinkWithAssetRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]IpsecLinkWithAssetRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = IpsecLinkWithAssetRow{Row: r}
+		key := r.AssetID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := asset.New().Unordered().
+		Where(asset.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.AssetID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "ipsec_links", "assets")
 		}
 		out[i].Asset = targets[j]
 	}

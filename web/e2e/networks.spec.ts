@@ -95,6 +95,19 @@ const WG = {
   ],
 }
 
+const IPSEC = {
+  links: [
+    { id: 'i1', name: 'Jakarta office to AWS', conn: 'argus-0a1b2c3d', assetId: 'a3', hostname: 'gw-jkt-01', peer: '108.136.1.10',
+      localRanges: ['192.168.10.0/24'], remoteRanges: ['10.30.0.0/16'], proposals: 'strong', state: 'active', requestedBy: 'rina@northwind.id',
+      approvedBy: 'dev@northwind.id', createdAt: ago(600), server: 'applied', serverAt: ago(50), link: 'down',
+      cloud: { provider: 'aws', accountName: 'prod', region: 'ap-southeast-3', name: 'jakarta-office', up: false, why: 'IPSEC IS DOWN' } },
+    { id: 'i2', name: 'Branch firewall', conn: 'argus-9f8e7d6c', assetId: 'a1', hostname: 'db-prod-01', peer: '36.72.1.9',
+      localRanges: ['10.88.0.0/24'], remoteRanges: ['192.168.20.0/24'], proposals: 'compatible', state: 'waiting', requestedBy: 'rina@northwind.id',
+      createdAt: ago(4), pendingBy: 'rina@northwind.id', pendingAt: ago(4),
+      pending: { name: 'Branch firewall', assetId: 'a1', hostname: 'db-prod-01', peer: '36.72.1.9', localRanges: ['10.88.0.0/24'], remoteRanges: ['192.168.20.0/24'], proposals: 'compatible' } },
+  ],
+}
+
 async function signIn(page: Page) {
   await page.goto('/')
   await page.getByLabel(/^email$/i).fill('dev@northwind.id')
@@ -106,6 +119,8 @@ async function signIn(page: Page) {
     ? r.fulfill({ json: WG })
     : r.fulfill({ status: 400, json: { error: '10.88.0.0/24 overlaps the Argus network Database mesh (10.88.0.0/24): pick a range nothing else uses' } }))
   await page.route('**/api/v1/networks/wireguard/*/approve', (r) => r.fulfill({ status: 204 }))
+  await page.route('**/api/v1/networks/ipsec', (r) => r.fulfill({ json: IPSEC }))
+  await page.route('**/api/v1/networks/ipsec/*/key', (r) => r.fulfill({ json: { psk: 'Kq3vX9tLmP2wR8sYzN4bH7cJ1dF6gA0eUoIiQxWv' } }))
   await page.route('**/api/v1/networks/cloudflare', (r) => r.request().method() === 'GET'
     ? r.fulfill({ json: { accounts: [], canSave: true } })
     : r.fulfill({ status: 400, json: { error: 'Cloudflare refused the token: Cloudflare answered 403: Unauthorized. It needs Cloudflare Tunnel Read on this account' } }))
@@ -194,6 +209,33 @@ test('networks: server networks wait for a second admin and show what each serve
   await dialog.getByRole('button', { name: 'Ask for approval' }).click()
   await expect(page.getByText(/overlaps the Argus network Database mesh/)).toBeVisible()
   await expect(dialog).toBeVisible()
+})
+
+test('networks: IPsec links show both ends and the key only on request', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await signIn(page)
+  await page.goto('/networks')
+  const aws = page.getByTestId('ipsec-link').filter({ hasText: 'Jakarta office to AWS' })
+  await expect(aws).toContainText('Down')
+  await expect(aws.getByTestId('ipsec-cloud')).toContainText('jakarta-office in AWS prod (ap-southeast-3): the cloud says this tunnel is down (IPSEC IS DOWN)')
+  await expect(page.getByTestId('ipsec-link').filter({ hasText: 'Branch firewall' }).getByTestId('ipsec-pending')).toContainText('rina@northwind.id asks to set it up')
+  if (SHOTS) await aws.locator('xpath=ancestor::*[contains(@class,"mantine-Paper")][1]').screenshot({ path: `${SHOTS}/networks-ipsec-links.png` })
+  await aws.getByRole('button', { name: 'Show key' }).click()
+  await expect(page.getByTestId('ipsec-key')).toHaveText('Kq3vX9tLmP2wR8sYzN4bH7cJ1dF6gA0eUoIiQxWv')
+  await page.keyboard.press('Escape')
+
+  await page.getByRole('button', { name: 'New link' }).click()
+  const dialog = page.getByRole('dialog', { name: 'New IPsec link' })
+  await dialog.getByLabel('Name').fill('Office to Azure')
+  await dialog.getByLabel('Other end').fill('20.1.2.3')
+  await dialog.getByLabel('Ranges on this side').fill('192.168.10.0/24')
+  await dialog.getByLabel('Ranges on the other side').fill('10.40.0.0/16')
+  await dialog.getByText('Compatible', { exact: true }).click()
+  await expect(dialog).toContainText('Azure gateway on its default policy')
+  await dialog.getByText('Use the key the cloud made').click()
+  await expect(dialog.getByLabel('Key', { exact: true })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Ask for approval' })).toBeDisabled()
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/networks-new-ipsec-link.png` })
 })
 
 test('networks: on a phone', async ({ page }) => {

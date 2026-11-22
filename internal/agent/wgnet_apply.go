@@ -39,6 +39,16 @@ type wgnetOps interface {
 	openPort(ctx context.Context, port int) (bool, error)
 	closePort(ctx context.Context, port int) error
 	readKey(stateDir, network string) (string, error)
+
+	// The IPsec links' side (ipsec.go): strongSwan's tools, the files
+	// under /etc/swanctl/conf.d Argus made, and loading them.
+	haveSwan() bool
+	installSwan(ctx context.Context) error
+	swanExisting() ([]string, error)
+	readSwan(conn string) (string, bool, error)
+	writeSwan(conn, text string) error
+	removeSwan(conn string) error
+	swanReload(ctx context.Context) error
 }
 
 // wgnetChange is what the helper did to one interface, to undo it.
@@ -49,6 +59,8 @@ type wgnetChange struct {
 	wasUp    bool
 	opened   int
 	removing bool
+	// swan marks an IPsec connection's file rather than an interface.
+	swan bool
 }
 
 // RunWGNetApply is the helper's entry point. It returns the exit code.
@@ -124,6 +136,11 @@ func applyWGNet(ctx context.Context, ops wgnetOps, plan WGNetPlan, confirmed fun
 			return WGNetFailed, "refused: " + err.Error()
 		}
 	}
+	for _, l := range plan.IPsec {
+		if err := validIPsecSpec(l, avoid); err != nil {
+			return WGNetFailed, "refused: " + err.Error()
+		}
+	}
 	if len(plan.Networks) > 0 && !ops.haveTools() {
 		writeWGNetRun(plan, WGNetApplying, "installing wireguard-tools")
 		if err := ops.install(ctx); err != nil {
@@ -140,9 +157,18 @@ func applyWGNet(ctx context.Context, ops wgnetOps, plan WGNetPlan, confirmed fun
 	}
 
 	var done []wgnetChange
+	swanTouched := false
 	undo := func(why string) (string, string) {
 		for i := len(done) - 1; i >= 0; i-- {
 			c := done[i]
+			if c.swan {
+				if c.hadPrev {
+					_ = ops.writeSwan(c.iface, c.prev)
+				} else {
+					_ = ops.removeSwan(c.iface)
+				}
+				continue
+			}
 			_ = ops.down(ctx, c.iface)
 			if c.hadPrev {
 				_ = ops.writeConf(c.iface, c.prev)
@@ -155,6 +181,9 @@ func applyWGNet(ctx context.Context, ops wgnetOps, plan WGNetPlan, confirmed fun
 			if c.opened > 0 {
 				_ = ops.closePort(ctx, c.opened)
 			}
+		}
+		if swanTouched {
+			_ = ops.swanReload(ctx)
 		}
 		return WGNetRolledBack, why
 	}
@@ -212,6 +241,55 @@ func applyWGNet(ctx context.Context, ops wgnetOps, plan WGNetPlan, confirmed fun
 			}
 		}
 	}
+	// IPsec links: files first, then one reload.
+	if len(plan.IPsec) > 0 && !ops.haveSwan() {
+		writeWGNetRun(plan, WGNetApplying, "installing strongSwan")
+		if err := ops.installSwan(ctx); err != nil {
+			return undo("cannot install strongSwan: " + err.Error())
+		}
+	}
+	haveSwan, err := ops.swanExisting()
+	if err != nil {
+		return undo("cannot read /etc/swanctl/conf.d: " + err.Error())
+	}
+	wantSwan := map[string]bool{}
+	for _, l := range plan.IPsec {
+		wantSwan[l.Conn] = true
+	}
+	for _, conn := range haveSwan {
+		if wantSwan[conn] || !reIPsecConn.MatchString(conn) {
+			continue
+		}
+		prev, _, err := ops.readSwan(conn)
+		if err != nil {
+			return undo("cannot read " + conn + ": " + err.Error())
+		}
+		done = append(done, wgnetChange{iface: conn, prev: prev, hadPrev: true, removing: true, swan: true})
+		swanTouched = true
+		if err := ops.removeSwan(conn); err != nil {
+			return undo("cannot remove " + conn + ": " + err.Error())
+		}
+	}
+	for _, l := range plan.IPsec {
+		text := swanConfig(l)
+		prev, had, err := ops.readSwan(l.Conn)
+		if err != nil {
+			return undo("cannot read " + l.Conn + ": " + err.Error())
+		}
+		if had && prev == text {
+			continue
+		}
+		done = append(done, wgnetChange{iface: l.Conn, prev: prev, hadPrev: had, swan: true})
+		swanTouched = true
+		if err := ops.writeSwan(l.Conn, text); err != nil {
+			return undo("cannot write " + l.Conn + ": " + err.Error())
+		}
+	}
+	if swanTouched {
+		if err := ops.swanReload(ctx); err != nil {
+			return undo("strongSwan would not load the links: " + err.Error())
+		}
+	}
 	if len(done) == 0 {
 		return WGNetApplied, "nothing to change"
 	}
@@ -220,7 +298,7 @@ func applyWGNet(ctx context.Context, ops wgnetOps, plan WGNetPlan, confirmed fun
 	if !confirmed(ctx) {
 		return undo("the server did not reach Argus within 2 minutes of the change, so it was undone")
 	}
-	return WGNetApplied, fmt.Sprintf("%d interface(s) changed", len(done))
+	return WGNetApplied, fmt.Sprintf("%d interface(s) or link(s) changed", len(done))
 }
 
 var errWGNetNotHere = errors.New("WireGuard networks from the console are for Linux servers")

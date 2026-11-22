@@ -1018,6 +1018,30 @@ func _assertHostKeyPinShape(m m0.HostKeyPin) {
 	}
 }
 
+// _assertIpsecLinkShape fails to compile if m0.IpsecLink gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertIpsecLinkShape(m m0.IpsecLink) {
+	type shape m0.IpsecLink
+	_ = shape{
+		m.Model,
+		m.Name,
+		m.Conn,
+		m.Asset,
+		m.Peer,
+		m.LocalRanges,
+		m.RemoteRanges,
+		m.Proposals,
+		m.PskSealed,
+		m.State,
+		m.Pending,
+		m.PendingBy,
+		m.PendingAt,
+		m.RequestedBy,
+		m.ApprovedBy,
+		m.ApprovedAt,
+	}
+}
+
 // _assertLogCleanupRuleShape fails to compile if m0.LogCleanupRule gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertLogCleanupRuleShape(m m0.LogCleanupRule) {

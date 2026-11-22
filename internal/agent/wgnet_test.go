@@ -102,10 +102,16 @@ type fakeWGOps struct {
 	opened map[int]bool
 	failUp string
 	log    []string
+	// IPsec
+	swanTools  bool
+	swan       map[string]string
+	reloads    int
+	failReload bool
 }
 
 func newFakeWGOps() *fakeWGOps {
-	return &fakeWGOps{tools: true, confs: map[string]string{}, upIf: map[string]bool{}, opened: map[int]bool{}}
+	return &fakeWGOps{tools: true, swanTools: true, confs: map[string]string{}, upIf: map[string]bool{}, opened: map[int]bool{},
+		swan: map[string]string{}}
 }
 
 func (f *fakeWGOps) haveTools() bool { return f.tools }
@@ -138,6 +144,30 @@ func (f *fakeWGOps) openPort(_ context.Context, p int) (bool, error) {
 }
 func (f *fakeWGOps) closePort(_ context.Context, p int) error { delete(f.opened, p); return nil }
 func (f *fakeWGOps) readKey(string, string) (string, error)   { return "PRIV", nil }
+
+func (f *fakeWGOps) haveSwan() bool { return f.swanTools }
+func (f *fakeWGOps) installSwan(context.Context) error {
+	f.swanTools = true
+	f.log = append(f.log, "install strongswan")
+	return nil
+}
+func (f *fakeWGOps) swanExisting() ([]string, error) {
+	var out []string
+	for k := range f.swan {
+		out = append(out, k)
+	}
+	return out, nil
+}
+func (f *fakeWGOps) readSwan(c string) (string, bool, error) { t, ok := f.swan[c]; return t, ok, nil }
+func (f *fakeWGOps) writeSwan(c, t string) error             { f.swan[c] = t; return nil }
+func (f *fakeWGOps) removeSwan(c string) error               { delete(f.swan, c); return nil }
+func (f *fakeWGOps) swanReload(context.Context) error {
+	f.reloads++
+	if f.failReload {
+		return errors.New("loading connection 'argus-0a1b2c3d' failed")
+	}
+	return nil
+}
 
 func testPlan(t *testing.T, specs ...WGNetSpec) WGNetPlan {
 	return WGNetPlan{Run: WGNetRun{ID: "run-1"}, StateDir: t.TempDir(), Networks: specs}
@@ -207,6 +237,9 @@ func (p *fakeWGPlatform) launch(_ context.Context, plan, unit string) error {
 	return nil
 }
 func (p *fakeWGPlatform) active(string) bool { return true }
+func (p *fakeWGPlatform) listSA(_ context.Context, conn string) (string, error) {
+	return "argus-0a1b2c3d: #1, ESTABLISHED, IKEv2\n  argus-0a1b2c3d: #1, reqid 1, INSTALLED, TUNNEL", nil
+}
 
 func TestWGNetsMakeKeysAndStartOnce(t *testing.T) {
 	dir := t.TempDir()
@@ -261,5 +294,86 @@ func TestControlAddrs(t *testing.T) {
 	}
 	if got := ControlAddrs("")(); got != nil {
 		t.Fatalf("%v", got)
+	}
+}
+
+func testLink() IPsecSpec {
+	return IPsecSpec{ID: "22222222-2222-4333-8444-555555555555", Name: "office to aws", Conn: "argus-0a1b2c3d", Peer: "52.1.2.3",
+		LocalRanges: []string{"192.168.10.0/24"}, RemoteRanges: []string{"10.30.0.0/16"}, Proposals: "strong", PSK: "Abcdefghijklmnop1234._"}
+}
+
+func TestIPsecSpecRefuses(t *testing.T) {
+	for name, change := range map[string]func(*IPsecSpec){
+		"foreign conn":    func(s *IPsecSpec) { s.Conn = "office" },
+		"public remote":   func(s *IPsecSpec) { s.RemoteRanges = []string{"0.0.0.0/0"} },
+		"control plane":   func(s *IPsecSpec) { s.RemoteRanges = []string{"10.20.0.0/16"} },
+		"public local":    func(s *IPsecSpec) { s.LocalRanges = []string{"52.0.0.0/8"} },
+		"quote in key":    func(s *IPsecSpec) { s.PSK = `abcdefghijklmnop"; }` },
+		"short key":       func(s *IPsecSpec) { s.PSK = "short" },
+		"newline in peer": func(s *IPsecSpec) { s.Peer = "52.1.2.3\n}" },
+		"weak proposals":  func(s *IPsecSpec) { s.Proposals = "3des-md5-modp1024" },
+		"no ranges":       func(s *IPsecSpec) { s.LocalRanges = nil },
+	} {
+		l := testLink()
+		change(&l)
+		if validIPsecSpec(l, testAvoid) == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if err := validIPsecSpec(testLink(), testAvoid); err != nil {
+		t.Fatal(err)
+	}
+	c := swanConfig(testLink())
+	for _, want := range []string{"remote_addrs = 52.1.2.3", "proposals = aes256gcm16-prfsha384-ecp384", "local_ts = 192.168.10.0/24",
+		"remote_ts = 10.30.0.0/16", "start_action = start", `secret = "Abcdefghijklmnop1234._"`} {
+		if !strings.Contains(c, want) {
+			t.Errorf("missing %q in\n%s", want, c)
+		}
+	}
+}
+
+func TestWGNetApplyIPsec(t *testing.T) {
+	f := newFakeWGOps()
+	f.swanTools = false
+	f.swan["argus-99999999"] = "old link"
+	plan := testPlan(t)
+	plan.IPsec = []IPsecSpec{testLink()}
+	state, msg := applyWGNet(context.Background(), f, plan, func(context.Context) bool { return true })
+	if state != WGNetApplied || !strings.Contains(f.swan["argus-0a1b2c3d"], "52.1.2.3") || f.reloads != 1 {
+		t.Fatalf("%s: %s %+v", state, msg, f)
+	}
+	if _, ok := f.swan["argus-99999999"]; ok {
+		t.Error("a link no longer wanted is still there")
+	}
+
+	// strongSwan refusing the file puts everything back.
+	f = newFakeWGOps()
+	f.swan["argus-0a1b2c3d"] = "before"
+	f.failReload = true
+	state, msg = applyWGNet(context.Background(), f, plan, func(context.Context) bool { return true })
+	if state != WGNetRolledBack || f.swan["argus-0a1b2c3d"] != "before" || !strings.Contains(msg, "would not load") {
+		t.Fatalf("%s: %s %+v", state, msg, f.swan)
+	}
+	// So does a trial nobody confirms.
+	f = newFakeWGOps()
+	state, _ = applyWGNet(context.Background(), f, plan, func(context.Context) bool { return false })
+	if _, ok := f.swan["argus-0a1b2c3d"]; state != WGNetRolledBack || ok || f.reloads != 2 {
+		t.Fatalf("%s %+v", state, f)
+	}
+}
+
+func TestWGNetsIPsecBeat(t *testing.T) {
+	p := &fakeWGPlatform{}
+	w := &WGNets{StateDir: t.TempDir(), Log: slog.New(slog.NewTextHandler(io.Discard, nil)), platform: p, now: time.Now}
+	w.Handle(context.Background(), &WGNetOrders{IPsec: []IPsecSpec{testLink()}})
+	if len(p.launched) != 1 {
+		t.Fatal("not started")
+	}
+	b := w.Beat()
+	if b.IPsec[testLink().ID] != IPsecUp {
+		t.Fatalf("%+v", b.IPsec)
+	}
+	if strings.Contains(string(mustJSON(b)), testLink().PSK) {
+		t.Fatal("the key is in the beat")
 	}
 }

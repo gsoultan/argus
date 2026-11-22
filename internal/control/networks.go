@@ -276,6 +276,11 @@ func (s *Store) Networks(ctx context.Context, now time.Time) (NetworksView, erro
 		return NetworksView{}, err
 	}
 	addCloudNetworks(&v, vpns, cfs, now)
+	links, err := s.IPsecLinks(ctx)
+	if err != nil {
+		return NetworksView{}, err
+	}
+	addIPsecProblems(&v, links)
 	return v, nil
 }
 

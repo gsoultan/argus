@@ -1492,6 +1492,7 @@ func All() []any {
 		&CloudflareAccount{},
 		&WgNetwork{},
 		&WgMember{},
+		&IpsecLink{},
 		&UIPreference{},
 		&Team{},
 		&TeamMember{},
@@ -2972,4 +2973,48 @@ func (m *WgMember) Schema(t *storm.Table) {
 	t.CheckNamed("wg_members_public_key_check", "length(public_key) <= 44")
 	t.Col(&m.Routes).Default("'{}'::text[]")
 	t.CheckNamed("wg_members_routes_check", "cardinality(routes) <= 16")
+}
+
+// IpsecLink is table ipsec_links: an IPsec link from a server to a cloud VPN
+// gateway or an office firewall, set up with strongSwan through its agent
+// once a second admin approves it (control/ipsec_links.go).
+type IpsecLink struct {
+	storm.Model
+
+	Name         string
+	Conn         string
+	Asset        Asset
+	Peer         string
+	LocalRanges  []string
+	RemoteRanges []string
+	Proposals    string
+	PskSealed    []byte
+	State        string
+	Pending      *storm.JSON
+	PendingBy    string
+	PendingAt    *time.Time
+	RequestedBy  string
+	ApprovedBy   string
+	ApprovedAt   *time.Time
+}
+
+func (m *IpsecLink) Schema(t *storm.Table) {
+	t.Col(&m.Name).Unique()
+	t.Col(&m.Conn).Unique()
+	t.Col(&m.Asset).ConstraintName("ipsec_links_asset_id_fkey")
+	t.Col(&m.Asset).OnDelete(storm.Cascade)
+	t.Col(&m.Asset).NoIndex()
+	t.Index(&m.Asset).Named("ipsec_links_asset_id_idx")
+	t.Col(&m.PskSealed).NotNull()
+	t.Col(&m.State).Default("'waiting'::text")
+	t.Col(&m.PendingBy).Default("''::text")
+	t.Col(&m.ApprovedBy).Default("''::text")
+	t.CheckNamed("ipsec_links_name_check", "(length(name) >= 1) AND (length(name) <= 80)")
+	t.CheckNamed("ipsec_links_conn_check", "conn ~ '^argus-[0-9a-f]{8}$'::text")
+	t.CheckNamed("ipsec_links_peer_check", "(length(peer) >= 1) AND (length(peer) <= 253)")
+	t.CheckNamed("ipsec_links_local_ranges_check", "(cardinality(local_ranges) >= 1) AND (cardinality(local_ranges) <= 16)")
+	t.CheckNamed("ipsec_links_remote_ranges_check", "(cardinality(remote_ranges) >= 1) AND (cardinality(remote_ranges) <= 16)")
+	t.CheckNamed("ipsec_links_proposals_check", "proposals = ANY (ARRAY['strong'::text, 'compatible'::text])")
+	t.CheckNamed("ipsec_links_state_check", "state = ANY (ARRAY['waiting'::text, 'active'::text])")
+	t.CheckNamed("ipsec_links_pending_check", "((pending IS NULL) OR (octet_length((pending)::text) <= 20000))")
 }

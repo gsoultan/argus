@@ -336,3 +336,68 @@ export const WG_MEMBER_STATE: Record<WGMemberState, { label: string; color: stri
   failed: { label: 'Failed', color: 'rose', hint: 'The server could not apply it.' },
   'rolled-back': { label: 'Undone', color: 'rose', hint: 'The change was undone on the server, so it is as it was before.' },
 }
+
+/* ── IPsec links (strongSwan to cloud gateways and office firewalls) ─────── */
+
+export type IPsecProposals = 'strong' | 'compatible'
+
+export interface IPsecDraft {
+  name: string
+  assetId: string
+  hostname?: string
+  peer: string
+  localRanges: string[]
+  remoteRanges: string[]
+  proposals: IPsecProposals
+  newKey?: boolean
+  remove?: boolean
+}
+
+export interface IPsecLink {
+  id: string
+  name: string
+  conn: string
+  assetId: string
+  hostname: string
+  peer: string
+  localRanges: string[]
+  remoteRanges: string[]
+  proposals: IPsecProposals
+  state: 'waiting' | 'active'
+  pending?: IPsecDraft
+  pendingBy?: string
+  pendingAt?: string
+  requestedBy: string
+  approvedBy?: string
+  approvedAt?: string
+  createdAt: string
+  approveOwn?: boolean
+  /** How the change went on the server: WGMemberState. */
+  server?: WGMemberState
+  serverMessage?: string
+  serverAt?: string
+  /** What strongSwan on the server says. */
+  link?: 'up' | 'down' | 'unknown'
+  cloud?: { provider: string; accountName: string; region: string; name: string; up: boolean; why?: string }
+}
+
+export const ipsecLinksQuery = () =>
+  queryOptions({
+    queryKey: ['networks', 'ipsec'] as const,
+    queryFn: () => get<{ links: IPsecLink[] }>('/api/v1/networks/ipsec').then((v) => v.links),
+    refetchInterval: 15_000,
+  })
+
+const ipsecPath = (id?: string, tail = '') => `/api/v1/networks/ipsec${id ? `/${encodeURIComponent(id)}` : ''}${tail}`
+export const askIPsecLink = (d: IPsecDraft & { psk?: string }) => post<IPsecLink>(ipsecPath(), d)
+export const askIPsecChange = (id: string, d: IPsecDraft & { psk?: string }) => send<void>('PUT', ipsecPath(id), d)
+export const askIPsecRemove = (id: string) => send<void>('DELETE', ipsecPath(id))
+export const approveIPsec = (id: string, confirmSelf?: string) => post<void>(ipsecPath(id, '/approve'), confirmSelf ? { confirmSelf } : {})
+export const declineIPsec = (id: string) => post<void>(ipsecPath(id, '/decline'), {})
+export const showIPsecKey = (id: string) => post<{ psk: string }>(ipsecPath(id, '/key'), {})
+
+export const IPSEC_LINK: Record<string, { label: string; color: string }> = {
+  up: { label: 'Up', color: 'teal' },
+  down: { label: 'Down', color: 'rose' },
+  unknown: { label: 'Not known', color: 'slate' },
+}

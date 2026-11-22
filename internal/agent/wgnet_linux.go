@@ -36,6 +36,17 @@ func (p linuxWGNets) launch(ctx context.Context, planPath, unit string) error {
 	return nil
 }
 
+func (p linuxWGNets) listSA(ctx context.Context, conn string) (string, error) {
+	if !reIPsecConn.MatchString(conn) {
+		return "", errors.New("not an Argus connection")
+	}
+	out, err := exec.CommandContext(ctx, "swanctl", "--list-sas", "--ike", conn).CombinedOutput()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
 func (p linuxWGNets) active(unit string) bool {
 	return exec.Command("systemctl", "is-active", "--quiet", unit+".service").Run() == nil
 }
@@ -222,4 +233,101 @@ func (linuxWGNetOps) readKey(stateDir, network string) (string, error) {
 		return "", errors.New("the key file is damaged")
 	}
 	return k, nil
+}
+
+/* ── IPsec (ipsec.go) ───────────────────────────────────────────────────── */
+
+const swanConfDir = "/etc/swanctl/conf.d"
+
+func (linuxWGNetOps) haveSwan() bool { return wgHave("swanctl") }
+
+func (linuxWGNetOps) installSwan(ctx context.Context) error {
+	switch {
+	case wgHave("apt-get"):
+		return wgRun(ctx, "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "-q", "strongswan-swanctl", "charon-systemd")
+	case wgHave("dnf"):
+		return wgRun(ctx, "dnf", "install", "-y", "-q", "strongswan")
+	case wgHave("yum"):
+		return wgRun(ctx, "yum", "install", "-y", "-q", "strongswan")
+	case wgHave("zypper"):
+		return wgRun(ctx, "zypper", "--non-interactive", "install", "strongswan")
+	}
+	return errors.New("no package manager Argus knows; install strongSwan with swanctl and try again")
+}
+
+func (linuxWGNetOps) swanExisting() ([]string, error) {
+	entries, err := os.ReadDir(swanConfDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, e := range entries {
+		if name, ok := strings.CutSuffix(e.Name(), ".conf"); ok && reIPsecConn.MatchString(name) && e.Type().IsRegular() {
+			out = append(out, name)
+		}
+	}
+	return out, nil
+}
+
+func swanConfPath(conn string) (string, error) {
+	if !reIPsecConn.MatchString(conn) {
+		return "", errors.New("not an Argus connection")
+	}
+	return filepath.Join(swanConfDir, conn+".conf"), nil
+}
+
+func (linuxWGNetOps) readSwan(conn string) (string, bool, error) {
+	p, err := swanConfPath(conn)
+	if err != nil {
+		return "", false, err
+	}
+	fi, err := os.Lstat(p)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if !fi.Mode().IsRegular() {
+		return "", false, errors.New(p + " is not a regular file")
+	}
+	b, err := os.ReadFile(p)
+	return string(b), err == nil, err
+}
+
+func (linuxWGNetOps) writeSwan(conn, text string) error {
+	p, err := swanConfPath(conn)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(swanConfDir, 0o750); err != nil {
+		return err
+	}
+	return writeFileAtomic(p, []byte(text), 0o600)
+}
+
+func (linuxWGNetOps) removeSwan(conn string) error {
+	p, err := swanConfPath(conn)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// swanReload starts strongSwan if it is not running and loads every
+// connection and secret; a connection whose file went is unloaded.
+func (linuxWGNetOps) swanReload(ctx context.Context) error {
+	for _, unit := range []string{"strongswan", "strongswan-swanctl"} {
+		if exec.Command("systemctl", "cat", unit+".service").Run() == nil {
+			_ = wgRun(ctx, "systemctl", "enable", "--now", unit+".service")
+			break
+		}
+	}
+	return wgRun(ctx, "swanctl", "--load-all", "--noprompt")
 }

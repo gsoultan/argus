@@ -114,3 +114,14 @@ links, staff VPN).
   (`WGNets.Avoid` = `agent.ControlAddrs(controlURL)`, also carried in the
   plan for the helper). Return routes on the site's router / cloud route
   table are the admin's (the console says so).
+- IPsec links (migration 110, ipsec_links.go, agent ipsec.go): one Argus
+  server runs strongSwan (swanctl, /etc/swanctl/conf.d/argus-xxxxxxxx.conf)
+  to a cloud VPN gateway or office firewall. Same draft/approve flow and the
+  same 2-minute trial as WG networks (carried in the wgnet heartbeat as
+  `ipsec`). PSK sealed AES-GCM ("argus ipsec keys v1"), never in lists or
+  beats; `/api/v1/networks/ipsec/{id}/key` is admin-only and audited
+  (`ipsec.link.key_shown`). Ciphers: strong (aes256gcm16/ecp384) or
+  compatible (aes256-sha256-modp2048). The cloud end is matched to a known
+  cloud VPN tunnel by outside address (`matchCloudEnds`), so its state
+  shows. Problems: ipsec-down, ipsec-undone. Creating cloud gateways through
+  the cloud APIs is not built yet.

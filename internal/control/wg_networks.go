@@ -574,6 +574,8 @@ type wgAgentState struct {
 	Supported bool      `json:"supported"`
 	Reason    string    `json:"reason,omitempty"`
 	Run       *WGNetRun `json:"run,omitempty"`
+	// IPsec is whether each IPsec link is up, by link id.
+	IPsec map[string]string `json:"ipsec,omitempty"`
 }
 
 // WGNetworks reads every network with its members and how each is doing.
@@ -807,6 +809,7 @@ type (
 		Reason    string            `json:"reason,omitempty"`
 		Keys      map[string]string `json:"keys,omitempty"`
 		Run       *WGNetRun         `json:"run,omitempty"`
+		IPsec     map[string]string `json:"ipsec,omitempty"`
 	}
 	WGNetRun struct {
 		ID       string    `json:"id"`
@@ -818,6 +821,7 @@ type (
 	}
 	WGNetOrders struct {
 		Networks []WGNetSpec `json:"networks"`
+		IPsec    []IPsecSpec `json:"ipsec,omitempty"`
 	}
 	WGNetSpec struct {
 		ID         string      `json:"id"`
@@ -841,6 +845,14 @@ type (
 // said, to tell when one has just ended.
 func (s *Store) recordWGNetBeat(ctx context.Context, host, assetID string, b WGNetBeat) (*WGNetRun, error) {
 	st := wgAgentState{Supported: b.Supported, Reason: clip(b.Reason, 500), Run: b.Run}
+	if len(b.IPsec) > 0 {
+		st.IPsec = map[string]string{}
+		for id, state := range b.IPsec {
+			if _, err := uuid.Parse(id); err == nil && len(st.IPsec) < 32 {
+				st.IPsec[id] = clip(state, 20)
+			}
+		}
+	}
 	if st.Run != nil {
 		r := *st.Run
 		r.Message = clip(r.Message, 1000)
@@ -1019,5 +1031,10 @@ func (a *API) heartbeatWGNet(ctx context.Context, host string, b *WGNetBeat) *WG
 		a.log.Error("heartbeat: cannot read the WireGuard networks to send", "hostname", host, "error", err)
 		return nil
 	}
-	return &WGNetOrders{Networks: specs}
+	links, err := a.ipsecSpecsFor(ctx, assetID)
+	if err != nil {
+		a.log.Error("heartbeat: cannot read the IPsec links to send", "hostname", host, "error", err)
+		return nil
+	}
+	return &WGNetOrders{Networks: specs, IPsec: links}
 }

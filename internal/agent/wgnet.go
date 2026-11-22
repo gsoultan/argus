@@ -93,6 +93,9 @@ type WGNetPeer struct {
 // the whole set: a network missing from it is taken down.
 type WGNetOrders struct {
 	Networks []WGNetSpec `json:"networks"`
+	// IPsec is the whole set of IPsec links (ipsec.go). Absent from a
+	// control plane older than them, which is the same as none.
+	IPsec []IPsecSpec `json:"ipsec,omitempty"`
 }
 
 // WGNet run states.
@@ -133,6 +136,9 @@ type WGNetBeat struct {
 	// Keys is this server's public key for each network it was told of.
 	Keys map[string]string `json:"keys,omitempty"`
 	Run  *WGNetRun         `json:"run,omitempty"`
+	// IPsec is whether each IPsec link is up (IPsecUp, IPsecDown,
+	// IPsecUnknown), by link id.
+	IPsec map[string]string `json:"ipsec,omitempty"`
 }
 
 // WGNetPlan is what the helper is handed.
@@ -142,6 +148,7 @@ type WGNetPlan struct {
 	Avoid    []string    `json:"avoid,omitempty"`
 	StateDir string      `json:"state_dir"`
 	Networks []WGNetSpec `json:"networks"`
+	IPsec    []IPsecSpec `json:"ipsec,omitempty"`
 	// TrialSeconds is how long the helper waits to hear the change did not
 	// cut the server off from Argus.
 	TrialSeconds int `json:"trial_seconds"`
@@ -166,6 +173,8 @@ type wgnetPlatform interface {
 	supported() string
 	launch(ctx context.Context, planPath, unit string) error
 	active(unit string) bool
+	// listSA is what swanctl says of an IPsec connection.
+	listSA(ctx context.Context, conn string) (string, error)
 }
 
 // WGNets is the daemon's half.
@@ -185,6 +194,7 @@ type WGNets struct {
 	loaded bool
 	keys   map[string]string
 	want   []WGNetSpec
+	ipsec  []IPsecSpec
 	run    WGNetRun
 	// confirmed is the run a heartbeat sent during its trial confirmed.
 	confirmed string
@@ -200,6 +210,19 @@ func NewWGNets(stateDir, executable string, log *slog.Logger) *WGNets {
 
 // Beat is what to put on the next heartbeat.
 func (w *WGNets) Beat() WGNetBeat {
+	b := w.beatLocked()
+	w.mu.Lock()
+	links := append([]IPsecSpec(nil), w.ipsec...)
+	w.mu.Unlock()
+	if len(links) > 0 && b.Supported {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		b.IPsec = ipsecStates(ctx, links, w.platform.listSA)
+		cancel()
+	}
+	return b
+}
+
+func (w *WGNets) beatLocked() WGNetBeat {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.loadLocked()
@@ -266,6 +289,17 @@ func (w *WGNets) Handle(ctx context.Context, o *WGNetOrders) {
 			return
 		}
 	}
+	if len(o.IPsec) > ipsecMaxLinks {
+		w.Log.Error("ipsec: refusing more links than an agent sets up", "count", len(o.IPsec))
+		return
+	}
+	for _, l := range o.IPsec {
+		// The error never names the key.
+		if err := validIPsecSpec(l, avoid); err != nil {
+			w.Log.Error("ipsec: refusing the console's links", "link", l.ID, "error", err)
+			return
+		}
+	}
 	// A key for every network first: the others cannot add this server as a
 	// peer until its public key has been reported.
 	newKey := false
@@ -284,8 +318,8 @@ func (w *WGNets) Handle(ctx context.Context, o *WGNetOrders) {
 	if newKey {
 		defer w.changedAsync()
 	}
-	w.want = specs
-	want := wgnetFingerprint(specs)
+	w.want, w.ipsec = specs, o.IPsec
+	want := wgnetFingerprint(specs, o.IPsec)
 	// A change that failed or rolled back is not tried again until the
 	// console asks for something different.
 	if want == w.run.Want {
@@ -294,10 +328,10 @@ func (w *WGNets) Handle(ctx context.Context, o *WGNetOrders) {
 	if w.run.ID != "" && !w.run.Finished() {
 		return
 	}
-	if len(specs) == 0 && w.run.ID == "" {
+	if len(specs) == 0 && len(o.IPsec) == 0 && w.run.ID == "" {
 		return
 	}
-	w.startLocked(ctx, specs, want)
+	w.startLocked(ctx, specs, o.IPsec, want)
 }
 
 func (w *WGNets) avoid() []netip.Addr {
@@ -313,12 +347,15 @@ func (w *WGNets) changedAsync() {
 	}
 }
 
-func (w *WGNets) startLocked(ctx context.Context, specs []WGNetSpec, want string) {
+func (w *WGNets) startLocked(ctx context.Context, specs []WGNetSpec, links []IPsecSpec, want string) {
 	now := w.now().UTC()
 	id := now.Format("20060102T150405") + "-" + want[:8]
 	run := WGNetRun{ID: id, Want: want, State: WGNetApplying, Message: "starting", At: now}
 	for _, s := range specs {
 		run.Networks = append(run.Networks, s.ID)
+	}
+	for _, l := range links {
+		run.Networks = append(run.Networks, l.ID)
 	}
 	fail := func(msg string) {
 		run.State, run.Message, run.Unit = WGNetFailed, msg, ""
@@ -335,7 +372,7 @@ func (w *WGNets) startLocked(ctx context.Context, specs []WGNetSpec, want string
 	}
 	run.Unit = "argus-wgnet-" + strings.ReplaceAll(id, "-", "")[:20]
 	planPath := filepath.Join(dir, "plan-"+id+".json")
-	plan := WGNetPlan{Run: run, StateDir: w.StateDir, Networks: specs, TrialSeconds: int(wgnetTrial / time.Second)}
+	plan := WGNetPlan{Run: run, StateDir: w.StateDir, Networks: specs, IPsec: links, TrialSeconds: int(wgnetTrial / time.Second)}
 	for _, a := range w.avoid() {
 		plan.Avoid = append(plan.Avoid, a.String())
 	}
@@ -585,11 +622,17 @@ func validWGKey(k string) bool {
 }
 
 // wgnetFingerprint names a set of specs, the same however it is ordered.
-func wgnetFingerprint(specs []WGNetSpec) string {
+func wgnetFingerprint(specs []WGNetSpec, links []IPsecSpec) string {
 	s := append([]WGNetSpec(nil), specs...)
 	sort.Slice(s, func(i, j int) bool { return s[i].ID < s[j].ID })
-	sum := sha256.Sum256(mustJSON(s))
-	return hex.EncodeToString(sum[:])
+	h := sha256.New()
+	h.Write(mustJSON(s))
+	if len(links) > 0 {
+		l := append([]IPsecSpec(nil), links...)
+		sort.Slice(l, func(i, j int) bool { return l[i].ID < l[j].ID })
+		h.Write(mustJSON(l))
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // wgConfig is an interface's file. The private key is read from the
