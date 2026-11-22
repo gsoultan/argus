@@ -1,10 +1,11 @@
 # Website checks: is a site up, and how much of the time
 
 `internal/control/websites.go` (store, loop, the confirmation rule, alerts),
+`checks.go` (the kinds of check; websites are the first),
 `website_routes.go` (HTTP), `internal/tunnel/sitecheck.go` (the one fetch,
 `SiteProbe`, shared by control plane and agent), `internal/agent/sitecheck.go`
 (the agent's `sitecheck` tunnel service). Web: `routes/websites.tsx`,
-`components/Websites.tsx`, `lib/websites.ts`. Migration 099.
+`components/Websites.tsx`, `lib/websites.ts`. Migrations 099, 101, 103.
 
 ## The rule: never call a site down when it is not
 
@@ -65,3 +66,18 @@ per-check alert recipients, public status page.
 - `tunnel.GrantSite` carries Method/Headers/Body; the probe drops the check's headers on a redirect to another host, refuses Host/Content-Length/etc, and sets JSON content type when the body starts with { or [.
 - `SiteResult.Method` is set by new probes; a confirming agent that answers without it (too old) is "could not be asked", never counted.
 - Headers that can't be opened (signing_secret changed) make the round "unknown", never down.
+
+## Storage: the shared check engine (migration 103)
+- Website checks are rows of `checks` with `kind = 'website'`; rounds and outages are `check_rounds` and `check_outages`. The `website_*` tables are left unwritten for rollback (103 is marked breaking: going back shows checks as they were before the update).
+- What every kind shares is a column (name, every/timeout, confirm_from, paused, Telegram, state, last_*, lease). A website's own settings are JSON in `settings` (url, expectStatus, keyword, method, body, headerNames); its header values are `secrets_sealed`; its certificate end is `expires_at`; `last_status` is the HTTP status.
+- `websiteCols` reads the JSON back into the old column order, so `scanWebsite` and the API are unchanged; `websiteSettings` builds it on INSERT/UPDATE. Every single-check statement also says `kind = 'website'`.
+- A new kind: add it to `checkKinds` (checks.go) and to `checks_kind_check` in a migration; `TestCheckKindsMatchTheTable` keeps them the same. The 200-check limit counts every kind.
+
+## Groups and who sees a check (migration 104, checks_access.go)
+- `check_groups` (name unique case-insensitively) and `checks.group_id` (ON DELETE SET NULL).
+- `check_viewers`: one check or one group, given to one person or one team, with `can_operate` (check now and pause).
+- Admins, owners and auditors see every check. Anyone else sees what they, or a team of theirs, were given, directly or through the group, and sees it limited (`limited: true`: no body, header names, Telegram or confirming servers).
+- Opening a check you were not given is 404, not 403. Giving, groups and moving are for admins and owners, and are audited (`check.viewers`, `check.group.*`, `website.pause`).
+- Going down also raises a person alert for each non-fleet watcher (same subject, so coming back up closes it).
+- `/auth/me` has `seesChecks`; the sidebar shows Websites to non-fleet roles only when it is true, and `/websites` uses `guardChecks`.
+- The "checks" access kind (label Monitoring) lists them in what a person can reach.

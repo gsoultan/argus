@@ -430,6 +430,32 @@ button.argus-navsection:hover {
 .argus-assettable-detail > td { background: var(--color-raised, var(--mantine-color-default-hover)); }
 .argus-assettable th { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--mantine-color-dimmed); white-space: nowrap; }
 
+/* The Assets filter bar: one panel, search and dropdowns above one row of
+   status pills, all the same height and shape. */
+.argus-filterbar {
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.argus-filterbar-pills { border-top: 1px solid var(--color-line); padding-top: 10px; margin-top: 10px; }
+.argus-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 12px; border-radius: 999px;
+  border: 1px solid var(--color-line); background: transparent;
+  font: inherit; font-size: 13px; font-weight: 500; color: var(--color-ink-soft);
+  cursor: pointer; white-space: nowrap;
+}
+.argus-pill:hover { background: var(--color-raised, var(--mantine-color-default-hover)); color: var(--color-ink); }
+.argus-pill:focus-visible { outline: 2px solid var(--mantine-color-azure-5); outline-offset: 2px; }
+.argus-pill[aria-pressed='true'] {
+  background: var(--mantine-color-azure-light); border-color: var(--mantine-color-azure-4);
+  color: var(--mantine-color-azure-light-color);
+}
+.argus-pill-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.argus-pill-count { color: var(--color-ink-muted); font-variant-numeric: tabular-nums; font-weight: 400; }
+.argus-pill[aria-pressed='true'] .argus-pill-count { color: inherit; opacity: .8; }
+
 /* The sidebar folded to icons: each entry is its icon, centred. */
 .argus-navlink-icon { padding-inline: 0; }
 .argus-sidefold:hover { background: var(--color-raised); color: var(--color-ink) !important; }

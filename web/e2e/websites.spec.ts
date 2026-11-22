@@ -190,3 +190,47 @@ test('websites: on a phone', async ({ page }) => {
   expect(overflow).toBeLessThanOrEqual(0)
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/04-websites-phone.png`, fullPage: true })
 })
+
+test('websites: groups, problems first, and who can see each', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1100 })
+  const grouped = LIST.map((c) => ({ ...c, canOperate: true,
+    groupId: c.id === 'w1' || c.id === 'w2' ? 'g-shop' : c.id === 'w3' ? 'g-docs' : '' }))
+  const groups = [{ id: 'g-docs', name: 'Documentation', checks: 1 }, { id: 'g-shop', name: 'Storefront', checks: 2 }]
+  let saved: unknown = null
+  // After signIn, whose own routes these replace.
+  await signIn(page)
+  await page.route('**/api/v1/websites', (r) => r.fulfill({ json: grouped }))
+  await page.route('**/api/v1/websites/w2', (r) => r.fulfill({ json: { ...DETAIL, check: grouped[1] } }))
+  await page.route('**/api/v1/telegram', (r) => r.fulfill({ json: TELEGRAM }))
+  await page.route('**/api/v1/check-groups', (r) => r.fulfill({ json: groups }))
+  await page.route('**/api/v1/teams', (r) => r.fulfill({ json: [
+    { id: 't1', name: 'Payments', members: [], servers: [], createdBy: '', createdAt: ago(9000) }] }))
+  await page.route('**/api/v1/check-groups/g-shop/viewers', (r) => {
+    if (r.request().method() === 'PUT') {
+      saved = r.request().postDataJSON()
+      return r.fulfill({ json: [{ teamId: 't1', teamName: 'Payments', canOperate: true }] })
+    }
+    return r.fulfill({ json: [] })
+  })
+  await page.goto('/websites')
+
+  // The group with a site down comes first, and its down site first in it.
+  const sections = page.getByTestId('check-group')
+  await expect(sections.nth(0).getByText('Storefront')).toBeVisible()
+  await expect(sections.nth(0).getByText('1 down', { exact: true })).toBeVisible()
+  await expect(sections.nth(0).getByRole('row').nth(1)).toContainText('Payments API')
+  await expect(sections.nth(1).getByText('Documentation')).toBeVisible()
+  await expect(sections.nth(2).getByText('Not in a group')).toBeVisible()
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/05-groups.png`, fullPage: true })
+
+  await sections.nth(0).getByRole('button', { name: 'Who can see this' }).click()
+  const dialog = page.getByRole('dialog', { name: /Who can see Storefront/ })
+  await expect(dialog.getByTestId('viewers-empty')).toBeVisible()
+  await dialog.getByRole('combobox', { name: 'Add a person or team' }).click()
+  await page.getByRole('option', { name: 'Payments' }).click()
+  await dialog.getByLabel('Can check now and pause').check()
+  if (SHOTS) await dialog.screenshot({ path: `${SHOTS}/06-who-can-see.png` })
+  await dialog.getByRole('button', { name: 'Save' }).click()
+  await expect(dialog).toBeHidden()
+  expect(saved).toEqual([{ teamId: 't1', canOperate: true }])
+})

@@ -1473,6 +1473,11 @@ func All() []any {
 		&WebsiteCheck{},
 		&WebsiteRound{},
 		&WebsiteOutage{},
+		&Check{},
+		&CheckRound{},
+		&CheckOutage{},
+		&CheckGroup{},
+		&CheckViewer{},
 		&WebsiteAlertSetting{},
 		&TelegramBot{},
 		&TelegramRoute{},
@@ -2702,4 +2707,158 @@ func (m *UIPreference) Schema(t *storm.Table) {
 	t.Col(&m.UpdatedAt).Default("now()")
 	t.CheckNamed("ui_preferences_key_check", "length(key) >= 1 AND length(key) <= 64")
 	t.CheckNamed("ui_preferences_value_check", "length(value) >= 1 AND length(value) <= 32")
+}
+
+// Check is table checks: one check of any kind, what every kind shares
+// as columns and its own settings as JSON (migration 103, checks.go), and
+// the Monitoring group it is in (migration 104, checks_access.go).
+type Check struct {
+	storm.Model
+
+	Kind           string
+	Name           string
+	Settings       storm.JSON
+	SecretsSealed  []byte
+	EverySeconds   int32
+	TimeoutSeconds int32
+	ConfirmFrom    [][16]byte
+	Paused         bool
+	Telegram       string
+	TelegramBot    string
+	TelegramChats  []string
+	CreatedBy      string
+	State          string
+	StateSince     *time.Time
+	FailingRounds  int32
+	LastAt         *time.Time
+	LastMs         *int32
+	LastStatus     *int32
+	LastDetail     string
+	LastOutcome    string
+	ExpiresAt      *time.Time
+	NextAt         time.Time
+	LeaseUntil     *time.Time
+	Group          *CheckGroup
+}
+
+func (m *Check) Schema(t *storm.Table) {
+	t.Col(&m.Settings).Default("'{}'::jsonb")
+	t.Col(&m.EverySeconds).Default("60")
+	t.Col(&m.TimeoutSeconds).Default("30")
+	t.Col(&m.ConfirmFrom).Default("'{}'::uuid[]")
+	t.Col(&m.Paused).Default("false")
+	t.Col(&m.Telegram).Default("'default'::text")
+	t.Col(&m.TelegramBot).Default("''::text")
+	t.Col(&m.TelegramChats).Default("'{}'::text[]")
+	t.Col(&m.State).Default("'pending'::text")
+	t.Col(&m.FailingRounds).Default("0")
+	t.Col(&m.LastDetail).Default("''::text")
+	t.Col(&m.LastOutcome).Default("''::text")
+	t.Col(&m.NextAt).Default("now()")
+	t.Col(&m.Group).ConstraintName("checks_group_id_fkey")
+	t.Col(&m.Group).OnDelete(storm.SetNull)
+	t.CheckNamed("checks_confirm_from_check", "cardinality(confirm_from) <= 3")
+	t.CheckNamed("checks_every_seconds_check", "every_seconds = ANY (ARRAY[60, 300, 600])")
+	t.CheckNamed("checks_kind_check", "kind = 'website'::text")
+	t.CheckNamed("checks_name_check", "(length(name) >= 1) AND (length(name) <= 100)")
+	t.CheckNamed("checks_settings_check", "(jsonb_typeof(settings) = 'object'::text) AND (octet_length((settings)::text) <= 80000)")
+	t.CheckNamed("checks_state_check", "state = ANY (ARRAY['pending'::text, 'up'::text, 'down'::text, 'unknown'::text])")
+	t.CheckNamed("checks_telegram_bot_check", "length(telegram_bot) <= 40")
+	t.CheckNamed("checks_telegram_chats_check", "cardinality(telegram_chats) <= 20")
+	t.CheckNamed("checks_telegram_check", "telegram = ANY (ARRAY['default'::text, 'off'::text, 'chats'::text])")
+	t.CheckNamed("checks_timeout_seconds_check", "(timeout_seconds >= 5) AND (timeout_seconds <= 60)")
+	t.Index(&m.NextAt).Where("NOT paused").Named("checks_due")
+	t.Index(&m.Group).Where("group_id IS NOT NULL").Named("checks_group")
+	t.Index(&m.Kind).Named("checks_kind")
+}
+
+// CheckGroup is table check_groups: a named set of checks on Monitoring.
+type CheckGroup struct {
+	ID        [16]byte
+	Name      string
+	CreatedBy string
+	CreatedAt time.Time
+}
+
+func (m *CheckGroup) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.CreatedAt).Default("now()")
+	t.CheckNamed("check_groups_name_check", "(length(btrim(name)) >= 1) AND (length(btrim(name)) <= 60)")
+	t.Index(storm.Lower(&m.Name)).Unique().Named("check_groups_name_lower_key")
+}
+
+// CheckViewer is table check_viewers: a person or team given a check or a
+// group (checks_access.go).
+type CheckViewer struct {
+	ID         int64
+	Check      *Check
+	Group      *CheckGroup
+	UserEmail  *string
+	Team       *Team
+	CanOperate bool
+	GrantedBy  string
+	GrantedAt  time.Time
+}
+
+func (m *CheckViewer) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Serial()
+	t.Col(&m.Check).ConstraintName("check_viewers_check_id_fkey")
+	t.Col(&m.Check).OnDelete(storm.Cascade)
+	t.Col(&m.Group).ConstraintName("check_viewers_group_id_fkey")
+	t.Col(&m.Group).OnDelete(storm.Cascade)
+	t.Col(&m.Team).ConstraintName("check_viewers_team_id_fkey")
+	t.Col(&m.Team).OnDelete(storm.Cascade)
+	t.Col(&m.CanOperate).Default("false")
+	t.Col(&m.GrantedAt).Default("now()")
+	t.CheckNamed("check_viewers_one_holder", "num_nonnulls(user_email, team_id) = 1")
+	t.CheckNamed("check_viewers_one_target", "num_nonnulls(check_id, group_id) = 1")
+	t.CheckNamed("check_viewers_user_email_check", "(user_email IS NULL) OR ((user_email = lower(btrim(user_email))) AND ((length(user_email) >= 3) AND (length(user_email) <= 320)))")
+	t.Index(&m.Check).Where("check_id IS NOT NULL").Named("check_viewers_check")
+	t.Index(&m.Group).Where("group_id IS NOT NULL").Named("check_viewers_group")
+	t.Index(storm.IndexExpr(&m.Check, "COALESCE((%s)::text, ''::text)"), storm.IndexExpr(&m.Group, "COALESCE((%s)::text, ''::text)"), storm.IndexExpr(&m.UserEmail, "COALESCE(%s, ''::text)"), storm.IndexExpr(&m.Team, "COALESCE((%s)::text, ''::text)")).Unique().Named("check_viewers_once")
+	t.Index(&m.Team).Where("team_id IS NOT NULL").Named("check_viewers_team")
+	t.Index(&m.UserEmail).Where("user_email IS NOT NULL").Named("check_viewers_user")
+}
+
+// CheckRound is table check_rounds: one round of a check, for uptime.
+type CheckRound struct {
+	Check   Check
+	At      time.Time
+	Secs    int32
+	Outcome string
+	Ms      *int32
+	Status  *int32
+	Detail  string
+}
+
+func (m *CheckRound) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Check, &m.At)
+	t.Col(&m.Check).ConstraintName("check_rounds_check_id_fkey")
+	t.Col(&m.Check).OnDelete(storm.Cascade)
+	t.Col(&m.Detail).Default("''::text")
+	t.CheckNamed("check_rounds_outcome_check", "outcome = ANY (ARRAY['up'::text, 'partial'::text, 'pending'::text, 'down'::text, 'unknown'::text])")
+	t.Index(&m.At).Named("check_rounds_at")
+}
+
+// CheckOutage is table check_outages: a confirmed outage of a check.
+type CheckOutage struct {
+	ID        int64
+	Check     Check
+	StartedAt time.Time
+	EndedAt   *time.Time
+	Cause     string
+	Confirmed string
+}
+
+func (m *CheckOutage) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Serial()
+	t.Col(&m.Check).ConstraintName("check_outages_check_id_fkey")
+	t.Col(&m.Check).OnDelete(storm.Cascade)
+	t.Col(&m.Cause).Default("''::text")
+	t.Col(&m.Confirmed).Default("''::text")
+	t.Index(&m.Check, storm.Desc(&m.StartedAt)).Named("check_outages_check")
+	t.Index(&m.Check).Unique().Where("ended_at IS NULL").Named("check_outages_open")
 }

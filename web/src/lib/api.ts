@@ -267,6 +267,7 @@ export const api = {
           shared: id.shared === true,
           multiOrg: id.multiOrg === true,
           platformOwner: id.platformOwner === true,
+          seesChecks: id.seesChecks === true,
           canEmailPeople: id.canEmailPeople === true,
         }
       }

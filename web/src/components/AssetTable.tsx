@@ -1,6 +1,6 @@
 import { Fragment, useState, type ReactNode } from 'react'
 import {
-  Anchor, Box, Group, Progress, Select, Stack, Table, Text, UnstyledButton,
+  Anchor, Box, Group, Progress, Stack, Table, Text, UnstyledButton,
 } from '@mantine/core'
 import { IconChevronDown, IconChevronRight, IconDeviceDesktop, IconDeviceMobile, IconTerminal2 } from '@tabler/icons-react'
 import { AssetAddresses } from '~/components/AssetAddresses'
@@ -29,6 +29,8 @@ export type GroupBy = 'needs' | 'none'
 
 interface Props {
   assets: Asset[]
+  /** Grouped by what needs you (most urgent first), or one plain list. Chosen in the filter bar. */
+  groupBy?: GroupBy
   admin: boolean
   mineBy: Map<string, MyServer>
   waitingBy: Map<string, UpdatesWaitingRow>
@@ -57,8 +59,7 @@ export function groupOf(a: Asset, waiting: UpdatesWaitingRow | undefined, usage:
   return 'fine'
 }
 
-export function AssetTable({ assets, admin, mineBy, waitingBy, usageBy, updates }: Props) {
-  const [groupBy, setGroupBy] = useState<GroupBy>('needs')
+export function AssetTable({ assets, groupBy = 'needs', admin, mineBy, waitingBy, usageBy, updates }: Props) {
   const [open, setOpen] = useState<string | null>(null)
   const [showFine, setShowFine] = useState(false)
   const toggle = (id: string) => setOpen((o) => (o === id ? null : id))
@@ -79,20 +80,6 @@ export function AssetTable({ assets, admin, mineBy, waitingBy, usageBy, updates 
 
   return (
     <Stack gap="sm">
-      <Group gap="sm">
-        <Select
-          size="xs"
-          w={220}
-          aria-label="Group by"
-          value={groupBy}
-          allowDeselect={false}
-          onChange={(v) => v && setGroupBy(v as GroupBy)}
-          data={[
-            { value: 'needs', label: 'Group by: what needs you' },
-            { value: 'none', label: 'No groups' },
-          ]}
-        />
-      </Group>
       <Box className="argus-table-wrap" style={{ overflowX: 'auto', border: '1px solid var(--color-line)', borderRadius: 10, background: 'var(--color-surface)' }}>
         <Table verticalSpacing={8} horizontalSpacing="sm" className="argus-assettable" data-testid="asset-table" miw={900}>
           <Table.Thead>

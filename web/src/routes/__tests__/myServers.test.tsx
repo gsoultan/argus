@@ -83,12 +83,12 @@ describe('the servers someone can reach', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Show all servers' }))
     expect(await screen.findAllByRole('heading', { level: 3 })).toHaveLength(3)
 
-    fireEvent.click(screen.getByText(/^Offline \(/))
+    fireEvent.click(screen.getByRole('button', { name: /^Offline \d/ }))
     await waitFor(() =>
       expect(screen.getAllByRole('heading', { level: 3 }).map((c) => c.textContent)).toEqual(['db-02']),
     )
     // A server whose identity changed answers; it is Blocked, not down.
-    fireEvent.click(screen.getByText(/^Blocked \(/))
+    fireEvent.click(screen.getByRole('button', { name: /^Blocked \d/ }))
     await waitFor(() =>
       expect(screen.getAllByRole('heading', { level: 3 }).map((c) => c.textContent)).toEqual(['pay-03']),
     )
@@ -336,15 +336,15 @@ describe('reachOf', () => {
     ])
     await renderRoute('/mine')
     await screen.findByRole('heading', { name: 'up-01' })
-    fireEvent.click(screen.getByText(/^Online \(/))
+    fireEvent.click(screen.getByRole('button', { name: /^Online \d/ }))
     await waitFor(() =>
       expect(screen.getAllByRole('heading', { level: 3 }).map((c) => c.textContent)).toEqual(['up-01']),
     )
     // The same word as Home, so the counts agree with its tiles.
-    expect(screen.getByText('Offline (2)')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Offline 2' })).toBeInTheDocument()
     expect(screen.queryByText(/No agent|Not answering/)).toBeNull()
-    expect(screen.queryByText(/^Blocked \(/)).toBeNull()
-    fireEvent.click(screen.getByText('Offline (2)'))
+    expect(screen.queryByRole('button', { name: /^Blocked/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Offline 2' }))
     await waitFor(() =>
       expect(screen.getAllByRole('heading', { level: 3 }).map((c) => c.textContent)).toEqual(['bare-03', 'gone-02']),
     )

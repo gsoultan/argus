@@ -296,18 +296,18 @@ func (s *Store) DeleteTelegramBot(ctx context.Context, id, moveTo string) error 
 		if _, err := tx.Exec(ctx, `UPDATE telegram_routes SET bot = $2, chats = '{}', updated_at = now() WHERE bot = $1`, id, moveTo); err != nil {
 			return err
 		}
-		// A website on its own chats of the removed bot follows the Websites
+		// A check on its own chats of the removed bot follows its feature's
 		// setting, or goes quiet if that was asked.
 		mode := TelegramDefault
 		if moveTo == BotOff {
 			mode = TelegramOff
 		}
 		if moveTo != BotDefault && moveTo != BotOff {
-			_, err = tx.Exec(ctx, `UPDATE website_checks SET telegram_bot = $2, telegram = 'default', telegram_chats = '{}', updated_at = now()
+			_, err = tx.Exec(ctx, `UPDATE checks SET telegram_bot = $2, telegram = 'default', telegram_chats = '{}', updated_at = now()
 				WHERE telegram_bot = $1`, id, moveTo)
 			return err
 		}
-		_, err = tx.Exec(ctx, `UPDATE website_checks SET telegram_bot = '', telegram = $2, telegram_chats = '{}', updated_at = now()
+		_, err = tx.Exec(ctx, `UPDATE checks SET telegram_bot = '', telegram = $2, telegram_chats = '{}', updated_at = now()
 			WHERE telegram_bot = $1`, id, mode)
 		return err
 	})
@@ -629,7 +629,7 @@ func validUUID(s string) bool {
 
 // WebsitesWithOwnTelegram are the websites that chose their own bot.
 func (s *Store) WebsitesWithOwnTelegram(ctx context.Context) ([]WebsiteCheck, error) {
-	rows, err := s.db(ctx).Query(ctx, `SELECT id::text, name, telegram_bot FROM website_checks WHERE telegram = 'chats' ORDER BY lower(name)`)
+	rows, err := s.db(ctx).Query(ctx, `SELECT id::text, name, telegram_bot FROM checks WHERE kind = 'website' AND telegram = 'chats' ORDER BY lower(name)`)
 	if err != nil {
 		return nil, err
 	}
