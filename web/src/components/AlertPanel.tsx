@@ -7,7 +7,7 @@ import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-quer
 import { useRouter } from '@tanstack/react-router'
 import {
   IconAlertTriangle, IconArrowLeft, IconDatabase, IconHourglass, IconLogin2, IconServer, IconSettings,
-  IconCloud, IconGauge, IconRefresh, IconTableRow, IconTerminal2, IconWorld, IconX,
+  IconCloud, IconGauge, IconRefresh, IconTableRow, IconTerminal2, IconTopologyStar3, IconWorld, IconX,
 } from '@tabler/icons-react'
 import {
   alertPrefsQuery, refreshAlertTarget, unreadAlertsQuery, type AlertKind, type AlertPrefs, type ConsoleAlert, type StreamStatus,
@@ -33,6 +33,7 @@ const KIND_ICON: Record<AlertKind, typeof IconHourglass> = {
   resources: IconGauge,
   cloud: IconCloud,
   website: IconWorld,
+  network: IconTopologyStar3,
 }
 
 const TONE: Record<ConsoleAlert['severity'], string> = { info: 'slate', warning: 'amber', critical: 'rose' }

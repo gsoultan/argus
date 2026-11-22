@@ -460,7 +460,7 @@ func (m *ConsoleAlert) Schema(t *storm.Table) {
 	t.Col(&m.Subject).Default("''::text")
 	t.Col(&m.Closed).Default("''::text")
 	t.CheckNamed("console_alerts_kind_check",
-		"kind = ANY (ARRAY['approval'::text, 'signin'::text, 'session'::text, 'security'::text, 'server'::text, 'backup'::text, 'data'::text, 'updates'::text, 'resources'::text, 'cloud'::text, 'website'::text])")
+		"kind = ANY (ARRAY['approval'::text, 'signin'::text, 'session'::text, 'security'::text, 'server'::text, 'backup'::text, 'data'::text, 'updates'::text, 'resources'::text, 'cloud'::text, 'website'::text, 'network'::text])")
 	t.CheckNamed("console_alerts_severity_check", "severity = ANY (ARRAY['info'::text, 'warning'::text, 'critical'::text])")
 	t.CheckNamed("console_alerts_audience_check", "audience = ANY (ARRAY['deciders'::text, 'admins'::text, 'person'::text])")
 	t.CheckNamed("console_alerts_link_check", "(link = ''::text) OR (link ~~ '/%'::text)")
@@ -1485,6 +1485,7 @@ func All() []any {
 		&WebsiteAlertSetting{},
 		&TelegramBot{},
 		&TelegramRoute{},
+		&CloudflareAccount{},
 		&UIPreference{},
 		&Team{},
 		&TeamMember{},
@@ -2360,6 +2361,32 @@ func (m *TelegramBot) Schema(t *storm.Table) {
 	t.CheckNamed("telegram_bots_chats_check", "jsonb_typeof(chats) = 'array'::text")
 	t.CheckNamed("telegram_bots_name_check", "(length(name) >= 1) AND (length(name) <= 80)")
 	t.Index(&m.IsDefault).Unique().Where("is_default").Named("telegram_bots_one_default")
+}
+
+// CloudflareAccount is table cloudflare_accounts: a Cloudflare account read
+// for Networks with a read-only token, sealed (control/cloudflare_accounts.go).
+type CloudflareAccount struct {
+	storm.Model
+
+	Name        string
+	AccountID   string
+	TokenSealed []byte
+	TokenTail   string
+	Snapshot    *storm.JSON
+	SyncedAt    *time.Time
+	LastError   string
+	LastErrorAt *time.Time
+	CreatedBy   string
+}
+
+func (m *CloudflareAccount) Schema(t *storm.Table) {
+	t.Col(&m.AccountID).Unique()
+	t.Col(&m.TokenSealed).NotNull()
+	t.Col(&m.TokenTail).Default("''::text")
+	t.Col(&m.LastError).Default("''::text")
+	t.CheckNamed("cloudflare_accounts_name_check", "(length(name) >= 1) AND (length(name) <= 80)")
+	t.CheckNamed("cloudflare_accounts_account_id_check", "account_id ~ '^[0-9a-f]{32}$'::text")
+	t.CheckNamed("cloudflare_accounts_snapshot_check", "((snapshot IS NULL) OR (octet_length((snapshot)::text) <= 2000000))")
 }
 
 // TelegramRoute is table telegram_routes: which bot each kind of alert uses.

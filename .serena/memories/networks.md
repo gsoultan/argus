@@ -42,3 +42,44 @@ links, staff VPN).
 - Problems: interface down, peer down/never, tunnel not connected, tunnel with
   one connection, VPN software installed but not running (never for
   WireGuard: wg-quick is a oneshot).
+
+## Cloud VPNs (internal/control/cloud/vpn.go)
+
+- `cloud.KindVPN`, read by the normal cloud sync. Details: tunnelsUp,
+  tunnelsTotal, tunnels ("addr=UP; addr=DOWN: why"), remoteAddress,
+  remoteNetworks, gateway, vpnType, routing. `cloud.SetTunnels` sets the
+  state: up, partial, down.
+- AWS: DescribeVpnConnections + DescribeCustomerGateways, tunnels from
+  VgwTelemetry. **Never** reads CustomerGatewayConfiguration (it holds the
+  pre-shared keys). Azure: `Microsoft.Network/connections` and
+  `localNetworkGateways`; sharedKey is never mapped; no status means
+  "unknown", not down. GCP: `/aggregated/vpnTunnels` grouped per gateway and
+  peer so HA VPN's two tunnels are one connection; ESTABLISHED is up.
+- Every provider treats the VPN list as **optional**: if the role cannot list
+  it, the kind is dropped from the snapshot's Kinds (so nothing is marked
+  gone) and the rest of the inventory still syncs.
+
+## Cloudflare accounts (cloudflare_accounts.go, cfapi/)
+
+- Table `cloudflare_accounts` (migration 107), up to 10 per organization.
+  Token sealed like Telegram tokens (key from signing_secret, label
+  "argus cloudflare tokens v1"), only its last three characters shown.
+  Adding or a new token reads the account first: nothing is saved that
+  cannot read tunnels.
+- `cfapi.Client.Read`: cfd_tunnel (required), warp_connector, teamnet/routes,
+  devices, magic/ipsec_tunnels + gre_tunnels (each optional; `read` lists what
+  worked, `errors` why the rest did not). GET only; a test fails on any other
+  method. Read every 5 minutes (`RunCloudflareSync`) or on "Read now".
+- Matching: a Cloudflare connection's `client_id` is the `connectorId` that
+  cloudflared's /ready reports to the agent. Unmatched → "unknown machine"
+  warning, worded so it may also be a server whose metrics Argus cannot read.
+- Problems: cf-tunnel-down (down), degraded, single connector, inactive with
+  routes, unknown machine, cloudflared over a year old, account read failed.
+
+## The bell (networks_watch.go)
+
+- Alert kind `network` (console_alerts check extended in migration 107).
+  Every minute `RunNetworkWatch` raises one alert per down problem, subject
+  `network:<problem key>`, and closes it with "Back up" when the key is gone.
+  A key's asset whose agent is quiet is neither raised nor closed. Warnings
+  stay on the page only.

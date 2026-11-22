@@ -36,7 +36,7 @@ const inventoryTTL = time.Minute
 
 // Kinds is what Argus reads in a subscription. Every one is in a region.
 var Kinds = []cloud.Kind{cloud.KindInstance, cloud.KindVolume, cloud.KindFirewall, cloud.KindNetwork, cloud.KindSubnet,
-	cloud.KindAddress, cloud.KindSnapshot, cloud.KindImage}
+	cloud.KindAddress, cloud.KindSnapshot, cloud.KindImage, cloud.KindVPN}
 
 type subscriptionInventory struct {
 	mu   sync.Mutex
@@ -200,6 +200,26 @@ type raw struct {
 
 		// Network security groups.
 		SecurityRules []rawRule `json:"securityRules"`
+
+		// Virtual network gateway connections (sharedKey is never read).
+		ConnectionStatus       string `json:"connectionStatus"`
+		ConnectionType         string `json:"connectionType"`
+		EnableBGP              bool   `json:"enableBgp"`
+		VirtualNetworkGateway1 idRef  `json:"virtualNetworkGateway1"`
+		VirtualNetworkGateway2 idRef  `json:"virtualNetworkGateway2"`
+		LocalNetworkGateway2   idRef  `json:"localNetworkGateway2"`
+		IngressBytes           int64  `json:"ingressBytesTransferred"`
+		EgressBytes            int64  `json:"egressBytesTransferred"`
+		TunnelConnectionStatus []struct {
+			Tunnel           string `json:"tunnel"`
+			ConnectionStatus string `json:"connectionStatus"`
+		} `json:"tunnelConnectionStatus"`
+
+		// Local network gateways: the far end of a site-to-site connection.
+		GatewayIPAddress         string `json:"gatewayIpAddress"`
+		LocalNetworkAddressSpace struct {
+			AddressPrefixes []string `json:"addressPrefixes"`
+		} `json:"localNetworkAddressSpace"`
 	} `json:"properties"`
 }
 
@@ -253,18 +273,22 @@ func (p *Provider) readSubscription(ctx context.Context, t token, subscription s
 		lNetworks
 		lNSGs
 		lLocks
+		lConnections
+		lLocalGateways
 	)
 	lists := []string{
-		lVMs:       "Microsoft.Compute/virtualMachines?api-version=" + computeAPI,
-		lStatus:    "Microsoft.Compute/virtualMachines?api-version=" + computeAPI + "&statusOnly=true",
-		lDisks:     "Microsoft.Compute/disks?api-version=" + diskAPI,
-		lSnapshots: "Microsoft.Compute/snapshots?api-version=" + diskAPI,
-		lImages:    "Microsoft.Compute/images?api-version=" + computeAPI,
-		lNICs:      "Microsoft.Network/networkInterfaces?api-version=" + networkAPI,
-		lAddresses: "Microsoft.Network/publicIPAddresses?api-version=" + networkAPI,
-		lNetworks:  "Microsoft.Network/virtualNetworks?api-version=" + networkAPI,
-		lNSGs:      "Microsoft.Network/networkSecurityGroups?api-version=" + networkAPI,
-		lLocks:     "Microsoft.Authorization/locks?api-version=" + lockAPI,
+		lVMs:           "Microsoft.Compute/virtualMachines?api-version=" + computeAPI,
+		lStatus:        "Microsoft.Compute/virtualMachines?api-version=" + computeAPI + "&statusOnly=true",
+		lDisks:         "Microsoft.Compute/disks?api-version=" + diskAPI,
+		lSnapshots:     "Microsoft.Compute/snapshots?api-version=" + diskAPI,
+		lImages:        "Microsoft.Compute/images?api-version=" + computeAPI,
+		lNICs:          "Microsoft.Network/networkInterfaces?api-version=" + networkAPI,
+		lAddresses:     "Microsoft.Network/publicIPAddresses?api-version=" + networkAPI,
+		lNetworks:      "Microsoft.Network/virtualNetworks?api-version=" + networkAPI,
+		lNSGs:          "Microsoft.Network/networkSecurityGroups?api-version=" + networkAPI,
+		lLocks:         "Microsoft.Authorization/locks?api-version=" + lockAPI,
+		lConnections:   "Microsoft.Network/connections?api-version=" + networkAPI,
+		lLocalGateways: "Microsoft.Network/localNetworkGateways?api-version=" + networkAPI,
 	}
 	got := make([][]raw, len(lists))
 	errs := make([]error, len(lists))
@@ -281,6 +305,11 @@ func (p *Provider) readSubscription(ctx context.Context, t token, subscription s
 	// them is still an inventory: no VM then says whether it is locked.
 	locks, locksRead := lockIndex(got[lLocks]), errs[lLocks] == nil
 	errs[lLocks] = nil
+	// VPN connections only add to the inventory: a role made before they
+	// were read, or a subscription without the network provider, still
+	// has the rest.
+	vpnsRead := errs[lConnections] == nil
+	errs[lConnections], errs[lLocalGateways] = nil, nil
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
@@ -383,7 +412,58 @@ func (p *Provider) readSubscription(ctx context.Context, t token, subscription s
 		sort.Strings(u.subnets)
 		out = append(out, securityGroup(r, ids, u))
 	}
+	if vpnsRead {
+		lngs := map[string]raw{}
+		for _, r := range got[lLocalGateways] {
+			lngs[strings.ToLower(r.ID)] = r
+		}
+		for _, r := range got[lConnections] {
+			out = append(out, vpnConnection(r, lngs))
+		}
+	}
 	return out, nil
+}
+
+// vpnConnection maps a virtual network gateway connection. An active-active
+// gateway reports each tunnel; otherwise the connection is its one tunnel.
+func vpnConnection(r raw, lngs map[string]raw) cloud.Resource {
+	p := r.Properties
+	res := cloud.Resource{Kind: cloud.KindVPN, ID: pathID(r.ID), Name: r.Name, Region: place(r.Location),
+		State: strings.ToLower(p.ProvisioningState), Tags: r.Tags, Details: map[string]string{}}
+	set(res.Details, "resourceId", r.ID)
+	set(res.Details, cloud.DetailGateway, last(p.VirtualNetworkGateway1.ID))
+	set(res.Details, cloud.DetailVPNType, p.ConnectionType)
+	if p.EnableBGP {
+		set(res.Details, cloud.DetailRouting, "bgp")
+	} else {
+		set(res.Details, cloud.DetailRouting, "static")
+	}
+	if l, ok := lngs[strings.ToLower(p.LocalNetworkGateway2.ID)]; ok {
+		set(res.Details, cloud.DetailRemoteAddress, l.Properties.GatewayIPAddress)
+		set(res.Details, cloud.DetailRemoteNetworks, strings.Join(l.Properties.LocalNetworkAddressSpace.AddressPrefixes, ","))
+	} else if p.VirtualNetworkGateway2.ID != "" {
+		set(res.Details, cloud.DetailRemoteAddress, last(p.VirtualNetworkGateway2.ID))
+	}
+	set(res.Details, "ingressBytes", strconv.FormatInt(p.IngressBytes, 10))
+	set(res.Details, "egressBytes", strconv.FormatInt(p.EgressBytes, 10))
+	if !strings.EqualFold(p.ProvisioningState, "Succeeded") {
+		return res
+	}
+	var ts []cloud.Tunnel
+	for _, t := range p.TunnelConnectionStatus {
+		ts = append(ts, cloud.Tunnel{Address: t.Tunnel, Up: t.ConnectionStatus == "Connected", Why: t.ConnectionStatus})
+	}
+	if len(ts) == 0 && p.ConnectionStatus != "" {
+		ts = append(ts, cloud.Tunnel{Address: res.Details[cloud.DetailRemoteAddress], Up: p.ConnectionStatus == "Connected", Why: p.ConnectionStatus})
+	}
+	if len(ts) == 0 {
+		// The list does not always carry a status; without one Argus
+		// says nothing rather than "down".
+		res.State = "unknown"
+		return res
+	}
+	cloud.SetTunnels(&res, ts)
+	return res
 }
 
 // list reads every page of one list.

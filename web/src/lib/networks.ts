@@ -1,5 +1,5 @@
 import { queryOptions } from '@tanstack/react-query'
-import { get } from '~/lib/live'
+import { get, post, send } from '~/lib/live'
 
 /*
  * Networks: the VPNs and tunnels on the servers Argus manages, as their agents
@@ -70,15 +70,88 @@ export interface NetworkTunnel {
   connectorId?: string
   version?: string
   error?: string
+  /** The Cloudflare tunnel it serves, when a connected account lists it. */
+  tunnelId?: string
+  tunnelName?: string
 }
 
 export interface NetworkProblem {
   severity: 'down' | 'warn'
   kind: string
+  key: string
+  /** Empty for what is not on a server: a cloud VPN, a Cloudflare tunnel. */
   assetId: string
   hostname: string
   title: string
   detail: string
+}
+
+export interface CloudTunnel { Address: string; Up: boolean; Why: string }
+
+/** A site-to-site VPN in a connected cloud account. */
+export interface NetworkCloudVPN {
+  accountId: string
+  accountName: string
+  provider: 'aws' | 'azure' | 'gcp' | string
+  region: string
+  id: string
+  name: string
+  /** up, partial, down, unknown, or the cloud's own word while it changes. */
+  state: string
+  tunnelsUp: number
+  tunnelsTotal: number
+  tunnels: CloudTunnel[]
+  remoteAddress?: string
+  remoteNetworks: string[]
+  gateway?: string
+  type?: string
+  routing?: string
+  seenAt: string
+}
+
+export interface CFConnector {
+  clientId: string
+  version?: string
+  originIp?: string
+  locations: string[]
+  connections: number
+  assetId?: string
+  hostname?: string
+  old: boolean
+}
+
+export interface CFTunnel {
+  id: string
+  name: string
+  kind: 'tunnel' | 'warp-connector'
+  status: 'healthy' | 'degraded' | 'down' | 'inactive' | string
+  connsActiveAt?: string
+  connsInactiveAt?: string
+  connectors: CFConnector[]
+  routes: string[]
+}
+
+export interface CFDevice { name: string; user?: string; os?: string; version?: string; last_seen?: string }
+export interface CFMagicTunnel { kind: 'ipsec' | 'gre'; name: string; customerEndpoint: string; cloudflareEndpoint: string; interfaceAddress: string }
+export interface CFRoute { network: string; tunnel_id: string; tunnel_name: string; comment: string }
+
+export type CFList = 'tunnels' | 'warpConnectors' | 'routes' | 'devices' | 'magicWan'
+
+/** A connected Cloudflare account as last read. */
+export interface NetworkCFAccount {
+  id: string
+  name: string
+  accountId: string
+  syncedAt?: string
+  stale: boolean
+  lastError?: string
+  read: CFList[]
+  missing?: Partial<Record<CFList, string>>
+  tunnels: CFTunnel[]
+  routes: CFRoute[]
+  devices: CFDevice[]
+  devicesTotal: number
+  magicWan: CFMagicTunnel[]
 }
 
 export interface NetworksView {
@@ -87,10 +160,59 @@ export interface NetworksView {
   interfaces: NetworkInterface[]
   tunnels: NetworkTunnel[]
   problems: NetworkProblem[]
+  cloudVpns: NetworkCloudVPN[]
+  cloudflare: NetworkCFAccount[]
 }
 
 export const networksQuery = () =>
   queryOptions({ queryKey: ['networks'] as const, queryFn: () => get<NetworksView>('/api/v1/networks'), refetchInterval: 30_000 })
+
+/* ── Cloudflare accounts ──────────────────────────────────────────────────── */
+
+export interface CloudflareAccount {
+  id: string
+  name: string
+  accountId: string
+  tokenTail: string
+  syncedAt?: string
+  lastError?: string
+  createdBy: string
+  createdAt: string
+}
+
+export interface CloudflareView { accounts: CloudflareAccount[]; canSave: boolean; cannotSave?: string }
+
+export const cloudflareQuery = () =>
+  queryOptions({ queryKey: ['networks', 'cloudflare'] as const, queryFn: () => get<CloudflareView>('/api/v1/networks/cloudflare') })
+
+export interface CloudflareInput { name: string; accountId?: string; token?: string }
+
+export const addCloudflare = (input: CloudflareInput) => post<CloudflareAccount>('/api/v1/networks/cloudflare', input)
+export const changeCloudflare = (id: string, input: CloudflareInput) =>
+  send<CloudflareAccount>('PUT', `/api/v1/networks/cloudflare/${encodeURIComponent(id)}`, input)
+export const removeCloudflare = (id: string) => send<void>('DELETE', `/api/v1/networks/cloudflare/${encodeURIComponent(id)}`)
+export const syncCloudflare = (id: string) => post<CloudflareAccount>(`/api/v1/networks/cloudflare/${encodeURIComponent(id)}/sync`, {})
+
+export const CF_STATUS: Record<string, { label: string; color: string; hint: string }> = {
+  healthy: { label: 'Healthy', color: 'teal', hint: 'Cloudflare has connections from every connector.' },
+  degraded: { label: 'Degraded', color: 'amber', hint: 'A connector has fewer connections than it should. It still works.' },
+  down: { label: 'Down', color: 'rose', hint: 'No connector is connected: its hostnames and routes reach nothing.' },
+  inactive: { label: 'Inactive', color: 'slate', hint: 'Has not run in a long time, or never has.' },
+}
+
+export const CLOUD_VPN_STATE: Record<string, { label: string; color: string }> = {
+  up: { label: 'Up', color: 'teal' },
+  partial: { label: 'Partly up', color: 'amber' },
+  down: { label: 'Down', color: 'rose' },
+  unknown: { label: 'Not known', color: 'slate' },
+}
+
+export const PROVIDER: Record<string, string> = { aws: 'AWS', azure: 'Azure', gcp: 'Google Cloud' }
+
+/** What a Cloudflare list is called, for "the token cannot read …". */
+export const CF_LIST: Record<CFList, string> = {
+  tunnels: 'tunnels', warpConnectors: 'WARP Connectors', routes: 'private network routes', devices: 'WARP devices', magicWan: 'Magic WAN',
+}
 
 export const PEER_STATE: Record<PeerState, { label: string; color: string; hint: string }> = {
   up: { label: 'Up', color: 'teal', hint: 'A handshake in the 3 minutes before the agent checked.' },

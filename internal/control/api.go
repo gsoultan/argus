@@ -252,6 +252,11 @@ type API struct {
 	telegramSlots  chan struct{}
 	telegramClient *http.Client
 	telegramAPI    string
+
+	// cloudflareHTTP and cloudflareBase stand in for Cloudflare's API in
+	// tests (cloudflare_accounts.go).
+	cloudflareHTTP *http.Client
+	cloudflareBase string
 }
 
 // SetThrottles enables per-client rate limiting.
@@ -546,6 +551,11 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/assets/{id}/server-logins/{name}", a.deleteServerLogin)
 	mux.HandleFunc("GET /api/v1/assets/{id}/applications", a.getApplications)
 	mux.HandleFunc("GET /api/v1/networks", a.getNetworks)
+	mux.HandleFunc("GET /api/v1/networks/cloudflare", a.getCloudflareAccounts)
+	mux.HandleFunc("POST /api/v1/networks/cloudflare", a.postCloudflareAccount)
+	mux.HandleFunc("PUT /api/v1/networks/cloudflare/{id}", a.putCloudflareAccount)
+	mux.HandleFunc("DELETE /api/v1/networks/cloudflare/{id}", a.deleteCloudflareAccount)
+	mux.HandleFunc("POST /api/v1/networks/cloudflare/{id}/sync", a.postCloudflareSync)
 	mux.HandleFunc("GET /api/v1/assets/{id}/android-apps", a.getAndroidApps)
 	mux.HandleFunc("GET /api/v1/assets/{id}/system", a.getSystem)
 	mux.HandleFunc("GET /api/v1/assets/{id}/usage/live", a.getUsageLive)

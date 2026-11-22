@@ -3,7 +3,9 @@ import { test, expect, type Page } from '@playwright/test'
 /**
  * Networks, against e2e/authstub.mjs with the links served by the test: a
  * WireGuard link between two Argus servers shown once, a peer down, an idle
- * laptop, Cloudflare Tunnels connected and not, and VPN software found. What
+ * laptop, Cloudflare Tunnels connected and not, VPN software found, cloud VPNs
+ * with one tunnel of two down, and a Cloudflare account whose tunnels are
+ * matched to the servers that run them. What
  * counts as down is the control plane's to decide (internal/control/networks.go).
  */
 test.use({ baseURL: 'http://localhost:5511', serviceWorkers: 'block' })
@@ -37,13 +39,37 @@ const VIEW = {
       peers: [peer({ publicKey: 'K1', latestHandshake: ago(1), state: 'up', peerAssetId: 'a1', peerHostname: 'db-prod-01', peerInterface: 'wg0' })] },
   ],
   tunnels: [
-    { assetId: 'a3', hostname: 'gw-jkt-01', metrics: '127.0.0.1:20241', state: 'up', readyConnections: 4, connectorId: '0b6a1c2e-1111-2222-3333-444455556666', version: '2025.11.1' },
+    { assetId: 'a3', hostname: 'gw-jkt-01', metrics: '127.0.0.1:20241', state: 'up', readyConnections: 4, connectorId: '0b6a1c2e-1111-2222-3333-444455556666', version: '2025.11.1', tunnelId: 't1', tunnelName: 'web-public' },
     { assetId: 'a2', hostname: 'db-prod-02', metrics: '127.0.0.1:20241', state: 'down', readyConnections: 0, error: 'metrics did not answer' },
   ],
   problems: [
-    { severity: 'down', kind: 'peer-down', assetId: 'a1', hostname: 'db-prod-01', title: 'wg0 on db-prod-01 cannot reach gw-jkt-01', detail: 'Last handshake 13 min before the agent checked, although this side keeps the link alive.' },
-    { severity: 'down', kind: 'tunnel-down', assetId: 'a2', hostname: 'db-prod-02', title: 'Cloudflare Tunnel on db-prod-02 is not connected', detail: "cloudflared's health check: metrics did not answer." },
-    { severity: 'warn', kind: 'stopped', assetId: 'a4', hostname: 'legacy-01', title: 'OpenVPN is installed but not running on legacy-01', detail: 'Installed, with no process or service running. If it should be connected, start it; if not, remove it.' },
+    { severity: 'down', kind: 'cloud-vpn-down', key: 'cloud-vpn::c1/ap-southeast-3/vpn-0a1', assetId: '', hostname: '', title: 'Cloud VPN jakarta-office is down (AWS prod in ap-southeast-3)', detail: 'No tunnel is up, so nothing crosses it. The cloud says 108.136.1.10: IPSEC IS DOWN; 108.136.1.11: IPSEC IS DOWN.' },
+    { severity: 'down', kind: 'peer-down', key: 'peer-down:a1:wg0/K3', assetId: 'a1', hostname: 'db-prod-01', title: 'wg0 on db-prod-01 cannot reach gw-jkt-01', detail: 'Last handshake 13 min before the agent checked, although this side keeps the link alive.' },
+    { severity: 'down', kind: 'tunnel-down', key: 'tunnel-down:a2:127.0.0.1:20241', assetId: 'a2', hostname: 'db-prod-02', title: 'Cloudflare Tunnel on db-prod-02 is not connected', detail: "cloudflared's health check: metrics did not answer." },
+    { severity: 'warn', kind: 'cloud-vpn-partial', key: 'cloud-vpn::c3/asia-southeast2/ha-gw-to-dc/partial', assetId: '', hostname: '', title: 'Cloud VPN ha-gw to dc-jkt has 1 of 2 tunnels up (Google Cloud data in asia-southeast2)', detail: 'Traffic still flows, but there is no spare: if the tunnel that is up fails, the link is down.' },
+    { severity: 'warn', kind: 'cf-unknown-machine', key: 'cf-unknown-machine::acct/t2/c9', assetId: '', hostname: '', title: 'Cloudflare Tunnel intranet has a connector no Argus server reports, from 114.4.22.7', detail: "It may be a machine without an Argus agent, such as someone's laptop publishing a company hostname, or a server whose cloudflared metrics Argus cannot read. Check who runs it." },
+    { severity: 'warn', kind: 'stopped', key: 'stopped:a4:openvpn', assetId: 'a4', hostname: 'legacy-01', title: 'OpenVPN is installed but not running on legacy-01', detail: 'Installed, with no process or service running. If it should be connected, start it; if not, remove it.' },
+  ],
+  cloudVpns: [
+    { accountId: 'c1', accountName: 'prod', provider: 'aws', region: 'ap-southeast-3', id: 'vpn-0a1', name: 'jakarta-office', state: 'down', tunnelsUp: 0, tunnelsTotal: 2,
+      tunnels: [{ Address: '108.136.1.10', Up: false, Why: 'IPSEC IS DOWN' }, { Address: '108.136.1.11', Up: false, Why: 'IPSEC IS DOWN' }],
+      remoteAddress: '36.72.1.9', remoteNetworks: ['192.168.10.0/24'], gateway: 'vgw-1', type: 'ipsec.1', routing: 'static', seenAt: ago(3) },
+    { accountId: 'c2', accountName: 'corp', provider: 'azure', region: 'southeastasia', id: 'conn-office', name: 'office-sg', state: 'up', tunnelsUp: 1, tunnelsTotal: 1,
+      tunnels: [{ Address: '203.0.113.9', Up: true, Why: 'Connected' }], remoteAddress: '203.0.113.9', remoteNetworks: ['10.30.0.0/16'], type: 'IPsec', routing: 'bgp', seenAt: ago(3) },
+    { accountId: 'c3', accountName: 'data', provider: 'gcp', region: 'asia-southeast2', id: 'ha-gw-to-dc', name: 'ha-gw to dc-jkt', state: 'partial', tunnelsUp: 1, tunnelsTotal: 2,
+      tunnels: [{ Address: 't0', Up: true, Why: 'ESTABLISHED' }, { Address: 't1', Up: false, Why: 'NO_INCOMING_PACKETS' }], remoteAddress: '36.72.1.9', remoteNetworks: [], type: 'HA VPN', routing: 'bgp', seenAt: ago(3) },
+  ],
+  cloudflare: [
+    { id: 'cf1', name: 'Main account', accountId: '0123456789abcdef0123456789abcdef', syncedAt: ago(2), stale: false,
+      read: ['tunnels', 'warpConnectors', 'routes', 'devices'], missing: { magicWan: 'Cloudflare answered 403' },
+      routes: [], devices: [], devicesTotal: 37, magicWan: [],
+      tunnels: [
+        { id: 't1', name: 'web-public', kind: 'tunnel', status: 'healthy', routes: [], connectors: [
+          { clientId: '0b6a1c2e-1111-2222-3333-444455556666', version: '2025.11.1', locations: ['cgk01', 'sin02'], connections: 4, assetId: 'a3', hostname: 'gw-jkt-01', old: false }] },
+        { id: 't2', name: 'intranet', kind: 'tunnel', status: 'degraded', routes: ['10.20.0.0/16'], connectors: [
+          { clientId: 'c9', version: '2024.2.1', originIp: '114.4.22.7', locations: ['cgk01'], connections: 1, old: true }] },
+        { id: 't3', name: 'office-warp', kind: 'warp-connector', status: 'inactive', routes: [], connsInactiveAt: ago(60 * 24 * 40), connectors: [] },
+      ] },
   ],
 }
 
@@ -54,6 +80,9 @@ async function signIn(page: Page) {
   await page.getByRole('button', { name: /^sign in$/i }).click()
   await expect(page.getByRole('button', { name: /^sign in$/i })).toBeHidden()
   await page.route('**/api/v1/networks', (r) => r.fulfill({ json: VIEW }))
+  await page.route('**/api/v1/networks/cloudflare', (r) => r.request().method() === 'GET'
+    ? r.fulfill({ json: { accounts: [], canSave: true } })
+    : r.fulfill({ status: 400, json: { error: 'Cloudflare refused the token: Cloudflare answered 403: Unauthorized. It needs Cloudflare Tunnel Read on this account' } }))
 }
 
 test('networks: links once each, down first, tunnels and software', async ({ page }) => {
@@ -61,8 +90,10 @@ test('networks: links once each, down first, tunnels and software', async ({ pag
   await signIn(page)
   await page.goto('/networks')
   await expect(page.getByRole('heading', { name: 'Networks' })).toBeVisible()
-  await expect(page.getByText('2 down')).toBeVisible()
-  await expect(page.getByTestId('network-problem')).toHaveCount(3)
+  await expect(page.getByText('3 down')).toBeVisible()
+  await expect(page.getByTestId('network-problem')).toHaveCount(6)
+  // A problem off any server links to nothing.
+  await expect(page.getByTestId('network-problem').first()).not.toContainText('Open ')
   // db-prod-01 <-> db-prod-02 is seen from both ends and shown once.
   const links = page.getByTestId('wg-link')
   await expect(links).toHaveCount(3)
@@ -73,14 +104,36 @@ test('networks: links once each, down first, tunnels and software', async ({ pag
   await expect(page.getByTestId('cf-tunnel').filter({ hasText: 'db-prod-02' })).toContainText('metrics did not answer')
   await expect(page.getByText(/1 server runs an agent too old/)).toBeVisible()
   await expect(page.getByRole('link', { name: 'VPNs and tunnels' })).toBeVisible()
+  await expect(page.getByTestId('cloud-vpn').filter({ hasText: 'jakarta-office' })).toContainText('0 of 2 up')
+  await expect(page.getByTestId('cloud-vpn').filter({ hasText: 'ha-gw to dc-jkt' })).toContainText('Partly up')
+  // The server's cloudflared names the tunnel it serves; the account's view names the server.
+  await expect(page.getByTestId('cf-tunnel').filter({ hasText: 'gw-jkt-01' })).toContainText('web-public')
+  await expect(page.getByTestId('cf-account-tunnel').filter({ hasText: 'web-public' })).toContainText('gw-jkt-01')
+  await expect(page.getByTestId('cf-account-tunnel').filter({ hasText: 'intranet' })).toContainText('Unknown machine 114.4.22.7')
+  await expect(page.getByTestId('cf-account')).toContainText('cannot read Magic WAN')
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/networks.png`, fullPage: true })
+})
+
+test('networks: connecting a Cloudflare account says why a token is refused', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await signIn(page)
+  await page.goto('/networks')
+  await page.getByRole('button', { name: 'Connect an account' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Connect a Cloudflare account' })
+  await dialog.getByLabel('Name').fill('Main account')
+  await dialog.getByLabel('Account id').fill('0123456789abcdef0123456789abcdef')
+  await dialog.getByLabel('API token').fill('wrong-token')
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/networks-connect-cloudflare.png` })
+  await dialog.getByRole('button', { name: 'Connect' }).click()
+  await expect(page.getByText(/needs Cloudflare Tunnel Read/)).toBeVisible()
+  await expect(dialog).toBeVisible()
 })
 
 test('networks: on a phone', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await signIn(page)
   await page.goto('/networks')
-  await expect(page.getByText('2 down')).toBeVisible()
+  await expect(page.getByText('3 down')).toBeVisible()
   const width = await page.evaluate(() => document.documentElement.scrollWidth)
   expect(width).toBeLessThanOrEqual(390)
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/networks-phone.png`, fullPage: true })

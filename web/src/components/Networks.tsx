@@ -6,7 +6,9 @@ import { AnchorLink } from '~/components/links'
 import { DataTable, EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page'
 import { relTime } from '~/components/primitives'
 import { Figure } from '~/components/Websites'
+import { CloudflareCard, CloudVPNsCard } from '~/components/NetworksCloud'
 import { isConfigured } from '~/lib/live'
+import { meQuery } from '~/lib/queries'
 import { formatBytes, linksOf, networksQuery, PEER_STATE, type Link, type NetworkTunnel, type NetworksView } from '~/lib/networks'
 import { FS, SP } from '~/theme'
 
@@ -18,6 +20,8 @@ import { FS, SP } from '~/theme'
  */
 export function NetworksPage() {
   const { data, isLoading, error } = useQuery({ ...networksQuery(), enabled: isConfigured() })
+  const { data: me } = useQuery({ ...meQuery(), enabled: isConfigured() })
+  const canManage = me?.role === 'admin' || me?.role === 'owner'
   const links = useMemo(() => linksOf(data?.interfaces ?? []), [data])
   const down = data?.problems.filter((p) => p.severity === 'down').length ?? 0
 
@@ -25,10 +29,10 @@ export function NetworksPage() {
     <Box>
       <PageHeader
         title="Networks"
-        description="VPN links and tunnels on your servers, as each server's agent sees them: WireGuard, Cloudflare Tunnel, and other VPN software. Checked every minute."
+        description="VPN links and tunnels on your servers, in your clouds and in Cloudflare: WireGuard between servers, cloud site-to-site VPNs, Cloudflare Tunnels, and other VPN software. Checked every minute."
         status={data ? (down > 0
           ? <Badge color="rose" variant="filled">{down} down</Badge>
-          : links.length + data.tunnels.length > 0 ? <Badge color="teal" variant="light">All up</Badge> : undefined) : undefined}
+          : links.length + data.tunnels.length + data.cloudVpns.length > 0 ? <Badge color="teal" variant="light">All up</Badge> : undefined) : undefined}
       />
       <PageBody>
         {!isConfigured() ? (
@@ -40,7 +44,9 @@ export function NetworksPage() {
             {data && <Figures data={data} links={links} />}
             {data && data.problems.length > 0 && <Problems data={data} />}
             <LinksCard links={links} loading={isLoading} />
+            <CloudVPNsCard vpns={data?.cloudVpns ?? []} loading={isLoading} />
             <TunnelsCard tunnels={data?.tunnels ?? []} loading={isLoading} />
+            <CloudflareCard accounts={data?.cloudflare ?? []} loading={isLoading} canManage={canManage} />
             <SoftwareCard data={data} loading={isLoading} />
             {data && <HowItReads data={data} />}
           </Stack>
@@ -55,10 +61,15 @@ function Figures({ data, links }: { data: NetworksView; links: Link[] }) {
   const linksDown = links.filter((l) => l.state === 'down' || l.state === 'never').length
   const tunnelsDown = data.tunnels.filter((t) => t.state === 'down').length
   const reporting = data.servers.filter((s) => s.reported).length
+  const vpnsDown = data.cloudVpns.filter((v) => v.state === 'down').length
+  const cfTunnels = data.cloudflare.flatMap((a) => a.tunnels)
+  const cfDown = cfTunnels.filter((t) => t.status === 'down').length
   return (
-    <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="md">
+    <SimpleGrid cols={{ base: 2, sm: 3, lg: 6 }} spacing="md">
       <Figure label="WireGuard links" value={links.length === 0 ? 'None' : linksDown > 0 ? `${linksDown} down of ${links.length}` : `${linksUp} up of ${links.length}`} warn={linksDown > 0} />
       <Figure label="Cloudflare Tunnels" value={data.tunnels.length === 0 ? 'None' : tunnelsDown > 0 ? `${tunnelsDown} down of ${data.tunnels.length}` : `${data.tunnels.length} connected`} warn={tunnelsDown > 0} />
+      <Figure label="Cloud VPNs" value={data.cloudVpns.length === 0 ? 'None' : vpnsDown > 0 ? `${vpnsDown} down of ${data.cloudVpns.length}` : `${data.cloudVpns.length} found`} warn={vpnsDown > 0} />
+      <Figure label="In Cloudflare" value={data.cloudflare.length === 0 ? 'Not connected' : cfDown > 0 ? `${cfDown} down of ${cfTunnels.length}` : `${cfTunnels.length} tunnels`} warn={cfDown > 0} />
       <Figure label="VPN software found" value={`${data.software.length} on ${new Set(data.software.map((s) => s.assetId)).size} servers`} />
       <Figure label="Servers reporting links" value={`${reporting} of ${data.servers.length}`} />
     </SimpleGrid>
@@ -69,14 +80,14 @@ function Problems({ data }: { data: NetworksView }) {
   return (
     <SectionCard title="Needs attention" icon={IconAlertTriangle} iconColor="rose">
       <Stack gap={SP.cozy}>
-        {data.problems.map((p, i) => (
-          <Group key={i} gap="sm" wrap="nowrap" align="flex-start" data-testid="network-problem">
+        {data.problems.map((p) => (
+          <Group key={p.key} gap="sm" wrap="nowrap" align="flex-start" data-testid="network-problem">
             <Badge color={p.severity === 'down' ? 'rose' : 'amber'} variant={p.severity === 'down' ? 'filled' : 'light'} miw={56}>
               {p.severity === 'down' ? 'Down' : 'Check'}
             </Badge>
             <Box>
               <Text size={FS.body} fw={600}>{p.title}</Text>
-              <Text size={FS.meta} c="dimmed">{p.detail} <AnchorLink to="/assets/$assetId" params={{ assetId: p.assetId }} size={FS.meta}>Open {p.hostname}</AnchorLink></Text>
+              <Text size={FS.meta} c="dimmed">{p.detail}{p.assetId && <> <AnchorLink to="/assets/$assetId" params={{ assetId: p.assetId }} size={FS.meta}>Open {p.hostname}</AnchorLink></>}</Text>
             </Box>
           </Group>
         ))}
@@ -134,8 +145,8 @@ const TUNNEL_STATE: Record<NetworkTunnel['state'], { label: string; color: strin
 function TunnelsCard({ tunnels, loading }: { tunnels: NetworkTunnel[]; loading: boolean }) {
   return (
     <SectionCard title="Cloudflare Tunnels" icon={IconBrandCloudflare} iconColor="amber" flush
-      description="Each cloudflared on a server, read from its own health check on the server. Which tunnel it serves comes when you connect your Cloudflare account.">
-      <DataTable columns={['Server', 'State', 'Connections to Cloudflare', 'Connector', 'cloudflared']} minWidth={760}
+      description="Each cloudflared on a server, read from its own health check on the server. Which tunnel it serves shows once your Cloudflare account is connected below.">
+      <DataTable columns={['Server', 'State', 'Connections to Cloudflare', 'Tunnel and connector', 'cloudflared']} minWidth={760}
         loading={loading} isEmpty={tunnels.length === 0}
         empty={<EmptyState icon={IconBrandCloudflare} title="No Cloudflare Tunnels found."
           description="When cloudflared runs on a server, its agent reports whether it is connected to Cloudflare here." />}>
@@ -144,7 +155,7 @@ function TunnelsCard({ tunnels, loading }: { tunnels: NetworkTunnel[]; loading: 
             <Table.Td><Server assetId={t.assetId} hostname={t.hostname} /></Table.Td>
             <Table.Td><Badge color={TUNNEL_STATE[t.state].color} variant={t.state === 'down' ? 'filled' : 'light'}>{TUNNEL_STATE[t.state].label}</Badge></Table.Td>
             <Table.Td><Text size={FS.body}>{t.error ? <Text span c="rose" size={FS.body}>{t.error}</Text> : t.readyConnections}</Text></Table.Td>
-            <Table.Td><Text size={FS.meta} ff="monospace">{t.connectorId || '—'}</Text></Table.Td>
+            <Table.Td>{t.tunnelName ? <Text size={FS.body} fw={500}>{t.tunnelName}</Text> : null}<Text size={FS.meta} ff="monospace" c="dimmed">{t.connectorId || '—'}</Text></Table.Td>
             <Table.Td><Text size={FS.body}>{t.version || '—'}</Text></Table.Td>
           </Table.Tr>
         ))}
@@ -186,7 +197,8 @@ function HowItReads({ data }: { data: NetworksView }) {
           ['Each server reads its own links.', 'Its agent asks WireGuard for each peer\'s last handshake and traffic, and asks each cloudflared on the server whether it is connected. A link going up or down reaches this page within about a minute.'],
           ['No keys leave the server.', 'Only public keys, addresses and counters are read. Private and preshared keys, and cloudflared\'s credentials, are never read.'],
           ['Idle is not down.', 'A WireGuard link handshakes only when there is traffic, unless it keeps itself alive. Argus calls a quiet link down only when its side keeps it alive and knows where to dial.'],
-          ['Nothing is changed.', 'This page only watches. Setting up links between servers comes next.'],
+          ['Clouds and Cloudflare are read, not changed.', 'Cloud VPNs come from the cloud sync with its read role; pre-shared keys are never read. Cloudflare is read with a read-only token kept sealed.'],
+          ['Down goes to the bell.', 'A link, cloud VPN or tunnel going down raises an alert for admins, closed when it is back up.'],
         ].map(([t, d]) => (
           <Text key={t} size={FS.body}><Text span fw={600}>{t}</Text> <Text span c="dimmed">{d}</Text></Text>
         ))}

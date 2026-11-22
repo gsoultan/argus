@@ -690,6 +690,10 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	// Website checks: every minute, confirmed before a site is called down;
 	// see websites.go.
 	go api.RunWebsiteChecks(ctx)
+	// Networks: connected Cloudflare accounts read every 5 minutes, and the
+	// bell when a VPN link, cloud VPN or tunnel goes down; see networks.go.
+	go api.RunCloudflareSync(ctx, control.CloudflareSyncInterval)
+	go api.RunNetworkWatch(ctx, control.NetworkWatchInterval)
 	// Cookies must be Secure whenever the browser reaches Argus over HTTPS,
 	// which includes the case where a proxy terminates TLS and this process
 	// only ever sees plain HTTP.

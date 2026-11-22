@@ -569,6 +569,24 @@ func _assertCloudScheduleRunShape(m m0.CloudScheduleRun) {
 	}
 }
 
+// _assertCloudflareAccountShape fails to compile if m0.CloudflareAccount gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertCloudflareAccountShape(m m0.CloudflareAccount) {
+	type shape m0.CloudflareAccount
+	_ = shape{
+		m.Model,
+		m.Name,
+		m.AccountID,
+		m.TokenSealed,
+		m.TokenTail,
+		m.Snapshot,
+		m.SyncedAt,
+		m.LastError,
+		m.LastErrorAt,
+		m.CreatedBy,
+	}
+}
+
 // _assertConsoleAlertShape fails to compile if m0.ConsoleAlert gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertConsoleAlertShape(m m0.ConsoleAlert) {

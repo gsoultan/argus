@@ -62,6 +62,13 @@ func (p *Provider) Inventory(ctx context.Context, a cloud.Account, region string
 				snap.Kinds = slices.DeleteFunc(slices.Clone(snap.Kinds), func(x cloud.Kind) bool { return x == cloud.KindScalingGroup })
 				got, err = nil, nil
 			}
+		case cloud.KindVPN:
+			// Like groups: a role made before VPNs were read may not allow
+			// it, and that is no reason to lose the rest of the region.
+			if got, err = vpnConnections(ctx, c, region); err != nil {
+				snap.Kinds = slices.DeleteFunc(slices.Clone(snap.Kinds), func(x cloud.Kind) bool { return x == cloud.KindVPN })
+				got, err = nil, nil
+			}
 		default:
 			err = fmt.Errorf("AWS has no inventory of %q yet", k)
 		}
