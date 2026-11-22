@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -213,7 +214,8 @@ func TestWGNetsMakeKeysAndStartOnce(t *testing.T) {
 	// The private key stays on the server, readable by its owner alone,
 	// and is in neither the beat nor the plan.
 	fi, err := os.Stat(filepath.Join(dir, wgnetDir, testNet+".key"))
-	if err != nil || fi.Mode().Perm() != 0o600 {
+	// Windows has no Unix modes; the networks are for Linux servers anyway.
+	if err != nil || runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Fatalf("key file: %v %v", fi, err)
 	}
 	priv, _ := os.ReadFile(filepath.Join(dir, wgnetDir, testNet+".key"))
