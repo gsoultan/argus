@@ -270,6 +270,11 @@ func TestPostgresAdminOps(t *testing.T) {
 		}
 		prev = rec.Hash
 		n++
+		// What a DBA open handed the level (no request of its own) is not
+		// one of this test's operations.
+		if (rec.Kind == "admin" || rec.Kind == "done") && rec.Request == 0 {
+			continue
+		}
 		kinds = append(kinds, rec.Kind)
 		if rec.Kind == "admin" && rec.SQL == "" {
 			t.Fatalf("an admin line without its statement: %+v", rec)

@@ -58,6 +58,19 @@ a session opens never reads the rules table.
   drop or terminate anything else; `TestPostgresLeavesOtherRolesAlone`
   snapshots an application's roles, ACLs and default privileges around
   sessions at every level. Keep it that way.
+- **DBA takes over what a superuser owns (2026-11).** Tables made as
+  `postgres` (psql, migrations run as postgres) were out of reach of every
+  level: Postgres lets only an owner index or alter, and `ownerReachSQL` never
+  makes a level a member of a superuser. Each DBA open now runs
+  `pgAdoptSuperuserObjects`: schemas, tables, views, sequences, trusted-
+  language non-SECURITY-DEFINER routines and types a superuser owns in the
+  database's own schemas go to `argus_dba_<db>`. Extension members, SECURITY
+  DEFINER and untrusted-language routines, table-owned sequences, `argus_auth`
+  and the trash stay put; roles are never touched. The statements are
+  recorded as `admin` lines with request 0 right after `open`, so the relay
+  audits them (`db.admin`). Owner is deliberately unchanged (the person chose
+  DBA only): a DBA owning a table a superuser writes to can add a trigger
+  that runs as that superuser. `TestPostgresDBAAdoptsSuperuserObjects`.
 - The DBA level role holds read/write/owner `WITH ADMIN OPTION`, which is how
   the console's Roles panel grants a level to an application role; nothing
   below DBA can.

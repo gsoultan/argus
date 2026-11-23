@@ -108,6 +108,9 @@ type PGAdminResult struct {
 	Exists  bool                  `json:"exists,omitempty"`
 	Steps   []tunnel.CreateStep   `json:"steps,omitempty"`
 	Options *tunnel.CreateOptions `json:"options,omitempty"`
+	// Adopted are the statements a DBA open ran to give the level what a
+	// superuser owned in the database (pgAdoptSuperuserObjects).
+	Adopted []string `json:"adopted,omitempty"`
 	// Bytes and DataDir are what database-size found.
 	Bytes   int64  `json:"bytes,omitempty"`
 	DataDir string `json:"dataDir,omitempty"`
@@ -200,6 +203,13 @@ func pgOpen(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAdmi
 	if err := pgEnsureTrash(ctx, conn); err != nil {
 		return PGAdminResult{Error: "setting up the trash: " + err.Error(), Version: version}
 	}
+	var adopted []string
+	if req.Level == tunnel.LevelDBA {
+		var err error
+		if adopted, err = pgAdoptSuperuserObjects(ctx, conn, levelRole(tunnel.LevelDBA, req.Database)); err != nil {
+			return PGAdminResult{Error: "giving the DBA level what postgres owns: " + err.Error(), Version: version}
+		}
+	}
 
 	// The person's role.
 	role := pgx(req.Role)
@@ -240,7 +250,7 @@ func pgOpen(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAdmi
 	if err := execAll(ctx, conn, stmts...); err != nil {
 		return PGAdminResult{Error: err.Error(), Version: version}
 	}
-	return PGAdminResult{OK: true, Version: version}
+	return PGAdminResult{OK: true, Version: version, Adopted: adopted}
 }
 
 func pgClose(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAdminResult {
@@ -269,6 +279,88 @@ func pgClose(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAdm
 		WHERE usename = $1 AND application_name LIKE 'argus:%' AND pid <> pg_backend_pid()`,
 		[][]byte{[]byte(req.Role)}, nil, nil, nil).Read()
 	return PGAdminResult{OK: true}
+}
+
+/*
+pgAdoptSuperuserObjects gives the DBA level what a superuser owns in this
+database: its schemas, tables, views, sequences, routines and types. Postgres
+lets only an object's owner, or a member of the owner's role, alter, index or
+drop it, and no Argus level is ever made a member of a superuser (see
+ownerReachSQL), so a table made as postgres -- with psql, or by a migration
+run as postgres -- was out of reach of every level, and "must be owner of
+table" was all a DBA saw. A DBA may change anything in the database; only
+Argus's own roles and the account the helper signs in as stay off limits,
+and those are roles, which this never touches.
+
+An application that connects as the superuser keeps working: a superuser
+needs no ownership. Left alone, because handing them over would change what
+runs with a superuser's rights, or is not the database's own:
+  - what an extension owns (ALTER EXTENSION is how those change);
+  - SECURITY DEFINER routines, and routines in an untrusted language such as
+    C, which only a superuser may replace;
+  - Postgres's schemas, information_schema and Argus's own (argus_auth and
+    the trash);
+  - sequences and types that belong to a table: they go with the table.
+Objects owned by an ordinary role are left with it: ownerReachSQL already
+makes the owner level, and through it DBA, a member of those roles.
+
+What a DBA can then do with a table it owns includes adding a trigger, which
+runs as whoever writes to the table next; an application that writes as the
+superuser hands its rights to that trigger. That is Postgres's model of
+ownership, and it is why this is the DBA level only.
+
+It runs on every DBA open, so what a superuser made since is covered by the
+next session. The statements are returned so the session records them.
+*/
+func pgAdoptSuperuserObjects(ctx context.Context, conn *pgconn.PgConn, dbaRole string) ([]string, error) {
+	const sql = `WITH su AS (SELECT oid FROM pg_roles WHERE rolsuper),
+ns AS (SELECT oid, nspname FROM pg_namespace
+       WHERE nspname NOT LIKE 'pg\_%' AND nspname <> 'information_schema' AND nspname <> 'argus_auth'
+         AND nspname NOT LIKE 'argus\_trash%'),
+ext AS (SELECT classid, objid FROM pg_depend WHERE deptype = 'e')
+SELECT 0 AS o, format('ALTER SCHEMA %I OWNER TO %I', n.nspname, $1::text)
+  FROM ns n JOIN pg_namespace x ON x.oid = n.oid
+ WHERE x.nspowner IN (SELECT oid FROM su)
+   AND NOT EXISTS (SELECT 1 FROM ext WHERE classid = 'pg_namespace'::regclass AND objid = n.oid)
+UNION ALL
+SELECT 1, format('ALTER %s %s OWNER TO %I',
+         CASE c.relkind WHEN 'v' THEN 'VIEW' WHEN 'm' THEN 'MATERIALIZED VIEW' WHEN 'S' THEN 'SEQUENCE'
+                        WHEN 'f' THEN 'FOREIGN TABLE' WHEN 'c' THEN 'TYPE' ELSE 'TABLE' END,
+         CASE c.relkind WHEN 'c' THEN c.reltype::regtype::text ELSE c.oid::regclass::text END, $1::text)
+  FROM pg_class c JOIN ns n ON n.oid = c.relnamespace
+ WHERE c.relowner IN (SELECT oid FROM su) AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f', 'c')
+   AND NOT EXISTS (SELECT 1 FROM ext WHERE classid = 'pg_class'::regclass AND objid = c.oid)
+   AND NOT (c.relkind = 'S' AND EXISTS (SELECT 1 FROM pg_depend d
+            WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype IN ('a', 'i')))
+UNION ALL
+SELECT 2, format('ALTER ROUTINE %s OWNER TO %I', p.oid::regprocedure, $1::text)
+  FROM pg_proc p JOIN ns n ON n.oid = p.pronamespace JOIN pg_language l ON l.oid = p.prolang
+ WHERE p.proowner IN (SELECT oid FROM su) AND p.prokind IN ('f', 'p') AND NOT p.prosecdef AND l.lanpltrusted
+   AND NOT EXISTS (SELECT 1 FROM ext WHERE classid = 'pg_proc'::regclass AND objid = p.oid)
+UNION ALL
+SELECT 3, format('ALTER %s %s OWNER TO %I', CASE t.typtype WHEN 'd' THEN 'DOMAIN' ELSE 'TYPE' END, t.oid::regtype, $1::text)
+  FROM pg_type t JOIN ns n ON n.oid = t.typnamespace
+ WHERE t.typowner IN (SELECT oid FROM su) AND t.typtype IN ('d', 'e', 'r')
+   AND NOT EXISTS (SELECT 1 FROM ext WHERE classid = 'pg_type'::regclass AND objid = t.oid)
+ORDER BY 1, 2`
+	res := conn.ExecParams(ctx, sql, [][]byte{[]byte(dbaRole)}, nil, nil, nil).Read()
+	if res.Err != nil {
+		return nil, res.Err
+	}
+	if len(res.Rows) == 0 {
+		return nil, nil
+	}
+	stmts := make([]string, 0, len(res.Rows))
+	for _, r := range res.Rows {
+		stmts = append(stmts, string(r[1]))
+	}
+	// All or none: a DBA sees every one handed over, or the open fails
+	// and says which.
+	if err := execAll(ctx, conn, append(append([]string{"BEGIN"}, stmts...), "COMMIT")...); err != nil {
+		_, _ = conn.Exec(context.WithoutCancel(ctx), "ROLLBACK").ReadAll()
+		return nil, err
+	}
+	return stmts, nil
 }
 
 // pgEnsurePoolerAuth creates the lookup PgBouncer authenticates Argus roles

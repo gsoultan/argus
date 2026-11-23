@@ -27,8 +27,8 @@ export const ENGINES: Record<DBEngine, EngineInfo> = {
     levels: {
       read: 'Look at data and run reports. The default.',
       write: 'Read and change rows: INSERT, UPDATE, DELETE.',
-      owner: 'Change tables, columns and indexes too.',
-      dba: 'Manage roles and grants, end other people’s queries. Never a Postgres superuser.',
+      owner: 'Create, change and index tables too: the ones made through Argus or by your application’s own role. Not ones the postgres superuser made.',
+      dba: 'Change or add anything in this database, including what the postgres superuser made, which is handed to the DBA level. Manage roles and grants, end other people’s queries. Never a Postgres superuser, and never Argus’s own roles.',
     },
   },
   mysql: {
