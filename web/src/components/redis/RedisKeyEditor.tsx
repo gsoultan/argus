@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
-  ActionIcon, Badge, Box, Button, Code, Group, Loader, Modal, NumberInput, Popover, Select, Stack, Table, Text, Textarea,
+  ActionIcon, Badge, Box, Button, Code, Group, Loader, Modal, NumberInput, Popover, Select, Stack, Table, Tabs, Text, Textarea,
   TextInput, Tooltip,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
@@ -9,6 +9,7 @@ import { FS, SP } from '~/theme'
 import { formatRedis, plain, type RedisKey, type RedisValue, type StoreAnswer, type StoreRequest } from '~/components/useStoreSession'
 import { editText, ttlText, unitSeconds, type RedisEditResult } from '~/lib/redisManage'
 import type { ChangeAnswer } from '~/components/redis/useRedisChange'
+import { RedisStreamGroups } from '~/components/redis/RedisStreamGroups'
 
 /*
 Changing one key without typing commands: each change becomes a command,
@@ -21,10 +22,12 @@ else is the console's.
 const typeBadge = { variant: 'outline', color: 'slate', radius: 'sm' } as const
 const mono = { fontFamily: 'var(--font-mono)', fontSize: 12.5, whiteSpace: 'pre-wrap' as const, wordBreak: 'break-all' as const }
 
-export function RedisKeyEditor({ selected, value, change, onChanged, onReload }: {
+export function RedisKeyEditor({ selected, value, change, ask, onChanged, onReload }: {
   selected: RedisKey
   value: StoreAnswer | null
   change: (req: StoreRequest) => Promise<ChangeAnswer>
+  /** Reads what is not recorded, such as a stream's consumer groups. */
+  ask?: (req: StoreRequest) => Promise<StoreAnswer>
   /** After a change ran: the new name when renamed, null when the key is gone. */
   onChanged: (name: string | null) => void
   onReload: () => void
@@ -33,7 +36,8 @@ export function RedisKeyEditor({ selected, value, change, onChanged, onReload }:
   const [pending, setPending] = useState<string[][]>([])
   const [applying, setApplying] = useState(false)
   const [err, setErr] = useState<string | null>(null)
-  useEffect(() => { setPending([]); setErr(null) }, [key])
+  const [streamTab, setStreamTab] = useState<string>('entries')
+  useEffect(() => { setPending([]); setErr(null); setStreamTab('entries') }, [key])
 
   const stage = (...cmds: string[][]) => setPending((p) => [...p, ...cmds])
 
@@ -135,6 +139,20 @@ export function RedisKeyEditor({ selected, value, change, onChanged, onReload }:
         {editable && kt === 'stream' && <AddLine label="Delete entry by id" placeholder="1700000000000-0" onAdd={(id) => stage(['XDEL', key, id])} />}
       </Stack>
     )
+    if (kt === 'stream' && ask && value.type === 'result' && !value.error) {
+      body = (
+        <Tabs value={streamTab} onChange={(t) => setStreamTab(t ?? 'entries')} keepMounted={false}>
+          <Tabs.List mb="sm">
+            <Tabs.Tab value="entries">Entries</Tabs.Tab>
+            <Tabs.Tab value="groups">Consumer groups</Tabs.Tab>
+          </Tabs.List>
+          <Tabs.Panel value="entries">{body}</Tabs.Panel>
+          <Tabs.Panel value="groups">
+            <RedisStreamGroups streamKey={key} keyQ={selected.q} ask={ask} stage={editable ? stage : undefined} version={value} />
+          </Tabs.Panel>
+        </Tabs>
+      )
+    }
   }
 
   return (

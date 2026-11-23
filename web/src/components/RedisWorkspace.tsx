@@ -11,9 +11,10 @@ import type { DBAccess, DBLevel, Database } from '~/types/domain'
 import { useCompletion } from '~/components/Autocomplete'
 import { completeRedis } from '~/lib/redisComplete'
 import { ConfirmByName, FatalBanner, StoreHeader } from '~/components/StoreChrome'
-import { formatRedis, plain, useStoreSession, type RedisKey, type RedisValue, type StoreAnswer } from '~/components/useStoreSession'
+import { formatRedis, plain, useStoreSession, type RedisKey, type RedisValue, type StoreAnswer, type StoreRequest } from '~/components/useStoreSession'
 import { useRedisChange } from '~/components/redis/useRedisChange'
 import { RedisKeyEditor } from '~/components/redis/RedisKeyEditor'
+import { RedisStreamGroups } from '~/components/redis/RedisStreamGroups'
 import { treeLevel, ttlText } from '~/lib/redisManage'
 import { notifyOk, notifyWarn } from '~/lib/notify'
 
@@ -313,9 +314,9 @@ export function RedisWorkspace({ database, access, getTicket, endpoint, onAskFor
       <Box style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <Box style={{ flex: '1 1 50%', minHeight: narrow ? 200 : 0, overflow: 'auto', borderBottom: '1px solid var(--color-line)' }} p="md">
           {selected && canEdit ? (
-            <RedisKeyEditor selected={selected} value={value} change={change} onChanged={afterEdit} onReload={() => void open(selected)} />
+            <RedisKeyEditor selected={selected} value={value} change={change} ask={can('stream_groups') ? s.ask : undefined} onChanged={afterEdit} onReload={() => void open(selected)} />
           ) : (
-            <ValueView selected={selected} value={value} onReload={selected ? () => void open(selected) : undefined} />
+            <ValueView selected={selected} value={value} onReload={selected ? () => void open(selected) : undefined} ask={can('stream_groups') ? s.ask : undefined} />
           )}
         </Box>
 
@@ -398,7 +399,9 @@ export function RedisWorkspace({ database, access, getTicket, endpoint, onAskFor
   )
 }
 
-function ValueView({ selected, value, onReload }: { selected: RedisKey | null; value: StoreAnswer | null; onReload?: () => void }) {
+function ValueView({ selected, value, onReload, ask }: {
+  selected: RedisKey | null; value: StoreAnswer | null; onReload?: () => void; ask?: (req: StoreRequest) => Promise<StoreAnswer>
+}) {
   if (!selected) {
     return <Text size={FS.meta} c="dimmed">Pick a key on the left to see its value. Reading a value is recorded, like a command.</Text>
   }
@@ -457,6 +460,18 @@ function ValueView({ selected, value, onReload }: { selected: RedisKey | null; v
               ))}
             </Table.Tbody>
           </Table>
+        </>
+      )
+    case 'stream':
+      return (
+        <>{head}
+          <Box style={mono}>{formatRedis(v)}</Box>
+          {ask && selected && (
+            <Box mt="md">
+              <Text fw={600} size={FS.body} mb="xs">Consumer groups</Text>
+              <RedisStreamGroups streamKey={selected.name} keyQ={selected.q} ask={ask} version={value} />
+            </Box>
+          )}
         </>
       )
     default:
