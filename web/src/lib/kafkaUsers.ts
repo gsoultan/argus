@@ -237,3 +237,43 @@ export const ACL_OPERATIONS: Record<string, string[]> = {
   group: ['READ', 'DESCRIBE', 'DELETE'],
   transactional_id: ['WRITE', 'DESCRIBE'],
 }
+
+/** Whether a topic ACL covers topic. */
+export function aclCovers(a: KafkaACL, topic: string): boolean {
+  if (a.resource !== 'topic') return false
+  if (a.pattern === 'PREFIXED') return topic.startsWith(a.name)
+  return a.name === topic || a.name === '*'
+}
+
+/** How a topic ACL names its topics, as the Access tab shows why. */
+export function aclBecause(a: KafkaACL): string {
+  if (a.pattern === 'LITERAL' && a.name === '*') return 'LITERAL * (the whole cluster)'
+  return `${a.pattern} ${a.name}`
+}
+
+/** An app user that reaches a topic: what it can do there, and the ACLs that let it. */
+export interface TopicReach { user: string; mechanisms: string[]; caps: KafkaCap[]; because: string[] }
+
+/** The app users whose ACLs reach topic, Argus's own session users left out. */
+export function topicAccess(data: KafkaUsersData, topic: string): TopicReach[] {
+  const out: TopicReach[] = []
+  for (const u of data.users) {
+    if (u.self || data.sessions.includes(u.name)) continue
+    const hits = [...u.acls, ...(u.outside ?? [])].filter((a) => aclCovers(a, topic))
+    if (hits.length === 0) continue
+    const caps = userCaps(hits).map((c) => c.cap)
+    if (caps.length === 0) continue
+    out.push({ user: u.name, mechanisms: u.mechanisms ?? [], caps, because: [...new Set(hits.map(aclBecause))] })
+  }
+  return out.sort((a, b) => a.user.localeCompare(b.user))
+}
+
+/** What an Argus level lets a person do on a Kafka entry's topics. */
+export function levelCaps(level: string): KafkaCap[] {
+  switch (level) {
+    case 'read': return ['Consume']
+    case 'write': return ['Produce', 'Consume']
+    case 'owner': case 'dba': return ['Produce', 'Consume', 'Alter topics']
+  }
+  return []
+}

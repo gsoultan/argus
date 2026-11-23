@@ -98,6 +98,31 @@ describe('KafkaWorkspace', () => {
     expect(del).toMatchObject({ name: 'orders.eu', confirm: 'stream-01' })
   })
 
+  it('shows which app users reach a topic, and by which ACL', async () => {
+    renderWithProviders(<Harness level="dba" start="topics" />)
+    await waitFor(() => expect(FakeSocket.last).not.toBeNull())
+    const ws = FakeSocket.last!
+    ws.push({ type: 'ready' })
+    ws.answer({ id: 0, type: 'ready', engine: 'kafka', level: 'dba', user: 'argus-ana-dba', ops: ['overview', 'topics', 'topic', 'groups', 'users'] })
+    await answerAll(ws, 'overview', { type: 'result', data: { cluster: 'c-1', brokers: [], topics: 1, partitions: 1, scope: 'orders.' } })
+    await answerAll(ws, 'topics', { type: 'result', data: [{ name: 'orders.paid', partitions: 1, replication: 1, messages: 3 }] })
+    await answerAll(ws, 'groups', { type: 'result', data: [] })
+    fireEvent.click(await screen.findByTitle('orders.paid'))
+    await answerAll(ws, 'topic', { type: 'result', data: { name: 'orders.paid', configs: {}, groups: [], partitions: [] } })
+    const acl = (name: string, pattern: string, operation: string) => ({ resource: 'topic', pattern, name, operation, permission: 'ALLOW', host: '*' })
+    await answerAll(ws, 'users', { type: 'result', data: { scope: 'orders.', notShown: 0, sessions: ['argus-ana-dba'], users: [
+      { name: 'billing-app', mechanisms: ['SCRAM-SHA-512'], quotas: {}, acls: [acl('orders.paid', 'LITERAL', 'READ')] },
+      { name: 'fulfilment-svc', mechanisms: ['SCRAM-SHA-512'], quotas: {}, acls: [acl('orders.', 'PREFIXED', 'WRITE'), acl('orders.', 'PREFIXED', 'READ')] },
+      { name: 'invoices', mechanisms: ['SCRAM-SHA-512'], quotas: {}, acls: [acl('orders.eu', 'LITERAL', 'READ')] },
+      { name: 'argus-ana-dba', quotas: {}, acls: [acl('*', 'LITERAL', 'ALL')] },
+    ] } })
+    expect(await screen.findByText('billing-app')).toBeInTheDocument()
+    expect(screen.getByText('LITERAL orders.paid')).toBeInTheDocument()
+    expect(screen.getByText('PREFIXED orders.')).toBeInTheDocument()
+    expect(screen.queryByText('invoices')).toBeNull()
+    expect(screen.queryAllByText('argus-ana-dba').some((el) => el.closest('table'))).toBe(false)
+  })
+
   it('makes an app user at Admin: only a salted hash goes with it, then it signs in and the details show once', async () => {
     renderWithProviders(<Harness level="dba" start="users" />)
     await waitFor(() => expect(FakeSocket.last).not.toBeNull())

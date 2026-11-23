@@ -14,6 +14,7 @@ import {
   type KafkaGroup, type KafkaMessage, type KafkaOverview, type KafkaTopic, type KafkaTopicDetail,
 } from '~/lib/kafka'
 import { notifyError, notifyOk } from '~/lib/notify'
+import { TopicAccess } from './TopicAccess'
 import { FS, INK } from '~/theme'
 import { levelName } from '~/lib/engines'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
@@ -164,7 +165,7 @@ export function KafkaWorkspace(props: KafkaWorkspaceProps) {
             {tab === 'overview' && <Overview overview={overview} topics={topics} groups={groups} needs={needs}
               onTopic={openTopic} onGroups={() => onNavigate({ tab: 'groups' })} />}
             {tab === 'topics' && (topic
-              ? <TopicDetail key={topic} name={topic} ask={s.ask} act={act} can={can} hostname={database.hostname} narrow={narrow}
+              ? <TopicDetail key={topic} name={topic} databaseId={database.id} ask={s.ask} act={act} can={can} hostname={database.hostname} narrow={narrow}
                   onBack={() => openTopic()} onPublish={() => setPublishing(topic)} />
               : <Topics topics={topics} narrow={narrow} onOpen={openTopic} canCreate={can('create_topic')} onCreate={() => setCreating(true)} />)}
             {tab === 'groups' && <Groups groups={groups} onTopic={openTopic} />}
@@ -394,8 +395,8 @@ function Groups({ groups, onTopic }: { groups: KafkaGroup[]; onTopic: (t: string
   )
 }
 
-function TopicDetail({ name, ask, act, can, hostname, narrow, onBack, onPublish }: {
-  name: string; ask: (r: Req) => Promise<StoreAnswer>; act: (r: Req, ok: string) => Promise<StoreAnswer>; can: (op: string) => boolean
+function TopicDetail({ name, databaseId, ask, act, can, hostname, narrow, onBack, onPublish }: {
+  name: string; databaseId: string; ask: (r: Req) => Promise<StoreAnswer>; act: (r: Req, ok: string) => Promise<StoreAnswer>; can: (op: string) => boolean
   hostname: string; narrow: boolean; onBack: () => void; onPublish: () => void
 }) {
   const [detail, setDetail] = useState<KafkaTopicDetail | null>(null)
@@ -502,6 +503,7 @@ function TopicDetail({ name, ask, act, can, hostname, narrow, onBack, onPublish 
         )}
       </Card>
 
+      {can('users') && <TopicAccess topic={name} databaseId={databaseId} ask={ask} />}
       <ConfirmByName opened={deleting} hostname={hostname} what={`Delete topic ${name} and every message in it, on every broker.`}
         onCancel={() => setDeleting(false)}
         onConfirm={(typed) => {

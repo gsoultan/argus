@@ -84,3 +84,23 @@ describe('a new Kafka user', () => {
     expect(m.get('a')?.by).toBe('ana@example.com')
   })
 })
+
+describe('who reaches a topic', () => {
+  const acl = (name: string, pattern: string, operation: string, permission = 'ALLOW') => ({ resource: 'topic', pattern, name, operation, permission, host: '*' })
+  it('matches literal, prefixed and whole-cluster ACLs, without Argus’s own users', async () => {
+    const { topicAccess, levelCaps } = await import('~/lib/kafkaUsers')
+    const reach = topicAccess({ scope: 'orders.', notShown: 0, sessions: ['argus-x'], users: [
+      { name: 'a', quotas: {}, acls: [acl('orders.paid', 'LITERAL', 'READ')] },
+      { name: 'b', quotas: {}, acls: [acl('orders.', 'PREFIXED', 'WRITE')] },
+      { name: 'c', quotas: {}, acls: [], outside: [acl('*', 'LITERAL', 'READ')] },
+      { name: 'd', quotas: {}, acls: [acl('orders.eu', 'LITERAL', 'READ')] },
+      { name: 'argus-x', quotas: {}, acls: [acl('*', 'LITERAL', 'ALL')] },
+    ] }, 'orders.paid')
+    expect(reach.map((r) => [r.user, r.caps.join(','), r.because.join(',')])).toEqual([
+      ['a', 'Consume', 'LITERAL orders.paid'],
+      ['b', 'Produce', 'PREFIXED orders.'],
+      ['c', 'Consume', 'LITERAL * (the whole cluster)'],
+    ])
+    expect(levelCaps('write')).toEqual(['Produce', 'Consume'])
+  })
+})
