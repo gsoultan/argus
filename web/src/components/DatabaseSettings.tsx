@@ -349,6 +349,7 @@ function StoreConnection({ db }: { db: Database }) {
           <Group><Button onClick={() => void save()} disabled={!dirty} loading={update.isPending}>Save</Button></Group>
         </Stack>
       </SectionCard>
+      {(db.engine === 'mysql' || db.engine === 'mssql' || db.engine === 'mongodb') && <Suspense fallback={null}><DatabaseOwner db={db} /></Suspense>}
       <SectionCard title="How people sign in">
         <Text size={FS.meta} c="dimmed">
           {db.engine === 'mysql'

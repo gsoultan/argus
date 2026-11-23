@@ -35,7 +35,8 @@ Ops:
 	options    what the dialog may offer: Postgres's installed extensions,
 	           roles and default locale; MySQL's character sets and
 	           collations; a Kafka cluster's broker count
-	set-owner  Postgres only: ALTER DATABASE … OWNER TO …
+	set-owner     give the database to another owner (dbowner.go)
+	set-password  give the database's owner user a new password
 */
 
 // CreateService is the tunnel service name.
@@ -73,6 +74,12 @@ type GrantCreate struct {
 	Rabbit   *RabbitCreate `json:"rabbit,omitempty"`
 	Kafka    *KafkaCreate  `json:"kafka,omitempty"`
 	MSSQL    *MSSQLCreate  `json:"mssql,omitempty"`
+
+	// Owner is who owns the database; nil is Argus's (see dbowner.go).
+	Owner *CreateOwner `json:"owner,omitempty"`
+	// PoolerPort is the PgBouncer the database's entry goes through, for
+	// Postgres: the new database and its owner are made reachable there.
+	PoolerPort int `json:"poolerPort,omitempty"`
 }
 
 // MSSQLCreate is a new SQL Server database's collation and recovery
@@ -153,6 +160,12 @@ type CreateResult struct {
 	Steps      []CreateStep `json:"steps,omitempty"`
 	// Options answers the options op.
 	Options *CreateOptions `json:"options,omitempty"`
+	// Manual are lines a person must add by hand, when the agent could not
+	// (PgBouncer's files it cannot write).
+	Manual []string `json:"manual,omitempty"`
+	// Pooled says the owner signed in through PgBouncer, so the app can
+	// use its port.
+	Pooled bool `json:"pooled,omitempty"`
 }
 
 // CreateOptions is what the console's create dialog may offer.
@@ -173,6 +186,11 @@ type CreateOptions struct {
 	// the model database's recovery model, which a new one takes.
 	Collations      []string `json:"collations,omitempty"`
 	DefaultRecovery string   `json:"defaultRecovery,omitempty"`
+	// Users are those that may own a new database, on every engine with an
+	// owner.
+	Users []OwnerUser `json:"users,omitempty"`
+	// Pooler is the PgBouncer in front of this Postgres, if there is one.
+	Pooler *PoolerInfo `json:"pooler,omitempty"`
 	// Taken are the names already on the server, so the dialog says so
 	// before anything runs.
 	Taken     []string `json:"taken,omitempty"`
@@ -214,17 +232,17 @@ func (c *GrantCreate) Validate() error {
 	switch c.Op {
 	case CreateOpOptions:
 		return nil
-	case CreateOpSetOwner:
-		if c.Engine != EnginePostgres {
-			return errors.New("only a Postgres database has an owner to change")
+	case CreateOpSetOwner, CreateOpSetPassword:
+		if !OwnerEngine(c.Engine) {
+			return errors.New(engineWord(c.Engine) + " has no owner to change")
 		}
-		if err := validPGDatabase(c.Name); err != nil {
+		if err := validOwnedName(c.Engine, c.Name); err != nil {
 			return err
 		}
-		if c.Postgres == nil {
+		if c.Op == CreateOpSetOwner && c.Engine == EnginePostgres && c.Owner == nil && c.Postgres == nil {
 			return errors.New("the new owner is required")
 		}
-		return validPGOwner(c.Postgres.Owner)
+		return c.validateOwner()
 	case CreateOpCreate:
 	default:
 		return errors.New("unknown operation " + c.Op)
@@ -349,6 +367,28 @@ func (c *GrantCreate) Validate() error {
 		}
 	default:
 		return errors.New("Argus cannot create on engine " + c.Engine)
+	}
+	return c.validateOwner()
+}
+
+// validOwnedName checks a database's name for an owner change: the names a
+// create would take, without the per-engine create settings.
+func validOwnedName(engine, n string) error {
+	switch engine {
+	case EnginePostgres:
+		return validPGDatabase(n)
+	case EngineMySQL:
+		if !ValidMySQLDB(n) {
+			return errors.New("that is not a MySQL database Argus can change")
+		}
+	case EngineMSSQL:
+		if !ValidMSSQLDB(n) {
+			return errors.New("that is not a SQL Server database Argus can change")
+		}
+	case EngineMongoDB:
+		if !ValidMongoDB(n) {
+			return errors.New("that is not a MongoDB database Argus can change")
+		}
 	}
 	return nil
 }
@@ -500,10 +540,10 @@ var pgReserved = map[string]bool{"user": true, "order": true, "table": true, "se
 // PGLiteral quotes a Postgres string literal.
 func PGLiteral(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
 
-// CreatePlan is what a create runs, in order, as text. The agent runs these
+// CreateDBPlan is what making the database itself runs, in order, as text. The agent runs these
 // exact statements for Postgres and MySQL; for MongoDB, RabbitMQ and Kafka
 // they describe the API calls it makes from the same fields.
-func CreatePlan(c GrantCreate) []string {
+func CreateDBPlan(c GrantCreate) []string {
 	switch c.Engine {
 	case EnginePostgres:
 		p := c.Postgres
@@ -614,11 +654,6 @@ func (r RabbitCreate) LimitsJSON() string {
 		return ""
 	}
 	return "{" + strings.Join(parts, ",") + "}"
-}
-
-// SetOwnerPlan is what changing a Postgres database's owner runs.
-func SetOwnerPlan(c GrantCreate) []string {
-	return []string{"ALTER DATABASE " + PGIdent(c.Name) + " OWNER TO " + PGIdent(c.PGOwnerRole())}
 }
 
 // shellWord quotes s for display the way a shell would take it. The agent

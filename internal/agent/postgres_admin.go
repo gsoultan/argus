@@ -44,7 +44,7 @@ A role Argus did not create is never touched: it is reported as taken.
 
 // PGAdminRequest is one provisioning operation.
 type PGAdminRequest struct {
-	Op string `json:"op"` // open, close, admin, prepare-replace, rollback-replace, drop-database, list-databases, discover-databases, database-size, create-test, drop-test, test-checks, run-checks, create-database, prepare-new-database, create-options, set-owner
+	Op string `json:"op"` // open, close, admin, prepare-replace, rollback-replace, drop-database, list-databases, discover-databases, database-size, create-test, drop-test, test-checks, run-checks, create-database, prepare-new-database, create-options, set-owner, set-password
 	// Database to connect to and grant in. The replace operations connect
 	// to the maintenance database and act on Target, since a database
 	// cannot be renamed from inside itself.
@@ -152,7 +152,7 @@ func RunPGAdmin(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PG
 		return pgReplaceOp(ctx, conn, req)
 	case "discover-databases":
 		return pgDiscover(ctx, conn)
-	case "create-database", "prepare-new-database", "create-options", "set-owner":
+	case "create-database", "prepare-new-database", "create-options", "set-owner", "set-password":
 		return pgCreateOp(ctx, conn, req)
 	case "database-size", "create-test", "drop-test", "test-checks", "run-checks":
 		return pgTestOp(ctx, conn, req)
