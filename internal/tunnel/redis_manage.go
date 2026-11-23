@@ -46,6 +46,8 @@ const (
 	RedisOpNetwork       = "network"        // where Redis listens and who can reach it
 	RedisOpNetworkSet    = "network_set"    // which LAN addresses it listens on
 	RedisOpDefaultSecure = "default_secure" // give the default user a password
+
+	RedisOpStreamGroups = "stream_groups" // a stream's consumer groups, a group's consumers and pending entries
 )
 
 // MaxRedisPassword bounds a password sent for a sign-in check.
@@ -87,7 +89,7 @@ type RedisApprovalNeed struct {
 // that is not one of these.
 func RedisOpLevel(op string) string {
 	switch op {
-	case RedisOpInfo, RedisOpUndoList:
+	case RedisOpInfo, RedisOpUndoList, RedisOpStreamGroups:
 		return LevelRead
 	case RedisOpEdit, RedisOpCount, RedisOpBulk, RedisOpUndo:
 		return LevelWrite
@@ -487,6 +489,7 @@ func RedisSortedNames[V any](m map[string]V) []string {
 
 // RedisEditable reports whether a command may be one of an edit's: a data
 // command on one key (RENAMENX names two), never one that walks or wipes.
+// A stream's consumer groups are its own bookkeeping, changed as the key's.
 func RedisEditable(args []string) bool {
 	if len(args) < 2 {
 		return false
@@ -497,8 +500,40 @@ func RedisEditable(args []string) bool {
 		return true
 	case "RENAMENX", "RENAME":
 		return len(args) == 3
+	case "XGROUP":
+		if len(args) < 4 {
+			return false
+		}
+		switch strings.ToUpper(args[1]) {
+		case "CREATE", "SETID":
+			return len(args) >= 5
+		case "DESTROY":
+			return len(args) == 4
+		case "DELCONSUMER", "CREATECONSUMER":
+			return len(args) == 5
+		}
+		return false
+	case "XACK":
+		return len(args) >= 4
+	case "XCLAIM":
+		return len(args) >= 6
 	}
 	return false
+}
+
+// RedisEditKey is the key an editable command changes: the third word of
+// XGROUP, the second of every other.
+func RedisEditKey(args []string) string {
+	if len(args) < 2 {
+		return ""
+	}
+	if strings.EqualFold(args[0], "XGROUP") {
+		if len(args) < 3 {
+			return ""
+		}
+		return args[2]
+	}
+	return args[1]
 }
 
 var redisHashRefRE = regexp.MustCompile(`^[0-9a-f]{8}…[0-9a-f]{8}$`)

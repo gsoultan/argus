@@ -73,6 +73,41 @@ describe('Redis management', () => {
     expect(edit).toMatchObject({ key: 'user:1', edits: [['HSET', 'user:1', 'name', 'Ana Lima']], undo: true })
   })
 
+  it('stages acknowledging and claiming a stream group’s pending entries', async () => {
+    renderWithProviders(
+      <RedisWorkspace database={db} access={{ level: 'dba' }} endpoint="/api/v1/postgres"
+        getTicket={async () => ({ ticket: 't', role: 'ana', level: 'dba' })} />,
+    )
+    await waitFor(() => expect(FakeSocket.last).not.toBeNull())
+    const ws = FakeSocket.last!
+    ws.push({ type: 'ready' })
+    ws.answer({ id: 0, type: 'ready', engine: 'redis', level: 'dba', user: 'argus-ana-dba', ops: [...ALL, 'stream_groups'] })
+    await ws.reply('scan', { type: 'result', keys: [{ name: 'orders', type: 'stream', ttl: -1 }], cursor: '0', total: 1 })
+    fireEvent.click(await screen.findByText('orders'))
+    await ws.reply('value', { type: 'result', keyType: 'stream', ttl: -1, total: 3, value: { t: 'a', a: [] } })
+    fireEvent.click(await screen.findByRole('tab', { name: 'Consumer groups' }))
+    await ws.reply('stream_groups', { type: 'result', data: { groups: [{ name: 'billing', consumers: 2, pending: 2, lastDelivered: '2-0', behind: 1 }] } })
+    const detail = await ws.reply('stream_groups', { type: 'result', data: {
+      groups: [{ name: 'billing', consumers: 2, pending: 2, lastDelivered: '2-0', behind: 1 }], group: 'billing',
+      consumers: [{ name: 'worker-1', pending: 2, idleMs: 600_000 }, { name: 'worker-2', pending: 0, idleMs: 2000 }],
+      pending: [{ id: '1-0', consumer: 'worker-1', idleMs: 600_000, deliveries: 4 }, { id: '2-0', consumer: 'worker-1', idleMs: 600_000, deliveries: 1 }],
+    } })
+    expect(detail).toMatchObject({ key: 'orders', name: 'billing' })
+    expect(await screen.findByText('Stuck work')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByLabelText('Pick 1-0'))
+    fireEvent.click(screen.getByRole('button', { name: 'Acknowledge 1' }))
+    expect(await screen.findByText('XACK orders billing 1-0')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Claim…' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Stage claim of 2' }))
+    expect(ws.sent.some((r) => r.op === 'edit')).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Apply 2' }))
+    const edit = await ws.reply('edit', { type: 'result', data: { ran: 2, undoId: 'b'.repeat(32) } })
+    expect(edit).toMatchObject({ key: 'orders', undo: true, edits: [['XACK', 'orders', 'billing', '1-0'],
+      ['XCLAIM', 'orders', 'billing', 'worker-2', '300000', '1-0', '2-0']] })
+  })
+
   it('sends a new user’s password only as its SHA-256', async () => {
     const ws = await open()
     fireEvent.click(screen.getByRole('tab', { name: 'Users & ACL' }))
