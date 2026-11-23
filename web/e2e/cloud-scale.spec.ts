@@ -233,6 +233,9 @@ test('AWS decides: the wizard keeps the maximum under the cost cap, and the grou
     limits: { min: 2, max: 6, costCap: 450 } } })
   // Asked, the wizard goes back to Scaling; let it land before going on.
   await page.waitForURL(/\/cloud\?tab=scaling/)
+  // The URL changes before the route settles; on WebKit a goto sent then is cut
+  // off by the router's own navigation. Wait for the Scaling tab itself.
+  await expect(page.getByText('Read replicas', { exact: true })).toBeVisible()
 
   // A group AWS decides for: no adding by hand, and what AWS keeps.
   await page.route('**/api/v1/cloud/scale-groups/sg1', (r) => r.fulfill({ json: { ...DETAIL, mode: 'aws', awsTrack: { metric: 'cpu', target: 55 },
@@ -279,6 +282,9 @@ test('read replicas of an RDS database: add one, and remove one Argus made', asy
   await dialog.getByRole('button', { name: 'Ask for approval' }).click()
   await expect.poll(() => got.body).toMatchObject({ accountId: 'ca1', region: 'ap-southeast-3', action: 'replica-create', reason: 'reads are 91% of statements',
     spec: { source: 'orders-db', name: 'orders-db-reads', size: 'db.r6i.large', zone: 'ap-southeast-3b' } })
+  // The "Asked for approval" toast sits over the row's buttons; close it first.
+  await page.locator('.mantine-Notification-root').getByRole('button').first().click()
+  await expect(page.locator('.mantine-Notification-root')).toHaveCount(0)
 
   await card.getByTestId('replica-row').getByRole('button', { name: 'Remove' }).click()
   const rm = page.getByRole('dialog', { name: 'Remove orders-db-r1' })
