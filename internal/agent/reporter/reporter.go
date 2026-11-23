@@ -177,6 +177,10 @@ type HeartbeatReply struct {
 	// the agent decodes it. Absent from a control plane older than server
 	// networks: the agent then leaves its interfaces as they are.
 	Wgnet json.RawMessage `json:"wgnet"`
+	// Firewall is the change the console wants made to the server's own
+	// firewall, and whether a person kept one. Absent from a control plane
+	// older than firewall changes: the agent then changes nothing.
+	Firewall json.RawMessage `json:"firewall"`
 	// KeepRecordingsHours is how long the console wants this host to keep a
 	// recording once the control plane has stored it; 0 is for ever. Nil from
 	// a control plane older than the setting: the agent keeps its own default.

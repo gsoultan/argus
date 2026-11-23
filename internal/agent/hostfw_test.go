@@ -134,7 +134,7 @@ func TestReadFirewalld(t *testing.T) {
 		"firewall-cmd --info-service=cockpit":    "cockpit\n  ports: 9090/tcp\n",
 	})
 	mine := firewalldMine{"5432": {`rule family="ipv4" source address="10.20.0.21" port port="5432" protocol="tcp" accept`}}
-	fw := readFirewalld(context.Background(), run, mine)
+	fw := readFirewalld(context.Background(), run, mine, nil)
 	if fw.DefaultIn != "reject" || strings.Join(fw.Zones, ",") != "public,trusted" {
 		t.Fatalf("zones: %+v", fw)
 	}

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -80,7 +82,7 @@ func readLinuxFirewall(ctx context.Context, run runCmd, has func(string) bool, s
 	}
 	if installed(tunnel.FirewallFirewalld) {
 		if out, _ := run(ctx, "firewall-cmd", "--state"); strings.TrimSpace(out) == "running" {
-			return finish(fw, readFirewalld(ctx, run, readFirewalldMine(stateFile)))
+			return finish(fw, readFirewalld(ctx, run, readFirewalldMine(stateFile), argusRichRules(stateFile)))
 		}
 	}
 	if ipt != nil {
@@ -302,7 +304,34 @@ func parseFirewalldZone(out string) firewalldZone {
 	return z
 }
 
-func readFirewalld(ctx context.Context, run runCmd, mine firewalldMine) tunnel.HostFirewall {
+// argusRichRules are the firewalld rules Argus added for its lines, by the
+// rule's text, with the line's key (hostfw_linux_backend.go keeps them).
+func argusRichRules(stateFile string) map[string]string {
+	out := map[string]string{}
+	if stateFile == "" {
+		return out
+	}
+	b, err := os.ReadFile(filepath.Join(filepath.Dir(stateFile), firewallLines))
+	if err != nil {
+		return out
+	}
+	var m map[string]fwdLine
+	if json.Unmarshal(b, &m) != nil {
+		return out
+	}
+	for k, l := range m {
+		for _, c := range l.Cmds {
+			for _, a := range c {
+				if rr, ok := strings.CutPrefix(a, "--add-rich-rule="); ok {
+					out[rr] = k
+				}
+			}
+		}
+	}
+	return out
+}
+
+func readFirewalld(ctx context.Context, run runCmd, mine firewalldMine, lines map[string]string) tunnel.HostFirewall {
 	fw := tunnel.HostFirewall{Kind: tunnel.FirewallFirewalld, Active: true, DefaultOut: "allow"}
 	out, err := run(ctx, "firewall-cmd", "--get-active-zones")
 	if err != nil {
@@ -388,10 +417,110 @@ func readFirewalld(ctx context.Context, run runCmd, mine firewalldMine) tunnel.H
 			fw.Rules = append(fw.Rules, r)
 		}
 		for _, rr := range z.rich {
-			fw.Rules = append(fw.Rules, richToRule(rr, z.name, argus[rr], portsOf))
+			r := richToRule(rr, z.name, argus[rr], portsOf)
+			if k, ok := lines[rr]; ok {
+				r.Name = tunnel.FirewallLineMark(k)
+			}
+			fw.Rules = append(fw.Rules, r)
+		}
+	}
+	// Going out: firewalld's zones do not filter it; direct rules do.
+	if out, err := run(ctx, "firewall-cmd", "--direct", "--get-all-rules"); err == nil {
+		for _, l := range strings.Split(out, "\n") {
+			r, drop, ok := firewalldDirectRule(l)
+			if drop {
+				fw.DefaultOut = "deny"
+			}
+			if ok {
+				fw.Rules = append(fw.Rules, r)
+			}
 		}
 	}
 	return fw
+}
+
+// shellFields splits like a shell: 'a b' and "a b" are one field.
+func shellFields(s string) []string {
+	var out []string
+	var cur strings.Builder
+	var q rune
+	in := false
+	for _, r := range s {
+		switch {
+		case q != 0:
+			if r == q {
+				q = 0
+			} else {
+				cur.WriteRune(r)
+			}
+		case r == '\'' || r == '"':
+			q, in = r, true
+		case r == ' ' || r == '\t':
+			if in {
+				out = append(out, cur.String())
+				cur.Reset()
+				in = false
+			}
+		default:
+			cur.WriteRune(r)
+			in = true
+		}
+	}
+	if in {
+		out = append(out, cur.String())
+	}
+	return out
+}
+
+// firewalldDirectRule reads one line of `firewall-cmd --direct
+// --get-all-rules` on the OUTPUT chain: "ipv4 filter OUTPUT 1 -p tcp -d
+// 203.0.113.9 --dport 443 -m comment --comment 'argus fw-k' -j ACCEPT".
+// drop says it is Argus's "block everything else going out".
+func firewalldDirectRule(line string) (r tunnel.FirewallRule, drop, ok bool) {
+	f := shellFields(line)
+	if len(f) < 4 || f[1] != "filter" || f[2] != "OUTPUT" {
+		return r, false, false
+	}
+	r = tunnel.FirewallRule{Direction: "out", Action: "allow", Protocol: "any", IPv6: f[0] == "ipv6",
+		Raw: strings.TrimSpace(line)}
+	for i := 4; i < len(f); i++ {
+		next := func() string {
+			if i+1 < len(f) {
+				i++
+				return f[i]
+			}
+			return ""
+		}
+		switch f[i] {
+		case "-p":
+			switch p := next(); p {
+			case "tcp", "udp":
+				r.Protocol = p
+			case "icmp", "ipv6-icmp":
+				r.Protocol = "icmp"
+			}
+		case "-d":
+			r.Sources = []string{next()}
+		case "--dport", "--dports":
+			r.Ports = strings.ReplaceAll(next(), ":", "-")
+		case "--comment":
+			r.Name = next()
+		case "-o", "--ctstate":
+			return r, false, false // the loopback and replies
+		case "-j":
+			switch next() {
+			case "DROP", "REJECT":
+				r.Action = "deny"
+			}
+		}
+	}
+	if r.Name == tunnel.FirewallLineMark("outdrop") {
+		return r, true, false
+	}
+	if r.Name == tunnel.FirewallLineMark("base") {
+		return r, false, false
+	}
+	return r, false, true
 }
 
 func richToRule(rr, zone string, argus bool, portsOf func(string) string) tunnel.FirewallRule {
