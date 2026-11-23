@@ -1,4 +1,4 @@
-import { Alert, Badge, Box, Card, Group, SegmentedControl, SimpleGrid, Stack, Table, Text } from '@mantine/core'
+import { Alert, Badge, Box, Button, Card, Group, SegmentedControl, SimpleGrid, Stack, Table, Text } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { IconShieldCheck } from '@tabler/icons-react'
@@ -36,7 +36,7 @@ function FleetFirewalls() {
       <PageHeader
         crumbs={[{ label: 'Assets', to: '/assets' }, { label: 'Firewalls' }]}
         title="Firewalls"
-        description="The firewall on each server and workstation, as its agent last read it. Open one to see its rules and who can reach each port."
+        description="The firewall on each server and workstation, as its agent last read it. Open one to see its rules, who can reach each port, and to change it."
       />
       <PageBody>
         {!isConfigured() ? (
@@ -50,7 +50,7 @@ function FleetFirewalls() {
               <Tile label="Off or none" value={off.length} color={off.length > 0 ? 'amber' : undefined} />
               <Tile label="Open to the internet" value={open.length} color={open.length > 0 ? 'rose' : undefined} />
             </SimpleGrid>
-            <Toolbar>
+            <Toolbar right={<Button component={Link} to="/assets/firewall-policies" variant="default" size="sm" data-testid="firewall-policies-link">Policies</Button>}>
               <SegmentedControl
                 value={show}
                 onChange={(v) => setShow(v as Show)}
@@ -69,7 +69,7 @@ function FleetFirewalls() {
               isEmpty={shown.length === 0}
               empty={<EmptyState icon={IconShieldCheck} title={show === 'all' ? 'No servers yet.' : 'None.'}
                 description={show === 'all' ? 'Servers and workstations appear here once their agent reports.' : 'Nothing here needs a look.'} />}
-              footer="Read only for now. Changing rules from Argus comes next."
+              footer="Open a server to change its firewall, or use Policies for lines many servers share."
             >
               {shown.map((r) => <Row key={r.assetId} r={r} />)}
             </DataTable>

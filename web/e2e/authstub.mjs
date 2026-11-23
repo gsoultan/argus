@@ -323,8 +323,9 @@ const FIREWALL = {
   firewall: { kind: 'ufw', installed: ['ufw'], active: true, defaultIn: 'deny', defaultOut: 'allow', manageable: true,
     readAt: new Date(Date.now() - 4 * 60_000).toISOString(), rules: [] },
   rules: [
-    { direction: 'in', action: 'allow', protocol: 'tcp', ports: '22', sources: ['10.8.0.0/24'], madeBy: 'outside' },
-    { direction: 'in', action: 'allow', protocol: 'tcp', ports: '80,443', madeBy: 'outside' },
+    { direction: 'in', action: 'allow', protocol: 'tcp', ports: '22', sources: ['10.8.0.0/24'], madeBy: 'outside',
+      raw: '22/tcp ALLOW IN 10.8.0.0/24' },
+    { direction: 'in', action: 'allow', protocol: 'tcp', ports: '80,443', madeBy: 'outside', raw: '80,443/tcp ALLOW IN Anywhere' },
     { direction: 'in', action: 'allow', protocol: 'tcp', ports: '5432', sources: ['10.0.0.12'], argus: true, argusPort: 5432,
       name: 'argus 5432', madeBy: 'database', database: { id: 'db-orders', name: 'orders', engine: 'postgres' } },
     { direction: 'in', action: 'deny', protocol: 'any', sources: ['198.51.100.23'], madeBy: 'outside' },
@@ -338,6 +339,53 @@ const FIREWALL = {
   ],
   names: { '10.0.0.12': 'open-absent-2' },
 }
+// Changing it: one line Argus keeps, one policy, and the change asked for
+// last, which stays waiting for the server.
+const FW_POLICY = {
+  id: 'p-web', name: 'Web servers', description: 'Web from everyone, metrics from the monitoring servers.', version: 3,
+  lines: [
+    { key: 'web', direction: 'in', action: 'allow', protocol: 'tcp', ports: '80,443', from: [{ kind: 'everyone' }], note: 'Public site' },
+    { key: 'mon', direction: 'in', action: 'allow', protocol: 'tcp', ports: '9100', from: [{ kind: 'tag', value: 'monitoring' }] },
+  ],
+  defaultOut: 'allow', starter: false, createdBy: 'dev@northwind.id', updatedBy: 'dev@northwind.id',
+  updatedAt: new Date(Date.now() - 3 * 3600_000).toISOString(),
+  targets: [{ id: 't1', tag: 'web' }, { id: 't2', assetId: 'a-closed-healthy', hostname: 'closed-healthy' }],
+  servers: 6, current: 4,
+  rollout: { id: 'r1', policyId: 'p-web', policyName: 'Web servers', version: 3, state: 'running',
+    summary: 'Version 3 of Web servers to 6 server(s)', requestedBy: 'dev@northwind.id',
+    requestedAt: new Date(Date.now() - 6 * 60_000).toISOString(), message: '', total: 6, done: 4, failed: 0,
+    servers: ['closed-healthy', 'open-absent-2', 'web-03', 'web-04', 'web-05', 'web-06'].map((h, i) => ({
+      id: `c${i}`, assetId: 'a-closed-healthy', hostname: h, kind: 'policy', summary: 'Move the policy Web servers to version 3',
+      reason: '', preview: [], state: i < 4 ? 'applied' : i === 4 ? 'trial' : 'queued', wave: i === 0 ? 0 : 1, requestedBy: 'dev@northwind.id',
+      requestedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), message: '', ran: [], canPutBack: i < 4 })) },
+}
+const FW_CHANGES = [
+  { id: 'fc-1', assetId: 'a-closed-healthy', hostname: 'closed-healthy', kind: 'lines',
+    summary: 'Let in Postgres 5432 from Servers tagged app', reason: 'orders app', preview: [], state: 'applied', wave: 0,
+    requestedBy: 'dev@northwind.id', requestedAt: new Date(Date.now() - 26 * 3600_000).toISOString(),
+    updatedAt: new Date().toISOString(), message: 'done', canPutBack: true,
+    ran: [{ command: "ufw allow in proto tcp from 10.0.0.12 to any port 5432 comment 'argus fw-s4k2p9x1'", ok: true }] },
+]
+const fwManage = () => ({
+  canChange: true, ready: true, defaultOut: 'allow', managers: ['ops@northwind.id'], remotePort: 22,
+  always: ["This server's own connection to Argus, and agent updates", 'Name lookups (DNS) to the resolvers the server uses',
+    "System updates from the server's package sources (Windows Update on Windows)"],
+  own: [{ key: 's4k2p9x1', direction: 'in', action: 'allow', protocol: 'tcp', ports: '5432', from: [{ kind: 'tag', value: 'app' }],
+    note: 'orders app', addedBy: 'dev@northwind.id' }],
+  policies: [{ id: 'p-web', name: 'Web servers', version: 3, latest: 3, defaultOut: 'allow', lines: FW_POLICY.lines, wanted: true }],
+  changes: FW_CHANGES, open: FW_CHANGES.find((c) => ['awaiting_approval', 'queued', 'sent', 'trial', 'waiting_keep'].includes(c.state)),
+})
+const fwPlan = (b) => ({
+  kind: b.takeOver ? 'take_over' : b.turnOn ? 'turn_on' : 'lines',
+  summary: b.takeOver ? 'Take over 1 rule(s) made by hand' : 'Let in TCP 22 from private networks',
+  preview: b.takeOver
+    ? ['ufw --force delete <the rule ' + b.takeOver[0] + '>', "ufw allow in proto tcp from 10.8.0.0/24 to any port 22 comment 'argus fw-s7h3k2m1'"]
+    : ["ufw allow in proto tcp from 10.0.0.0/8 to any port 22 comment 'argus fw-s7h3k2m1'",
+      "ufw allow in proto tcp from 172.16.0.0/12 to any port 22 comment 'argus fw-s7h3k2m1'",
+      "ufw allow in proto tcp from 192.168.0.0/16 to any port 22 comment 'argus fw-s7h3k2m1'",
+      "ufw allow in proto tcp from fc00::/7 to any port 22 comment 'argus fw-s7h3k2m1'"],
+  lines: [], needsApproval: !!b.takeOver, warnings: [], keep: false,
+})
 const FIREWALL_FLEET = () => ASSETS.slice(0, 6).map((a, i) => ({
   assetId: a.id, hostname: a.id.slice(2), kind: 'server', os: 'Ubuntu 24.04', tags: [], reported: i !== 5,
   firewall: i === 3 ? '' : i === 4 ? 'firewalld' : 'ufw', active: i !== 2 && i !== 3, manageable: true,
@@ -565,8 +613,37 @@ const server = createServer(async (req, res) => {
     // A server's firewall as its agent read it: ufw on, two rules made by
     // hand, one Argus opened for a database, and a port open to the internet.
     if (path === '/api/v1/assets/a-closed-healthy/firewall' && req.method === 'GET') {
-      return json(res, 200, FIREWALL)
+      return json(res, 200, { ...FIREWALL, manage: fwManage() })
     }
+    if (path === '/api/v1/assets/a-closed-healthy/firewall/plan' && req.method === 'POST') {
+      return json(res, 200, fwPlan(await readBody(req)))
+    }
+    if (path === '/api/v1/assets/a-closed-healthy/firewall/changes' && req.method === 'POST') {
+      const b = await readBody(req)
+      const p = fwPlan(b)
+      const c = { ...FW_CHANGES[0], id: `fc-${FW_CHANGES.length + 1}`, kind: p.kind, summary: p.summary, reason: b.reason ?? '',
+        preview: p.preview, state: p.needsApproval ? 'awaiting_approval' : 'queued', requestedAt: new Date().toISOString(),
+        message: '', ran: [], canPutBack: false }
+      FW_CHANGES.unshift(c)
+      return json(res, 202, c)
+    }
+    {
+      const m = /^\/api\/v1\/firewall-changes\/([^/]+)\/(approve|deny|cancel|keep)$/.exec(path)
+      if (m && req.method === 'POST') {
+        const c = FW_CHANGES.find((x) => x.id === m[1])
+        if (!c) return json(res, 404, { error: 'no such firewall change' })
+        if (m[2] === 'keep') Object.assign(c, { keptBy: 'dev@northwind.id', keptAt: new Date().toISOString() })
+        else c.state = { approve: 'queued', deny: 'denied', cancel: 'cancelled' }[m[2]]
+        return json(res, 200, c)
+      }
+    }
+    if (path === '/api/v1/firewall-policies' && req.method === 'GET') {
+      return json(res, 200, { policies: [FW_POLICY, { ...FW_POLICY, id: 'p-lock', name: 'Locked down', version: 1, starter: true,
+        description: 'SSH from private networks only, and nothing going out but what Argus always allows.',
+        lines: [{ key: 'ssh', direction: 'in', action: 'allow', protocol: 'tcp', ports: '22', from: [{ kind: 'private' }] }],
+        defaultOut: 'deny', targets: [{ id: 't3', tag: 'pci' }], servers: 2, current: 2, rollout: undefined }] })
+    }
+    if (path === '/api/v1/firewall-policies/p-web' && req.method === 'GET') return json(res, 200, FW_POLICY)
     if (path === '/api/v1/firewalls' && req.method === 'GET') return json(res, 200, { servers: FIREWALL_FLEET() })
     // Everything else about one asset (logs, disks, packages…) is not stubbed:
     // a 404 lets each card say so instead of drawing an empty list as data.

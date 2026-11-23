@@ -41,6 +41,8 @@ import { Route as DatabasesIndexRouteImport } from './routes/databases.index'
 import { Route as DatabasesDbIdRouteImport } from './routes/databases.$dbId'
 import { Route as SessionsIndexRouteImport } from './routes/sessions.index'
 import { Route as SessionsSessionIdRouteImport } from './routes/sessions.$sessionId'
+import { Route as AssetsFirewallPoliciesIndexRouteImport } from './routes/assets.firewall-policies.index'
+import { Route as AssetsFirewallPoliciesPolicyIdRouteImport } from './routes/assets.firewall-policies.$policyId'
 import { Route as BrokersBrokerIdSettingsRouteImport } from './routes/brokers.$brokerId_.settings'
 import { Route as CloudScaleGroupIdRouteImport } from './routes/cloud.scale.$groupId'
 import { Route as CloudScaleNewRouteImport } from './routes/cloud.scale.new'
@@ -206,6 +208,18 @@ const SessionsSessionIdRoute = SessionsSessionIdRouteImport.update({
   path: '/sessions/$sessionId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AssetsFirewallPoliciesIndexRoute =
+  AssetsFirewallPoliciesIndexRouteImport.update({
+    id: '/assets/firewall-policies/',
+    path: '/assets/firewall-policies/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const AssetsFirewallPoliciesPolicyIdRoute =
+  AssetsFirewallPoliciesPolicyIdRouteImport.update({
+    id: '/assets/firewall-policies/$policyId',
+    path: '/assets/firewall-policies/$policyId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const BrokersBrokerIdSettingsRoute = BrokersBrokerIdSettingsRouteImport.update({
   id: '/brokers/$brokerId_/settings',
   path: '/brokers/$brokerId/settings',
@@ -260,10 +274,12 @@ export interface FileRoutesByFullPath {
   '/cloud/': typeof CloudIndexRoute
   '/databases/': typeof DatabasesIndexRoute
   '/sessions/': typeof SessionsIndexRoute
+  '/assets/firewall-policies/$policyId': typeof AssetsFirewallPoliciesPolicyIdRoute
   '/brokers/$brokerId/settings': typeof BrokersBrokerIdSettingsRoute
   '/cloud/scale/$groupId': typeof CloudScaleGroupIdRoute
   '/cloud/scale/new': typeof CloudScaleNewRoute
   '/databases/$dbId/settings': typeof DatabasesDbIdSettingsRoute
+  '/assets/firewall-policies/': typeof AssetsFirewallPoliciesIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -298,10 +314,12 @@ export interface FileRoutesByTo {
   '/cloud': typeof CloudIndexRoute
   '/databases': typeof DatabasesIndexRoute
   '/sessions': typeof SessionsIndexRoute
+  '/assets/firewall-policies/$policyId': typeof AssetsFirewallPoliciesPolicyIdRoute
   '/brokers/$brokerId/settings': typeof BrokersBrokerIdSettingsRoute
   '/cloud/scale/$groupId': typeof CloudScaleGroupIdRoute
   '/cloud/scale/new': typeof CloudScaleNewRoute
   '/databases/$dbId/settings': typeof DatabasesDbIdSettingsRoute
+  '/assets/firewall-policies': typeof AssetsFirewallPoliciesIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -337,10 +355,12 @@ export interface FileRoutesById {
   '/cloud/': typeof CloudIndexRoute
   '/databases/': typeof DatabasesIndexRoute
   '/sessions/': typeof SessionsIndexRoute
+  '/assets/firewall-policies/$policyId': typeof AssetsFirewallPoliciesPolicyIdRoute
   '/brokers/$brokerId_/settings': typeof BrokersBrokerIdSettingsRoute
   '/cloud/scale/$groupId': typeof CloudScaleGroupIdRoute
   '/cloud/scale/new': typeof CloudScaleNewRoute
   '/databases/$dbId_/settings': typeof DatabasesDbIdSettingsRoute
+  '/assets/firewall-policies/': typeof AssetsFirewallPoliciesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -377,10 +397,12 @@ export interface FileRouteTypes {
     | '/cloud/'
     | '/databases/'
     | '/sessions/'
+    | '/assets/firewall-policies/$policyId'
     | '/brokers/$brokerId/settings'
     | '/cloud/scale/$groupId'
     | '/cloud/scale/new'
     | '/databases/$dbId/settings'
+    | '/assets/firewall-policies/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -415,10 +437,12 @@ export interface FileRouteTypes {
     | '/cloud'
     | '/databases'
     | '/sessions'
+    | '/assets/firewall-policies/$policyId'
     | '/brokers/$brokerId/settings'
     | '/cloud/scale/$groupId'
     | '/cloud/scale/new'
     | '/databases/$dbId/settings'
+    | '/assets/firewall-policies'
   id:
     | '__root__'
     | '/'
@@ -453,10 +477,12 @@ export interface FileRouteTypes {
     | '/cloud/'
     | '/databases/'
     | '/sessions/'
+    | '/assets/firewall-policies/$policyId'
     | '/brokers/$brokerId_/settings'
     | '/cloud/scale/$groupId'
     | '/cloud/scale/new'
     | '/databases/$dbId_/settings'
+    | '/assets/firewall-policies/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -492,10 +518,12 @@ export interface RootRouteChildren {
   CloudIndexRoute: typeof CloudIndexRoute
   DatabasesIndexRoute: typeof DatabasesIndexRoute
   SessionsIndexRoute: typeof SessionsIndexRoute
+  AssetsFirewallPoliciesPolicyIdRoute: typeof AssetsFirewallPoliciesPolicyIdRoute
   BrokersBrokerIdSettingsRoute: typeof BrokersBrokerIdSettingsRoute
   CloudScaleGroupIdRoute: typeof CloudScaleGroupIdRoute
   CloudScaleNewRoute: typeof CloudScaleNewRoute
   DatabasesDbIdSettingsRoute: typeof DatabasesDbIdSettingsRoute
+  AssetsFirewallPoliciesIndexRoute: typeof AssetsFirewallPoliciesIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -724,6 +752,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SessionsSessionIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/assets/firewall-policies/': {
+      id: '/assets/firewall-policies/'
+      path: '/assets/firewall-policies'
+      fullPath: '/assets/firewall-policies/'
+      preLoaderRoute: typeof AssetsFirewallPoliciesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/assets/firewall-policies/$policyId': {
+      id: '/assets/firewall-policies/$policyId'
+      path: '/assets/firewall-policies/$policyId'
+      fullPath: '/assets/firewall-policies/$policyId'
+      preLoaderRoute: typeof AssetsFirewallPoliciesPolicyIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/brokers/$brokerId_/settings': {
       id: '/brokers/$brokerId_/settings'
       path: '/brokers/$brokerId/settings'
@@ -788,10 +830,12 @@ const rootRouteChildren: RootRouteChildren = {
   CloudIndexRoute: CloudIndexRoute,
   DatabasesIndexRoute: DatabasesIndexRoute,
   SessionsIndexRoute: SessionsIndexRoute,
+  AssetsFirewallPoliciesPolicyIdRoute: AssetsFirewallPoliciesPolicyIdRoute,
   BrokersBrokerIdSettingsRoute: BrokersBrokerIdSettingsRoute,
   CloudScaleGroupIdRoute: CloudScaleGroupIdRoute,
   CloudScaleNewRoute: CloudScaleNewRoute,
   DatabasesDbIdSettingsRoute: DatabasesDbIdSettingsRoute,
+  AssetsFirewallPoliciesIndexRoute: AssetsFirewallPoliciesIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

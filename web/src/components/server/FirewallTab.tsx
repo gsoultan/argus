@@ -1,5 +1,6 @@
 import { Alert, Badge, Box, Card, Code, Group, Skeleton, Stack, Table, Text, ThemeIcon } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
+import type { ReactNode } from 'react'
 import { AnchorLink } from '~/components/links'
 import { IconShieldCheck, IconShieldOff, IconShieldQuestion } from '@tabler/icons-react'
 import { SectionCard } from '~/components/page'
@@ -9,6 +10,7 @@ import {
   type FirewallListen, type ServerFirewall, type ServerFirewallRule,
 } from '~/lib/firewallApi'
 import { assetFirewallQuery } from '~/lib/firewallQueries'
+import { FirewallManagePanel, TakeOverButton, TurnOnButton } from '~/components/server/FirewallChanges'
 import { isBroker } from '~/lib/engines'
 import { isConfigured } from '~/lib/live'
 import { FS, SP } from '~/theme'
@@ -19,9 +21,8 @@ import type { Asset } from '~/types/domain'
  * what happens to traffic no rule names, every rule in plain words with who
  * made it, and who can reach each program waiting for connections.
  *
- * Read only. Changing it from here is the next step of the plan
- * (plans/server-firewall/design.md); until then nothing on this tab offers
- * to change anything, so nothing looks set that is not.
+ * Changing it (FirewallChanges.tsx) is for admins, owners and the operators
+ * an admin names; everyone else who sees the fleet reads it.
  */
 export function FirewallTab({ asset }: { asset: Asset }) {
   const { data: v, isLoading, error } = useQuery(assetFirewallQuery(asset.id))
@@ -61,7 +62,7 @@ export function FirewallTab({ asset }: { asset: Asset }) {
   const outgoing = v.rules.filter((r) => r.direction === 'out')
   return (
     <Stack gap="md">
-      <StatusCard view={v} />
+      <StatusCard view={v} asset={asset} />
       {fw.error ? (
         <Alert color="amber" title="The agent could not read the firewall">
           <Text size={FS.body}>{fw.error}</Text>
@@ -83,6 +84,7 @@ export function FirewallTab({ asset }: { asset: Asset }) {
               description="Each line lets one kind of traffic in, or keeps it out. Names are servers in Argus."
               rules={incoming}
               names={v.names}
+              take={(raw) => (v.manage ? <TakeOverButton asset={asset} manage={v.manage} raw={raw} /> : null)}
               footer={defaultLine(fw.active, fw.defaultIn, 'in')}
               hidden={fw.hidden}
               testId="firewall-in"
@@ -94,10 +96,12 @@ export function FirewallTab({ asset }: { asset: Asset }) {
               description="Rules for traffic leaving this server."
               rules={outgoing}
               names={v.names}
+              take={(raw) => (v.manage ? <TakeOverButton asset={asset} manage={v.manage} raw={raw} /> : null)}
               footer={defaultLine(fw.active, fw.defaultOut, 'out')}
               testId="firewall-out"
             />
           )}
+          {v.manage && <FirewallManagePanel asset={asset} manage={v.manage} kind={fw.kind} />}
           <ListeningCard view={v} />
         </>
       )}
@@ -110,7 +114,7 @@ export function FirewallTab({ asset }: { asset: Asset }) {
 
 /* ── State ───────────────────────────────────────────────────────────────── */
 
-function StatusCard({ view }: { view: ServerFirewall }) {
+function StatusCard({ view, asset }: { view: ServerFirewall; asset: Asset }) {
   const fw = view.firewall
   const on = fw.active && !fw.error
   const none = !fw.kind && !fw.error
@@ -133,9 +137,11 @@ function StatusCard({ view }: { view: ServerFirewall }) {
         <Box style={{ flex: 1, minWidth: 0 }}>
           <Group gap={SP.snug}>
             <Text fw={650} size="md">{title}</Text>
-            <Badge size="sm" variant="light" color="slate" radius="sm" tt="none" title="Changing it from Argus comes next">
-              Read only for now
-            </Badge>
+            {!view.manage?.canChange && (
+              <Badge size="sm" variant="light" color="slate" radius="sm" tt="none" title="Admins and the server's firewall managers change it">
+                Read only
+              </Badge>
+            )}
           </Group>
           <Text size={FS.meta} c="dimmed" mt={2} lh={1.5}>
             {fw.kind ? `${firewallName(fw.kind)} · ` : ''}
@@ -144,6 +150,9 @@ function StatusCard({ view }: { view: ServerFirewall }) {
             {' · '}
             <span title={absTime(fw.readAt)}>read by the agent {relTime(fw.readAt)}</span>
           </Text>
+          {!on && !fw.error && view.manage && (
+            <Box mt={SP.cozy}><TurnOnButton asset={asset} manage={view.manage} kind={fw.kind} /></Box>
+          )}
           {!on && !none && fw.installed && fw.installed.length > 1 && (
             <Text size={FS.meta} c="dimmed" mt={2}>Installed: {fw.installed.map(firewallName).join(', ')}.</Text>
           )}
@@ -184,8 +193,10 @@ function defaultLine(active: boolean, v: string | undefined, dir: 'in' | 'out'):
 
 /* ── Rules ───────────────────────────────────────────────────────────────── */
 
-function RulesCard({ title, description, rules, names, footer, hidden, testId }: {
+function RulesCard({ title, description, rules, names, take, footer, hidden, testId }: {
   title: string
+  /** The Take over button for a rule made by hand. */
+  take: (raw: string) => ReactNode
   description: string
   rules: ServerFirewallRule[]
   names: Record<string, string>
@@ -213,7 +224,7 @@ function RulesCard({ title, description, rules, names, footer, hidden, testId }:
               </Table.Tr>
             )}
             {rules.map((r, i) => (
-              <RuleRow key={i} rule={r} names={names} />
+              <RuleRow key={i} rule={r} names={names} take={take} />
             ))}
             <Table.Tr>
               <Table.Td colSpan={3} bg="var(--mantine-color-body)">
@@ -230,7 +241,7 @@ function RulesCard({ title, description, rules, names, footer, hidden, testId }:
   )
 }
 
-function RuleRow({ rule: r, names }: { rule: ServerFirewallRule; names: Record<string, string> }) {
+function RuleRow({ rule: r, names, take }: { rule: ServerFirewallRule; names: Record<string, string>; take: (raw: string) => ReactNode }) {
   if (r.action === 'other') {
     return (
       <Table.Tr>
@@ -275,7 +286,12 @@ function RuleRow({ rule: r, names }: { rule: ServerFirewallRule; names: Record<s
           </Text>
         )}
       </Table.Td>
-      <Table.Td><MadeBy rule={r} /></Table.Td>
+      <Table.Td>
+        <Group gap={SP.tight} wrap="nowrap" justify="space-between">
+          <MadeBy rule={r} />
+          {r.madeBy === 'outside' && r.raw && !r.name?.startsWith('argus fw-') ? take(r.raw) : null}
+        </Group>
+      </Table.Td>
     </Table.Tr>
   )
 }

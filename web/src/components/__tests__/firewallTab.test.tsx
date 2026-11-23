@@ -3,7 +3,10 @@ import { MantineProvider } from '@mantine/core'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { describe, expect, it, vi } from 'vitest'
 import { FirewallTab, reachWords } from '~/components/server/FirewallTab'
-import { firewallOff, openWords, ruleWhat, type FirewallFleetRow, type ServerFirewall } from '~/lib/firewallApi'
+import {
+  changeOpen, changeStateWords, firewallOff, lineWords, openWords, ruleWhat, sourceWords,
+  type FirewallFleetRow, type FirewallManage, type ServerFirewall,
+} from '~/lib/firewallApi'
 import { assets } from '~/lib/seed'
 import { theme } from '~/theme'
 
@@ -40,8 +43,22 @@ vi.mock('~/lib/live', async (orig) => ({
 
 vi.mock('~/lib/firewallApi', async (orig) => ({
   ...(await orig<typeof import('~/lib/firewallApi')>()),
-  assetFirewall: async () => report,
+  assetFirewall: async () => current,
 }))
+
+let current: ServerFirewall = report
+
+const manage: FirewallManage = {
+  canChange: true, ready: true, defaultOut: 'allow', managers: [], remotePort: 22, always: ['Argus itself'],
+  own: [{ key: 'sabc', direction: 'in', action: 'allow', protocol: 'tcp', ports: '5432', from: [{ kind: 'tag', value: 'app' }], note: 'orders app' }],
+  policies: [],
+  changes: [],
+  open: {
+    id: 'c1', assetId: 'a1', hostname: 'h', kind: 'turn_on', summary: 'Turn ufw on', reason: '', preview: ['ufw --force enable'],
+    state: 'waiting_keep', wave: 0, requestedBy: 'x@y', requestedAt: '2026-11-23T05:00:00Z', updatedAt: '2026-11-23T05:00:00Z',
+    message: '', ran: [], canPutBack: false, keepBefore: new Date(Date.now() + 8 * 60_000).toISOString(),
+  },
+}
 
 function renderTab() {
   const asset = assets.find((a) => a.protocol !== 'rdp')!
@@ -58,9 +75,32 @@ describe('Firewall tab', () => {
   it('says the firewall is on, read only, and who made each rule', async () => {
     renderTab()
     expect(await screen.findByText(/Firewall is on/)).toBeTruthy()
-    expect(screen.getByText('Read only for now')).toBeTruthy()
+    expect(screen.getByText('Read only')).toBeTruthy()
     expect(screen.getAllByText('By hand')).toHaveLength(2)
     expect(screen.getByText('app-01')).toBeTruthy()
+  })
+
+  it('shows the lines Argus keeps, and a change waiting for Keep', async () => {
+    current = { ...report, manage }
+    renderTab()
+    expect(await screen.findByText('orders app')).toBeTruthy()
+    expect(screen.getByText('Waiting for Keep')).toBeTruthy()
+    expect(screen.getByTestId('firewall-keep')).toBeTruthy()
+    expect(screen.getByTestId('firewall-add')).toBeTruthy()
+    expect(screen.queryAllByRole('button', { name: 'Take over' }).length).toBe(0) // not while a change is on its way
+    expect(screen.queryByText('Read only')).toBeNull()
+    current = report
+  })
+
+  it('puts lines and changes in words', () => {
+    expect(lineWords({ direction: 'in', action: 'allow', protocol: 'tcp', ports: '443', from: [{ kind: 'private' }] }))
+      .toBe('Let in Web 443 from Private networks')
+    expect(lineWords({ direction: 'out', action: 'deny', protocol: 'any', from: [{ kind: 'address', value: '203.0.113.9' }] }))
+      .toBe('Block going out Everything to 203.0.113.9')
+    expect(sourceWords({ kind: 'policy', value: 'p1', label: 'Web servers' })).toBe('Servers with Web servers')
+    expect(changeStateWords('rolled_back')).toBe('Undone')
+    expect(changeOpen('trial')).toBe(true)
+    expect(changeOpen('applied')).toBe(false)
   })
 
   it('names a rule by what it lets in', () => {
