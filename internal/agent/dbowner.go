@@ -10,7 +10,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -207,7 +206,7 @@ var reloadBouncers = func(l pgLocator) error {
 		if err != nil {
 			continue
 		}
-		if err := syscall.Kill(pid, syscall.SIGHUP); err != nil {
+		if err := hangUp(pid); err != nil {
 			return err
 		}
 		n++
