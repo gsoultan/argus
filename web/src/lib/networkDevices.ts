@@ -118,6 +118,18 @@ export interface DeviceAttempt {
   snmp?: { name: string; description: string; location?: string; uptimeSec: number; interfaces: DeviceInterface[] }
 }
 
+/** What "Find it" gets back: the v2c community that answered, if any. */
+export interface SnmpDiscovery {
+  found: boolean
+  community?: string
+  snmp?: { name: string; description: string; location?: string; uptimeSec: number; interfaces: DeviceInterface[] }
+  tried: number
+  detail?: string
+}
+
+/** The two read-only defaults a lot of gear ships with, always tried. */
+export const SNMP_DEFAULT_COMMUNITIES = ['public', 'private'] as const
+
 export const AUTH_PROTOS = ['SHA', 'SHA224', 'SHA256', 'SHA384', 'SHA512', 'MD5'] as const
 export const PRIV_PROTOS = ['AES', 'AES192', 'AES256', 'DES'] as const
 
@@ -152,6 +164,14 @@ export const usePauseDevice = () =>
 
 export const testNetworkDevice = (in_: NetworkDeviceInput, id?: string) =>
   send<DeviceAttempt>('POST', `/api/v1/network-devices/test${id ? `?id=${encodeURIComponent(id)}` : ''}`, in_)
+
+/**
+ * Ask a server on the device's network to find its v2c community string by
+ * trying the common defaults plus `extra`, read-only. The strings are never
+ * echoed back; the reply names only the one that worked.
+ */
+export const discoverCommunity = (host: string, port: number, checkFrom: string[], extra: string[]) =>
+  send<SnmpDiscovery>('POST', '/api/v1/network-devices/discover', { host, port, checkFrom, communities: extra })
 
 /** "1.2 Gb/s", "340 kb/s", "0 b/s", or "—". */
 export function formatBps(v: number | undefined): string {

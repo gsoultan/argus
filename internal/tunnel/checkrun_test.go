@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"context"
+	"errors"
 	"net"
 	"strings"
 	"testing"
@@ -61,5 +62,58 @@ func TestSNMPProbeNoAnswer(t *testing.T) {
 	}
 	if time.Since(start) > 5*time.Second {
 		t.Errorf("took %s", time.Since(start))
+	}
+}
+
+func TestSNMPDiscoverValidate(t *testing.T) {
+	if err := (SNMPDiscover{Host: "10.0.0.1", Communities: []string{"public"}}).Validate(); err != nil {
+		t.Fatalf("valid: %v", err)
+	}
+	for name, d := range map[string]SNMPDiscover{
+		"no host":        {Communities: []string{"public"}},
+		"link-local":     {Host: "169.254.169.254", Communities: []string{"public"}},
+		"no communities": {Host: "sw1"},
+		"empty string":   {Host: "sw1", Communities: []string{""}},
+		"too many":       {Host: "sw1", Communities: make([]string, snmpDiscoverMax+1)},
+		"long timeout":   {Host: "sw1", Communities: []string{"public"}, TimeoutSec: SNMPTimeoutMax + 1},
+	} {
+		if d.Validate() == nil {
+			t.Errorf("%s was allowed", name)
+		}
+	}
+	if err := (GrantCheck{Kind: CheckKindSNMPDiscover}).Validate(); err == nil {
+		t.Error("discover with no payload was allowed")
+	}
+	if err := (GrantCheck{Kind: CheckKindSNMPDiscover, Discover: &SNMPDiscover{Host: "sw1", Communities: []string{"x"}}}).Validate(); err != nil {
+		t.Errorf("valid discover grant: %v", err)
+	}
+}
+
+// Discover stops at the first string that answers and names it.
+func TestSNMPProbeDiscover(t *testing.T) {
+	var tried []string
+	p := SNMPProbe{DialSystem: func(_ context.Context, q SNMPQuery) (*SNMPAnswer, string, error) {
+		tried = append(tried, q.Community)
+		if q.Version != SNMPv2c {
+			t.Errorf("discovery used %q, not v2c", q.Version)
+		}
+		if q.Community == "netmon" {
+			return &SNMPAnswer{Name: "sw1", Description: "Cisco", UptimeSec: 42}, "", nil
+		}
+		return nil, SNMPFailNoAnswer, errors.New("no answer")
+	}}
+	res := p.Discover(context.Background(), SNMPDiscover{Host: "10.0.0.1", Communities: []string{"public", "private", "netmon", "late"}})
+	if !res.Found || res.Community != "netmon" || res.SNMP == nil || res.SNMP.Name != "sw1" {
+		t.Fatalf("found = %+v", res)
+	}
+	if res.Tried != 3 || len(tried) != 3 {
+		t.Errorf("tried %d (%v), want 3 and to stop before 'late'", res.Tried, tried)
+	}
+
+	none := SNMPProbe{DialSystem: func(_ context.Context, _ SNMPQuery) (*SNMPAnswer, string, error) {
+		return nil, SNMPFailNoAnswer, errors.New("no answer")
+	}}.Discover(context.Background(), SNMPDiscover{Host: "10.0.0.1", Communities: []string{"public", "private"}})
+	if none.Found || none.Tried != 2 || none.Detail == "" {
+		t.Errorf("none = %+v", none)
 	}
 }

@@ -72,6 +72,9 @@ func CheckRun(cfg CheckRunConfig) TunnelService {
 		switch q.Kind {
 		case tunnel.CheckKindSNMP:
 			res = snmp.Probe(ctx, *q.SNMP)
+		case tunnel.CheckKindSNMPDiscover:
+			dr := snmp.Discover(ctx, *q.Discover)
+			res = tunnel.AttemptResult{Kind: q.Kind, OK: dr.Found, Discovery: &dr}
 		}
 		if h, err := os.Hostname(); err == nil {
 			res.From = h

@@ -43,6 +43,45 @@ const (
 type SNMPProbe struct {
 	// Dial stands in for a device in tests: given the query, it answers.
 	Dial func(ctx context.Context, q SNMPQuery) (*SNMPAnswer, string, error)
+	// DialSystem is Dial for a system-group-only read (discovery); it
+	// stands in for a device in tests the same way.
+	DialSystem func(ctx context.Context, q SNMPQuery) (*SNMPAnswer, string, error)
+}
+
+// Discover tries each community string in order against the device and
+// returns the first that answers, read-only. It reads only the system
+// group: enough to prove a string works and to show who the device is.
+func (p SNMPProbe) Discover(ctx context.Context, d SNMPDiscover) SNMPDiscovery {
+	res := SNMPDiscovery{}
+	if err := d.Validate(); err != nil {
+		res.Detail = err.Error()
+		return res
+	}
+	read := p.DialSystem
+	if read == nil {
+		read = readSNMPSystem
+	}
+	var detail string
+	for _, c := range d.Communities {
+		if ctx.Err() != nil {
+			break
+		}
+		q := SNMPQuery{Host: d.Host, Port: d.Port, Version: SNMPv2c, Community: c, TimeoutSec: d.TimeoutSec}
+		res.Tried++
+		a, fail, err := read(ctx, q)
+		if err == nil {
+			res.Found, res.Community, res.SNMP = true, c, a
+			return res
+		}
+		detail = err.Error()
+		// A name that does not resolve or an address no check may reach
+		// fails the same way for every string: stop and say so once.
+		if fail == SNMPFailAddress || fail == SNMPFailBlocked {
+			break
+		}
+	}
+	res.Detail = detail
+	return res
 }
 
 // Probe asks the device once and says whether it passes.
@@ -113,6 +152,47 @@ func snmpClient(ctx context.Context, q SNMPQuery, addr string) *gosnmp.GoSNMP {
 	}
 	g.SecurityParameters = usm
 	return g
+}
+
+// readSNMPSystem reads only the device's system group over the network:
+// its name, description, uptime and location. Discovery uses it to prove a
+// community string works without the slower interface walk.
+func readSNMPSystem(ctx context.Context, q SNMPQuery) (*SNMPAnswer, string, error) {
+	addr, fail, err := snmpResolve(ctx, q.Host)
+	if err != nil {
+		return nil, fail, err
+	}
+	g := snmpClient(ctx, q, addr)
+	if err := g.Connect(); err != nil {
+		return nil, SNMPFailNoAnswer, fmt.Errorf("could not open a socket to %s: %v", q.Host, err)
+	}
+	defer g.Conn.Close()
+	pkt, err := g.Get([]string{oidSysName, oidSysDescr, oidSysUpTime, oidSysLocation})
+	if err != nil {
+		return nil, snmpFail(err), snmpErr(q, err)
+	}
+	if pkt.Error != gosnmp.NoError {
+		return nil, SNMPFailRefused, fmt.Errorf("%s refused: %s", q.Host, pkt.Error)
+	}
+	a := &SNMPAnswer{Interfaces: []SNMPInterface{}}
+	for _, v := range pkt.Variables {
+		switch v.Name {
+		case oidSysName:
+			a.Name = snmpString(v)
+		case oidSysDescr:
+			a.Description = snmpString(v)
+		case oidSysLocation:
+			a.Location = snmpString(v)
+		case oidSysUpTime:
+			if n := gosnmp.ToBigInt(v.Value); n != nil {
+				a.UptimeSec = n.Int64() / 100
+			}
+		}
+	}
+	if a.Name == "" && a.Description == "" && a.UptimeSec == 0 {
+		return nil, SNMPFailRefused, fmt.Errorf("%s answered but shared nothing: its SNMP view may not include the system group", q.Host)
+	}
+	return a, "", nil
 }
 
 // readSNMP reads the device over the network.

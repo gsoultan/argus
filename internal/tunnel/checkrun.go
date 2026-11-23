@@ -30,6 +30,10 @@ const FrameAttemptResult byte = 'g'
 // The kinds an agent can run.
 const (
 	CheckKindSNMP = "snmp"
+	// CheckKindSNMPDiscover tries a short list of v2c community strings
+	// against one device and reports the first that answers, to help an
+	// admin who does not know the string of a device they own.
+	CheckKindSNMPDiscover = "snmp_discover"
 )
 
 // ErrUnknownCheckKind is what an agent answers for a kind it cannot run.
@@ -38,8 +42,9 @@ var ErrUnknownCheckKind = errors.New("unknown check kind")
 // GrantCheck is the attempt a checkrun grant allows: its kind and that
 // kind's settings.
 type GrantCheck struct {
-	Kind string     `json:"kind"`
-	SNMP *SNMPQuery `json:"snmp,omitempty"`
+	Kind     string        `json:"kind"`
+	SNMP     *SNMPQuery    `json:"snmp,omitempty"`
+	Discover *SNMPDiscover `json:"discover,omitempty"`
 }
 
 // Validate refuses an attempt that does not name its kind's settings.
@@ -50,6 +55,11 @@ func (g GrantCheck) Validate() error {
 			return errors.New("the check names no device")
 		}
 		return g.SNMP.Validate()
+	case CheckKindSNMPDiscover:
+		if g.Discover == nil {
+			return errors.New("the discovery names no device")
+		}
+		return g.Discover.Validate()
 	}
 	return ErrUnknownCheckKind
 }
@@ -65,6 +75,9 @@ type AttemptResult struct {
 	From   string `json:"from,omitempty"`
 	// SNMP is what the device said about itself, when it answered.
 	SNMP *SNMPAnswer `json:"snmp,omitempty"`
+	// Discovery is set on a CheckKindSNMPDiscover attempt: which community
+	// string worked, if any, and what that device said about itself.
+	Discovery *SNMPDiscovery `json:"discovery,omitempty"`
 }
 
 /* ── SNMP ───────────────────────────────────────────────────────────────── */
@@ -93,6 +106,11 @@ const (
 	// SNMPInterfacesMax bounds how many interfaces are read and watched.
 	SNMPInterfacesMax = 512
 	snmpSecretMax     = 200
+	// SNMPDiscoverPerTry is how long each community string is given when
+	// finding one; short, because a wrong v2c string is a silent timeout.
+	SNMPDiscoverPerTry = 3
+	// snmpDiscoverMax bounds how many strings one discovery tries.
+	snmpDiscoverMax = 20
 )
 
 // SNMPQuery is a device and how to read it.
@@ -165,6 +183,66 @@ func (q SNMPQuery) Validate() error {
 		return errors.New("the SNMP version is v3 or v2c")
 	}
 	return nil
+}
+
+// SNMPDiscover asks an agent to find a device's v2c community string by
+// trying a short list against it, read-only. It is for a device the admin
+// owns on their own network; blockedAddr keeps it off addresses no check
+// may reach.
+type SNMPDiscover struct {
+	Host string `json:"host"`
+	Port int    `json:"port,omitempty"`
+	// TimeoutSec is how long each string is given; 0 is SNMPDiscoverPerTry.
+	TimeoutSec int `json:"timeoutSec,omitempty"`
+	// Communities are the strings to try, in order. The first that answers
+	// wins.
+	Communities []string `json:"communities"`
+}
+
+// Validate refuses a discovery that cannot be sent.
+func (d SNMPDiscover) Validate() error {
+	h := strings.TrimSpace(d.Host)
+	if h == "" || h != d.Host || len(h) > 253 || strings.ContainsAny(h, " /@?#") {
+		return errors.New("enter the device's address: an IP address or a name")
+	}
+	if a, err := netip.ParseAddr(h); err == nil && blockedAddr(a) {
+		return errors.New("that address is not a device a check may reach")
+	}
+	if d.Port < 0 || d.Port > 65535 {
+		return errors.New("the port is 1 to 65535")
+	}
+	if d.TimeoutSec < 0 || d.TimeoutSec > SNMPTimeoutMax {
+		return fmt.Errorf("the timeout is at most %d seconds", SNMPTimeoutMax)
+	}
+	if len(d.Communities) == 0 {
+		return errors.New("add at least one community string to try")
+	}
+	if len(d.Communities) > snmpDiscoverMax {
+		return fmt.Errorf("try at most %d strings at once", snmpDiscoverMax)
+	}
+	for _, c := range d.Communities {
+		if c == "" {
+			return errors.New("a community string to try is empty")
+		}
+		if len(c) > snmpSecretMax {
+			return errors.New("a community string is too long")
+		}
+	}
+	return nil
+}
+
+// SNMPDiscovery is what a discovery found: the community that worked, if
+// any, and who the device said it is so the admin can confirm it.
+type SNMPDiscovery struct {
+	Found bool `json:"found"`
+	// Community is the string that answered. Returned so the admin can use
+	// it; the console shows it with a reveal, then seals it like any secret.
+	Community string      `json:"community,omitempty"`
+	SNMP      *SNMPAnswer `json:"snmp,omitempty"`
+	// Tried is how many strings were tried before stopping.
+	Tried int `json:"tried"`
+	// Detail says why none answered, when none did.
+	Detail string `json:"detail,omitempty"`
 }
 
 // SNMPAnswer is what a device said about itself.

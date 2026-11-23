@@ -553,12 +553,20 @@ func (a *API) attemptFromServer(ctx context.Context, hostname string, g tunnel.G
 		op.err = err.Error()
 		return op
 	}
-	timeout := tunnel.SNMPTimeoutDefault
-	if g.SNMP != nil && g.SNMP.TimeoutSec > 0 {
-		timeout = g.SNMP.TimeoutSec
+	// The interface table is several requests after the first; discovery
+	// instead tries each community string in turn, so budget for all of them.
+	budget := tunnel.SNMPTimeoutDefault*3 + 15
+	switch {
+	case g.Discover != nil:
+		per := g.Discover.TimeoutSec
+		if per <= 0 {
+			per = tunnel.SNMPDiscoverPerTry
+		}
+		budget = per*len(g.Discover.Communities) + 15
+	case g.SNMP != nil && g.SNMP.TimeoutSec > 0:
+		budget = g.SNMP.TimeoutSec*3 + 15
 	}
-	// The interface table is several requests after the first.
-	octx, cancel := context.WithTimeout(ctx, time.Duration(timeout*3+15)*time.Second)
+	octx, cancel := context.WithTimeout(ctx, time.Duration(budget)*time.Second)
 	defer cancel()
 	st, open, err := a.Tunnels.OpenWith(octx, agentHost, tunnel.Header{Service: tunnel.CheckRunService, Grant: tok})
 	switch {
@@ -1102,6 +1110,95 @@ func (a *API) postNetworkDeviceTest(w http.ResponseWriter, r *http.Request) {
 	}
 	op.res.From = op.host
 	writeJSON(w, http.StatusOK, op.res)
+}
+
+// snmpDefaultCommunities are the strings tried for every discovery: the
+// read-only defaults a great deal of gear ships with.
+var snmpDefaultCommunities = []string{"public", "private"}
+
+// mergeCommunities is the defaults followed by the admin's own additions,
+// trimmed, de-duplicated, and capped.
+func mergeCommunities(extra []string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	add := func(c string) {
+		c = strings.TrimSpace(c)
+		if c == "" || seen[c] {
+			return
+		}
+		seen[c] = true
+		out = append(out, c)
+	}
+	for _, c := range snmpDefaultCommunities {
+		add(c)
+	}
+	for _, c := range extra {
+		if len(out) >= 20 {
+			break
+		}
+		add(c)
+	}
+	return out
+}
+
+// postNetworkDeviceDiscover tries to find a v2c community string for a
+// device the admin owns, by trying the common defaults plus any strings
+// they add, through the first server chosen, read-only. It saves nothing
+// and never echoes the strings tried back.
+func (a *API) postNetworkDeviceDiscover(w http.ResponseWriter, r *http.Request) {
+	actor, ok := a.websiteAdmin(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Host        string   `json:"host"`
+		Port        int      `json:"port"`
+		CheckFrom   []string `json:"checkFrom"`
+		Communities []string `json:"communities"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	host := strings.TrimSpace(in.Host)
+	port := in.Port
+	if port == 0 {
+		port = 161
+	}
+	if len(in.CheckFrom) == 0 || strings.TrimSpace(in.CheckFrom[0]) == "" {
+		writeErr(w, http.StatusBadRequest, "choose a server on the device's network to read it from")
+		return
+	}
+	d := tunnel.SNMPDiscover{Host: host, Port: port, TimeoutSec: tunnel.SNMPDiscoverPerTry, Communities: mergeCommunities(in.Communities)}
+	if err := d.Validate(); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	asset, err := a.store.AssetByID(r.Context(), strings.TrimSpace(in.CheckFrom[0]))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "the server chosen to read it from is no longer in Argus")
+		return
+	}
+	op := a.attemptFromServer(r.Context(), asset.Hostname, tunnel.GrantCheck{Kind: tunnel.CheckKindSNMPDiscover, Discover: &d})
+	if op.err != "" {
+		writeJSON(w, http.StatusOK, tunnel.SNMPDiscovery{Detail: op.host + " could not be asked: " + op.err})
+		return
+	}
+	res := tunnel.SNMPDiscovery{Tried: len(d.Communities)}
+	if op.res.Discovery != nil {
+		res = *op.res.Discovery
+	}
+	// Record that a discovery ran, never the strings themselves.
+	found := "none found"
+	if res.Found {
+		found = "found one"
+	}
+	if _, err := a.store.AppendAudit(r.Context(), AuditEvent{Action: "network_device.discover", Severity: "info",
+		ActorEmail: actor, Target: "network device " + host,
+		Detail: fmt.Sprintf("tried %d community strings via %s; %s", res.Tried, asset.Hostname, found)}); err != nil {
+		a.log.Error("audit append failed", "error", err, "action", "network_device.discover")
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 func (a *API) postNetworkDevicePause(w http.ResponseWriter, r *http.Request) {

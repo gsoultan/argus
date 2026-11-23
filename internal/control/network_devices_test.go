@@ -317,3 +317,67 @@ func TestNextDeviceInfo(t *testing.T) {
 		t.Error("a small step back is a clock, not a restart")
 	}
 }
+
+// Discover tries the defaults plus the admin's strings through the chosen
+// server, fills in the one that answers, audits the run without the strings,
+// and is for admins only.
+func TestNetworkDeviceDiscover(t *testing.T) {
+	h := newTenantHarness(t)
+	h.api.Tunnels = testGrantHub(t)
+	tn, owner, pw := newTenant(t, h.store)
+	ctx := WithTenant(context.Background(), tn)
+	admin := h.signIn(t, tn.Slug, owner, pw)
+	asset, err := h.store.CreateAsset(ctx, AssetInput{Hostname: unique("edge") + ".example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var sent []string
+	h.api.deviceAsk = func(_ context.Context, host string, g tunnel.GrantCheck) deviceOpinion {
+		if g.Kind != tunnel.CheckKindSNMPDiscover || g.Discover == nil {
+			t.Errorf("kind=%s discover=%v", g.Kind, g.Discover)
+			return deviceOpinion{host: host}
+		}
+		sent = g.Discover.Communities
+		return deviceOpinion{host: host, res: tunnel.AttemptResult{Kind: g.Kind, OK: true,
+			Discovery: &tunnel.SNMPDiscovery{Found: true, Community: "netmon", Tried: 3,
+				SNMP: &tunnel.SNMPAnswer{Name: "pdu1", Description: "APC", UptimeSec: 7}}}}
+	}
+
+	body := `{"host":"10.0.20.40","checkFrom":["` + asset.ID + `"],"communities":["netmon"]}`
+	code, b := h.call(t, admin, "", http.MethodPost, "/api/v1/network-devices/discover", body)
+	if code != http.StatusOK || !strings.Contains(b, `"found":true`) || !strings.Contains(b, `"community":"netmon"`) || !strings.Contains(b, "pdu1") {
+		t.Fatalf("discover = %d %s", code, b)
+	}
+	// The defaults are always tried, before the admin's additions.
+	if len(sent) != 3 || sent[0] != "public" || sent[1] != "private" || sent[2] != "netmon" {
+		t.Errorf("communities sent = %v", sent)
+	}
+	// The run is audited, and the strings never appear in the record.
+	events, err := h.store.AuditEvents(ctx, 20, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, e := range events {
+		if e.Action == "network_device.discover" {
+			found = true
+			if strings.Contains(e.Detail, "netmon") || strings.Contains(e.Detail, "public") {
+				t.Errorf("audit leaked the strings: %s", e.Detail)
+			}
+		}
+	}
+	if !found {
+		t.Error("the discovery was not audited")
+	}
+
+	// A member who is not an admin cannot run it.
+	email := unique("netops") + "@northwind.id"
+	if _, err := h.store.CreateAccount(ctx, email, "Net", "operator", "correct horse battery staple"); err != nil {
+		t.Fatal(err)
+	}
+	member := h.signIn(t, tn.Slug, email, "correct horse battery staple")
+	if code, _ := h.call(t, member, "", http.MethodPost, "/api/v1/network-devices/discover", body); code != http.StatusForbidden {
+		t.Errorf("non-admin discover = %d, want 403", code)
+	}
+}

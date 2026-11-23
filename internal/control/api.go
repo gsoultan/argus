@@ -380,6 +380,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/network-devices", a.getNetworkDevices)
 	mux.HandleFunc("POST /api/v1/network-devices", a.postNetworkDevice)
 	mux.HandleFunc("POST /api/v1/network-devices/test", a.postNetworkDeviceTest)
+	mux.HandleFunc("POST /api/v1/network-devices/discover", a.postNetworkDeviceDiscover)
 	mux.HandleFunc("GET /api/v1/network-devices/{id}", a.getNetworkDevice)
 	mux.HandleFunc("PUT /api/v1/network-devices/{id}", a.putNetworkDevice)
 	mux.HandleFunc("DELETE /api/v1/network-devices/{id}", a.deleteNetworkDevice)

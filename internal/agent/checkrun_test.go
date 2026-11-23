@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"net"
 	"strings"
 	"testing"
@@ -83,5 +84,23 @@ func TestCheckRunService(t *testing.T) {
 	wrongHost.Host = "edge-02"
 	if ans, _ := askCheckRun(t, svc, key, wrongHost); ans.OK {
 		t.Error("a grant for another server was accepted")
+	}
+}
+
+// Discovery runs over the same service and carries back the string that worked.
+func TestCheckRunDiscover(t *testing.T) {
+	_, key, _ := ed25519.GenerateKey(rand.Reader)
+	svc := CheckRun(CheckRunConfig{Verifier: &tunnel.GrantVerifier{Host: "edge-01"}, SNMP: &tunnel.SNMPProbe{
+		DialSystem: func(_ context.Context, q tunnel.SNMPQuery) (*tunnel.SNMPAnswer, string, error) {
+			if q.Community == "public" {
+				return &tunnel.SNMPAnswer{Name: "pdu1", Description: "APC", UptimeSec: 5}, "", nil
+			}
+			return nil, tunnel.SNMPFailNoAnswer, errors.New("no answer")
+		},
+	}})
+	d := tunnel.SNMPDiscover{Host: "10.0.0.9", Communities: []string{"nope", "public"}}
+	ans, res := askCheckRun(t, svc, key, checkGrant(tunnel.GrantCheck{Kind: tunnel.CheckKindSNMPDiscover, Discover: &d}))
+	if !ans.OK || res.Discovery == nil || !res.Discovery.Found || res.Discovery.Community != "public" || res.Discovery.SNMP.Name != "pdu1" {
+		t.Fatalf("discover: %+v %+v", ans, res)
 	}
 }
