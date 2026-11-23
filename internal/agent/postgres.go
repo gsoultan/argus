@@ -198,9 +198,9 @@ type pgSession struct {
 	// adopted is what the open handed the DBA level, recorded once the
 	// recording is open.
 	adopted []string
-	uses  *roleUse
-	g     tunnel.Grant
-	db    tunnel.GrantDB
+	uses    *roleUse
+	g       tunnel.Grant
+	db      tunnel.GrantDB
 	// poolDB is the name PgBouncer knows the database by, when it differs
 	// from db.Name on the Postgres it sends to (pgremote.go sentOn).
 	poolDB string

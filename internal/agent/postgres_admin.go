@@ -301,6 +301,7 @@ runs with a superuser's rights, or is not the database's own:
   - Postgres's schemas, information_schema and Argus's own (argus_auth and
     the trash);
   - sequences and types that belong to a table: they go with the table.
+
 Objects owned by an ordinary role are left with it: ownerReachSQL already
 makes the owner level, and through it DBA, a member of those roles.
 
