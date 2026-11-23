@@ -175,6 +175,9 @@ type StoreRequest struct {
 	// Restart asks a MongoDB network_set to restart mongod's service, since
 	// mongod reads net.bindIp only when it starts.
 	Restart bool `json:"restart,omitempty"`
+	// BrokerUser is a Kafka or RabbitMQ user to list, make, change or delete
+	// (brokerusers.go).
+	BrokerUser *BrokerUser `json:"brokerUser,omitempty"`
 }
 
 // StoreAnswer is the agent's reply to a request, or news about the session.

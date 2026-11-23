@@ -47,11 +47,11 @@ const answerAll = async (ws: FakeSocket, op: string, ans: Record<string, unknown
   return req
 }
 
-function Harness() {
-  const [at, setAt] = useState<{ tab: KafkaTab; topic?: string }>({ tab: 'overview' })
+function Harness({ level = 'owner', start = 'overview' }: { level?: 'owner' | 'dba'; start?: KafkaTab }) {
+  const [at, setAt] = useState<{ tab: KafkaTab; topic?: string }>({ tab: start })
   return (
-    <KafkaWorkspace database={db} access={{ level: 'owner' }} endpoint="/api/v1/postgres"
-      getTicket={async () => ({ ticket: 't', role: 'ana', level: 'owner' })} tab={at.tab} topic={at.topic} onNavigate={setAt} />
+    <KafkaWorkspace database={{ ...db, label: 'staging' }} access={{ level }} endpoint="/api/v1/postgres"
+      getTicket={async () => ({ ticket: 't', role: 'ana', level })} tab={at.tab} topic={at.topic} onNavigate={setAt} />
   )
 }
 
@@ -96,5 +96,44 @@ describe('KafkaWorkspace', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Do it' }))
     const del = await answerAll(ws, 'delete_topic', { type: 'result', ms: 30 })
     expect(del).toMatchObject({ name: 'orders.eu', confirm: 'stream-01' })
+  })
+
+  it('makes an app user at Admin: only a salted hash goes with it, then it signs in and the details show once', async () => {
+    renderWithProviders(<Harness level="dba" start="users" />)
+    await waitFor(() => expect(FakeSocket.last).not.toBeNull())
+    const ws = FakeSocket.last!
+    ws.push({ type: 'ready' })
+    ws.answer({ id: 0, type: 'ready', engine: 'kafka', level: 'dba', user: 'argus-ana-dba',
+      ops: ['overview', 'topics', 'groups', 'users', 'user_set', 'user_del', 'user_scope_del', 'user_login'] })
+    await answerAll(ws, 'overview', { type: 'result', data: { cluster: 'c-1', brokers: [], topics: 1, partitions: 1, scope: 'orders.' } })
+    await answerAll(ws, 'topics', { type: 'result', data: [{ name: 'orders.invoices', partitions: 1, replication: 1, messages: 0 }] })
+    await answerAll(ws, 'groups', { type: 'result', data: [] })
+    await answerAll(ws, 'users', { type: 'result', data: { scope: 'orders.', notShown: 2, sessions: ['argus-ana-dba'], users: [
+      { name: 'billing', mechanisms: ['SCRAM-SHA-512'], quotas: {}, acls: [{ resource: 'topic', pattern: 'PREFIXED', name: 'orders.', operation: 'READ', permission: 'ALLOW', host: '*' }],
+        outside: [{ resource: 'topic', pattern: 'LITERAL', name: 'payments', operation: 'READ', permission: 'ALLOW', host: '*' }] },
+    ] } })
+    expect(await screen.findByText('billing')).toBeInTheDocument()
+    expect(screen.getByText('1 ACL')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'New user' }))
+    fireEvent.change(await screen.findByLabelText('Name'), { target: { value: 'invoices-app' } })
+    expect(screen.getByText(/Covers 1 topic now: orders.invoices/)).toBeInTheDocument()
+    const create = screen.getByRole('button', { name: 'Create invoices-app' })
+    await waitFor(() => expect(create).toBeEnabled())
+    fireEvent.click(create)
+    const set = await answerAll(ws, 'user_set', { type: 'result', data: { user: 'invoices-app', added: 4 } }) as {
+      password?: string; brokerUser: { name: string; create: boolean; credential: { salt: string; saltedPassword: string; iterations: number }; acls: unknown[] }
+    }
+    expect(set.password).toBeUndefined()
+    expect(set.brokerUser).toMatchObject({ name: 'invoices-app', create: true, mechanism: 'SCRAM-SHA-512' })
+    expect(set.brokerUser.credential.iterations).toBe(8192)
+    expect(set.brokerUser.acls).toHaveLength(4)
+
+    const login = await answerAll(ws, 'user_login', { type: 'result', data: { user: 'invoices-app', address: '127.0.0.1:9092', ok: true, topics: ['orders.invoices'], elsewhere: 0 } }) as { password: string }
+    expect(login.password.length).toBeGreaterThanOrEqual(12)
+    expect(JSON.stringify(set)).not.toContain(login.password)
+    expect(await screen.findByText('Signs in on 127.0.0.1:9092')).toBeInTheDocument()
+    expect(screen.getByText('shown once')).toBeInTheDocument()
+    await answerAll(ws, 'users', { type: 'result', data: { scope: 'orders.', notShown: 2, sessions: [], users: [] } })
   })
 })

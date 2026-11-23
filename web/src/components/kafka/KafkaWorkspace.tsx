@@ -18,6 +18,7 @@ import { FS, INK } from '~/theme'
 import { levelName } from '~/lib/engines'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
 
+const KafkaUsers = lazy(() => import('~/components/kafka/KafkaUsers').then((m) => ({ default: m.KafkaUsers })))
 const StoreNetworkPanel = lazy(() => import('~/components/network/StoreNetwork').then((m) => ({ default: m.StoreNetworkPanel })))
 
 /*
@@ -32,7 +33,7 @@ seconds while the page is visible. Peeking at messages, publishing and
 creating or deleting a topic are recorded by the agent before they run.
 */
 
-export type KafkaTab = 'overview' | 'topics' | 'groups' | 'network'
+export type KafkaTab = 'overview' | 'topics' | 'groups' | 'users' | 'network'
 
 type Req = Record<string, unknown> & { op: string }
 
@@ -150,6 +151,7 @@ export function KafkaWorkspace(props: KafkaWorkspaceProps) {
             <Tabs.Tab value="groups" rightSection={<Badge size="xs" variant="light" color={needs.some((n) => n.group) ? 'amber' : 'slate'}>{groups.length}</Badge>}>
               {narrow ? 'Groups' : 'Consumer groups'}
             </Tabs.Tab>
+            {can('users') && <Tabs.Tab value="users">Users</Tabs.Tab>}
             {can('network') && <Tabs.Tab value="network">Network</Tabs.Tab>}
           </Tabs.List>
         </Tabs>
@@ -166,6 +168,11 @@ export function KafkaWorkspace(props: KafkaWorkspaceProps) {
                   onBack={() => openTopic()} onPublish={() => setPublishing(topic)} />
               : <Topics topics={topics} narrow={narrow} onOpen={openTopic} canCreate={can('create_topic')} onCreate={() => setCreating(true)} />)}
             {tab === 'groups' && <Groups groups={groups} onTopic={openTopic} />}
+            {tab === 'users' && can('users') && (
+              <Suspense fallback={null}>
+                <KafkaUsers s={s} database={database} topics={topics.map((t) => t.name)} can={can} narrow={narrow} />
+              </Suspense>
+            )}
             {tab === 'network' && can('network') && (
           <Suspense fallback={null}>
             <Box style={{ display: 'flex', flexDirection: 'column', height: 'calc(100dvh - 220px)', minHeight: 520, border: '1px solid var(--color-line)', borderRadius: 8, overflow: 'hidden' }}>

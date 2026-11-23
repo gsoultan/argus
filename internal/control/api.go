@@ -443,6 +443,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/databases/{id}/read-endpoint", a.withPostgres("read endpoints", tunnel.LevelDBA, a.deleteReadEndpoint))
 	// Saved queries; see saved_queries.go.
 	mux.HandleFunc("POST /api/v1/databases/{id}/statements", a.withEngines("statement approvals", tunnel.LevelWrite, approvalEngines, a.postStatementAsk))
+	mux.HandleFunc("GET /api/v1/databases/{id}/broker-users", a.withEngines("broker users", tunnel.LevelOwner, brokerUserEngines, a.getBrokerUserEvents))
 	mux.HandleFunc("GET /api/v1/databases/{id}/approval", a.withEngines("approvals", tunnel.LevelRead, approvalEngines, a.getChangeApproval))
 	mux.HandleFunc("GET /api/v1/databases/{id}/statements/{request}", a.withEngines("statement approvals", tunnel.LevelRead, approvalEngines, a.getStatementAsk))
 	mux.HandleFunc("GET /api/v1/databases/{id}/changes", a.withPostgres("data changes", tunnel.LevelRead, a.getDataChanges))

@@ -23,8 +23,8 @@ import { FS, INK } from '~/theme'
  * tab, queue, exchange and topic are in the address, so a link opens the same view.
  */
 interface Search { tab?: BrokerTab | KafkaTab; queue?: string; exchange?: string; topic?: string }
-const TABS: (BrokerTab | KafkaTab)[] = ['overview', 'queues', 'routing', 'connections', 'topics', 'groups']
-const KAFKA_TABS: KafkaTab[] = ['overview', 'topics', 'groups', 'network']
+const TABS: (BrokerTab | KafkaTab)[] = ['overview', 'queues', 'routing', 'connections', 'topics', 'groups', 'users', 'network']
+const KAFKA_TABS: KafkaTab[] = ['overview', 'topics', 'groups', 'users', 'network']
 const RABBIT_TABS: BrokerTab[] = ['overview', 'queues', 'routing', 'connections', 'network']
 
 export const Route = createFileRoute('/brokers/$brokerId')({

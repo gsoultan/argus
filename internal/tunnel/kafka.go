@@ -84,8 +84,11 @@ func KafkaStoreOps(level string) []string {
 	switch level {
 	case LevelWrite:
 		ops = append(ops, "publish")
-	case LevelOwner, LevelDBA:
-		ops = append(ops, "publish", "create_topic", "delete_topic")
+	case LevelOwner:
+		ops = append(ops, "publish", "create_topic", "delete_topic", BrokerOpUsers)
+	case LevelDBA:
+		ops = append(ops, "publish", "create_topic", "delete_topic", BrokerOpUsers,
+			BrokerOpUserSet, BrokerOpUserDel, BrokerOpUserScopeDel, BrokerOpUserLogin)
 	case LevelRead:
 	default:
 		return nil
