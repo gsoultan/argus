@@ -124,6 +124,10 @@ type StoreRequest struct {
 	// Queue is a declared queue's type, arguments and binding; nil is a
 	// classic queue with none.
 	Queue *RabbitQueue `json:"queue,omitempty"`
+	// Stream is where a RabbitMQ stream_read starts.
+	Stream *RabbitStreamRead `json:"stream,omitempty"`
+	// SuperStream is a new RabbitMQ super stream, for declare_super_stream.
+	SuperStream *RabbitSuperStream `json:"superStream,omitempty"`
 	// Move: the queue messages go to (Name is where they come from).
 	Target string `json:"target,omitempty"`
 	// Declare an exchange: direct, topic, fanout or headers.
@@ -532,24 +536,29 @@ func RabbitPermissions(level string) (RabbitLevel, bool) {
 // operations per level on top of the permissions, never the management API
 // itself.
 var rabbitOps = map[string]string{
-	"overview":         LevelRead,
-	"queues":           LevelRead,
-	"exchanges":        LevelRead,
-	"exchange":         LevelRead,
-	"bindings":         LevelRead,
-	"queue":            LevelRead,
-	"consumers":        LevelRead,
-	"peek":             LevelRead,
-	"publish":          LevelWrite,
-	"purge":            LevelOwner,
-	"move":             LevelOwner,
-	"declare_queue":    LevelOwner,
-	"delete_queue":     LevelOwner,
-	"declare_exchange": LevelOwner,
-	"bind":             LevelOwner,
-	"connections":      LevelDBA,
-	"channels":         LevelDBA,
-	"close_connection": LevelDBA,
+	"overview":             LevelRead,
+	"queues":               LevelRead,
+	"exchanges":            LevelRead,
+	"exchange":             LevelRead,
+	"bindings":             LevelRead,
+	"queue":                LevelRead,
+	"consumers":            LevelRead,
+	"peek":                 LevelRead,
+	"stream_read":          LevelRead,
+	"stream_readers":       LevelRead,
+	"super_streams":        LevelRead,
+	"publish":              LevelWrite,
+	"purge":                LevelOwner,
+	"move":                 LevelOwner,
+	"declare_queue":        LevelOwner,
+	"delete_queue":         LevelOwner,
+	"declare_exchange":     LevelOwner,
+	"bind":                 LevelOwner,
+	"declare_super_stream": LevelOwner,
+	"delete_super_stream":  LevelOwner,
+	"connections":          LevelDBA,
+	"channels":             LevelDBA,
+	"close_connection":     LevelDBA,
 }
 
 // RabbitOpAllowed reports whether level may ask for op.
@@ -562,8 +571,8 @@ func RabbitOpAllowed(op, level string) bool {
 func RabbitOps(level string) []string {
 	var out []string
 	for _, op := range []string{"overview", "queues", "exchanges", "exchange", "bindings", "queue", "consumers",
-		"peek", "publish", "purge", "move", "declare_queue", "delete_queue", "declare_exchange", "bind",
-		"connections", "channels", "close_connection"} {
+		"peek", "stream_read", "stream_readers", "super_streams", "publish", "purge", "move", "declare_queue",
+		"delete_queue", "declare_exchange", "bind", "declare_super_stream", "delete_super_stream", "connections", "channels", "close_connection"} {
 		if RabbitOpAllowed(op, level) {
 			out = append(out, op)
 		}
@@ -578,7 +587,7 @@ var RabbitExchangeKinds = map[string]bool{"direct": true, "topic": true, "fanout
 // someone off, so the person must type the entry's name first.
 func RabbitNeedsConfirm(op string) bool {
 	switch op {
-	case "purge", "delete_queue", "close_connection":
+	case "purge", "delete_queue", "close_connection", "delete_super_stream":
 		return true
 	}
 	return false
