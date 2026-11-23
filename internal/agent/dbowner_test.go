@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -30,7 +31,7 @@ func TestAddArgusLineKeepsTheFile(t *testing.T) {
 	if bak, _ := os.ReadFile(ini + ".argus.bak"); string(bak) != orig {
 		t.Fatalf("backup:\n%s", bak)
 	}
-	if st, _ := os.Stat(ini); st.Mode().Perm() != 0o640 {
+	if st, _ := os.Stat(ini); runtime.GOOS != "windows" && st.Mode().Perm() != 0o640 {
 		t.Fatalf("mode changed to %v", st.Mode().Perm())
 	}
 	// Twice is once.
