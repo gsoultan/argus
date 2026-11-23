@@ -38,3 +38,28 @@ func TestRabbitUserChanges(t *testing.T) {
 		t.Fatal("levels")
 	}
 }
+
+func TestKafkaChangeRules(t *testing.T) {
+	for name, req := range map[string]StoreRequest{
+		"outside":       {Op: KafkaOpAddPartitions, Name: "payments", KafkaChange: &KafkaChange{Add: 1}},
+		"zero":          {Op: KafkaOpAddPartitions, Name: "orders.eu", KafkaChange: &KafkaChange{Add: 0}},
+		"unknown key":   {Op: KafkaOpAlterConfigs, Name: "orders.eu", KafkaChange: &KafkaChange{Set: map[string]string{"follower.replication.throttled.replicas": "*"}}},
+		"bad value":     {Op: KafkaOpAlterConfigs, Name: "orders.eu", KafkaChange: &KafkaChange{Set: map[string]string{"cleanup.policy": "never"}}},
+		"no offsets":    {Op: KafkaOpDeleteRecords, Name: "orders.eu", KafkaChange: &KafkaChange{}},
+		"other topic":   {Op: KafkaOpDeleteRecords, Name: "orders.eu", KafkaChange: &KafkaChange{Offsets: map[string]map[int32]int64{"orders.us": {0: 1}}}},
+		"reset outside": {Op: KafkaOpGroupReset, KafkaChange: &KafkaChange{Group: "g", Offsets: map[string]map[int32]int64{"payments": {0: 1}}}},
+		"shift deletes": {Op: KafkaOpDeleteRecords, Name: "orders.eu", KafkaChange: &KafkaChange{DryRun: true, To: "shift", By: -1}},
+		"group no name": {Op: KafkaOpDeleteGroup, KafkaChange: &KafkaChange{}},
+	} {
+		if ValidKafkaChange("orders.", req) == "" {
+			t.Errorf("%s passed", name)
+		}
+	}
+	ok := StoreRequest{Op: KafkaOpGroupReset, KafkaChange: &KafkaChange{Group: "billing", Offsets: map[string]map[int32]int64{"orders.eu": {1: 40, 0: 12}}}}
+	if why := ValidKafkaChange("orders.", ok); why != "" {
+		t.Fatal(why)
+	}
+	if got := KafkaChangeText(ok); got != "MOVE CONSUMER GROUP \"billing\" TO\n  orders.eu partition 0 offset 12\n  orders.eu partition 1 offset 40" {
+		t.Fatalf("text: %q", got)
+	}
+}

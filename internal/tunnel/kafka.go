@@ -80,13 +80,15 @@ func KafkaTopicOps(level string) []string {
 
 // KafkaStoreOps are the operations the console may ask for at a level.
 func KafkaStoreOps(level string) []string {
-	ops := []string{"overview", "topics", "topic", "groups", "peek"}
+	ops := []string{"overview", "topics", "topic", "groups", "peek", KafkaOpTopicConfigs, KafkaOpGroup}
 	switch level {
 	case LevelWrite:
 		ops = append(ops, "publish")
 	case LevelOwner:
 		ops = append(ops, "publish", "create_topic", "delete_topic", BrokerOpUsers)
+		ops = append(ops, KafkaChangeOps...)
 	case LevelDBA:
+		ops = append(ops, KafkaChangeOps...)
 		ops = append(ops, "publish", "create_topic", "delete_topic", BrokerOpUsers,
 			BrokerOpUserSet, BrokerOpUserDel, BrokerOpUserScopeDel, BrokerOpUserLogin)
 	case LevelRead:

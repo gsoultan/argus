@@ -81,7 +81,12 @@ describe('KafkaWorkspace', () => {
       name: 'orders.eu', configs: { 'retention.ms': '86400000' }, groups: [],
       partitions: [{ partition: 0, leader: 1, replicas: [1], isr: [1], start: 0, end: 1200 }],
     } })
+    await answerAll(ws, 'topic_configs', { type: 'result', data: {
+      configs: [{ key: 'retention.ms', value: '86400000', source: 'DYNAMIC_TOPIC_CONFIG', default: false, editable: true }],
+      settings: [{ key: 'retention.ms', name: 'Keep messages for', kind: 'ms' }],
+    } })
     expect(await screen.findByText('retention.ms')).toBeInTheDocument()
+    expect(screen.getByText('1 day')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Read' }))
     const peek = await answerAll(ws, 'peek', { type: 'result', data: [
@@ -160,5 +165,40 @@ describe('KafkaWorkspace', () => {
     expect(await screen.findByText('Signs in on 127.0.0.1:9092')).toBeInTheDocument()
     expect(screen.getByText('shown once')).toBeInTheDocument()
     await answerAll(ws, 'users', { type: 'result', data: { scope: 'orders.', notShown: 2, sessions: [], users: [] } })
+  })
+
+  it('deletes messages before the exact offsets a dry run worked out, with the server name', async () => {
+    function H() {
+      const [at, setAt] = useState<{ tab: KafkaTab; topic?: string }>({ tab: 'topics', topic: 'orders.eu' })
+      return <KafkaWorkspace database={db} access={{ level: 'owner' }} endpoint="/api/v1/postgres"
+        getTicket={async () => ({ ticket: 't', role: 'ana', level: 'owner' })} tab={at.tab} topic={at.topic} onNavigate={setAt} />
+    }
+    renderWithProviders(<H />)
+    await waitFor(() => expect(FakeSocket.last).not.toBeNull())
+    const ws = FakeSocket.last!
+    ws.push({ type: 'ready' })
+    ws.answer({ id: 0, type: 'ready', engine: 'kafka', level: 'owner', user: 'argus-ana-owner',
+      ops: ['overview', 'topics', 'topic', 'groups', 'topic_configs', 'group', 'delete_records', 'add_partitions', 'alter_configs', 'group_reset', 'delete_group'] })
+    await answerAll(ws, 'overview', { type: 'result', data: { cluster: 'c-1', brokers: [], topics: 1, partitions: 2, scope: 'orders.' } })
+    await answerAll(ws, 'topics', { type: 'result', data: [{ name: 'orders.eu', partitions: 2, replication: 1, messages: 30 }] })
+    await answerAll(ws, 'groups', { type: 'result', data: [] })
+    await answerAll(ws, 'topic', { type: 'result', data: { name: 'orders.eu', configs: {}, groups: [],
+      partitions: [{ partition: 0, leader: 1, replicas: [1], isr: [1], start: 0, end: 20 }, { partition: 1, leader: 1, replicas: [1], isr: [1], start: 0, end: 10 }] } })
+    await answerAll(ws, 'topic_configs', { type: 'result', data: { configs: [], settings: [] } })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete messages…' }))
+    fireEvent.click(await screen.findByRole('radio', { name: /Before an offset/ }))
+    fireEvent.change(screen.getByLabelText('Before offset'), { target: { value: '12' } })
+    const dry = await answerAll(ws, 'delete_records', { type: 'result', data: {
+      plan: [{ topic: 'orders.eu', partition: 0, start: 0, end: 20, now: 0, after: 12 }], offsets: { 'orders.eu': { 0: 12 } }, unread: { billing: 7 } } })
+    expect(dry).toMatchObject({ name: 'orders.eu', kafkaChange: { dryRun: true, to: 'offset', partition: 0, offset: 12 } })
+    expect(await screen.findByText(/Not read yet by billing \(7\)/)).toBeInTheDocument()
+    const del = screen.getByRole('button', { name: 'Delete 12 messages' })
+    expect(del).toBeDisabled()
+    fireEvent.change(screen.getByLabelText(/Type the server's name/), { target: { value: 'stream-01' } })
+    fireEvent.click(del)
+    const run = await answerAll(ws, 'delete_records', { type: 'result' })
+    expect(run).toMatchObject({ name: 'orders.eu', confirm: 'stream-01', kafkaChange: { offsets: { 'orders.eu': { 0: 12 } } } })
+    expect((run as { kafkaChange: { dryRun?: boolean } }).kafkaChange.dryRun).toBeUndefined()
   })
 })

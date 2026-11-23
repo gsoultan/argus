@@ -178,6 +178,9 @@ type StoreRequest struct {
 	// BrokerUser is a Kafka or RabbitMQ user to list, make, change or delete
 	// (brokerusers.go).
 	BrokerUser *BrokerUser `json:"brokerUser,omitempty"`
+	// KafkaChange is a Kafka topic or consumer group change
+	// (kafkachange.go).
+	KafkaChange *KafkaChange `json:"kafkaChange,omitempty"`
 }
 
 // StoreAnswer is the agent's reply to a request, or news about the session.

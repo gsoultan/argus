@@ -263,9 +263,15 @@ func (s *kafkaSession) grants() *kadm.ACLBuilder {
 	return b.Topics(s.db.Name).ResourcePatternType(kadm.ACLPatternPrefixed)
 }
 
+// groupGrants let every level see consumer groups, and Manage and Admin
+// move and delete them (Argus keeps those to the scope's topics).
 func (s *kafkaSession) groupGrants() *kadm.ACLBuilder {
+	ops := []kadm.ACLOperation{kadm.OpDescribe}
+	if tunnel.LevelRank(s.db.Level) >= tunnel.LevelRank(tunnel.LevelOwner) {
+		ops = append(ops, kadm.OpRead, kadm.OpDelete)
+	}
 	return kadm.NewACLs().Allow(kafkaPrincipal(s.user)).AllowHosts().Groups("*").
-		ResourcePatternType(kadm.ACLPatternLiteral).Operations(kadm.OpDescribe)
+		ResourcePatternType(kadm.ACLPatternLiteral).Operations(ops...)
 }
 
 // dropUser deletes a user's SCRAM credential and every ACL that names it.
@@ -425,6 +431,9 @@ func (s *kafkaSession) do(ctx context.Context, req tunnel.StoreRequest, rec *stm
 	}
 	cctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
+	if req.Op == tunnel.KafkaOpTopicConfigs || req.Op == tunnel.KafkaOpGroup || tunnel.IsKafkaChange(req.Op) {
+		return s.changeOp(cctx, req, rec)
+	}
 	switch req.Op {
 	case "overview":
 		return s.overview(cctx)
