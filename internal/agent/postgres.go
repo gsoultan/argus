@@ -195,9 +195,12 @@ type pgSession struct {
 	id    string
 	cfg   PostgresConfig
 	admin pgAdminRunner
-	uses  *roleUse
-	g     tunnel.Grant
-	db    tunnel.GrantDB
+	// adopted is what the open handed the DBA level, recorded once the
+	// recording is open.
+	adopted []string
+	uses    *roleUse
+	g       tunnel.Grant
+	db      tunnel.GrantDB
 	// poolDB is the name PgBouncer knows the database by, when it differs
 	// from db.Name on the Postgres it sends to (pgremote.go sentOn).
 	poolDB string
@@ -265,6 +268,7 @@ func openPGSession(ctx context.Context, cfg PostgresConfig, admin pgAdminRunner,
 		return nil, errors.New(res.Error)
 	}
 	s.version = res.Version
+	s.adopted = res.Adopted
 
 	conn, err := s.connect(octx, password)
 	if err != nil {
@@ -282,6 +286,24 @@ func openPGSession(ctx context.Context, cfg PostgresConfig, admin pgAdminRunner,
 		return nil, fmt.Errorf("the session could not be recorded, so it was not opened: %w", err)
 	}
 	return s, nil
+}
+
+// recordAdopted writes what the open handed the DBA level (see
+// pgAdoptSuperuserObjects) into the recording as administrative changes, so
+// the control plane audits them like any other and a replay shows them. A
+// long list is split so each line fits a frame.
+func (s *pgSession) recordAdopted() error {
+	const per = 100
+	for i := 0; i < len(s.adopted); i += per {
+		part := s.adopted[i:min(i+per, len(s.adopted))]
+		if err := s.record(tunnel.PGRecord{Kind: "admin", SQL: strings.Join(part, ";\n")}); err != nil {
+			return err
+		}
+		if err := s.record(tunnel.PGRecord{Kind: "done", Tag: "ALTER", Rows: int64(len(part))}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *pgSession) useKey() string { return s.db.Name + "\x00" + s.g.Principal }
@@ -539,6 +561,9 @@ func (s *pgSession) serve(ctx context.Context, st tunnel.Stream) {
 
 	if s.record(tunnel.PGRecord{Kind: "open", Actor: s.g.Email, Role: s.g.Principal,
 		Level: s.db.Level, Grant: s.g.ID}) != nil {
+		return
+	}
+	if s.recordAdopted() != nil {
 		return
 	}
 	via := "direct"
@@ -889,6 +914,9 @@ func (s *pgSession) statementFailed(ctx context.Context, id uint32, err error, r
 		if pgErr.Code == "57014" && ctx.Err() == nil {
 			a.Error = "cancelled: " + pgErr.Message
 		}
+		if a.Hint == "" {
+			a.Hint = ownerHint(s.db.Level, pgErr)
+		}
 	} else if s.conn.IsClosed() {
 		_ = s.record(tunnel.PGRecord{Kind: "error", Request: id, Error: err.Error(), MS: elapsed})
 		_ = s.send(a)
@@ -899,6 +927,25 @@ func (s *pgSession) statementFailed(ctx context.Context, id uint32, err error, r
 		return rerr
 	}
 	return s.send(a)
+}
+
+// ownerHint is the next step for "must be owner of" at the owner and DBA
+// levels. Owner reaches what Argus and an application's own role made, never
+// what a superuser made; a DBA session is handed what a superuser owns as it
+// opens, so at DBA this is one of the few things left with its owner.
+func ownerHint(level string, e *pgconn.PgError) string {
+	if e.Code != "42501" || !strings.HasPrefix(e.Message, "must be owner of ") {
+		return ""
+	}
+	switch level {
+	case tunnel.LevelOwner:
+		return "Owner reaches what was made through Argus or by an application's own role, not what the postgres superuser made. " +
+			"Open the database at DBA to change it: a DBA session is handed what postgres owns here."
+	case tunnel.LevelDBA:
+		return "A DBA session is handed what postgres owns here, except what an extension owns, SECURITY DEFINER routines, " +
+			"routines in an untrusted language, and objects of a role that can create roles. Change those as their owner."
+	}
+	return ""
 }
 
 // beginSQL reports whether a statement opens a transaction.

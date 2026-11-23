@@ -49,8 +49,14 @@ func TestPostgresOwnerAltersObjectsOfExistingRoles(t *testing.T) {
 					t.Fatalf("%s: %+v", s, final)
 				}
 			}
-			// The level is not a way to become someone more powerful.
-			refused := []string{"ALTER TABLE argus_t_super ADD COLUMN x int", "ALTER TABLE argus_t_owns_cr ADD COLUMN x int"}
+			// The level is not a way to become someone more powerful. A DBA
+			// session is handed what a superuser owns as it opens (see
+			// TestPostgresDBAAdoptsSuperuserObjects); a role that can create
+			// roles keeps its own at every level.
+			refused := []string{"ALTER TABLE argus_t_owns_cr ADD COLUMN x int"}
+			if level == tunnel.LevelOwner {
+				refused = append(refused, "ALTER TABLE argus_t_super ADD COLUMN x int")
+			}
 			if pg16 {
 				// Before 16 a member may always SET ROLE; there the role
 				// was checked to carry nothing more than its objects.
