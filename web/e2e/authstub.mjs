@@ -375,7 +375,7 @@ const fwManage = () => ({
   policies: [{ id: 'p-web', name: 'Web servers', version: 3, latest: 3, defaultOut: 'allow', lines: FW_POLICY.lines, wanted: true }],
   changes: FW_CHANGES, open: FW_CHANGES.find((c) => ['awaiting_approval', 'queued', 'sent', 'trial', 'waiting_keep'].includes(c.state)),
 })
-const fwPlan = (b) => ({
+const fwPlan = (/** @type {any} */ b) => ({
   kind: b.takeOver ? 'take_over' : b.turnOn ? 'turn_on' : 'lines',
   summary: b.takeOver ? 'Take over 1 rule(s) made by hand' : 'Let in TCP 22 from private networks',
   preview: b.takeOver
@@ -621,7 +621,7 @@ const server = createServer(async (req, res) => {
     if (path === '/api/v1/assets/a-closed-healthy/firewall/changes' && req.method === 'POST') {
       const b = await readBody(req)
       const p = fwPlan(b)
-      const c = { ...FW_CHANGES[0], id: `fc-${FW_CHANGES.length + 1}`, kind: p.kind, summary: p.summary, reason: b.reason ?? '',
+      const c = { .../** @type {any} */ (FW_CHANGES[0]), id: `fc-${FW_CHANGES.length + 1}`, kind: p.kind, summary: p.summary, reason: b.reason ?? '',
         preview: p.preview, state: p.needsApproval ? 'awaiting_approval' : 'queued', requestedAt: new Date().toISOString(),
         message: '', ran: [], canPutBack: false }
       FW_CHANGES.unshift(c)
@@ -633,7 +633,7 @@ const server = createServer(async (req, res) => {
         const c = FW_CHANGES.find((x) => x.id === m[1])
         if (!c) return json(res, 404, { error: 'no such firewall change' })
         if (m[2] === 'keep') Object.assign(c, { keptBy: 'dev@northwind.id', keptAt: new Date().toISOString() })
-        else c.state = { approve: 'queued', deny: 'denied', cancel: 'cancelled' }[m[2]]
+        else c.state = { approve: 'queued', deny: 'denied', cancel: 'cancelled' }[/** @type {string} */ (m[2])] ?? c.state
         return json(res, 200, c)
       }
     }
