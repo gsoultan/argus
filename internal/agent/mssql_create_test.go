@@ -27,7 +27,7 @@ func TestMSSQLCreateDatabase(t *testing.T) {
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	opts := createOn(ctx, CreateDBConfig{}, c, "ana@corp.example")
+	opts := createOn(ctx, CreateDBConfig{}, c, "ana@corp.example", "")
 	if !opts.OK || opts.Options == nil || opts.Options.DefaultCollation == "" || opts.Options.DefaultRecovery == "" ||
 		!slices.Contains(opts.Options.Collations, "Latin1_General_100_CI_AS_SC_UTF8") || opts.Version == "" {
 		t.Fatalf("options: %+v %+v", opts, opts.Options)
@@ -38,7 +38,7 @@ func TestMSSQLCreateDatabase(t *testing.T) {
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	res := createOn(ctx, CreateDBConfig{}, c, "ana@corp.example")
+	res := createOn(ctx, CreateDBConfig{}, c, "ana@corp.example", "")
 	if !res.OK || len(res.Statements) != 2 {
 		t.Fatalf("create: %+v", res)
 	}
@@ -47,12 +47,12 @@ func TestMSSQLCreateDatabase(t *testing.T) {
 		coll != "Latin1_General_100_CI_AS_SC_UTF8" || rec != "SIMPLE" {
 		t.Fatalf("made: %v %s %s", err, coll, rec)
 	}
-	if again := createOn(ctx, CreateDBConfig{}, c, "ana@corp.example"); again.OK || !again.Exists {
+	if again := createOn(ctx, CreateDBConfig{}, c, "ana@corp.example", ""); again.OK || !again.Exists {
 		t.Fatalf("a second create: %+v", again)
 	}
 	bad := c
 	bad.Name, bad.MSSQL = "argus_t_nocoll", &tunnel.MSSQLCreate{Collation: "No_Such_Collation"}
-	if r := createOn(ctx, CreateDBConfig{}, bad, "ana@corp.example"); r.OK || r.Error != "this server has no collation No_Such_Collation" {
+	if r := createOn(ctx, CreateDBConfig{}, bad, "ana@corp.example", ""); r.OK || r.Error != "this server has no collation No_Such_Collation" {
 		t.Fatalf("an unknown collation: %+v", r)
 	}
 }

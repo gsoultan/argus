@@ -692,7 +692,9 @@ func PersonalRole(login string) string {
 
 // PgBouncer in front of a database authenticates Argus roles with auth_query.
 // The lookup is a SECURITY DEFINER function that answers only for roles Argus
-// made, so PgBouncer's auth_user learns nothing about anyone else's password.
+// made for people, and for the application roles an admin made or named as a
+// database's owner in Argus (members of PoolerAppsRole, never a superuser),
+// so PgBouncer's auth_user learns nothing about anyone else's password.
 // The agent creates it before every pooled session; the console shows the
 // same statements for the one-time setup, and these are the only copy.
 const (
@@ -703,6 +705,17 @@ const (
 	// PoolerAuthMarker is the role comment Argus leaves on PoolerAuthRole.
 	PoolerAuthMarker = "argus-managed pgbouncer auth"
 )
+
+// PoolerAppsSetupSQL makes PoolerAppsRole: no login, no privileges, only a
+// list of application roles Argus's PgBouncer lookup also answers for.
+func PoolerAppsSetupSQL() []string {
+	return []string{`DO $argus$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '` + PoolerAppsRole + `') THEN
+    CREATE ROLE ` + PoolerAppsRole + ` NOLOGIN;
+    COMMENT ON ROLE ` + PoolerAppsRole + ` IS '` + PoolerAuthMarker + `: application roles';
+  END IF;
+END $argus$`}
+}
 
 // PoolerAuthSetupSQL is the setup, as statements. Every one is safe to run
 // again. The role comment starts with "argus-managed", which is how the
@@ -724,8 +737,10 @@ END $argus$`,
 AS $f$
   SELECT s.usename, s.passwd FROM pg_shadow s
   WHERE s.usename = p_user
-    AND pg_has_role(s.usename, 'argus_people', 'MEMBER')
-    AND coalesce(shobj_description(s.usesysid, 'pg_authid'), '') LIKE 'argus-managed%'
+    AND ((pg_has_role(s.usename, 'argus_people', 'MEMBER')
+          AND coalesce(shobj_description(s.usesysid, 'pg_authid'), '') LIKE 'argus-managed%')
+      OR (NOT s.usesuper AND EXISTS (SELECT 1 FROM pg_auth_members m JOIN pg_roles g ON g.oid = m.roleid
+            WHERE g.rolname = '` + PoolerAppsRole + `' AND m.member = s.usesysid)))
 $f$`,
 		`REVOKE ALL ON FUNCTION argus_auth.pgbouncer_lookup(text) FROM PUBLIC`,
 		`GRANT USAGE ON SCHEMA argus_auth TO ` + PoolerAuthRole,

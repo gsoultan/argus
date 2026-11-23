@@ -85,6 +85,11 @@ type pgBouncerSeen struct {
 	Targets []tunnel.PoolerTarget
 	// AuthUser is its auth_user, which PgBouncer itself signs in as.
 	AuthUser string
+	// AuthQuery, AuthType and PoolMode are its auth_query, auth_type and
+	// pool_mode, as written.
+	AuthQuery string
+	AuthType  string
+	PoolMode  string
 	// Logins are the user= and password= a [databases] line signs in to
 	// its Postgres with. They stay in the agent: Targets go to the
 	// control plane, these never do.
@@ -617,6 +622,12 @@ func (l pgLocator) pgbouncer(path string) (pgBouncerSeen, bool) {
 				b.AuthFile = authFile(path, val)
 			case "auth_user":
 				b.AuthUser = val
+			case "auth_query":
+				b.AuthQuery = val
+			case "auth_type":
+				b.AuthType = strings.ToLower(val)
+			case "pool_mode":
+				b.PoolMode = strings.ToLower(val)
 			}
 		case "databases":
 			t := poolerTarget(key, val)

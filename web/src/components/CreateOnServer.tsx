@@ -17,6 +17,10 @@ import { databasesOnAssetQuery, dbqk } from '~/lib/queries'
 import { ENGINES, isBroker } from '~/lib/engines'
 import { FS } from '~/theme'
 import { pgLevelRole } from '~/lib/pgRoles'
+import {
+  ConnectionDetails, hasOwner, ManualLines, newOwnerState, OwnerFields, ownerName, ownerPassword, ownerReady, ownerRequest,
+  type OwnerState,
+} from '~/components/OwnerFields'
 import type { Asset, Database, DBEngine, DBLabel } from '~/types/domain'
 
 /**
@@ -55,8 +59,13 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
 
   const [name, setName] = useState('')
   const [label, setLabel] = useState<DBLabel>(like?.label ?? 'production')
+  // Who owns it (Postgres, MySQL, SQL Server, MongoDB)
+  const [ownerS, setOwnerS] = useState<OwnerState>(() => newOwnerState())
+  // The new owner's password, kept only for the result, shown once.
+  const [madePw, setMadePw] = useState('')
+  const [copied, setCopied] = useState(false)
+  const [leaving, setLeaving] = useState(false)
   // Postgres
-  const [owner, setOwner] = useState('')
   const [extensions, setExtensions] = useState<string[]>([])
   const [encoding, setEncoding] = useState('')
   const [locale, setLocale] = useState('')
@@ -93,7 +102,8 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
   const [result, setResult] = useState<CreateAnswer | null>(null)
   const [giving, setGiving] = useState<Database | null>(null)
 
-  const whereQ = { engine, port: Number(port) || 0, host: addr.trim(), configPath: configPath.trim() }
+  const whereQ = { engine, port: Number(port) || 0, host: addr.trim(), configPath: configPath.trim(),
+    poolerPort: engine === 'postgres' ? Number(poolerPort) || 0 : 0 }
   const [whereD] = useDebouncedValue(whereQ, 400)
   const opts = useQuery({
     queryKey: ['create-options', asset.id, whereD] as const,
@@ -108,11 +118,14 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
   const collations = cs ? charsets[cs] ?? [] : []
   const co = collation && collations.includes(collation) ? collation
     : cs === o?.defaultCharset && o?.defaultCollation ? o.defaultCollation : null
+  const users = useMemo(() => o?.users ?? (o?.roles ?? []).map((r) => ({ name: r })), [o])
+  const owned = hasOwner(engine)
+  const ownerN = owned ? ownerName(ownerS, name, users) : ''
 
   const fields = (): CreateFields => {
     switch (engine) {
       case 'postgres':
-        return { postgres: { owner, extensions, encoding: encoding.trim() || undefined, locale: locale.trim() || undefined } }
+        return { postgres: { extensions, encoding: encoding.trim() || undefined, locale: locale.trim() || undefined } }
       case 'mysql':
         return { mysql: { charset: cs ?? undefined, collation: co ?? undefined } }
       case 'mssql':
@@ -145,6 +158,7 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
     ...(configPath.trim() ? { configPath: configPath.trim() } : {}),
     ...(engine === 'postgres' && Number(poolerPort) ? { poolerPort: Number(poolerPort) } : {}),
     ...fields(),
+    ...(owned && ownerRequest(ownerS, engine, name, users) ? { owner: ownerRequest(ownerS, engine, name, users) } : {}),
   }
   const [reqD] = useDebouncedValue(req, 350)
   const preview = useQuery({
@@ -162,11 +176,16 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
   const agentDown = opts.data && (opts.data.state === 'offline' || opts.data.state === 'unsupported')
   const ready = n !== '' && !takenHere && !previewError && preview.data?.state === 'ok' && !agentDown && !busy
     && (engine !== 'mongodb' || collection.trim() !== '')
+    && (!owned || ownerReady(ownerS, engine, name, users))
 
   const submit = async () => {
     setBusy(true)
     try {
-      const a = await createOnServer(asset.id, req)
+      const pw = owned ? ownerPassword(ownerS) : ''
+      const a = await createOnServer(asset.id, { ...req, ...(pw ? { password: pw } : {}) })
+      setMadePw(a.connection && pw ? pw : '')
+      setCopied(false)
+      setLeaving(false)
       setResult(a)
       if (a.state === 'ok' || a.state === 'partial') {
         void qc.invalidateQueries({ queryKey: dbqk.databases })
@@ -200,7 +219,9 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
 
   if (result && result.state !== 'exists') {
     const made = result.state === 'ok' || result.state === 'partial'
-    return (
+    // Closing before copying the password asks once: it is not shown again.
+    const close = () => { if (madePw && !copied && !leaving) setLeaving(true); else onClose() }
+    const what = (
       <Stack gap="sm">
         <Text size={FS.body} fw={600}>{made ? `Created ${n} on ${host}` : `${n} was not created`}</Text>
         <Steps steps={result.steps} />
@@ -209,7 +230,26 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
             <Text size={FS.meta}>{result.error}</Text>
           </Alert>
         )}
+        <ManualLines lines={result.manual ?? []} />
         {result.statements.length > 0 && made && <Statements title={`Ran on ${host}`} lines={result.statements} />}
+      </Stack>
+    )
+    const details = made && result.connection
+      ? <ConnectionDetails engine={engine} connection={result.connection} password={madePw} onCopied={() => setCopied(true)} />
+      : null
+    return (
+      <Stack gap="sm">
+        {details && !narrow ? (
+          <Box style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 340px', gap: 16, alignItems: 'stretch' }}>
+            {what}
+            <Box pl={16} style={{ borderLeft: '1px solid var(--color-line)' }}>{details}</Box>
+          </Box>
+        ) : <>{what}{details}</>}
+        {leaving && (
+          <Alert variant="light" color="amber" p="xs" icon={<IconAlertTriangle size={16} />}>
+            <Text size={FS.meta}>The password will not be shown again. Copy it first, or close anyway and give {result.connection?.user} a new one later from Settings.</Text>
+          </Alert>
+        )}
         <Group justify="flex-end" gap="xs">
           {!made && <Button variant="default" onClick={() => setResult(null)}>Back</Button>}
           {result.database && (
@@ -219,7 +259,7 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
                 : { to: '/databases/$dbId', params: { dbId: result.database.id } } as const)} variant="default">Open</ButtonLink>
             </>
           )}
-          <Button onClick={onClose}>Done</Button>
+          <Button onClick={close} color={leaving ? 'amber' : undefined}>{leaving ? 'Close anyway' : madePw ? 'I’ve saved it, close' : 'Done'}</Button>
         </Group>
         {giving && <GiveAccessMany opened targets={[giving]} onClose={() => setGiving(null)} />}
       </Stack>
@@ -261,10 +301,8 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
 
       {engine === 'postgres' && (
         <>
-          <Select label="Owner" value={owner} onChange={(v) => setOwner(v ?? '')} allowDeselect={false} searchable
-            data={[{ value: '', label: `Argus Owner level${n && ownerRole ? ` (${ownerRole})` : ''}` },
-              ...(o?.roles ?? []).map((r) => ({ value: r, label: r }))]}
-            description="Whoever is given Owner here can create and change its tables. Pick an application's own role instead if the app will run its migrations." />
+          <OwnerFields engine={engine} host={host} db={n} users={users} value={ownerS} onChange={setOwnerS}
+            currentOwner={n && ownerRole ? ownerRole : undefined} />
           <MultiSelect label="Extensions" placeholder={o?.extensions ? `Add from ${o.extensions.length} installed…` : 'Optional'}
             data={o?.extensions ?? []} value={extensions} onChange={setExtensions} searchable clearable maxValues={20} />
           <Box>
@@ -291,6 +329,7 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
               placeholder={o?.defaultCollation ?? 'server default'} />
           </SimpleGrid>
           <Text size={FS.micro} c="dimmed">The server's defaults, from the agent. On MariaDB the lists show MariaDB's.</Text>
+          <OwnerFields engine={engine} host={host} db={n} users={users} value={ownerS} onChange={setOwnerS} />
         </>
       )}
 
@@ -304,6 +343,7 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
                 { value: 'FULL', label: 'Full' }, { value: 'BULK_LOGGED', label: 'Bulk-logged' }, { value: 'SIMPLE', label: 'Simple' }]} />
           </SimpleGrid>
           <Text size={FS.micro} c="dimmed">Full keeps the log until it is backed up, so the database can be restored to any moment. Simple keeps no log backups.</Text>
+          <OwnerFields engine={engine} host={host} db={n} users={users} value={ownerS} onChange={setOwnerS} />
         </>
       )}
 
@@ -327,6 +367,7 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
             <NumberInput label="Size (MB)" value={cappedMB} onChange={setCappedMB} min={1}
               description="The oldest documents go once it is full." />
           )}
+          <OwnerFields engine={engine} host={host} db={n} users={users} value={ownerS} onChange={setOwnerS} />
         </>
       )}
 
@@ -407,7 +448,8 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
         loading={preview.isFetching} empty={n ? (previewError ? 'Fix the fields to see what runs.' : '') : 'Type a name to see what runs.'} />
       <Text size={FS.micro} c="dimmed">
         Then it is added to Argus as {label}, the server’s rules for databases added later apply, and it is backed up like the others here.
-        {covered && !addEntry ? ' A covered topic adds nothing to Argus.' : ''} Recorded in Activity with what ran.
+        {covered && !addEntry ? ' A covered topic adds nothing to Argus.' : ''} Recorded in Activity with what ran{ownerS.kind === 'new' && owned ? ', the password left out' : ''}.
+        {ownerS.kind === 'new' && owned ? ` Then the agent signs in as ${ownerN || 'the new user'} to check the password${engine === 'postgres' && o?.pooler ? `, through PgBouncer ${o.pooler.port} and straight to Postgres` : ''}.` : ''}
       </Text>
     </Stack>
   )
@@ -420,7 +462,7 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
       <Group justify="flex-end">
         <Button variant="default" onClick={onClose}>Cancel</Button>
         <Button onClick={() => void submit()} loading={busy} disabled={!ready} fullWidth={narrow}>
-          {n ? `Create ${n}` : 'Create'}
+          {n ? `Create ${n}${owned && ownerS.kind === 'new' && ownerN ? ` and ${ownerN}` : ''}` : 'Create'}
         </Button>
       </Group>
     </Stack>

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -30,8 +31,12 @@ runs over a name that is there; the statements are tunnel.CreatePlan's, so
 the console's preview is what runs.
 */
 
-// CreateDBService is the tunnel service name.
-const CreateDBService = tunnel.CreateService
+// CreateDBService is the tunnel service name; CreateDBOwnedService is the
+// same service for a create that names an owner user (tunnel/dbowner.go).
+const (
+	CreateDBService      = tunnel.CreateService
+	CreateDBOwnedService = tunnel.CreateOwnedService
+)
 
 // CreateDBConfig is the create service. Its fields are DiscoverDBConfig's.
 type CreateDBConfig = DiscoverDBConfig
@@ -62,7 +67,8 @@ func CreateDatabases(cfg CreateDBConfig) TunnelService {
 			call.Refuse(err.Error())
 			return
 		}
-		if !g.ForService(CreateDBService) || g.Create == nil {
+		if (!g.ForService(CreateDBService) && !g.ForService(CreateDBOwnedService)) || g.Create == nil ||
+			g.Service != tunnel.CreateServiceFor(*g.Create) {
 			log.Warn("tunnel: refused a create on a grant for another service", "service", g.Service, "for", g.Email)
 			call.Refuse(tunnel.ErrGrant{Reason: "it is not for creating databases"}.Error())
 			return
@@ -76,7 +82,24 @@ func CreateDatabases(cfg CreateDBConfig) TunnelService {
 			return
 		}
 		cctx, cancel := context.WithTimeout(ctx, createTimeout)
-		res := createOn(cctx, cfg, c, g.Email)
+		var res tunnel.CreateResult
+		pw := ""
+		if c.NeedsPassword() {
+			p, err := readCreatePassword(cctx, call.Stream)
+			if err == nil {
+				if why := tunnel.OwnerPasswordProblem(c, p); why != "" {
+					err = errors.New(why)
+				}
+			}
+			if err != nil {
+				res.Error = err.Error()
+			}
+			pw = p
+		}
+		if res.Error == "" {
+			res = createOn(cctx, cfg, c, g.Email, pw)
+		}
+		pw = ""
 		cancel()
 		log.Info("tunnel: create", "op", c.Op, "engine", c.Engine, "name", c.Name, "port", c.Port,
 			"ok", res.OK, "exists", res.Exists, "error", res.Error, "for", g.Email)
@@ -86,31 +109,40 @@ func CreateDatabases(cfg CreateDBConfig) TunnelService {
 	}
 }
 
-func createOn(ctx context.Context, cfg CreateDBConfig, c tunnel.GrantCreate, email string) tunnel.CreateResult {
+func createOn(ctx context.Context, cfg CreateDBConfig, c tunnel.GrantCreate, email, pw string) tunnel.CreateResult {
 	switch c.Engine {
 	case tunnel.EnginePostgres:
-		return createPostgres(ctx, cfg, c, email)
+		return createPostgres(ctx, cfg, c, email, pw)
 	case tunnel.EngineMySQL:
 		socks := cfg.MySQLSockets
 		if socks == nil {
 			socks = mysqlSockets
 		}
-		return createMySQL(ctx, socks, c)
+		if c.Op == tunnel.CreateOpSetOwner || c.Op == tunnel.CreateOpSetPassword {
+			return ownMySQL(ctx, socks, c, pw)
+		}
+		return createMySQL(ctx, socks, c, pw)
 	case tunnel.EngineMongoDB:
-		return createMongo(ctx, c)
+		if c.Op == tunnel.CreateOpSetOwner || c.Op == tunnel.CreateOpSetPassword {
+			return ownMongo(ctx, c, pw)
+		}
+		return createMongo(ctx, c, pw)
 	case tunnel.EngineRabbitMQ:
 		return createRabbit(ctx, cfg.Ctl, c)
 	case tunnel.EngineKafka:
 		return createKafka(ctx, c)
 	case tunnel.EngineMSSQL:
-		return createMSSQL(ctx, c)
+		if c.Op == tunnel.CreateOpSetOwner || c.Op == tunnel.CreateOpSetPassword {
+			return ownMSSQL(ctx, c, pw)
+		}
+		return createMSSQL(ctx, c, pw)
 	}
 	return tunnel.CreateResult{Error: "Argus cannot create on engine " + c.Engine}
 }
 
 // createMSSQL makes a SQL Server database as the admin login. The person's
 // logins and users are made when someone first opens it, like any entry.
-func createMSSQL(ctx context.Context, c tunnel.GrantCreate) tunnel.CreateResult {
+func createMSSQL(ctx context.Context, c tunnel.GrantCreate, pw string) tunnel.CreateResult {
 	admin, err := mssqlAdminConn(ctx, c.Host, c.Port, c.ConfigPath)
 	if err != nil {
 		return tunnel.CreateResult{Error: err.Error()}
@@ -125,6 +157,7 @@ func createMSSQL(ctx context.Context, c tunnel.GrantCreate) tunnel.CreateResult 
 			return res
 		}
 		o.Version = res.Version
+		o.Users = mssqlOwnerUsers(ctx, admin.db)
 		res.OK, res.Options = true, o
 		return res
 	}
@@ -144,14 +177,21 @@ func createMSSQL(ctx context.Context, c tunnel.GrantCreate) tunnel.CreateResult 
 			return res
 		}
 	}
-	plan := tunnel.CreatePlan(c)
+	made, ok := mssqlOwnerBefore(ctx, admin, c, pw, &res)
+	if !ok {
+		return res
+	}
+	plan := tunnel.CreateDBPlan(c)
 	if _, err := admin.db.ExecContext(ctx, plan[0]); err != nil {
 		res.Error = mssqlMessage(err)
 		res.Exists = strings.Contains(res.Error, "already exists")
+		if made {
+			res.Steps = append(res.Steps, mssqlUndoLogin(ctx, admin, c.Owner.Name))
+		}
 		return res
 	}
 	res.Steps = append(res.Steps, tunnel.CreateStep{Text: "Created the database " + c.Name, OK: true})
-	res.Statements = plan[:1]
+	res.Statements = append(res.Statements, plan[0])
 	if len(plan) > 1 {
 		if _, err := admin.db.ExecContext(ctx, plan[1]); err != nil {
 			// The database is there: a partial success, said as one.
@@ -160,9 +200,9 @@ func createMSSQL(ctx context.Context, c tunnel.GrantCreate) tunnel.CreateResult 
 			return res
 		}
 		res.Steps = append(res.Steps, tunnel.CreateStep{Text: "Set the recovery model to " + c.MSSQL.Recovery, OK: true})
-		res.Statements = plan
+		res.Statements = append(res.Statements, plan[1])
 	}
-	res.OK = true
+	res.OK = mssqlOwnerAfter(ctx, admin, c, pw, &res)
 	return res
 }
 
@@ -208,11 +248,22 @@ func mssqlCreateOptions(ctx context.Context, db *sql.DB) (*tunnel.CreateOptions,
 	return o, rows.Err()
 }
 
-func createPostgres(ctx context.Context, cfg CreateDBConfig, c tunnel.GrantCreate, email string) tunnel.CreateResult {
+func createPostgres(ctx context.Context, cfg CreateDBConfig, c tunnel.GrantCreate, email, pw string) tunnel.CreateResult {
 	socket := socketDir(tunnel.GrantDB{Host: c.Host, Port: c.Port})
+	l := pgLocator{root: cfg.PGRoot}
+	bouncer, pooled := findBouncer(l, c.PoolerPort)
+	verifier := ""
+	if pw != "" {
+		v, err := scramVerifier(pw)
+		if err != nil {
+			return tunnel.CreateResult{Error: err.Error()}
+		}
+		verifier = v
+	}
 	ask := func(op, database string) PGAdminResult {
 		r := cfg.Admin(ctx, PGAdminRequest{Op: op, Database: database, Socket: socket, Port: c.Port,
-			AdminUser: c.AdminUser, Owner: email, Create: &c})
+			AdminUser: c.AdminUser, Owner: email, Create: &c, Verifier: verifier,
+			Pooled: pooled && poolerAuth(bouncer) == "argus"})
 		if !r.OK && strings.Contains(r.Error, "unknown operation") {
 			r.Error = "this agent's database helper is older than the agent; restart the agent and try again"
 		}
@@ -221,12 +272,28 @@ func createPostgres(ctx context.Context, cfg CreateDBConfig, c tunnel.GrantCreat
 	switch c.Op {
 	case tunnel.CreateOpOptions:
 		r := ask("create-options", "postgres")
+		if r.Options != nil && pooled {
+			r.Options.Pooler = poolerInfo(l, bouncer)
+		}
 		return tunnel.CreateResult{OK: r.OK, Error: r.Error, Version: r.Version, Options: r.Options}
+	case tunnel.CreateOpSetPassword:
+		r := ask("set-password", "postgres")
+		res := tunnel.CreateResult{OK: r.OK, Error: r.Error, Version: r.Version, Steps: r.Steps}
+		if r.OK {
+			res.Statements = tunnel.SetPasswordPlan(c)
+			res.Steps = append(res.Steps, pgOwnerSignIn(ctx, c, pw, bouncer, pooled, &res)...)
+		}
+		return res
 	case tunnel.CreateOpSetOwner:
 		r := ask("set-owner", "postgres")
 		res := tunnel.CreateResult{OK: r.OK, Error: r.Error, Version: r.Version, Steps: r.Steps}
 		if r.OK {
 			res.Statements = tunnel.SetOwnerPlan(c)
+			if pooled {
+				steps, changed, manual := ensurePooler(l, bouncer, c, verifier)
+				res.Steps, res.Statements, res.Manual = append(res.Steps, steps...), append(res.Statements, changed...), manual
+			}
+			res.Steps = append(res.Steps, pgOwnerSignIn(ctx, c, pw, bouncer, pooled, &res)...)
 		}
 		return res
 	}
@@ -235,8 +302,9 @@ func createPostgres(ctx context.Context, cfg CreateDBConfig, c tunnel.GrantCreat
 	if !r.OK {
 		return res
 	}
-	plan := tunnel.CreatePlan(c)
-	res.Statements = plan[:1]
+	pre, _ := tunnel.OwnerPlan(c, tunnel.PasswordRedacted)
+	plan := tunnel.CreateDBPlan(c)
+	res.Statements = append(append([]string{}, pre...), plan[0])
 	// The level roles and the extensions are made inside the new database,
 	// a second sign-in.
 	p := ask("prepare-new-database", c.Name)
@@ -255,10 +323,41 @@ func createPostgres(ctx context.Context, cfg CreateDBConfig, c tunnel.GrantCreat
 		}
 		res.Error = p.Error
 	}
+	if pooled {
+		steps, changed, manual := ensurePooler(l, bouncer, c, verifier)
+		res.Steps, res.Statements, res.Manual = append(res.Steps, steps...), append(res.Statements, changed...), manual
+	}
+	res.Steps = append(res.Steps, pgOwnerSignIn(ctx, c, pw, bouncer, pooled, &res)...)
 	return res
 }
 
-func createMySQL(ctx context.Context, sockets []string, c tunnel.GrantCreate) tunnel.CreateResult {
+// pgOwnerSignIn checks the owner signs in with its new password, straight
+// to Postgres and through PgBouncer. A failure is said, not fatal: what was
+// made stays.
+func pgOwnerSignIn(ctx context.Context, c tunnel.GrantCreate, pw string, b pgBouncerSeen, pooled bool, res *tunnel.CreateResult) []tunnel.CreateStep {
+	if pw == "" || c.Owner == nil {
+		return nil
+	}
+	user := c.Owner.Name
+	var steps []tunnel.CreateStep
+	if err := pgSignIn(ctx, c.Port, user, pw, c.Name, 1); err != nil {
+		steps = append(steps, tunnel.CreateStep{Text: fmt.Sprintf("Sign in as %s on 127.0.0.1:%d", user, c.Port),
+			Error: signInText(err) + "; check pg_hba.conf allows password sign-in from this server"})
+	} else {
+		steps = append(steps, tunnel.CreateStep{OK: true, Text: fmt.Sprintf("%s signs in straight to Postgres (%d)", user, c.Port)})
+	}
+	if pooled && len(res.Manual) == 0 {
+		if err := pgSignIn(ctx, b.Port, user, pw, c.Name, 4); err != nil {
+			steps = append(steps, tunnel.CreateStep{Text: fmt.Sprintf("Sign in as %s through PgBouncer %d", user, b.Port), Error: signInText(err)})
+		} else {
+			res.Pooled = true
+			steps = append(steps, tunnel.CreateStep{OK: true, Text: fmt.Sprintf("%s signs in through PgBouncer (%d)", user, b.Port)})
+		}
+	}
+	return steps
+}
+
+func createMySQL(ctx context.Context, sockets []string, c tunnel.GrantCreate, pw string) tunnel.CreateResult {
 	admin, err := adminConn(ctx, sockets, tunnel.GrantDB{Host: c.Host, Port: c.Port, ConfigPath: c.ConfigPath})
 	if err != nil {
 		return tunnel.CreateResult{Error: err.Error()}
@@ -272,6 +371,7 @@ func createMySQL(ctx context.Context, sockets []string, c tunnel.GrantCreate) tu
 			return res
 		}
 		o.Version = admin.version
+		o.Users = mysqlOwnerUsers(ctx, admin)
 		res.OK, res.Options = true, o
 		return res
 	}
@@ -298,14 +398,22 @@ func createMySQL(ctx context.Context, sockets []string, c tunnel.GrantCreate) tu
 			return res
 		}
 	}
-	plan := tunnel.CreatePlan(c)
+	made, ok := mysqlOwnerBefore(ctx, admin, c, pw, &res)
+	if !ok {
+		return res
+	}
+	plan := tunnel.CreateDBPlan(c)
 	if _, err := admin.db.ExecContext(ctx, plan[0]); err != nil {
 		res.Error = mysqlMessage(err)
 		res.Exists = strings.Contains(res.Error, "exists")
+		if made {
+			res.Steps = append(res.Steps, mysqlUndoUser(ctx, admin, c.Owner))
+		}
 		return res
 	}
 	res.Steps = append(res.Steps, tunnel.CreateStep{Text: "Created the database " + c.Name, OK: true})
-	res.OK, res.Statements = true, plan
+	res.Statements = append(res.Statements, plan...)
+	res.OK = mysqlOwnerAfter(ctx, admin, c, pw, &res)
 	return res
 }
 
@@ -343,7 +451,7 @@ func mysqlCreateOptions(ctx context.Context, admin *mysqlAdmin) (*tunnel.CreateO
 	return o, nil
 }
 
-func createMongo(ctx context.Context, c tunnel.GrantCreate) tunnel.CreateResult {
+func createMongo(ctx context.Context, c tunnel.GrantCreate, pw string) tunnel.CreateResult {
 	s := &mongoSession{host: c.Host, port: c.Port, file: c.ConfigPath}
 	if s.file == "" {
 		s.file = tunnel.MongoAdminFile
@@ -370,6 +478,7 @@ func createMongo(ctx context.Context, c tunnel.GrantCreate) tunnel.CreateResult 
 				o.Taken = append(o.Taken, d.Name)
 			}
 		}
+		o.Users = mongoOwnerUsers(ctx, admin)
 		res.OK, res.Options = true, o
 		return res
 	}
@@ -380,6 +489,9 @@ func createMongo(ctx context.Context, c tunnel.GrantCreate) tunnel.CreateResult 
 		}
 	}
 	res.Steps = append(res.Steps, tunnel.CreateStep{Text: "The name " + c.Name + " is free", OK: true})
+	if !mongoOwnerBefore(ctx, admin, c, &res) {
+		return res
+	}
 	m := c.Mongo
 	cmd := bson.D{{Key: "create", Value: m.Collection}}
 	switch m.Kind {
@@ -396,7 +508,8 @@ func createMongo(ctx context.Context, c tunnel.GrantCreate) tunnel.CreateResult 
 		return res
 	}
 	res.Steps = append(res.Steps, tunnel.CreateStep{Text: "Created " + c.Name + " with the collection " + m.Collection, OK: true})
-	res.OK, res.Statements = true, tunnel.CreatePlan(c)
+	res.Statements = tunnel.CreateDBPlan(c)
+	res.OK = mongoOwnerAfter(ctx, admin, c, pw, &res)
 	return res
 }
 
@@ -433,7 +546,7 @@ func createRabbit(ctx context.Context, ctl func(context.Context, []string, strin
 		return res
 	}
 	res.Steps = append(res.Steps, tunnel.CreateStep{Text: "Created the vhost " + c.Name, OK: true})
-	plan := tunnel.CreatePlan(c)
+	plan := tunnel.CreateDBPlan(c)
 	res.OK, res.Statements = true, plan[:1]
 	if l := r.LimitsJSON(); l != "" {
 		if _, err := ctl(ctx, []string{"set_vhost_limits", "-p", c.Name, l}, ""); err != nil {
@@ -500,6 +613,6 @@ func createKafka(ctx context.Context, c tunnel.GrantCreate) tunnel.CreateResult 
 		return res
 	}
 	res.Steps = append(res.Steps, tunnel.CreateStep{Text: "Created the topic " + c.Name, OK: true})
-	res.OK, res.Statements = true, tunnel.CreatePlan(c)
+	res.OK, res.Statements = true, tunnel.CreateDBPlan(c)
 	return res
 }
