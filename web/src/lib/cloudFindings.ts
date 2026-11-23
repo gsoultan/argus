@@ -1,6 +1,6 @@
 import { queryOptions, useMutation, useQueryClient } from '@tanstack/react-query'
 import { get, isConfigured, send } from '~/lib/live'
-import type { CloudAction, CloudEnvironment, CloudRule } from '~/lib/cloud'
+import { sameRule, type CloudAction, type CloudChange, type CloudEnvironment, type CloudRule } from '~/lib/cloud'
 
 /*
  * Cloud › Risks & waste: security risks, what is paid for and not in use,
@@ -127,4 +127,25 @@ export function findingCounts(items: CloudFinding[]) {
 /** Whether a High finding may be kept this way: never with no end. */
 export function keepAllowed(f: CloudFinding, days: KeepInput['days']): boolean {
   return f.severity !== 'high' || days > 0
+}
+
+/**
+ * The change already asked for that ends a firewall-rule finding: one that
+ * takes its rule away, or deletes its group or Google firewall rule, still
+ * waiting for approval or being made, or made since the account was last
+ * read. While there is one, the finding says so instead of offering the fix
+ * again, which would only ask twice or be refused as a rule that is gone.
+ */
+export function ruleChangeFor(f: CloudFinding, changes: CloudChange[] | undefined, since?: string): CloudChange | undefined {
+  if (f.fix !== 'firewall-rules' || !f.rule) return undefined
+  const rule = f.rule
+  return (changes ?? []).find((c) => {
+    if (c.accountId !== f.accountId || c.resourceId !== f.resourceId) return false
+    const live = c.state === 'awaiting_approval' || c.state === 'applying' ||
+      (c.state === 'applied' && (!since || Date.parse(c.appliedAt ?? c.requestedAt) > Date.parse(since)))
+    if (!live) return false
+    if (c.action === 'firewall-delete') return true
+    const remove = (c.spec as { remove?: CloudRule[] } | null)?.remove ?? []
+    return c.action === 'firewall-rules' && remove.some((x) => sameRule(x, rule))
+  })
 }

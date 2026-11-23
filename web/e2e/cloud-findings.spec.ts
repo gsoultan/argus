@@ -255,3 +255,76 @@ test('launch three more like an instance', async ({ page }) => {
   await expect.poll(() => asked).toMatchObject({ action: 'launch', spec: {
     name: 'web-03', count: 3, extraDisks: [100], spot: true, protect: false, size: 't3.medium', image: 'ami-ubuntu24', subnet: 'subnet-b', firewalls: ['sg-web'] } })
 })
+
+/** Serves POSTed changes back on GET, as the control plane lists them. */
+async function changes(page: Page) {
+  const asked: Record<string, unknown>[] = []
+  await page.route('**/api/v1/cloud/changes*', async (r) => {
+    if (r.request().method() === 'POST') {
+      const body = r.request().postDataJSON()
+      const c = { id: 'c' + (asked.length + 1), accountId: body.accountId, accountName: 'payments-prod', region: body.region, action: body.action,
+        level: 'change', environment: 'production', resourceId: body.resourceId, resourceName: body.resourceId, spec: body.spec ?? {}, plan: {},
+        planHash: '', summary: `Change rules on ${body.resourceId}`, reason: body.reason ?? '', state: 'awaiting_approval', requestedBy: 'dev',
+        requestedAt: new Date().toISOString(), decidedBy: null, decidedAt: null, appliedAt: null, requestId: '', result: {}, error: '', confirm: body.confirm }
+      asked.push(c)
+      return r.fulfill({ status: 202, json: c })
+    }
+    return r.fulfill({ json: { changes: asked } })
+  })
+  return asked
+}
+
+test('removing a rule from the list asks for it once, and the row says so', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await stub(page)
+  const asked = await changes(page)
+  await signIn(page)
+  await page.goto('/cloud?tab=risks')
+  const row = page.getByRole('row').filter({ hasText: 'SSH open to the whole internet' })
+  await row.getByRole('button', { name: 'Remove the rule' }).click()
+
+  const modal = page.getByRole('dialog', { name: /Rules of sg-web-public/ })
+  await expect(modal.getByText('− tcp 22 from anywhere')).toBeVisible()
+  await modal.getByLabel('Why').fill('Everyone signs in through Argus now')
+  await modal.getByRole('button', { name: 'Ask for approval' }).click()
+  await expect(modal).toBeHidden()
+
+  expect(asked).toHaveLength(1)
+  expect(asked[0]).toMatchObject({ action: 'firewall-rules', resourceId: 'sg-web', spec: { add: [], remove: [SSH] } })
+  // The row waits for the approval instead of offering the same change again.
+  await expect(row.getByText('Waiting for approval')).toBeVisible()
+  await expect(row.getByRole('button', { name: 'Remove the rule' })).toHaveCount(0)
+  await page.reload()
+  await expect(page.getByRole('row').filter({ hasText: 'SSH open to the whole internet' }).getByText('Waiting for approval')).toBeVisible()
+})
+
+test("a Google firewall rule's only allow is removed by deleting the rule", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  const gcp = { accountId: 'ca2', accountName: 'web-gcp', environment: 'development' as const, region: 'global' }
+  const finding = { ...FINDINGS[0], ...gcp, id: 'open:901:tcp/22-22/0.0.0.0/0', resourceId: '901', name: 'allow-ssh' }
+  await page.route('**/api/v1/cloud/findings', (r) => r.fulfill({ json: { ...VIEW, items: [finding] } }))
+  await page.route('**/api/v1/cloud/resources?*', (r) => {
+    const kind = new URL(r.request().url()).searchParams.get('kind') ?? ''
+    return r.fulfill({ json: { items: kind === 'firewall' ? [{ ...item('firewall', '901', 'allow-ssh', { region: 'global', network: '700', rules: [SSH],
+      details: { direction: 'ingress', action: 'allow', targetTags: 'ssh' } }), ...gcp }] : [] } })
+  })
+  await page.route('**/api/v1/cloud/accounts', async (r) => {
+    const res = await r.fetch()
+    const body = await res.json()
+    body.accounts = body.accounts.map((a: { access: string }) => ({ ...a, access: 'manage' }))
+    return r.fulfill({ response: res, json: body })
+  })
+  const asked = await changes(page)
+  await signIn(page)
+  await page.goto('/cloud?tab=risks')
+  await page.getByRole('button', { name: 'Remove the rule' }).click()
+
+  const modal = page.getByRole('dialog', { name: /Rules of allow-ssh/ })
+  await expect(modal.getByText(/a Google firewall rule cannot allow nothing, so Argus deletes the firewall rule/)).toBeVisible()
+  await expect(modal.getByText('A Google firewall rule allows something; to allow nothing, delete it.')).toHaveCount(0)
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/05-remove-gcp.png` })
+  await modal.getByRole('button', { name: 'Delete firewall rule' }).click()
+  await expect(modal).toBeHidden()
+  expect(asked).toHaveLength(1)
+  expect(asked[0]).toMatchObject({ action: 'firewall-delete', resourceId: '901', confirm: '901', region: 'global' })
+})

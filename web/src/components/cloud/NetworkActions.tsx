@@ -224,8 +224,11 @@ function RulesEditor({ it, env, users, account, onClose, strike }: {
   const ready = add.every(Boolean)
   const adding = add.filter((x): x is CloudRule => x !== null)
   const remove = rules.filter((_, i) => removed.has(i))
+  // In Google a firewall rule is the rule: taking away all it allows,
+  // adding nothing, is deleting it, which is what the change then asks for.
+  const deletes = gcp && rules.length > 0 && removed.size === rules.length && adding.length === 0 && drafts.length === 0
   const shapeProblem = azure ? azureRemovalProblem(rules, removed)
-    : gcp && ready && adding.length + remove.length > 0
+    : gcp && ready && !deletes && adding.length + remove.length > 0
       ? gcpRulesProblem([...rules.filter((_, i) => !removed.has(i)), ...adding]) : undefined
   const dup = adding.some((x, i) => adding.slice(0, i).some((y) => sameRule(x, y)) ||
     rules.some((y, j) => !removed.has(j) && sameRule(x, y)))
@@ -262,12 +265,15 @@ function RulesEditor({ it, env, users, account, onClose, strike }: {
     </Field>
   )
   return (
-    <ChangeModal title={`Rules of ${r.name}`} env={env} level={exposes.length ? 'remove' : 'change'} reason={reason} setReason={setReason}
-      onClose={onClose} busy={busy} submit={changes ? `Save ${changes} change${changes === 1 ? '' : 's'}` : 'Save'}
-      disabled={changes === 0 || !ready || dup || Boolean(shapeProblem) || roleLacks(account, 'firewall-rules')}
-      onSubmit={() => void submit({ accountId: it.accountId, region: r.region, action: 'firewall-rules', resourceId: r.id,
-        spec: { add: adding, remove }, reason }, 'Rules changed')}>
-      <RoleNeedsUpdate account={account} action="firewall-rules" />
+    <ChangeModal title={`Rules of ${r.name}`} env={env} level={exposes.length || deletes ? 'remove' : 'change'} reason={reason} setReason={setReason}
+      onClose={onClose} busy={busy} submit={deletes ? 'Delete firewall rule' : changes ? `Save ${changes} change${changes === 1 ? '' : 's'}` : 'Save'}
+      color={deletes ? 'rose' : undefined}
+      disabled={changes === 0 || !ready || dup || Boolean(shapeProblem) || roleLacks(account, deletes ? 'firewall-delete' : 'firewall-rules')}
+      onSubmit={() => void (deletes
+        ? submit({ accountId: it.accountId, region: r.region, action: 'firewall-delete', resourceId: r.id, confirm: r.id, reason }, 'Rule removed')
+        : submit({ accountId: it.accountId, region: r.region, action: 'firewall-rules', resourceId: r.id,
+          spec: { add: adding, remove }, reason }, 'Rules changed'))}>
+      <RoleNeedsUpdate account={account} action={deletes ? 'firewall-delete' : 'firewall-rules'} />
       {section(true)}
       {!gcp && section(false)}
       {changes > 0 && (
@@ -281,7 +287,15 @@ function RulesEditor({ it, env, users, account, onClose, strike }: {
       {dup && <Text size={FS.meta} c={INK.denied}>A rule being added is already in the group, or added twice.</Text>}
       {shapeProblem && <Text size={FS.meta} c={INK.denied}>{shapeProblem}</Text>}
       <ExposureAlert exposes={exposes} level />
-      {gcp && users.length > 0 && changes > 0 && (
+      {deletes && (
+        <Alert color="rose" variant="light" icon={<IconTrash size={16} />} p="sm">
+          <Text size={FS.meta}>
+            This is everything {r.name} allows, and a Google firewall rule cannot allow nothing, so Argus deletes the firewall rule.
+            {gcpReach(users, gcpTargetTags(r).length > 0)} Put a rule back with the undo button above to keep it instead.
+          </Text>
+        </Alert>
+      )}
+      {gcp && !deletes && users.length > 0 && changes > 0 && (
         <Text size={FS.meta} c="dimmed">Applies at once to the {users.length} VM{users.length === 1 ? '' : 's'} it reaches. Google replaces the rule's ports and sources in one update.</Text>
       )}
       {azure && changes > 0 && (
@@ -316,7 +330,7 @@ function FirewallDelete({ it, env, users, account, onClose }: {
   const azure = account?.provider === 'azure'
   const tagged = gcp && gcpTargetTags(r).length > 0
   const on = Number(r.details?.interfaces ?? 0)
-  const refusal = gcp ? (tagged && users.length ? `it reaches ${users.map((u) => u.resource.name).join(', ')}; take it off them first` : '')
+  const refusal = gcp ? ''
     : azure ? (users.length ? `it is in front of ${users.map((u) => u.resource.name).join(', ')}; take it off them first`
       : on > 0 ? `it is on ${on} network interface${on === 1 ? '' : 's'} or subnet${on === 1 ? '' : 's'}; take it off in the Azure portal first` : '')
     : r.name === 'default' ? 'every network keeps its default group'
@@ -334,7 +348,7 @@ function FirewallDelete({ it, env, users, account, onClose }: {
         <>
           <Text size={FS.body} lh={1.55}>
             {gcp
-              ? `Google deletes the firewall rule.${users.length ? ` It reaches every VM in its network, so ${users.length} VM${users.length === 1 ? '' : 's'} lose what it lets in at once.` : ' It reaches no VM now.'} This cannot be undone.`
+              ? `Google deletes the firewall rule.${gcpReach(users, tagged)} This cannot be undone.`
               : azure ? 'Azure deletes the group and its rules. Nothing uses it now. This cannot be undone.'
                 : 'AWS deletes the group and its rules. Nothing uses it now. This cannot be undone.'}
           </Text>
@@ -344,6 +358,15 @@ function FirewallDelete({ it, env, users, account, onClose }: {
       )}
     </ChangeModal>
   )
+}
+
+/** What deleting a Google firewall rule takes from the VMs it reaches, in words. */
+function gcpReach(users: CloudItem[], tagged: boolean): string {
+  if (!users.length) return ' It reaches no VM now.'
+  const n = `${users.length} VM${users.length === 1 ? '' : 's'}`
+  return tagged
+    ? ` ${n} it reaches by network tag (${users.map((u) => u.resource.name).join(', ')}) lose what it lets in at once; their tags stay.`
+    : ` It reaches every VM in its network, so ${n} lose what it lets in at once.`
 }
 
 /** A new security group, from Network › Firewalls. */

@@ -118,6 +118,34 @@ func ruleWords(r cloud.Rule) string {
 	return r.PortText() + " " + dir + " " + src
 }
 
+// storedRules swaps each rule to take away for the group's own copy of it,
+// as the last read listed it. What is taken away is matched, not checked:
+// a rule AWS or Google lists (an ICMP type, a protocol by number, a group
+// in a peered account) is taken away exactly as it is, even where Argus
+// would not let it be added. A rule written by hand is matched once
+// normalized, so 10.0.0.1 finds 10.0.0.1/32.
+func storedRules(res cloud.Resource, remove []cloud.Rule, again string) ([]cloud.Rule, error) {
+	out := make([]cloud.Rule, 0, len(remove))
+	for _, x := range remove {
+		x.Protocol, x.Source = strings.ToLower(strings.TrimSpace(x.Protocol)), strings.TrimSpace(x.Source)
+		n := slices.IndexFunc(res.Rules, x.Same)
+		if n < 0 {
+			if y := x; y.Check() == nil {
+				n = slices.IndexFunc(res.Rules, y.Same)
+			}
+		}
+		if n < 0 {
+			return nil, fmt.Errorf("%s has no rule %s; read the %s again", res.Name, ruleWords(x), again)
+		}
+		have := res.Rules[n]
+		if slices.ContainsFunc(out, have.Same) {
+			return nil, fmt.Errorf("%s is in the change twice", ruleWords(have))
+		}
+		out = append(out, have)
+	}
+	return out, nil
+}
+
 // checkRules normalizes rules and checks each source group exists here.
 func (a *API) checkRules(ctx context.Context, accountID, region string, rules []cloud.Rule) error {
 	for i := range rules {
@@ -182,20 +210,8 @@ func (a *API) planNetwork(r *http.Request, m cloudManaged, in *cloudChangeIn, ch
 		if err := a.checkRules(ctx, m.acct.ID, in.Region, s.Add); err != nil {
 			return ch, http.StatusBadRequest, err
 		}
-		if err := a.checkRules(ctx, m.acct.ID, in.Region, s.Remove); err != nil {
-			return ch, http.StatusBadRequest, err
-		}
-		for i, x := range s.Remove {
-			found := false
-			for _, have := range res.Rules {
-				if have.Same(x) {
-					found = true
-					s.Remove[i].Description = have.Description
-				}
-			}
-			if !found {
-				return ch, http.StatusConflict, fmt.Errorf("%s has no rule %s; read the account again", res.Name, ruleWords(x))
-			}
+		if s.Remove, err = storedRules(res, s.Remove, "account"); err != nil {
+			return ch, http.StatusConflict, err
 		}
 		for i, x := range s.Add {
 			for _, have := range res.Rules {
