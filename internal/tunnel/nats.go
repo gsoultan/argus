@@ -195,30 +195,41 @@ func NATSPermissions(level, inbox string) (NATSPerms, bool) {
 
 // natsOps is the least level each NATS operation needs.
 var natsOps = map[string]string{
-	"overview":        LevelRead,
-	"streams":         LevelRead,
-	"stream":          LevelRead,
-	"consumers":       LevelRead,
-	"consumer":        LevelRead,
-	"subjects":        LevelRead,
-	"connections":     LevelRead,
-	"get":             LevelRead,
-	"tail":            LevelRead,
-	"publish":         LevelWrite,
-	"stream_create":   LevelOwner,
-	"stream_update":   LevelOwner,
-	"stream_purge":    LevelOwner,
-	"stream_delete":   LevelOwner,
-	"msg_delete":      LevelOwner,
-	"consumer_create": LevelOwner,
-	"consumer_delete": LevelOwner,
-	"consumer_pause":  LevelOwner,
-	"consumer_move":   LevelOwner,
+	"overview":         LevelRead,
+	"streams":          LevelRead,
+	"stream":           LevelRead,
+	"consumers":        LevelRead,
+	"consumer":         LevelRead,
+	"subjects":         LevelRead,
+	"connections":      LevelRead,
+	"get":              LevelRead,
+	"tail":             LevelRead,
+	"publish":          LevelWrite,
+	"stream_create":    LevelOwner,
+	"stream_update":    LevelOwner,
+	"stream_purge":     LevelOwner,
+	"stream_delete":    LevelOwner,
+	"msg_delete":       LevelOwner,
+	"consumer_create":  LevelOwner,
+	"consumer_delete":  LevelOwner,
+	"consumer_pause":   LevelOwner,
+	"consumer_move":    LevelOwner,
+	NATSOpKVBuckets:    LevelRead,
+	NATSOpKVKeys:       LevelRead,
+	NATSOpKVGet:        LevelRead,
+	NATSOpKVPut:        LevelWrite,
+	NATSOpKVDel:        LevelWrite,
+	NATSOpKVCreate:     LevelOwner,
+	NATSOpKVDelete:     LevelOwner,
+	RabbitOpNetwork:    LevelDBA,
+	RabbitOpNetworkSet: LevelDBA,
 }
 
 var natsOpOrder = []string{"overview", "streams", "stream", "consumers", "consumer", "subjects", "connections",
 	"get", "tail", "publish", "stream_create", "stream_update", "stream_purge", "stream_delete", "msg_delete",
-	"consumer_create", "consumer_delete", "consumer_pause", "consumer_move"}
+	"consumer_create", "consumer_delete", "consumer_pause", "consumer_move",
+	NATSOpKVBuckets, NATSOpKVKeys, NATSOpKVGet, NATSOpKVPut, NATSOpKVDel, NATSOpKVCreate, NATSOpKVDelete,
+	RabbitOpNetwork, RabbitOpNetworkSet}
 
 // NATSOpAllowed reports whether level may ask for op.
 func NATSOpAllowed(op, level string) bool {
@@ -266,6 +277,11 @@ type NATSRequest struct {
 	// change.
 	StreamSpec   *NATSStreamSpec   `json:"streamSpec,omitempty"`
 	ConsumerSpec *NATSConsumerSpec `json:"consumerSpec,omitempty"`
+	// Bucket and Key name a key-value bucket and one of its keys; Key is a
+	// filter (with * and >) for kv_keys. KVSpec is a bucket to make.
+	Bucket string      `json:"bucket,omitempty"`
+	Key    string      `json:"key,omitempty"`
+	KVSpec *NATSKVSpec `json:"kvSpec,omitempty"`
 }
 
 // NATSStreamSpec is the part of a stream's configuration the console sets.
@@ -410,7 +426,7 @@ func (c NATSConsumerSpec) Validate() error {
 // person must type the stream's name: deleting a stream, or purging all of it.
 func NATSNeedsConfirm(op string, n *NATSRequest) bool {
 	switch op {
-	case "stream_delete":
+	case "stream_delete", NATSOpKVDelete:
 		return true
 	case "stream_purge":
 		return n == nil || (n.Subject == "" && n.Seq == 0 && n.Keep == 0)

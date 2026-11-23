@@ -61,11 +61,11 @@ const consumer = {
   num_ack_pending: 0, num_redelivered: 0, num_waiting: 0, num_pending: 1190,
 }
 
-function Harness({ start = 'overview' }: { start?: NatsTab }) {
+function Harness({ start = 'overview', level = 'owner' }: { start?: NatsTab; level?: 'owner' | 'write' }) {
   const [at, setAt] = useState<{ tab: NatsTab; stream?: string; consumer?: string }>({ tab: start })
   return (
-    <NatsWorkspace database={db} access={{ level: 'owner' }} endpoint="/api/v1/postgres"
-      getTicket={async () => ({ ticket: 't', role: 'ana', level: 'owner' })} tab={at.tab} stream={at.stream} consumer={at.consumer} onNavigate={setAt} />
+    <NatsWorkspace database={db} access={{ level }} endpoint="/api/v1/postgres"
+      getTicket={async () => ({ ticket: 't', role: 'ana', level })} tab={at.tab} stream={at.stream} consumer={at.consumer} onNavigate={setAt} />
   )
 }
 
@@ -130,5 +130,44 @@ describe('NatsWorkspace', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create stream' }))
     const create = await answerAll(ws, 'stream_create', { type: 'result', data: { ...stream, config: { ...stream.config, name: 'EU', subjects: ['eu.orders.>'] } } })
     expect(create).toMatchObject({ nats: { streamSpec: { name: 'EU', subjects: ['eu.orders.>'], retention: 'limits', maxAgeS: 604800 } } })
+  })
+
+  it('lists a bucket\u2019s keys, reads a key\u2019s history and puts a new value at Write', async () => {
+    renderWithProviders(<Harness start="kv" level="write" />)
+    await waitFor(() => expect(FakeSocket.last).not.toBeNull())
+    const ws = FakeSocket.last!
+    ws.push({ type: 'ready' })
+    ws.answer({ id: 0, type: 'ready', engine: 'nats', level: 'write', user: 'argus-ana-write',
+      ops: ['overview', 'streams', 'consumers', 'kv_buckets', 'kv_keys', 'kv_get', 'kv_put', 'kv_del'] })
+    await answerAll(ws, 'overview', { type: 'result', data: { account: 'ORDERS', accountId: 'ADXX', jetstream: true } })
+    await answerAll(ws, 'streams', { type: 'result', data: [] })
+    await answerAll(ws, 'consumers', { type: 'result', data: [] })
+    await answerAll(ws, 'kv_buckets', { type: 'result', data: [
+      { bucket: 'carts', values: 4, history: 5, ttlS: 86400, bytes: 2048, storage: 'file', replicas: 1, maxBytes: -1, maxValueSize: -1 },
+    ] })
+    expect(screen.queryByRole('button', { name: /Remove bucket/ })).toBeNull()
+    const keys = await answerAll(ws, 'kv_keys', { type: 'result', total: 2, data: [
+      { key: 'c1', revision: 3, size: 11, op: 'put', kept: 3, time: stale },
+      { key: 'c2', revision: 4, size: 0, op: 'del', kept: 2, time: stale },
+    ] })
+    expect(keys).toMatchObject({ nats: { bucket: 'carts' } })
+    expect(await screen.findByText('c1')).toBeInTheDocument()
+    expect(screen.queryByText('c2')).toBeNull()
+
+    fireEvent.click(screen.getByText('c1'))
+    const get = await answerAll(ws, 'kv_get', { type: 'result', data: { key: 'c1', entries: [
+      { revision: 3, op: 'put', value: { subject: '$KV.carts.c1', data: '{"items":3}', size: 11, time: stale } },
+      { revision: 1, op: 'put', value: { subject: '$KV.carts.c1', data: '{"items":1}', size: 11, time: stale } },
+    ] } })
+    expect(get).toMatchObject({ nats: { bucket: 'carts', key: 'c1' } })
+    expect(await screen.findByText(/"items": 3/)).toBeInTheDocument()
+    expect(screen.getByText('current')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Put a new value' }))
+    const value = await screen.findByLabelText('Value')
+    fireEvent.change(value, { target: { value: '{"items":4}' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Put' }))
+    const put = await answerAll(ws, 'kv_put', { type: 'result', data: { revision: 5 } })
+    expect(put).toMatchObject({ nats: { bucket: 'carts', key: 'c1' }, payload: '{"items":4}' })
   })
 })

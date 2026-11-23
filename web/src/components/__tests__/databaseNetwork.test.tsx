@@ -8,7 +8,7 @@ import { mysqlReachPlan, type MySQLNetworkData } from '~/lib/mysqlNetwork'
 import { mongoReachPlan, type MongoNetworkData } from '~/lib/mongoNetwork'
 import { MongoNetwork } from '~/components/mongo/MongoNetwork'
 import { StoreNetworkPanel } from '~/components/network/StoreNetwork'
-import { kafkaReachPlan, rabbitReachPlan, type KafkaNetworkData, type RabbitNetworkData } from '~/lib/brokerNetwork'
+import { kafkaReachPlan, natsReachPlan, rabbitReachPlan, type KafkaNetworkData, type NatsNetworkData, type RabbitNetworkData } from '~/lib/brokerNetwork'
 import type { StoreAnswer, StoreRequest, StoreSession } from '~/components/useStoreSession'
 import type { Database } from '~/types/domain'
 
@@ -233,5 +233,15 @@ describe('Broker network panels', () => {
   it('Kafka: cannot close or open past its listeners', () => {
     expect(kafkaReachPlan(kf, 'local', []).blocked).toMatch(/does not change Kafka/)
     expect(kafkaReachPlan({ ...kf, bind: '127.0.0.1', reach: 'local' }, 'network', []).blocked).toMatch(/server\.properties/)
+  })
+  it('NATS: the firewall only, and never past a loopback listener', () => {
+    const n: NatsNetworkData = { bind: '*', port: 4222, tls: false, reach: 'any', host: 'nats-01', firewall: 'ufw', firewallActive: true,
+      addresses: [{ ip: '10.0.0.183', iface: 'eth0', prefix: '10.0.0.0/24', private: true, state: 'open' }] }
+    const plan = natsReachPlan(n, 'selected', ['10.0.0.61'])
+    expect(plan.blocked).toBeNull()
+    expect(plan.steps.map((s) => s.title)).toContain('No restart')
+    expect(plan.steps.some((s) => s.title === 'TLS is off')).toBe(true)
+    expect(natsReachPlan(n, 'local', []).blocked).toMatch(/does not change nats-server/)
+    expect(natsReachPlan({ ...n, bind: '127.0.0.1', reach: 'local' }, 'network', []).blocked).toMatch(/nats-server\.conf/)
   })
 })

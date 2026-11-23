@@ -1,6 +1,9 @@
 package tunnel
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestNATSSubjects(t *testing.T) {
 	for s, ok := range map[string]bool{
@@ -49,8 +52,11 @@ func TestNATSNamesAndLevels(t *testing.T) {
 			t.Errorf("read was given %s", op)
 		}
 	}
-	if len(owner) != len(natsOps) || len(NATSStoreOps(LevelDBA)) != len(natsOps) {
-		t.Fatal("manage and admin should have every operation")
+	if len(NATSStoreOps(LevelDBA)) != len(natsOps) || len(owner) != len(natsOps)-2 || slices.Contains(owner, RabbitOpNetworkSet) {
+		t.Fatal("admin has every operation, manage every one but the network")
+	}
+	if !NATSNeedsConfirm(NATSOpKVDelete, nil) {
+		t.Fatal("removing a bucket needs its name")
 	}
 	if !NATSNeedsConfirm("stream_purge", &NATSRequest{Stream: "X"}) || NATSNeedsConfirm("stream_purge", &NATSRequest{Stream: "X", Subject: "a.b"}) ||
 		!NATSNeedsConfirm("stream_delete", nil) || NATSNeedsConfirm("consumer_delete", nil) {
@@ -90,5 +96,33 @@ func TestNATSSpecs(t *testing.T) {
 		if c.Validate() == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+func TestNATSKeyValueRules(t *testing.T) {
+	for k, ok := range map[string]bool{"c1": true, "eu.c3": true, "a/b=c_d-e": true, "_kv.x": false, "a..b": false, ".a": false, "a b": false, "a*": false, "*": false} {
+		if ValidNATSKey(k, false) != ok {
+			t.Errorf("ValidNATSKey(%q) = %v", k, !ok)
+		}
+	}
+	for k, ok := range map[string]bool{"eu.*": true, ">": true, "eu.>": true, "eu.>.x": false, "e*": false} {
+		if ValidNATSKey(k, true) != ok {
+			t.Errorf("ValidNATSKey(%q, filter) = %v", k, !ok)
+		}
+	}
+	if (NATSKVSpec{Bucket: "carts", History: 5}).Validate() != nil {
+		t.Fatal("a good bucket was refused")
+	}
+	for name, k := range map[string]NATSKVSpec{"dot": {Bucket: "a.b"}, "history": {Bucket: "a", History: 65}, "storage": {Bucket: "a", Storage: "disk"}, "replicas": {Bucket: "a", Replicas: 7}} {
+		if k.Validate() == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if NATSStoreOps(LevelRead) == nil || slices.Contains(NATSStoreOps(LevelRead), NATSOpKVPut) || !slices.Contains(NATSStoreOps(LevelWrite), NATSOpKVPut) ||
+		slices.Contains(NATSStoreOps(LevelWrite), NATSOpKVCreate) {
+		t.Fatal("key-value levels")
+	}
+	if StoreNetworkText(EngineNATS, StoreRequest{Reach: ReachAny}) != "FIREWALL ALLOW ANY" {
+		t.Fatal("network text")
 	}
 }

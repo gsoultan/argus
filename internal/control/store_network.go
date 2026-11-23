@@ -17,7 +17,7 @@ change's exact text, tunnel.StoreNetworkText, which the agent asks for too.
 
 // storeNetworkEngines are the store engines whose network changes pass
 // through storeNetworkGate.
-var storeNetworkEngines = map[string]bool{tunnel.EngineMongoDB: true, tunnel.EngineRabbitMQ: true, tunnel.EngineKafka: true}
+var storeNetworkEngines = map[string]bool{tunnel.EngineMongoDB: true, tunnel.EngineRabbitMQ: true, tunnel.EngineKafka: true, tunnel.EngineNATS: true}
 
 // storeNetworkGate decides whether a MongoDB, RabbitMQ or Kafka request may pass
 // to the agent. It returns the refusal to answer with, or nil.

@@ -24,7 +24,7 @@ import { FS, INK } from '~/theme'
  * tab, queue, exchange and topic are in the address, so a link opens the same view.
  */
 interface Search { tab?: BrokerTab | KafkaTab | NatsTab; queue?: string; exchange?: string; topic?: string; stream?: string; consumer?: string }
-const TABS: (BrokerTab | KafkaTab | NatsTab)[] = ['overview', 'queues', 'routing', 'connections', 'topics', 'groups', 'users', 'network', 'streams', 'consumers', 'subjects']
+const TABS: (BrokerTab | KafkaTab | NatsTab)[] = ['overview', 'queues', 'routing', 'connections', 'topics', 'groups', 'users', 'network', 'streams', 'consumers', 'subjects', 'kv']
 const KAFKA_TABS: KafkaTab[] = ['overview', 'topics', 'groups', 'users', 'network']
 const RABBIT_TABS: BrokerTab[] = ['overview', 'queues', 'routing', 'connections', 'users', 'network']
 

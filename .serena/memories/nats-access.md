@@ -36,4 +36,15 @@ Migration 115 widens the engine CHECK.
   stream name. consumer_move deletes and remakes a durable consumer.
 - **Monitoring port** (`/accstatz`, `/connz?acc=`) gives connections, rates
   and subscriptions; when it does not answer, the rest still works.
-- Later PRs planned: key-value + Network tab; NATS users for apps (.creds).
+- **Key-value** (`internal/agent/natskv.go`, `web/src/components/nats/NatsKV.tsx`):
+  kv_buckets, kv_keys (stream info with subject filter, latest revision of
+  each, at most 500), kv_get (history by direct get, recorded) at Read;
+  kv_put, kv_del (recorded, value in the recording) at Write; kv_create,
+  kv_delete (confirm = bucket name) at Manage. No watcher or consumer is
+  made, so Read works with the read-only JetStream API.
+- **Network** (`internal/agent/natsnet.go`): network/network_set at Admin,
+  firewall for the client port only, like Kafka; listen address read from
+  `/varz` and never changed. Goes through control's storeNetworkGate
+  (approval for anywhere or where writes need approval); text
+  `tunnel.NATSNetworkText`.
+- Later PR planned: NATS users for apps (.creds).

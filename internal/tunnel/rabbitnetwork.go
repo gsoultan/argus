@@ -48,6 +48,8 @@ func StoreNetworkText(engine string, req StoreRequest) string {
 		return RabbitNetworkText(req)
 	case EngineKafka:
 		return KafkaNetworkText(req)
+	case EngineNATS:
+		return NATSNetworkText(req)
 	}
 	return ""
 }

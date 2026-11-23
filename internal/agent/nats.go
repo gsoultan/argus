@@ -358,7 +358,7 @@ func (s *natsSession) do(ctx context.Context, req tunnel.StoreRequest, rec *stmt
 	}
 	if s.noJS {
 		switch req.Op {
-		case "overview", "subjects", "connections", "tail", "publish":
+		case "overview", "subjects", "connections", "tail", "publish", tunnel.RabbitOpNetwork, tunnel.RabbitOpNetworkSet:
 		default:
 			return tunnel.StoreAnswer{Type: "error", Error: "JetStream is not on for the account " + s.db.Name}, nil
 		}
@@ -402,6 +402,22 @@ func (s *natsSession) do(ctx context.Context, req tunnel.StoreRequest, rec *stmt
 		return s.consumerPause(cctx, req, n, rec)
 	case "consumer_move":
 		return s.consumerMove(cctx, req, n, rec)
+	case tunnel.NATSOpKVBuckets:
+		return s.kvBuckets(cctx)
+	case tunnel.NATSOpKVKeys:
+		return s.kvKeys(cctx, n)
+	case tunnel.NATSOpKVGet:
+		return s.kvGet(cctx, req, n, rec)
+	case tunnel.NATSOpKVPut:
+		return s.kvPut(cctx, req, n, rec)
+	case tunnel.NATSOpKVDel:
+		return s.kvDel(cctx, req, n, rec)
+	case tunnel.NATSOpKVCreate:
+		return s.kvCreate(cctx, req, n, rec)
+	case tunnel.NATSOpKVDelete:
+		return s.kvDelete(cctx, req, n, rec)
+	case tunnel.RabbitOpNetwork, tunnel.RabbitOpNetworkSet:
+		return s.network(ctx, req, rec)
 	}
 	return tunnel.StoreAnswer{Type: "error", Error: "unknown operation " + req.Op}, nil
 }

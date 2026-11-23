@@ -438,3 +438,48 @@ export function consumerProblems(c: ConsumerSpec, stream?: NatsStream): string[]
 export function items<T>(d: unknown): T[] {
   return Array.isArray(d) ? (d as T[]) : []
 }
+
+export interface NatsKVBucket {
+  bucket: string
+  description?: string
+  values: number
+  history: number
+  ttlS: number
+  bytes: number
+  storage: string
+  replicas: number
+  maxBytes: number
+  maxValueSize: number
+  compressed?: boolean
+}
+
+export interface NatsKVKey { key: string; revision: number; time?: string; size: number; op: 'put' | 'del' | 'purge'; kept: number }
+
+export interface NatsKVEntry { revision: number; op: 'put' | 'del' | 'purge'; value: NatsMessage }
+
+/** What the bucket form sends: the agent's NATSKVSpec. */
+export interface KVSpec {
+  bucket: string
+  description?: string
+  history?: number
+  ttlS?: number
+  maxBytes?: number
+  maxValueSize?: number
+  storage?: 'file' | 'memory'
+  replicas?: number
+}
+
+/** A key as NATS takes it: letters, digits and -/_=. split by dots; with filter, * and > too. */
+export function validKey(k: string, filter = false): boolean {
+  if (!k || k.length > 255 || k.startsWith('_kv')) return false
+  const parts = k.split('.')
+  return parts.every((p, i) => p !== '' && ((filter && (p === '*' || (p === '>' && i === parts.length - 1))) || /^[A-Za-z0-9\-/_=]+$/.test(p)))
+}
+
+export function bucketProblems(k: KVSpec, buckets: NatsKVBucket[]): string[] {
+  const out: string[] = []
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(k.bucket)) out.push('The name is letters, digits, - and _ only.')
+  else if (buckets.some((b) => b.bucket === k.bucket)) out.push(`There is already a bucket ${k.bucket}.`)
+  if (k.history !== undefined && (k.history < 1 || k.history > 64)) out.push('Keep 1 to 64 values of each key.')
+  return out
+}

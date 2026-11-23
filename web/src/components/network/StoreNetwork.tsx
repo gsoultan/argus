@@ -7,7 +7,7 @@ import type { Database } from '~/types/domain'
 
 /*
 Which machines can connect, for an engine whose console is a store session
-(MongoDB, RabbitMQ, Kafka): the same panel as Postgres and MySQL, asked
+(MongoDB, RabbitMQ, Kafka, NATS): the same panel as Postgres and MySQL, asked
 through the session's network and network_set operations instead of the
 SQL session's admin operations. A change that waits for approval asks for
 it the way a Redis change does, for the exact text the agent sent.
@@ -16,7 +16,7 @@ it the way a Redis change does, for the exact text the agent sent.
 export function StoreNetworkPanel({ s, database, engine, narrow, onBack }: {
   s: StoreSession
   database: Database
-  engine: Extract<NetworkEngine, 'mongodb' | 'rabbitmq' | 'kafka'>
+  engine: Extract<NetworkEngine, 'mongodb' | 'rabbitmq' | 'kafka' | 'nats'>
   narrow: boolean
   onBack?: () => void
 }) {
