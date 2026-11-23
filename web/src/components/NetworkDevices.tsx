@@ -577,24 +577,26 @@ function DeviceForm({ device, onClose, onSaved }: { device?: NetworkDevice; onCl
         </Box>
         {v.version === 'v2c' ? (
           <>
-            <Box>
-              <Group justify="space-between" mb={4} wrap="nowrap">
-                <Text size="sm" fw={500}>Community string {!savedSecret && <Text span c="red">*</Text>}
-                  {autofilled && <Badge ml={6} size="xs" color="teal" variant="light">Found by trying common strings</Badge>}</Text>
-                <UnstyledButton onClick={() => setFinding((f) => !f)}>
-                  <Group gap={4} wrap="nowrap"><IconSearch size={13} /><Text size={FS.meta} fw={600} c="blue">{finding ? 'Close' : "Don't know it? Find it"}</Text></Group>
-                </UnstyledButton>
-              </Group>
+            <Box pos="relative">
+              <UnstyledButton onClick={() => setFinding((f) => !f)} pos="absolute" top={0} right={0} style={{ zIndex: 1 }}>
+                <Group gap={4} wrap="nowrap"><IconSearch size={13} /><Text size={FS.meta} fw={600} c="blue">{finding ? 'Close' : "Don't know it? Find it"}</Text></Group>
+              </UnstyledButton>
               {finding ? (
-                <FindCommunity host={v.host} port={v.port} checkFrom={v.checkFrom}
-                  onUse={(c) => { set('community', c); setAutofilled(true); setFinding(false) }}
-                  onSwitchV3={() => { set('version', 'v3'); setFinding(false) }} />
+                <>
+                  <Text size="sm" fw={500} mb={4}>Community string</Text>
+                  <FindCommunity host={v.host} port={v.port} checkFrom={v.checkFrom}
+                    onUse={(c) => { set('community', c); setAutofilled(true); setFinding(false) }}
+                    onSwitchV3={() => { set('version', 'v3'); setFinding(false) }} />
+                </>
               ) : (
-                <PasswordInput required={!savedSecret} placeholder={keepNote} value={v.community} autoComplete="off"
+                <PasswordInput label="Community string" required={!savedSecret} placeholder={keepNote} value={v.community} autoComplete="off"
                   onChange={(e) => { set('community', e.currentTarget.value); setAutofilled(false) }} />
               )}
               {autofilled && !finding && (
-                <Text size={FS.meta} c="dimmed" mt={4}>Filled from the device. Sealed on save and never shown again, like any Argus secret.</Text>
+                <Group gap={6} mt={4} wrap="nowrap">
+                  <Badge size="xs" color="teal" variant="light">Found by trying common strings</Badge>
+                  <Text size={FS.meta} c="dimmed">Filled from the device. Sealed on save and never shown again, like any Argus secret.</Text>
+                </Group>
               )}
             </Box>
             <Alert color="amber" variant="light">
