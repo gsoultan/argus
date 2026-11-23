@@ -4,7 +4,7 @@ import {
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { IconEye, IconFolderPlus, IconInfoCircle, IconPlayerPause, IconPlayerPlay, IconPlus, IconRefresh, IconRouter } from '@tabler/icons-react'
+import { IconCheck, IconEye, IconFolderPlus, IconInfoCircle, IconPlayerPause, IconPlayerPlay, IconPlus, IconRefresh, IconRouter, IconSearch, IconX } from '@tabler/icons-react'
 import { useMemo, useState, type ReactNode } from 'react'
 import { DataTable, EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page'
 import { GroupForm, WhoCanSee } from '~/components/CheckAccess'
@@ -14,9 +14,9 @@ import { isConfigured } from '~/lib/live'
 import { run } from '~/lib/notify'
 import { assetsQuery, meQuery } from '~/lib/queries'
 import {
-  AUTH_PROTOS, formatBps, formatSpeed, formatUptimeSec, interfaceLabel, networkDeviceQuery, networkDevicesQuery, PRIV_PROTOS,
-  securityWords, testNetworkDevice, useAddNetworkDevice, useChangeNetworkDevice, useCheckDeviceNow, usePauseDevice, useRemoveNetworkDevice,
-  type DeviceAttempt, type DeviceInterface, type NetworkDevice, type NetworkDeviceInput, type SnmpVersion, type WatchedInterface,
+  AUTH_PROTOS, discoverCommunity, formatBps, formatSpeed, formatUptimeSec, interfaceLabel, networkDeviceQuery, networkDevicesQuery, PRIV_PROTOS,
+  securityWords, SNMP_DEFAULT_COMMUNITIES, testNetworkDevice, useAddNetworkDevice, useChangeNetworkDevice, useCheckDeviceNow, usePauseDevice, useRemoveNetworkDevice,
+  type DeviceAttempt, type DeviceInterface, type NetworkDevice, type NetworkDeviceInput, type SnmpDiscovery, type SnmpVersion, type WatchedInterface,
 } from '~/lib/networkDevices'
 import { ago, checkGroupsQuery, formatDuration, formatUptime, outageMinutes, stateLabel, useMoveCheck, type CheckGroup } from '~/lib/websites'
 import { FS, SP } from '~/theme'
@@ -444,10 +444,98 @@ export function readyToRead(v: NetworkDeviceInput, saved: boolean): boolean {
   return (!v.authProto || v.authPass.length >= 8) && (!v.privProto || v.privPass.length >= 8)
 }
 
+const MONO = { label: { fontFamily: 'monospace', textTransform: 'none' as const } }
+
+/**
+ * Finds a v2c community string for a device the admin owns but can't recall:
+ * it asks the first chosen server to try the common defaults plus any strings
+ * the admin adds, read-only, and fills in the one that answers.
+ */
+function FindCommunity({ host, port, checkFrom, onUse, onSwitchV3 }: {
+  host: string; port: number; checkFrom: string[]; onUse: (c: string) => void; onSwitchV3: () => void
+}) {
+  const [extra, setExtra] = useState<string[]>([])
+  const [draft, setDraft] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<SnmpDiscovery | null>(null)
+  const [reveal, setReveal] = useState(true)
+  const ready = host.trim() !== '' && checkFrom.length > 0
+  const defaults = SNMP_DEFAULT_COMMUNITIES as readonly string[]
+  const addDraft = () => {
+    const c = draft.trim()
+    if (c && !extra.includes(c) && !defaults.includes(c)) setExtra((p) => [...p, c])
+    setDraft('')
+  }
+  const find = () => {
+    setBusy(true)
+    setResult(null)
+    void run(async () => setResult(await discoverCommunity(host.trim(), port || 161, checkFrom, extra)),
+      { failure: 'Could not search' }).finally(() => setBusy(false))
+  }
+  const tried = [...defaults, ...extra]
+
+  if (result?.found && result.community) {
+    const s = result.snmp
+    return (
+      <Alert color="teal" variant="light" p="sm" data-testid="device-found">
+        <Group gap={6} mb={6} wrap="nowrap"><IconCheck size={15} /><Text fw={700} size={FS.body}>Found it</Text></Group>
+        {s && (
+          <Text size={FS.body} mb={SP.snug}>
+            <b>{s.name || host}</b> answered. {s.description ? `${s.description} · ` : ''}up for {formatUptimeSec(s.uptimeSec)}.
+          </Text>
+        )}
+        <Group gap={8} wrap="nowrap" mb={SP.snug}>
+          <Text size={FS.meta} c="dimmed">Community that worked</Text>
+          <Badge variant="light" color="teal" styles={MONO}>{reveal ? result.community : '••••••'}</Badge>
+          <UnstyledButton onClick={() => setReveal((x) => !x)}><Text size={FS.meta} c="blue">{reveal ? 'Hide' : 'Show'}</Text></UnstyledButton>
+        </Group>
+        <Text size={FS.meta} c="dimmed" mb={SP.snug}>Tried {result.tried} string{result.tried === 1 ? '' : 's'}. Check it is the right device before you use it.</Text>
+        <Group gap="xs">
+          <Button size="compact-sm" onClick={() => onUse(result.community as string)}>Use this community</Button>
+          <Button size="compact-sm" variant="subtle" onClick={() => setResult(null)}>Try other strings</Button>
+        </Group>
+      </Alert>
+    )
+  }
+
+  return (
+    <Box style={{ border: '1px solid var(--mantine-color-blue-3)', background: 'var(--mantine-color-blue-0)', borderRadius: 8, padding: 12 }}>
+      <Group gap={6} mb={4} wrap="nowrap"><IconSearch size={14} /><Text fw={700} size={FS.body}>Find the community string</Text></Group>
+      <Text size={FS.meta} c="dimmed" mb={SP.snug}>
+        A server you chose tries each string below against the device, read-only, and stops at the first that answers. Nothing on the device changes.
+      </Text>
+      <Group gap={6} mb={SP.snug}>
+        {SNMP_DEFAULT_COMMUNITIES.map((c) => <Badge key={c} variant="light" color="blue" styles={MONO}>{c}</Badge>)}
+        {extra.map((c) => (
+          <Badge key={c} variant="outline" color="gray" styles={MONO}
+            rightSection={<IconX size={11} style={{ cursor: 'pointer', display: 'block' }} onClick={() => setExtra((p) => p.filter((x) => x !== c))} />}>{c}</Badge>
+        ))}
+      </Group>
+      <Group gap="xs" mb={SP.snug} wrap="nowrap" align="flex-end">
+        <TextInput style={{ flex: 1 }} placeholder="Add a string you know, from a runbook or the vendor default" value={draft}
+          onChange={(e) => setDraft(e.currentTarget.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addDraft() } }} />
+        <Button variant="default" onClick={addDraft} disabled={!draft.trim()}>Add</Button>
+      </Group>
+      {result && !result.found && (
+        <Alert color="rose" variant="light" mb={SP.snug} p="xs" data-testid="device-none">
+          <Text size={FS.meta}>None of the {result.tried} strings was accepted. The device may use a different community, speak only SNMPv3, have SNMP turned off, or be read better from another server.{result.detail ? ` (${result.detail})` : ''}</Text>
+        </Alert>
+      )}
+      <Group gap="xs">
+        <Button size="compact-sm" loading={busy} disabled={!ready} onClick={find}>Find it</Button>
+        {result && !result.found && <Button size="compact-sm" variant="subtle" onClick={onSwitchV3}>Switch to SNMPv3</Button>}
+        <Text size={FS.meta} c="dimmed">{ready ? `Tries ${tried.length} string${tried.length === 1 ? '' : 's'} on port ${port || 161}, through the first server you chose.` : 'Fill in the address and a server first.'}</Text>
+      </Group>
+    </Box>
+  )
+}
+
 function DeviceForm({ device, onClose, onSaved }: { device?: NetworkDevice; onClose: () => void; onSaved: (d: NetworkDevice) => void }) {
   const [v, setV] = useState<NetworkDeviceInput>(device ? inputOf(device) : BLANK)
   const [tested, setTested] = useState<DeviceAttempt | null>(null)
   const [testing, setTesting] = useState(false)
+  const [finding, setFinding] = useState(false)
+  const [autofilled, setAutofilled] = useState(false)
   const add = useAddNetworkDevice()
   const change = useChangeNetworkDevice()
   const { data: assets } = useQuery(assetsQuery())
@@ -489,8 +577,28 @@ function DeviceForm({ device, onClose, onSaved }: { device?: NetworkDevice; onCl
         </Box>
         {v.version === 'v2c' ? (
           <>
-            <PasswordInput label="Community string" required={!savedSecret} placeholder={keepNote} value={v.community} autoComplete="off"
-              onChange={(e) => set('community', e.currentTarget.value)} />
+            <Box pos="relative">
+              <UnstyledButton onClick={() => setFinding((f) => !f)} pos="absolute" top={0} right={0} style={{ zIndex: 1 }}>
+                <Group gap={4} wrap="nowrap"><IconSearch size={13} /><Text size={FS.meta} fw={600} c="blue">{finding ? 'Close' : "Don't know it? Find it"}</Text></Group>
+              </UnstyledButton>
+              {finding ? (
+                <>
+                  <Text size="sm" fw={500} mb={4}>Community string</Text>
+                  <FindCommunity host={v.host} port={v.port} checkFrom={v.checkFrom}
+                    onUse={(c) => { set('community', c); setAutofilled(true); setFinding(false) }}
+                    onSwitchV3={() => { set('version', 'v3'); setFinding(false) }} />
+                </>
+              ) : (
+                <PasswordInput label="Community string" required={!savedSecret} placeholder={keepNote} value={v.community} autoComplete="off"
+                  onChange={(e) => { set('community', e.currentTarget.value); setAutofilled(false) }} />
+              )}
+              {autofilled && !finding && (
+                <Group gap={6} mt={4} wrap="nowrap">
+                  <Badge size="xs" color="teal" variant="light">Found by trying common strings</Badge>
+                  <Text size={FS.meta} c="dimmed">Filled from the device. Sealed on save and never shown again, like any Argus secret.</Text>
+                </Group>
+              )}
+            </Box>
             <Alert color="amber" variant="light">
               <Text size={FS.body}>SNMP v2c sends the community string in the clear, so anyone on the network between the server and the device can read it. Use a read-only community, or SNMPv3 if the device supports it.</Text>
             </Alert>
