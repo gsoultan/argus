@@ -339,7 +339,7 @@ const FIREWALL = {
   names: { '10.0.0.12': 'open-absent-2' },
 }
 const FIREWALL_FLEET = () => ASSETS.slice(0, 6).map((a, i) => ({
-  assetId: a.id, hostname: a.hostname, kind: 'server', os: 'Ubuntu 24.04', tags: [], reported: i !== 5,
+  assetId: a.id, hostname: a.id.slice(2), kind: 'server', os: 'Ubuntu 24.04', tags: [], reported: i !== 5,
   firewall: i === 3 ? '' : i === 4 ? 'firewalld' : 'ufw', active: i !== 2 && i !== 3, manageable: true,
   rules: i === 3 ? 0 : 3 + i, outside: i === 0 || i === 3 ? 0 : 2, openToInternet: i === 1 ? [443, 6379] : i === 2 ? [22, 3306] : [],
   docker: i === 4,
