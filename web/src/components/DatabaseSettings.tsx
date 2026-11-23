@@ -83,7 +83,7 @@ export function DatabaseSettings({ dbId, initialTab, section }: {
   }
   const info = engineOf(db.engine)
   const LEVELS = levelsFor(db)
-  const title = db.engine === 'redis' ? `Redis · db ${db.dbname}` : db.engine === 'mysql' ? `MySQL · ${db.dbname}` : db.engine === 'mssql' ? `SQL Server · ${db.dbname}` : db.engine === 'mongodb' ? `MongoDB · ${db.dbname}` : db.engine === 'rabbitmq' ? `RabbitMQ · ${db.dbname}` : db.engine === 'kafka' ? `Kafka · ${db.dbname === '*' ? 'every topic' : db.dbname}` : db.dbname
+  const title = db.engine === 'redis' ? `Redis · db ${db.dbname}` : db.engine === 'mysql' ? `MySQL · ${db.dbname}` : db.engine === 'mssql' ? `SQL Server · ${db.dbname}` : db.engine === 'mongodb' ? `MongoDB · ${db.dbname}` : db.engine === 'rabbitmq' ? `RabbitMQ · ${db.dbname}` : db.engine === 'kafka' ? `Kafka · ${db.dbname === '*' ? 'every topic' : db.dbname}` : db.engine === 'nats' ? `NATS · ${db.dbname}` : db.dbname
   const names = new Map((users ?? []).map((u) => [u.email, u.displayName]))
 
   const onRemove = async (id: string, label: string) => {
@@ -299,7 +299,7 @@ function StoreConnection({ db }: { db: Database }) {
   const [host, setHost] = useState(db.host)
   const [port, setPort] = useState<number | string>(db.port)
   const [conf, setConf] = useState(db.configPath ?? '')
-  const withConf = db.engine === 'redis' || db.engine === 'mysql' || db.engine === 'mssql' || db.engine === 'mongodb' || db.engine === 'kafka'
+  const withConf = db.engine === 'redis' || db.engine === 'mysql' || db.engine === 'mssql' || db.engine === 'mongodb' || db.engine === 'kafka' || db.engine === 'nats'
   const dirty = host.trim() !== db.host || Number(port) !== db.port || (withConf && conf.trim() !== (db.configPath ?? ''))
   const save = async () => {
     try {
@@ -312,9 +312,10 @@ function StoreConnection({ db }: { db: Database }) {
   }
   return (
     <Stack gap="md">
-      <SectionCard title={db.engine === 'redis' ? 'Redis' : db.engine === 'mysql' ? 'MySQL' : db.engine === 'mssql' ? 'SQL Server' : db.engine === 'mongodb' ? 'MongoDB' : db.engine === 'kafka' ? 'Kafka listener' : 'RabbitMQ management API'}
+      <SectionCard title={db.engine === 'redis' ? 'Redis' : db.engine === 'mysql' ? 'MySQL' : db.engine === 'mssql' ? 'SQL Server' : db.engine === 'mongodb' ? 'MongoDB' : db.engine === 'kafka' ? 'Kafka listener' : db.engine === 'nats' ? 'NATS server' : 'RabbitMQ management API'}
         description={db.engine === 'mssql'
           ? 'On the server itself, on loopback: SQL Server listens on TCP only. The agent refuses anything else.'
+          : db.engine === 'nats' ? 'On the server itself, on loopback: nats-server in operator mode. The agent refuses a server anyone can use without signing in.'
           : db.engine !== 'rabbitmq' && db.engine !== 'kafka'
           ? 'On the server itself: a loopback address or the path of its unix socket. The agent refuses anything else.'
           : db.engine === 'kafka' ? 'On the server itself, on loopback: a SASL listener with SCRAM. The agent refuses anything else, and a cluster with no authorizer.'
@@ -346,6 +347,10 @@ function StoreConnection({ db }: { db: Database }) {
             <TextInput label="Admin file" value={conf} onChange={(e) => setConf(e.currentTarget.value)} w={420} placeholder="/etc/argus/kafka.conf"
               description="On the server, readable by root only: user = and password = (and mechanism = SCRAM-SHA-256 if not 512) for an account that may manage SCRAM users and ACLs. Empty means /etc/argus/kafka.conf." />
           )}
+          {db.engine === 'nats' && (
+            <TextInput label="Signing key file" value={conf} onChange={(e) => setConf(e.currentTarget.value)} w={420} placeholder="/etc/argus/nats.conf"
+              description="On the server, readable by root only: account NAME = ACCOUNT_PUBLIC_KEY SIGNING_KEY_SEED for each account, and monitor = PORT if the monitoring port is not 8222. Empty means /etc/argus/nats.conf." />
+          )}
           <Group><Button onClick={() => void save()} disabled={!dirty} loading={update.isPending}>Save</Button></Group>
         </Stack>
       </SectionCard>
@@ -360,6 +365,8 @@ function StoreConnection({ db }: { db: Database }) {
             ? 'Each person gets a MongoDB user named argus-<login>-<level> in this database, with that level’s built-in roles on it and a one-time password for their session, and it is dropped when their last session closes. MongoDB 5.0 or later, with access control on: a server anyone can use without signing in is refused. Argus never touches a user whose name does not start with argus-.'
             : db.engine === 'redis'
             ? 'Each person gets a Redis ACL user named argus-<login>-<level> with a one-time password for their session, and it is deleted when their last session closes. Redis 6 or later, or Valkey. Argus never touches a user whose name does not start with argus-.'
+            : db.engine === 'nats'
+            ? 'Each session gets its own NATS user, signed by the agent with the account’s signing key: named argus-<login>-<level>, with publish and subscribe rules for the level, and gone when the session ends (it expires on its own soon after). Nothing is added to the server, and the key never leaves it.'
             : db.engine === 'kafka'
             ? 'Each person gets a SCRAM user named argus-<login>-<level> with a one-time password, and ACLs for their level on this entry’s topics only; the user and its ACLs are deleted when their last session closes. Argus never touches a user whose name does not start with argus-, and never changes another ACL.'
             : 'The agent runs rabbitmqctl on the server to add a user named argus-<login>-<level> with its tag and permissions on this vhost, the password on standard input, and deletes it when the last session closes. Argus never touches a user whose name does not start with argus-.'}
@@ -430,6 +437,8 @@ function Safety({ db, assignments, onAccess }: { db: Database; assignments: { ne
             ? 'Every command, and every collection opened in the browser, is recorded before it runs, in a hash chain the verifier checks. Commands the agent refused are recorded too.'
             : db.engine === 'redis'
             ? 'Every command, and every value read in the key browser, is recorded before it runs, in a hash chain the verifier checks. Commands the agent refused are recorded too.'
+            : db.engine === 'nats'
+            ? 'Every read of messages, live listen, publish (with its subject, headers and data), and every stream or consumer created, changed, purged or deleted is recorded before it runs, in a hash chain the verifier checks.'
             : db.engine === 'kafka'
             ? 'Every read of messages, publish (with its key, headers and value), and topic created or deleted is recorded before it runs, in a hash chain the verifier checks.'
             : 'Every peek, publish (with its payload), purge and change is recorded before it is sent, in a hash chain the verifier checks.'}</Text></Box>

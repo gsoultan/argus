@@ -238,7 +238,7 @@ function Reach({ l, withPort = false }: { l: ServerAppListen; withPort?: boolean
  * its admin password from Valkey's own config file.
  */
 const APP_ENGINES: Record<string, DBEngine> = {
-  postgres: 'postgres', mysql: 'mysql', mariadb: 'mysql', mssql: 'mssql', mongodb: 'mongodb', redis: 'redis', valkey: 'redis', rabbitmq: 'rabbitmq', kafka: 'kafka',
+  postgres: 'postgres', mysql: 'mysql', mariadb: 'mysql', mssql: 'mssql', mongodb: 'mongodb', redis: 'redis', valkey: 'redis', rabbitmq: 'rabbitmq', kafka: 'kafka', nats: 'nats',
 }
 function engineOfApp(kind: string): DBEngine | undefined {
   return APP_ENGINES[kind]
@@ -307,7 +307,7 @@ function AddFound({ app, engine, added, onAdd }: {
 }) {
   const what = engine === 'postgres' ? 'postgres account' : engine === 'mysql' ? 'MySQL root account'
     : engine === 'mssql' ? 'SQL Server admin file'
-    : engine === 'mongodb' ? 'MongoDB admin file' : engine === 'redis' ? `${app.name} admin` : engine === 'kafka' ? 'Kafka admin' : 'rabbitmqctl'
+    : engine === 'mongodb' ? 'MongoDB admin file' : engine === 'redis' ? `${app.name} admin` : engine === 'kafka' ? 'Kafka admin' : engine === 'nats' ? 'NATS signing key file' : 'rabbitmqctl'
   if (app.container) {
     return (
       <Tooltip multiline w={260} label={`Argus opens this through the server's own ${what}. Inside a container that is not reachable, so it cannot be added from here yet.`}>
@@ -320,6 +320,7 @@ function AddFound({ app, engine, added, onAdd }: {
   const ports: (number | undefined)[] = engine === 'rabbitmq'
     ? [listening.includes(15672) ? 15672 : undefined]
     : engine === 'kafka' ? [listening.includes(9092) ? 9092 : listening[0]]
+    : engine === 'nats' ? [listening.includes(4222) ? 4222 : listening.find((p) => p !== 8222 && p !== 6222 && p !== 7422)]
     : listening.length ? listening : [undefined]
   const inArgus = (p: number | undefined) =>
     engine === 'redis' || isBroker(engine) ? [...added.values()][0]
@@ -347,7 +348,7 @@ function AddFound({ app, engine, added, onAdd }: {
             {(!db || again) && (
               <Button size="compact-xs" variant={db ? 'subtle' : 'default'}
                 leftSection={<IconDatabasePlus size={12} />} onClick={() => onAdd(p)}>
-                {db ? 'Add another' : engine === 'rabbitmq' ? 'Add a vhost' : engine === 'kafka' ? 'Add topics' : 'Add as database'}{ports.length > 1 && p ? ` · ${p}` : ''}
+                {db ? 'Add another' : engine === 'rabbitmq' ? 'Add a vhost' : engine === 'kafka' ? 'Add topics' : engine === 'nats' ? 'Add an account' : 'Add as database'}{ports.length > 1 && p ? ` · ${p}` : ''}
               </Button>
             )}
           </Group>

@@ -453,6 +453,16 @@ func runDaemon(args []string) int {
 			Executable: exe,
 			StateDir:   *stateDir,
 		})
+		// NATS: a user JWT signed for each session with the account's signing
+		// key, carrying the level as permissions; reads of messages and
+		// changes recorded before they run.
+		services[agent.NATSService] = agent.NATS(agent.StoreConfig{
+			Verifier:   &tunnel.GrantVerifier{Host: hostname},
+			RecordDir:  *dir,
+			Log:        log,
+			Executable: exe,
+			StateDir:   *stateDir,
+		})
 		services[agent.RabbitMQService] = agent.RabbitMQ(agent.RabbitConfig{StoreConfig: agent.StoreConfig{
 			Verifier:   &tunnel.GrantVerifier{Host: hostname},
 			RecordDir:  *dir,

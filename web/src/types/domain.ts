@@ -956,7 +956,7 @@ export interface AccessRequest {
   statement?: StatementAsk
   /** Set on a change the reader may decide as an editor of its database. */
   asEditor?: boolean
-  /** Set when the request is for a message broker (RabbitMQ, Kafka), not a database. */
+  /** Set when the request is for a message broker (RabbitMQ, Kafka, NATS), not a database. */
   broker?: boolean
   /**
    * Set on the reader's own pending request when nobody else could decide
@@ -1179,7 +1179,7 @@ export interface ChangeApproval {
 }
 
 /** What a database entry is: a Postgres database, a Redis server or a RabbitMQ vhost. */
-export type DBEngine = 'postgres' | 'mysql' | 'mssql' | 'mongodb' | 'redis' | 'rabbitmq' | 'kafka'
+export type DBEngine = 'postgres' | 'mysql' | 'mssql' | 'mongodb' | 'redis' | 'rabbitmq' | 'kafka' | 'nats'
 
 /** One database on one server. */
 export interface Database {

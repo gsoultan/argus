@@ -139,6 +139,8 @@ func discoverPlaceholder(engine string) string {
 		return "argus_probe"
 	case tunnel.EngineKafka:
 		return tunnel.KafkaAllTopics
+	case tunnel.EngineNATS:
+		return "ARGUS_PROBE"
 	}
 	return "postgres"
 }

@@ -509,6 +509,8 @@ func engineCreateNoun(engine string) string {
 		return "RabbitMQ vhost"
 	case tunnel.EngineKafka:
 		return "Kafka topic"
+	case tunnel.EngineNATS:
+		return "NATS account"
 	case tunnel.EngineMSSQL:
 		return "SQL Server database"
 	}

@@ -76,6 +76,13 @@ func (d *GrantDiscover) Validate() error {
 		if d.ConfigPath != "" && !ValidKafkaAdminFile(d.ConfigPath) {
 			return errors.New("the admin file must be an absolute path to a .conf file on the server")
 		}
+	case EngineNATS:
+		if !LocalLoopback(d.Host) {
+			return fmt.Errorf("NATS must be on this server; %s is not", d.Host)
+		}
+		if d.ConfigPath != "" && !ValidNATSAdminFile(d.ConfigPath) {
+			return errors.New("the signing key file must be an absolute path to a .conf file on the server")
+		}
 	case EngineRabbitMQ:
 		if !LocalLoopback(d.Host) {
 			return fmt.Errorf("the RabbitMQ management API must be on this server; %s is not", d.Host)

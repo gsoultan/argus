@@ -41,6 +41,7 @@ enforces all of it and CI runs it by name.
 | [mssql-access](mssql-access.md) | SQL Server entries: per-person logins per database, the admin file, T-SQL batches and approvals |
 | [mongodb-access](mongodb-access.md) | MongoDB entries: per-person users, the admin file, the mongosh-style command line |
 | [kafka-access](kafka-access.md) | Kafka under Brokers: topic scopes, per-person SCRAM users and ACLs, the admin file |
+| [nats-access](nats-access.md) | NATS under Brokers: one account per entry, operator mode, per-session signed user JWTs, streams and consumers |
 | [app-discovery](app-discovery.md) | What the agent finds running on a server, and what it must never read |
 | [server-firewall](server-firewall.md) | The firewall on each server: reading it, the Firewall tab, Assets › Firewalls, later changes and policies |
 | [server-system](server-system.md) | The System card: OS, processor, memory, disks, load, and how fresh they are |

@@ -292,6 +292,7 @@ export function CreateOnServer({ asset, engine, onClose, onBack, onAddExisting }
           rabbitmq: 'Up to 63 characters, no quotes.',
           kafka: 'Up to 249 letters, digits, . _ or -.',
           redis: '',
+          nats: '',
         }[engine]} />
       {(takenHere || result?.state === 'exists') && (
         <Alert variant="light" color="amber" p="xs">

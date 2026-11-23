@@ -177,10 +177,12 @@ var brokerLevelWords = map[string]string{
 var engineWords = map[string]string{
 	tunnel.EnginePostgres: "Postgres", tunnel.EngineMySQL: "MySQL", tunnel.EngineMongoDB: "MongoDB",
 	tunnel.EngineRedis: "Redis", tunnel.EngineRabbitMQ: "RabbitMQ", tunnel.EngineKafka: "Kafka",
-	tunnel.EngineMSSQL: "SQL Server",
+	tunnel.EngineMSSQL: "SQL Server", tunnel.EngineNATS: "NATS",
 }
 
-func isBrokerEngine(e string) bool { return e == tunnel.EngineRabbitMQ || e == tunnel.EngineKafka }
+func isBrokerEngine(e string) bool {
+	return e == tunnel.EngineRabbitMQ || e == tunnel.EngineKafka || e == tunnel.EngineNATS
+}
 
 func datastoreAccess(ctx context.Context, s *Store, email string, brokers bool) ([]AccessItem, error) {
 	list, err := s.PersonDatabases(ctx, email)

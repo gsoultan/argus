@@ -50,6 +50,8 @@ func ServiceForEngine(engine string) string {
 		return MongoDBService
 	case EngineKafka:
 		return KafkaService
+	case EngineNATS:
+		return NATSService
 	case EngineMSSQL:
 		return MSSQLService
 	}
@@ -185,6 +187,9 @@ type StoreRequest struct {
 	// KafkaChange is a Kafka topic or consumer group change
 	// (kafkachange.go).
 	KafkaChange *KafkaChange `json:"kafkaChange,omitempty"`
+	// NATS names a NATS operation's stream, consumer, subject and spec
+	// (nats.go).
+	NATS *NATSRequest `json:"nats,omitempty"`
 }
 
 // StoreAnswer is the agent's reply to a request, or news about the session.
