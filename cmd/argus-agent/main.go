@@ -140,6 +140,25 @@ func main() {
 		// allows on one database port, or the change to who may connect.
 		// Only rules Argus added are ever removed.
 		os.Exit(agent.RunFirewall(os.Stdin, os.Stdout))
+	case "firewall-read":
+		// Run by the daemon outside its sandbox: the whole firewall, read
+		// only, for the server page's Firewall tab.
+		os.Exit(agent.RunFirewallRead(os.Stdin, os.Stdout))
+	case "firewall-apply":
+		// Run by the daemon in a unit of its own to change the firewall as
+		// the console asked, on a trial it undoes unless the server still
+		// reaches Argus (and, turning a firewall on, unless someone keeps it).
+		fs := flag.NewFlagSet("firewall-apply", flag.ExitOnError)
+		plan := fs.String("plan", "", "the firewall plan the daemon wrote")
+		_ = fs.Parse(os.Args[2:])
+		os.Exit(agent.RunFirewallApply(*plan))
+	case "firewall-putback":
+		// By hand on the server, when the console cannot reach it: put back
+		// the firewall as it was saved before a change.
+		fs := flag.NewFlagSet("firewall-putback", flag.ExitOnError)
+		dir := fs.String("state", agent.DefaultStateDir, "the agent's state folder")
+		_ = fs.Parse(os.Args[2:])
+		os.Exit(agent.RunFirewallPutBack(*dir, fs.Arg(0)))
 	case "packages-repair":
 		// Run by the daemon after an update run was cut short.
 		os.Exit(agent.RunPackagesRepair(os.Stdout))
@@ -325,6 +344,9 @@ func runDaemon(args []string) int {
 	wgnets := agent.NewWGNets(*stateDir, exe, log)
 	// No peer may carry the control plane's address.
 	wgnets.Avoid = agent.ControlAddrs(*controlURL)
+	// The server's own firewall: the same, from the same binary.
+	hostfw := agent.NewHostFirewalls(*stateDir, exe, log)
+	hostfw.Always = agent.FirewallAlways(agent.ControlAddrs(*controlURL))
 	updater.Marker = agent.UpdateMarkerPath(*socket)
 	var (
 		openStreams atomic.Int64
@@ -779,6 +801,7 @@ func runDaemon(args []string) int {
 		logBeat := logs.Beat()
 		diskBeat := disks.Beat()
 		wgBeat := wgnets.Beat()
+		fwBeat := hostfw.Beat()
 		reply, ok := rep.HeartbeatWithReply(ctx, map[string]any{
 			"hostname":        hostname,
 			"version":         version,
@@ -800,6 +823,7 @@ func runDaemon(args []string) int {
 			"logs":              logBeat,
 			"disks":             diskBeat,
 			"wgnet":             wgBeat,
+			"firewall":          fwBeat,
 		})
 		// Orders signed with the fleet recovery key are checked against that
 		// key alone, before the gate: a rekey is what makes a reply signed
@@ -902,6 +926,16 @@ func runDaemon(args []string) int {
 				}
 			}
 			wgnets.Handle(ctx, wgOrders)
+			hostfw.Delivered(fwBeat)
+			var fwOrders *tunnel.FirewallOrders
+			if len(reply.Firewall) > 0 && string(reply.Firewall) != "null" {
+				fwOrders = &tunnel.FirewallOrders{}
+				if err := json.Unmarshal(reply.Firewall, fwOrders); err != nil {
+					log.Error("firewall: cannot read the console's orders", "error", err)
+					fwOrders = nil
+				}
+			}
+			hostfw.Handle(ctx, fwOrders)
 		}
 		// An update is acted on only when the reply arrived: silence from
 		// the control plane neither starts one nor takes one back.
@@ -1051,6 +1085,18 @@ func runDaemon(args []string) int {
 		}
 	}
 	go agent.Supervise(ctx, log, "wireguard networks", wgnets.Watch)
+	hostfw.Changed = func() {
+		if rep.Enabled() {
+			heartbeat()
+		}
+	}
+	hostfw.ReadNow = func() {
+		select {
+		case factsNow <- struct{}{}:
+		default:
+		}
+	}
+	go agent.Supervise(ctx, log, "firewall changes", hostfw.Watch)
 
 	// Host facts on their own, slower loop. The inventory is hand-written, so
 	// "Argus covers all privileged access" is only checkable if hosts say what
@@ -1090,10 +1136,13 @@ func runDaemon(args []string) int {
 			}
 		}
 	})
+	readFirewall := agent.HostFirewallReader(exe, *stateDir)
 	go loopOrNow(log, "host facts", 10*time.Minute, stop, factsNow, func() {
 		f := agent.Discover(agent.DefaultDiscoverConfig())
 		apps := agent.DiscoverApps(ctx)
 		sys := agent.DiscoverSystem()
+		// The whole firewall, read only, for the Firewall tab.
+		fw := readFirewall(ctx)
 		writeJSON(*stateDir+"/facts.json", f, log)
 		writeJSON(*stateDir+"/applications.json", apps, log)
 		vpnMu.Lock()
@@ -1119,12 +1168,15 @@ func runDaemon(args []string) int {
 			"applications": apps,
 			"system":       sys,
 			"vpn":          vpn,
+			"firewall":     fw,
 		}
 		// Compared without the scan time, which differs every run, and with
 		// the VPN's up-or-down state rather than its counters.
 		probe := apps
 		probe.CheckedAt = time.Time{}
-		fingerprint, _ := json.Marshal([]any{f, probe, sys, vpnNow})
+		fwProbe := fw
+		fwProbe.ReadAt = time.Time{}
+		fingerprint, _ := json.Marshal([]any{f, probe, sys, vpnNow, fwProbe})
 		if bytes.Equal(fingerprint, lastFacts) && time.Since(lastSent) < time.Hour {
 			return
 		}

@@ -50,6 +50,7 @@ const (
 	KindDirectSSH      ApprovalKind = "logins.direct"
 	KindServerRuns     ApprovalKind = "servers.runs"
 	KindServerUpkeep   ApprovalKind = "servers.upkeep"
+	KindServerFirewall ApprovalKind = "servers.firewall"
 	KindScriptReview   ApprovalKind = "servers.scripts"
 	KindDataChange     ApprovalKind = "data.change"
 	KindDataSession    ApprovalKind = "data.session"
@@ -153,6 +154,9 @@ var ApprovalKinds = []ApprovalKindInfo{
 	{Kind: KindServerUpkeep, Group: "Servers", Title: "Growing disks, cleaning logs",
 		What: "Disk grows and log cleanups on servers whose rule asks for a second admin.",
 		Envs: threeEnvs, Today: every("sometimes"), Notes: every("where the rule asks")},
+	{Kind: KindServerFirewall, Group: "Servers", Title: "Server firewalls",
+		What: "Firewall changes that let everyone in, turn a firewall on, take over rules made by hand, block what goes out, or touch a production server; and every firewall change an operator asks for.",
+		Envs: threeEnvs, Today: every("sometimes"), Notes: every("where the change opens up or locks down")},
 	{Kind: KindScriptReview, Group: "Servers", Title: "Reviewing your own scripts",
 		What: "A new script version runs nowhere until someone other than its author reviews it.",
 		Envs: []string{EnvAll}, Today: map[string]string{EnvAll: "always"}},

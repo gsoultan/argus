@@ -61,6 +61,8 @@ type Row struct {
 	DisksRescan     bool
 	Vpn             runtime.Null[runtime.JSON]
 	WgnetState      runtime.Null[runtime.JSON]
+	Firewall        runtime.Null[runtime.JSON]
+	FirewallBeat    runtime.Null[runtime.JSON]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -99,7 +101,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 41
+const nCols = 43
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -589,6 +591,8 @@ var (
 	DisksRescan     = BoolCol{38}
 	Vpn             = NullJSONCol{39}
 	WgnetState      = NullJSONCol{40}
+	Firewall        = NullJSONCol{41}
+	FirewallBeat    = NullJSONCol{42}
 )
 
 // TextCol addresses a text column.
@@ -1159,6 +1163,20 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
+		case 41:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 42:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1428,6 +1446,20 @@ func (q *Query) leaf(p Pred) {
 		q.jsns[q.njs] = p.jsn
 		q.njs++
 	case 40:
+		if int(q.njs) >= 2 {
+			q.over = true
+			return
+		}
+		q.jsns[q.njs] = p.jsn
+		q.njs++
+	case 41:
+		if int(q.njs) >= 2 {
+			q.over = true
+			return
+		}
+		q.jsns[q.njs] = p.jsn
+		q.njs++
+	case 42:
 		if int(q.njs) >= 2 {
 			q.over = true
 			return
@@ -1764,8 +1796,24 @@ func (q Query) WgnetStateHasAnyKey(v ...string) Query      { return q.Where(Wgne
 func (q Query) WgnetStateHasAllKeys(v ...string) Query     { return q.Where(WgnetState.HasAllKeys(v...)) }
 func (q Query) WgnetStateIsNull() Query                    { return q.Where(WgnetState.IsNull()) }
 func (q Query) WgnetStateIsNotNull() Query                 { return q.Where(WgnetState.IsNotNull()) }
+func (q Query) FirewallContains(v runtime.JSON) Query      { return q.Where(Firewall.Contains(v)) }
+func (q Query) FirewallContainedBy(v runtime.JSON) Query   { return q.Where(Firewall.ContainedBy(v)) }
+func (q Query) FirewallHasAnyKey(v ...string) Query        { return q.Where(Firewall.HasAnyKey(v...)) }
+func (q Query) FirewallHasAllKeys(v ...string) Query       { return q.Where(Firewall.HasAllKeys(v...)) }
+func (q Query) FirewallIsNull() Query                      { return q.Where(Firewall.IsNull()) }
+func (q Query) FirewallIsNotNull() Query                   { return q.Where(Firewall.IsNotNull()) }
+func (q Query) FirewallBeatContains(v runtime.JSON) Query  { return q.Where(FirewallBeat.Contains(v)) }
+func (q Query) FirewallBeatContainedBy(v runtime.JSON) Query {
+	return q.Where(FirewallBeat.ContainedBy(v))
+}
+func (q Query) FirewallBeatHasAnyKey(v ...string) Query { return q.Where(FirewallBeat.HasAnyKey(v...)) }
+func (q Query) FirewallBeatHasAllKeys(v ...string) Query {
+	return q.Where(FirewallBeat.HasAllKeys(v...))
+}
+func (q Query) FirewallBeatIsNull() Query    { return q.Where(FirewallBeat.IsNull()) }
+func (q Query) FirewallBeatIsNotNull() Query { return q.Where(FirewallBeat.IsNotNull()) }
 
-const selectPrefix = `SELECT "hostname", "version", "last_seen_at", "active_sessions", "posture", "updated_at", "matched_asset", "fqdn", "machine_id", "os", "addresses", "accounts", "ssh_ports", "enrollment_state", "review_note", "reviewed_by", "reviewed_at", "first_seen_at", "exec_tracing", "exec_reason", "update_status", "applications", "system", "usage", "packages", "packages_state", "packages_check_id", "packages_check_at", "usage_at", "logs", "logs_state", "logs_scan_id", "logs_scan_at", "android_apps", "disks", "disks_state", "disks_scan_id", "disks_scan_at", "disks_rescan", "vpn", "wgnet_state" FROM "agents"`
+const selectPrefix = `SELECT "hostname", "version", "last_seen_at", "active_sessions", "posture", "updated_at", "matched_asset", "fqdn", "machine_id", "os", "addresses", "accounts", "ssh_ports", "enrollment_state", "review_note", "reviewed_by", "reviewed_at", "first_seen_at", "exec_tracing", "exec_reason", "update_status", "applications", "system", "usage", "packages", "packages_state", "packages_check_id", "packages_check_at", "usage_at", "logs", "logs_state", "logs_scan_id", "logs_scan_at", "android_apps", "disks", "disks_state", "disks_scan_id", "disks_scan_at", "disks_rescan", "vpn", "wgnet_state", "firewall", "firewall_beat" FROM "agents"`
 const countPrefix = `SELECT count(*) FROM "agents"`
 const existsPrefix = `SELECT 1 FROM "agents"`
 const existsSuffix = ` LIMIT 1`
@@ -2048,6 +2096,18 @@ var orderTable = [nCols][4]string{
 		"\"wgnet_state\" ASC NULLS FIRST",
 		"\"wgnet_state\" DESC NULLS LAST",
 	},
+	{ // firewall
+		"\"firewall\"",
+		"\"firewall\" DESC",
+		"\"firewall\" ASC NULLS FIRST",
+		"\"firewall\" DESC NULLS LAST",
+	},
+	{ // firewall_beat
+		"\"firewall_beat\"",
+		"\"firewall_beat\" DESC",
+		"\"firewall_beat\" ASC NULLS FIRST",
+		"\"firewall_beat\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -2094,6 +2154,8 @@ var identTable = [nCols]string{
 	"\"disks_rescan\"",
 	"\"vpn\"",
 	"\"wgnet_state\"",
+	"\"firewall\"",
+	"\"firewall_beat\"",
 }
 
 var lowering = runtime.Lowering{
@@ -2126,7 +2188,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [41][28]runtime.Frag{
+var fragTable = [43][28]runtime.Frag{
 	{ // hostname
 		{}, // opNone
 		{A: "\"hostname\" = $", B: ""},
@@ -3357,6 +3419,66 @@ var fragTable = [41][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // firewall
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"firewall\" @> $", B: ""},
+		{A: "\"firewall\" <@ $", B: ""},
+		{A: "\"firewall\" ?| $", B: ""},
+		{A: "\"firewall\" ?& $", B: ""},
+		{A: "\"firewall\" IS NULL", B: ""},
+		{A: "\"firewall\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // firewall_beat
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"firewall_beat\" @> $", B: ""},
+		{A: "\"firewall_beat\" <@ $", B: ""},
+		{A: "\"firewall_beat\" ?| $", B: ""},
+		{A: "\"firewall_beat\" ?& $", B: ""},
+		{A: "\"firewall_beat\" IS NULL", B: ""},
+		{A: "\"firewall_beat\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -3563,6 +3685,8 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.DisksRescan = runtime.Bool(rv[38])
 	r.Vpn = runtime.NullJSON(rv[39], sl)
 	r.WgnetState = runtime.NullJSON(rv[40], sl)
+	r.Firewall = runtime.NullJSON(rv[41], sl)
+	r.FirewallBeat = runtime.NullJSON(rv[42], sl)
 	return decErr
 }
 
@@ -3749,6 +3873,14 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
+			case 41:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 42:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -3902,6 +4034,14 @@ func (q Query) bindPreds(b *binder) []any {
 			v = append(v, &b.jsns[njs])
 			njs++
 		case 40:
+			b.jsns[njs] = q.jsns[njs]
+			v = append(v, &b.jsns[njs])
+			njs++
+		case 41:
+			b.jsns[njs] = q.jsns[njs]
+			v = append(v, &b.jsns[njs])
+			njs++
+		case 42:
 			b.jsns[njs] = q.jsns[njs]
 			v = append(v, &b.jsns[njs])
 			njs++

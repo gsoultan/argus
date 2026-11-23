@@ -161,8 +161,15 @@ const BUDGET_KB = {
    * 322.5 kB with Networks (VPNs and tunnels): its sidebar group, entry and
    * icon, and the route and its guard in the route map. The page and its
    * queries are a route chunk.
+   * 323.6 kB with server firewalls (322.5 before): the Assets › Firewalls
+   * route and its guard in the route map, and the Firewall tab name the
+   * server page's search rule checks. The tab, the page and their calls are
+   * route chunks.
+   * 326.6 kB with firewall changes and policies (323.6 before): the two
+   * policy routes and their guards in the route map. The policy pages, the
+   * line editor and the change review are route chunks.
    */
-  overview: 323,
+  overview: 327.5,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most
@@ -226,8 +233,10 @@ const BUDGET_KB = {
    * 422.3 kB with the sidebar, the same shared weight as the overview.
    * 423.5 kB with network devices, the same shared weight as the overview.
    * 424.5 kB with Networks, the same shared weight as the overview.
+   * 425.8 kB with server firewalls, the same shared weight as the overview.
+   * 428.7 kB with firewall policies, the same shared weight as the overview.
    */
-  sessionDetail: 425,
+  sessionDetail: 429.5,
 }
 
 /**

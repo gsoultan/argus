@@ -78,6 +78,8 @@ func _assertAgentShape(m m0.Agent) {
 		m.DisksRescan,
 		m.Vpn,
 		m.WgnetState,
+		m.Firewall,
+		m.FirewallBeat,
 	}
 }
 
@@ -976,6 +978,122 @@ func _assertDiskGrowRunShape(m m0.DiskGrowRun) {
 		m.SizeBefore,
 		m.SizeAfter,
 		m.AutoDay,
+	}
+}
+
+// _assertFirewallChangeShape fails to compile if m0.FirewallChange gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertFirewallChangeShape(m m0.FirewallChange) {
+	type shape m0.FirewallChange
+	_ = shape{
+		m.ID,
+		m.Asset,
+		m.Hostname,
+		m.AssetHostname,
+		m.Kind,
+		m.Summary,
+		m.Reason,
+		m.Delta,
+		m.Before,
+		m.Spec,
+		m.Preview,
+		m.State,
+		m.Rollout,
+		m.Wave,
+		m.RequestedBy,
+		m.RequestedAt,
+		m.DecidedBy,
+		m.DecidedAt,
+		m.KeptBy,
+		m.KeptAt,
+		m.SentAt,
+		m.EndedAt,
+		m.UpdatedAt,
+		m.Message,
+		m.Ran,
+	}
+}
+
+// _assertFirewallPolicyShape fails to compile if m0.FirewallPolicy gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertFirewallPolicyShape(m m0.FirewallPolicy) {
+	type shape m0.FirewallPolicy
+	_ = shape{
+		m.ID,
+		m.Name,
+		m.Description,
+		m.Version,
+		m.Lines,
+		m.DefaultOut,
+		m.Starter,
+		m.CreatedBy,
+		m.CreatedAt,
+		m.UpdatedBy,
+		m.UpdatedAt,
+	}
+}
+
+// _assertFirewallPolicyTargetShape fails to compile if m0.FirewallPolicyTarget gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertFirewallPolicyTargetShape(m m0.FirewallPolicyTarget) {
+	type shape m0.FirewallPolicyTarget
+	_ = shape{
+		m.ID,
+		m.Policy,
+		m.Asset,
+		m.Tag,
+		m.CreatedBy,
+		m.CreatedAt,
+	}
+}
+
+// _assertFirewallPolicyVersionShape fails to compile if m0.FirewallPolicyVersion gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertFirewallPolicyVersionShape(m m0.FirewallPolicyVersion) {
+	type shape m0.FirewallPolicyVersion
+	_ = shape{
+		m.Policy,
+		m.Version,
+		m.Lines,
+		m.DefaultOut,
+		m.Note,
+		m.CreatedBy,
+		m.CreatedAt,
+	}
+}
+
+// _assertFirewallRolloutShape fails to compile if m0.FirewallRollout gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertFirewallRolloutShape(m m0.FirewallRollout) {
+	type shape m0.FirewallRollout
+	_ = shape{
+		m.ID,
+		m.Policy,
+		m.PolicyName,
+		m.Version,
+		m.State,
+		m.Summary,
+		m.RequestedBy,
+		m.RequestedAt,
+		m.DecidedBy,
+		m.DecidedAt,
+		m.EndedAt,
+		m.Message,
+	}
+}
+
+// _assertFirewallServerShape fails to compile if m0.FirewallServer gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertFirewallServerShape(m m0.FirewallServer) {
+	type shape m0.FirewallServer
+	_ = shape{
+		m.Asset,
+		m.OwnLines,
+		m.Policies,
+		m.DefaultOut,
+		m.Managers,
+		m.SyncedAt,
+		m.UpdatedAt,
 	}
 }
 

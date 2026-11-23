@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/gsoultan/argus/internal/tunnel"
 )
 
 // HostFacts is what an agent reports about the machine it runs on.
@@ -33,6 +35,9 @@ type HostFacts struct {
 	// VPN is the host's VPN links. Nil from an agent older than VPN
 	// discovery, which leaves what the row holds.
 	VPN *VPNScan `json:"vpn,omitempty"`
+	// Firewall is the host's whole firewall, read only. Nil from an agent
+	// older than firewall reading, which leaves what the row holds.
+	Firewall *tunnel.HostFirewall `json:"firewall,omitempty"`
 }
 
 // DiscoveredHost is an agent reporting from somewhere the inventory has no
@@ -129,6 +134,14 @@ func (s *Store) RecordFacts(ctx context.Context, hostname string, f HostFacts) e
 		}
 		vpn = b
 	}
+	var firewall []byte // nil keeps what the row holds, as for apps
+	if f.Firewall != nil {
+		b, err := json.Marshal(f.Firewall.Bounded())
+		if err != nil {
+			return err
+		}
+		firewall = b
+	}
 	tx, err := s.db(ctx).Begin(ctx)
 	if err != nil {
 		return err
@@ -136,8 +149,8 @@ func (s *Store) RecordFacts(ctx context.Context, hostname string, f HostFacts) e
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO agents (hostname, fqdn, machine_id, os, addresses, ssh_ports, accounts, applications, system, android_apps, vpn, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,now())
+		INSERT INTO agents (hostname, fqdn, machine_id, os, addresses, ssh_ports, accounts, applications, system, android_apps, vpn, firewall, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,now())
 		ON CONFLICT (hostname) DO UPDATE SET
 			fqdn       = COALESCE(NULLIF(EXCLUDED.fqdn,''), agents.fqdn),
 			machine_id = COALESCE(NULLIF(EXCLUDED.machine_id,''), agents.machine_id),
@@ -149,9 +162,10 @@ func (s *Store) RecordFacts(ctx context.Context, hostname string, f HostFacts) e
 			system     = COALESCE(EXCLUDED.system, agents.system),
 			android_apps = COALESCE(EXCLUDED.android_apps, agents.android_apps),
 			vpn        = COALESCE(EXCLUDED.vpn, agents.vpn),
+			firewall   = COALESCE(EXCLUDED.firewall, agents.firewall),
 			updated_at = now()`,
 		hostname, f.FQDN, f.MachineID, f.OS,
-		nonNilStrings(f.Addresses), nonNilInts(f.SSHPorts), nonNilStrings(f.Accounts), apps, system, androidApps, vpn); err != nil {
+		nonNilStrings(f.Addresses), nonNilInts(f.SSHPorts), nonNilStrings(f.Accounts), apps, system, androidApps, vpn, firewall); err != nil {
 		return err
 	}
 

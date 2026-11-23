@@ -758,6 +758,15 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	api.ReporterToken = cfg.ReporterToken
 	api.AllowedOrigins = cfg.AllowedOrigins
 	api.BehindTLSProxy = cfg.BehindTLSProxy
+	{
+		// What stays open on this server's own firewall, whatever its lines
+		// say: the ports people and agents reach argus-control on.
+		quic := ""
+		if cfg.Tunnel != nil {
+			quic = cfg.Tunnel.QUICListen
+		}
+		api.FirewallProtect = control.FirewallProtectLines([]string{cfg.Listen, cfg.ConsoleListen}, quic)
+	}
 
 	// Sweep for agents that stopped reporting. This is what turns "someone
 	// killed the agent" from an invisible event into a visible one.
