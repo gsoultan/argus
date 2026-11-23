@@ -116,6 +116,9 @@ type Agent struct {
 	// Firewall is the server's whole firewall, as its agent last read it
 	// (migration 113).
 	Firewall *storm.JSON
+	// FirewallBeat is whether the agent can change the firewall and how
+	// its last change went (migration 114).
+	FirewallBeat *storm.JSON
 }
 
 func (m *Agent) Schema(t *storm.Table) {
@@ -1460,6 +1463,12 @@ func All() []any {
 		&HostKeyPin{},
 		&DiskGrowRun{},
 		&DiskGrowRule{},
+		&FirewallServer{},
+		&FirewallPolicy{},
+		&FirewallPolicyVersion{},
+		&FirewallPolicyTarget{},
+		&FirewallRollout{},
+		&FirewallChange{},
 		&LogCleanupRun{},
 		&LogCleanupRule{},
 		&PackageRun{},
@@ -3110,4 +3119,191 @@ func (m *WgStaffDevice) Schema(t *storm.Table) {
 	t.CheckNamed("wg_staff_devices_name_check", "(length(name) >= 1) AND (length(name) <= 60)")
 	t.CheckNamed("wg_staff_devices_public_key_check", "length(public_key) = 44")
 	t.CheckNamed("wg_staff_devices_address_check", "length(address) <= 15")
+}
+
+// FirewallServer is table firewall_servers: what Argus keeps on a server's
+// firewall, as last applied (migration 114).
+type FirewallServer struct {
+	Asset      Asset
+	OwnLines   storm.JSON
+	Policies   storm.JSON
+	DefaultOut string
+	Managers   []string
+	SyncedAt   *time.Time
+	UpdatedAt  time.Time
+}
+
+func (m *FirewallServer) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Asset)
+	t.Col(&m.Asset).ConstraintName("firewall_servers_asset_id_fkey")
+	t.Col(&m.Asset).OnDelete(storm.Cascade)
+	t.Col(&m.Asset).NoIndex()
+	t.Col(&m.OwnLines).Default("'[]'::jsonb")
+	t.Col(&m.Policies).Default("'{}'::jsonb")
+	t.Col(&m.DefaultOut).Default("''::text")
+	t.Col(&m.Managers).Default("'{}'::text[]")
+	t.Col(&m.UpdatedAt).Default("now()")
+	t.CheckNamed("firewall_servers_default_out_check", "default_out = ANY (ARRAY[''::text, 'allow'::text, 'deny'::text])")
+}
+
+// FirewallPolicy is table firewall_policies: a named, versioned set of
+// firewall lines put on servers by name or tag (migration 114).
+type FirewallPolicy struct {
+	ID          [16]byte
+	Name        string
+	Description string
+	Version     int32
+	Lines       storm.JSON
+	DefaultOut  string
+	Starter     bool
+	CreatedBy   string
+	CreatedAt   time.Time
+	UpdatedBy   string
+	UpdatedAt   time.Time
+}
+
+func (m *FirewallPolicy) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Description).Default("''::text")
+	t.Col(&m.Version).Default("1")
+	t.Col(&m.Lines).Default("'[]'::jsonb")
+	t.Col(&m.DefaultOut).Default("'allow'::text")
+	t.Col(&m.Starter).Default("false")
+	t.Col(&m.CreatedAt).Default("now()")
+	t.Col(&m.UpdatedAt).Default("now()")
+	t.CheckNamed("firewall_policies_name_check", "(char_length(name) >= 1) AND (char_length(name) <= 80)")
+	t.CheckNamed("firewall_policies_default_out_check", "default_out = ANY (ARRAY['allow'::text, 'deny'::text])")
+	t.Index(storm.Lower(&m.Name)).Unique().Named("firewall_policies_name")
+}
+
+// FirewallPolicyVersion is table firewall_policy_versions: every version
+// of a policy, frozen (migration 114).
+type FirewallPolicyVersion struct {
+	Policy     FirewallPolicy
+	Version    int32
+	Lines      storm.JSON
+	DefaultOut string
+	Note       string
+	CreatedBy  string
+	CreatedAt  time.Time
+}
+
+func (m *FirewallPolicyVersion) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Policy, &m.Version)
+	t.Col(&m.Policy).ConstraintName("firewall_policy_versions_policy_id_fkey")
+	t.Col(&m.Policy).OnDelete(storm.Cascade)
+	t.Col(&m.Policy).NoIndex()
+	t.Col(&m.Note).Default("''::text")
+	t.Col(&m.CreatedAt).Default("now()")
+	t.CheckNamed("firewall_policy_versions_default_out_check", "default_out = ANY (ARRAY['allow'::text, 'deny'::text])")
+}
+
+// FirewallPolicyTarget is table firewall_policy_targets: a server, or
+// every server with a tag, a policy is on (migration 114).
+type FirewallPolicyTarget struct {
+	ID        [16]byte
+	Policy    FirewallPolicy
+	Asset     *Asset
+	Tag       *string
+	CreatedBy string
+	CreatedAt time.Time
+}
+
+func (m *FirewallPolicyTarget) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Policy).ConstraintName("firewall_policy_targets_policy_id_fkey")
+	t.Col(&m.Policy).OnDelete(storm.Cascade)
+	t.Col(&m.Policy).NoIndex()
+	t.Col(&m.Asset).ConstraintName("firewall_policy_targets_asset_id_fkey")
+	t.Col(&m.Asset).OnDelete(storm.Cascade)
+	t.Col(&m.Asset).NoIndex()
+	t.Col(&m.CreatedAt).Default("now()")
+	t.CheckNamed("firewall_policy_targets_check", "(asset_id IS NULL) <> (tag IS NULL)")
+	t.Index(&m.Policy, &m.Asset).Unique().Where("asset_id IS NOT NULL").Named("firewall_policy_targets_asset")
+	t.Index(&m.Policy, storm.Lower(&m.Tag)).Unique().Where("tag IS NOT NULL").Named("firewall_policy_targets_tag")
+}
+
+// FirewallRollout is table firewall_rollouts: a policy's new version, or
+// where it is, going out to its servers (migration 114).
+type FirewallRollout struct {
+	ID          [16]byte
+	Policy      *FirewallPolicy
+	PolicyName  string
+	Version     int32
+	State       string
+	Summary     string
+	RequestedBy string
+	RequestedAt time.Time
+	DecidedBy   *string
+	DecidedAt   *time.Time
+	EndedAt     *time.Time
+	Message     string
+}
+
+func (m *FirewallRollout) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Policy).ConstraintName("firewall_rollouts_policy_id_fkey")
+	t.Col(&m.Policy).OnDelete(storm.SetNull)
+	t.Col(&m.Policy).NoIndex()
+	t.Col(&m.Summary).Default("''::text")
+	t.Col(&m.RequestedAt).Default("now()")
+	t.Col(&m.Message).Default("''::text")
+	t.CheckNamed("firewall_rollouts_state_check", "state = ANY (ARRAY['awaiting_approval'::text, 'running'::text, 'done'::text, 'stopped'::text, 'denied'::text, 'cancelled'::text])")
+	t.Index(&m.Policy, storm.Desc(&m.RequestedAt)).Named("firewall_rollouts_policy")
+}
+
+// FirewallChange is table firewall_changes: one change to one server's
+// firewall (migration 114).
+type FirewallChange struct {
+	ID            [16]byte
+	Asset         Asset
+	Hostname      string
+	AssetHostname string
+	Kind          string
+	Summary       string
+	Reason        string
+	Delta         storm.JSON
+	Before        *storm.JSON
+	Spec          *storm.JSON
+	Preview       storm.JSON
+	State         string
+	Rollout       *FirewallRollout
+	Wave          int32
+	RequestedBy   string
+	RequestedAt   time.Time
+	DecidedBy     *string
+	DecidedAt     *time.Time
+	KeptBy        *string
+	KeptAt        *time.Time
+	SentAt        *time.Time
+	EndedAt       *time.Time
+	UpdatedAt     time.Time
+	Message       string
+	Ran           storm.JSON
+}
+
+func (m *FirewallChange) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.Asset).ConstraintName("firewall_changes_asset_id_fkey")
+	t.Col(&m.Asset).OnDelete(storm.Cascade)
+	t.Col(&m.Asset).NoIndex()
+	t.Col(&m.Rollout).ConstraintName("firewall_changes_rollout_id_fkey")
+	t.Col(&m.Rollout).OnDelete(storm.SetNull)
+	t.Col(&m.Rollout).NoIndex()
+	t.Col(&m.Reason).Default("''::text")
+	t.Col(&m.Preview).Default("'[]'::jsonb")
+	t.Col(&m.Wave).Default("0")
+	t.Col(&m.RequestedAt).Default("now()")
+	t.Col(&m.UpdatedAt).Default("now()")
+	t.Col(&m.Message).Default("''::text")
+	t.Col(&m.Ran).Default("'[]'::jsonb")
+	t.CheckNamed("firewall_changes_kind_check", "kind = ANY (ARRAY['lines'::text, 'take_over'::text, 'turn_on'::text, 'put_back'::text, 'policy'::text, 'sync'::text])")
+	t.CheckNamed("firewall_changes_state_check", "state = ANY (ARRAY['awaiting_approval'::text, 'queued'::text, 'sent'::text, 'trial'::text, 'waiting_keep'::text, 'applied'::text, 'failed'::text, 'rolled_back'::text, 'denied'::text, 'cancelled'::text, 'interrupted'::text, 'stopped'::text])")
+	t.Index(&m.Asset, storm.Desc(&m.RequestedAt)).Named("firewall_changes_asset")
+	t.Index(storm.Lower(&m.Hostname)).Where("state = ANY (ARRAY['queued'::text, 'sent'::text, 'trial'::text, 'waiting_keep'::text])").Named("firewall_changes_host")
+	t.Index(&m.Rollout, &m.Wave).Where("rollout_id IS NOT NULL").Named("firewall_changes_rollout")
 }

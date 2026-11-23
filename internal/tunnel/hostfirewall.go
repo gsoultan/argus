@@ -63,8 +63,8 @@ type HostFirewall struct {
 	// Docker says Docker's own chains are present: ports Docker publishes
 	// pass around ufw and firewalld.
 	Docker bool `json:"docker,omitempty"`
-	// Manageable says Argus can change this firewall (ufw and firewalld
-	// today); the others are read only.
+	// Manageable says Argus can change this firewall (ufw, firewalld,
+	// nftables and Windows Firewall); iptables written by hand is read only.
 	Manageable bool      `json:"manageable"`
 	ReadAt     time.Time `json:"readAt"`
 	// Note is a plain sentence on anything the reader could not do.
@@ -313,4 +313,13 @@ func isPublic(s string) bool {
 
 func isCGNAT(a netip.Addr) bool {
 	return netip.MustParsePrefix("100.64.0.0/10").Contains(a)
+}
+
+// ManageableFirewall says Argus can change a firewall of this kind.
+func ManageableFirewall(kind string) bool {
+	switch kind {
+	case FirewallUFW, FirewallFirewalld, FirewallNftables, FirewallWindows:
+		return true
+	}
+	return false
 }

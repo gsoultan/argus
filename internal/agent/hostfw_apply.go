@@ -64,10 +64,10 @@ type fwSnapshot struct {
 
 // FirewallPlan is what the daemon hands the helper.
 type FirewallPlan struct {
-	Run      tunnel.FirewallRun         `json:"run"`
-	Spec     tunnel.FirewallChangeSpec  `json:"spec"`
-	Always   []tunnel.FirewallLine      `json:"always,omitempty"`
-	StateDir string                     `json:"state_dir"`
+	Run      tunnel.FirewallRun        `json:"run"`
+	Spec     tunnel.FirewallChangeSpec `json:"spec"`
+	Always   []tunnel.FirewallLine     `json:"always,omitempty"`
+	StateDir string                    `json:"state_dir"`
 }
 
 const (

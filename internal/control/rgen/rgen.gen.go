@@ -42,6 +42,12 @@ import (
 	"github.com/gsoultan/argus/internal/control/rgen/databaserestore"
 	"github.com/gsoultan/argus/internal/control/rgen/databasestatement"
 	"github.com/gsoultan/argus/internal/control/rgen/databasestatementitem"
+	"github.com/gsoultan/argus/internal/control/rgen/firewallchange"
+	"github.com/gsoultan/argus/internal/control/rgen/firewallpolicy"
+	"github.com/gsoultan/argus/internal/control/rgen/firewallpolicytarget"
+	"github.com/gsoultan/argus/internal/control/rgen/firewallpolicyversion"
+	"github.com/gsoultan/argus/internal/control/rgen/firewallrollout"
+	"github.com/gsoultan/argus/internal/control/rgen/firewallserver"
 	"github.com/gsoultan/argus/internal/control/rgen/ipseclink"
 	"github.com/gsoultan/argus/internal/control/rgen/recoverycode"
 	"github.com/gsoultan/argus/internal/control/rgen/savedquery"
@@ -94,67 +100,73 @@ var FlushOrder = map[string]int{
 	"direct_login_requests":     20,
 	"disk_grow_rules":           21,
 	"disk_grow_runs":            22,
-	"gateway_policy":            23,
-	"host_key_pins":             24,
-	"ipsec_links":               25,
-	"log_cleanup_rules":         26,
-	"log_cleanup_runs":          27,
-	"package_runs":              28,
-	"package_update_rules":      29,
-	"redeemed_tickets":          30,
-	"revoked_sessions":          31,
-	"saved_queries":             32,
-	"scale_groups":              33,
-	"schema_migrations":         34,
-	"server_logins":             35,
-	"sessions":                  36,
-	"sign_in_devices":           37,
-	"software_files":            38,
-	"software_previews":         39,
-	"software_scripts":          40,
-	"teams":                     41,
-	"telegram_bots":             42,
-	"telegram_routes":           43,
-	"ui_preferences":            44,
-	"usage_history":             45,
-	"usage_hourly":              46,
-	"users":                     47,
-	"website_alert_settings":    48,
-	"website_checks":            49,
-	"website_outages":           50,
-	"website_rounds":            51,
-	"wg_networks":               52,
-	"wg_staff_devices":          53,
-	"wg_staff_grants":           54,
-	"wg_staff_modes":            55,
-	"access_requests":           56,
-	"agent_enrollment_tokens":   57,
-	"asset_assignments":         58,
-	"asset_team_assignments":    59,
-	"check_outages":             60,
-	"check_rounds":              61,
-	"check_viewers":             62,
-	"cloud_access":              63,
-	"cloud_schedule_runs":       64,
-	"console_alert_reads":       65,
-	"database_access_rules":     66,
-	"database_assignments":      67,
-	"database_backup_schedules": 68,
-	"database_backups":          69,
-	"database_changes":          70,
-	"database_read_endpoints":   71,
-	"database_replicas":         72,
-	"database_restores":         73,
-	"database_statements":       74,
-	"recovery_codes":            75,
-	"scale_group_activity":      76,
-	"scale_group_members":       77,
-	"software_script_versions":  78,
-	"team_members":              79,
-	"wg_members":                80,
-	"agent_credentials":         81,
-	"database_backup_tests":     82,
-	"database_statement_items":  83,
+	"firewall_policies":         23,
+	"firewall_policy_targets":   24,
+	"firewall_policy_versions":  25,
+	"firewall_rollouts":         26,
+	"firewall_servers":          27,
+	"gateway_policy":            28,
+	"host_key_pins":             29,
+	"ipsec_links":               30,
+	"log_cleanup_rules":         31,
+	"log_cleanup_runs":          32,
+	"package_runs":              33,
+	"package_update_rules":      34,
+	"redeemed_tickets":          35,
+	"revoked_sessions":          36,
+	"saved_queries":             37,
+	"scale_groups":              38,
+	"schema_migrations":         39,
+	"server_logins":             40,
+	"sessions":                  41,
+	"sign_in_devices":           42,
+	"software_files":            43,
+	"software_previews":         44,
+	"software_scripts":          45,
+	"teams":                     46,
+	"telegram_bots":             47,
+	"telegram_routes":           48,
+	"ui_preferences":            49,
+	"usage_history":             50,
+	"usage_hourly":              51,
+	"users":                     52,
+	"website_alert_settings":    53,
+	"website_checks":            54,
+	"website_outages":           55,
+	"website_rounds":            56,
+	"wg_networks":               57,
+	"wg_staff_devices":          58,
+	"wg_staff_grants":           59,
+	"wg_staff_modes":            60,
+	"access_requests":           61,
+	"agent_enrollment_tokens":   62,
+	"asset_assignments":         63,
+	"asset_team_assignments":    64,
+	"check_outages":             65,
+	"check_rounds":              66,
+	"check_viewers":             67,
+	"cloud_access":              68,
+	"cloud_schedule_runs":       69,
+	"console_alert_reads":       70,
+	"database_access_rules":     71,
+	"database_assignments":      72,
+	"database_backup_schedules": 73,
+	"database_backups":          74,
+	"database_changes":          75,
+	"database_read_endpoints":   76,
+	"database_replicas":         77,
+	"database_restores":         78,
+	"database_statements":       79,
+	"firewall_changes":          80,
+	"recovery_codes":            81,
+	"scale_group_activity":      82,
+	"scale_group_members":       83,
+	"software_script_versions":  84,
+	"team_members":              85,
+	"wg_members":                86,
+	"agent_credentials":         87,
+	"database_backup_tests":     88,
+	"database_statement_items":  89,
 }
 
 // NewUnit stages writes across this context and flushes them in foreign-key
@@ -5535,6 +5547,849 @@ func (p DatabaseWithAssetQuery) All(ctx context.Context, ex runtime.Executor) ([
 			// A foreign key pointing at a row that is not there. The database
 			// forbids it, so reaching this means the constraint was dropped.
 			return nil, fmt.Errorf("storm: %s references a missing %s row", "databases", "assets")
+		}
+		out[i].Asset = targets[j]
+	}
+	return out, nil
+}
+
+// FirewallChangeWithAssetRow is firewall_changes with its Asset loaded.
+type FirewallChangeWithAssetRow struct {
+	firewallchange.Row
+	Asset asset.Row
+}
+
+type FirewallChangeWithAssetQuery struct {
+	q firewallchange.Query
+}
+
+// FirewallChangeWithAsset starts the plan.
+func FirewallChangeWithAsset() FirewallChangeWithAssetQuery {
+	return FirewallChangeWithAssetQuery{q: firewallchange.New()}
+}
+
+func (p FirewallChangeWithAssetQuery) Where(ps ...firewallchange.Pred) FirewallChangeWithAssetQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p FirewallChangeWithAssetQuery) WhereIf(cond bool, pr firewallchange.Pred) FirewallChangeWithAssetQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p FirewallChangeWithAssetQuery) Any(ps ...firewallchange.Pred) FirewallChangeWithAssetQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p FirewallChangeWithAssetQuery) Not(pr firewallchange.Pred) FirewallChangeWithAssetQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p FirewallChangeWithAssetQuery) NotAny(ps ...firewallchange.Pred) FirewallChangeWithAssetQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p FirewallChangeWithAssetQuery) Order(ts ...firewallchange.Sort) FirewallChangeWithAssetQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p FirewallChangeWithAssetQuery) Limit(n int64) FirewallChangeWithAssetQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p FirewallChangeWithAssetQuery) Offset(n int64) FirewallChangeWithAssetQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p FirewallChangeWithAssetQuery) After(r FirewallChangeWithAssetRow) FirewallChangeWithAssetQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p FirewallChangeWithAssetQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p FirewallChangeWithAssetQuery) All(ctx context.Context, ex runtime.Executor) ([]FirewallChangeWithAssetRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]FirewallChangeWithAssetRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = FirewallChangeWithAssetRow{Row: r}
+		key := r.AssetID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := asset.New().Unordered().
+		Where(asset.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.AssetID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "firewall_changes", "assets")
+		}
+		out[i].Asset = targets[j]
+	}
+	return out, nil
+}
+
+// FirewallChangeWithRolloutRow is firewall_changes with its Rollout loaded.
+type FirewallChangeWithRolloutRow struct {
+	firewallchange.Row
+	// A pointer because the link is optional. nil means the row has no
+	// Rollout, which is different from having one that failed to load.
+	Rollout *firewallrollout.Row
+}
+
+type FirewallChangeWithRolloutQuery struct {
+	q firewallchange.Query
+}
+
+// FirewallChangeWithRollout starts the plan.
+func FirewallChangeWithRollout() FirewallChangeWithRolloutQuery {
+	return FirewallChangeWithRolloutQuery{q: firewallchange.New()}
+}
+
+func (p FirewallChangeWithRolloutQuery) Where(ps ...firewallchange.Pred) FirewallChangeWithRolloutQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p FirewallChangeWithRolloutQuery) WhereIf(cond bool, pr firewallchange.Pred) FirewallChangeWithRolloutQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p FirewallChangeWithRolloutQuery) Any(ps ...firewallchange.Pred) FirewallChangeWithRolloutQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p FirewallChangeWithRolloutQuery) Not(pr firewallchange.Pred) FirewallChangeWithRolloutQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p FirewallChangeWithRolloutQuery) NotAny(ps ...firewallchange.Pred) FirewallChangeWithRolloutQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p FirewallChangeWithRolloutQuery) Order(ts ...firewallchange.Sort) FirewallChangeWithRolloutQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p FirewallChangeWithRolloutQuery) Limit(n int64) FirewallChangeWithRolloutQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p FirewallChangeWithRolloutQuery) Offset(n int64) FirewallChangeWithRolloutQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p FirewallChangeWithRolloutQuery) After(r FirewallChangeWithRolloutRow) FirewallChangeWithRolloutQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p FirewallChangeWithRolloutQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p FirewallChangeWithRolloutQuery) All(ctx context.Context, ex runtime.Executor) ([]FirewallChangeWithRolloutRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]FirewallChangeWithRolloutRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = FirewallChangeWithRolloutRow{Row: r}
+		key, ok := r.RolloutID.Get()
+		if !ok {
+			continue
+		}
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := firewallrollout.New().Unordered().
+		Where(firewallrollout.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key, ok := out[i].Row.RolloutID.Get()
+		if !ok {
+			continue
+		}
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "firewall_changes", "firewall_rollouts")
+		}
+		out[i].Rollout = &targets[j]
+	}
+	return out, nil
+}
+
+// FirewallPolicyTargetWithAssetRow is firewall_policy_targets with its Asset loaded.
+type FirewallPolicyTargetWithAssetRow struct {
+	firewallpolicytarget.Row
+	// A pointer because the link is optional. nil means the row has no
+	// Asset, which is different from having one that failed to load.
+	Asset *asset.Row
+}
+
+type FirewallPolicyTargetWithAssetQuery struct {
+	q firewallpolicytarget.Query
+}
+
+// FirewallPolicyTargetWithAsset starts the plan.
+func FirewallPolicyTargetWithAsset() FirewallPolicyTargetWithAssetQuery {
+	return FirewallPolicyTargetWithAssetQuery{q: firewallpolicytarget.New()}
+}
+
+func (p FirewallPolicyTargetWithAssetQuery) Where(ps ...firewallpolicytarget.Pred) FirewallPolicyTargetWithAssetQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p FirewallPolicyTargetWithAssetQuery) WhereIf(cond bool, pr firewallpolicytarget.Pred) FirewallPolicyTargetWithAssetQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p FirewallPolicyTargetWithAssetQuery) Any(ps ...firewallpolicytarget.Pred) FirewallPolicyTargetWithAssetQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p FirewallPolicyTargetWithAssetQuery) Not(pr firewallpolicytarget.Pred) FirewallPolicyTargetWithAssetQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p FirewallPolicyTargetWithAssetQuery) NotAny(ps ...firewallpolicytarget.Pred) FirewallPolicyTargetWithAssetQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p FirewallPolicyTargetWithAssetQuery) Order(ts ...firewallpolicytarget.Sort) FirewallPolicyTargetWithAssetQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p FirewallPolicyTargetWithAssetQuery) Limit(n int64) FirewallPolicyTargetWithAssetQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p FirewallPolicyTargetWithAssetQuery) Offset(n int64) FirewallPolicyTargetWithAssetQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p FirewallPolicyTargetWithAssetQuery) After(r FirewallPolicyTargetWithAssetRow) FirewallPolicyTargetWithAssetQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p FirewallPolicyTargetWithAssetQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p FirewallPolicyTargetWithAssetQuery) All(ctx context.Context, ex runtime.Executor) ([]FirewallPolicyTargetWithAssetRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]FirewallPolicyTargetWithAssetRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = FirewallPolicyTargetWithAssetRow{Row: r}
+		key, ok := r.AssetID.Get()
+		if !ok {
+			continue
+		}
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := asset.New().Unordered().
+		Where(asset.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key, ok := out[i].Row.AssetID.Get()
+		if !ok {
+			continue
+		}
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "firewall_policy_targets", "assets")
+		}
+		out[i].Asset = &targets[j]
+	}
+	return out, nil
+}
+
+// FirewallPolicyTargetWithPolicyRow is firewall_policy_targets with its Policy loaded.
+type FirewallPolicyTargetWithPolicyRow struct {
+	firewallpolicytarget.Row
+	Policy firewallpolicy.Row
+}
+
+type FirewallPolicyTargetWithPolicyQuery struct {
+	q firewallpolicytarget.Query
+}
+
+// FirewallPolicyTargetWithPolicy starts the plan.
+func FirewallPolicyTargetWithPolicy() FirewallPolicyTargetWithPolicyQuery {
+	return FirewallPolicyTargetWithPolicyQuery{q: firewallpolicytarget.New()}
+}
+
+func (p FirewallPolicyTargetWithPolicyQuery) Where(ps ...firewallpolicytarget.Pred) FirewallPolicyTargetWithPolicyQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p FirewallPolicyTargetWithPolicyQuery) WhereIf(cond bool, pr firewallpolicytarget.Pred) FirewallPolicyTargetWithPolicyQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p FirewallPolicyTargetWithPolicyQuery) Any(ps ...firewallpolicytarget.Pred) FirewallPolicyTargetWithPolicyQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p FirewallPolicyTargetWithPolicyQuery) Not(pr firewallpolicytarget.Pred) FirewallPolicyTargetWithPolicyQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p FirewallPolicyTargetWithPolicyQuery) NotAny(ps ...firewallpolicytarget.Pred) FirewallPolicyTargetWithPolicyQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p FirewallPolicyTargetWithPolicyQuery) Order(ts ...firewallpolicytarget.Sort) FirewallPolicyTargetWithPolicyQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p FirewallPolicyTargetWithPolicyQuery) Limit(n int64) FirewallPolicyTargetWithPolicyQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p FirewallPolicyTargetWithPolicyQuery) Offset(n int64) FirewallPolicyTargetWithPolicyQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p FirewallPolicyTargetWithPolicyQuery) After(r FirewallPolicyTargetWithPolicyRow) FirewallPolicyTargetWithPolicyQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p FirewallPolicyTargetWithPolicyQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p FirewallPolicyTargetWithPolicyQuery) All(ctx context.Context, ex runtime.Executor) ([]FirewallPolicyTargetWithPolicyRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]FirewallPolicyTargetWithPolicyRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = FirewallPolicyTargetWithPolicyRow{Row: r}
+		key := r.PolicyID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := firewallpolicy.New().Unordered().
+		Where(firewallpolicy.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.PolicyID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "firewall_policy_targets", "firewall_policies")
+		}
+		out[i].Policy = targets[j]
+	}
+	return out, nil
+}
+
+// FirewallPolicyVersionWithPolicyRow is firewall_policy_versions with its Policy loaded.
+type FirewallPolicyVersionWithPolicyRow struct {
+	firewallpolicyversion.Row
+	Policy firewallpolicy.Row
+}
+
+type FirewallPolicyVersionWithPolicyQuery struct {
+	q firewallpolicyversion.Query
+}
+
+// FirewallPolicyVersionWithPolicy starts the plan.
+func FirewallPolicyVersionWithPolicy() FirewallPolicyVersionWithPolicyQuery {
+	return FirewallPolicyVersionWithPolicyQuery{q: firewallpolicyversion.New()}
+}
+
+func (p FirewallPolicyVersionWithPolicyQuery) Where(ps ...firewallpolicyversion.Pred) FirewallPolicyVersionWithPolicyQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p FirewallPolicyVersionWithPolicyQuery) WhereIf(cond bool, pr firewallpolicyversion.Pred) FirewallPolicyVersionWithPolicyQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p FirewallPolicyVersionWithPolicyQuery) Any(ps ...firewallpolicyversion.Pred) FirewallPolicyVersionWithPolicyQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p FirewallPolicyVersionWithPolicyQuery) Not(pr firewallpolicyversion.Pred) FirewallPolicyVersionWithPolicyQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p FirewallPolicyVersionWithPolicyQuery) NotAny(ps ...firewallpolicyversion.Pred) FirewallPolicyVersionWithPolicyQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p FirewallPolicyVersionWithPolicyQuery) Order(ts ...firewallpolicyversion.Sort) FirewallPolicyVersionWithPolicyQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p FirewallPolicyVersionWithPolicyQuery) Limit(n int64) FirewallPolicyVersionWithPolicyQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p FirewallPolicyVersionWithPolicyQuery) Offset(n int64) FirewallPolicyVersionWithPolicyQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p FirewallPolicyVersionWithPolicyQuery) After(r FirewallPolicyVersionWithPolicyRow) FirewallPolicyVersionWithPolicyQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p FirewallPolicyVersionWithPolicyQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p FirewallPolicyVersionWithPolicyQuery) All(ctx context.Context, ex runtime.Executor) ([]FirewallPolicyVersionWithPolicyRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]FirewallPolicyVersionWithPolicyRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = FirewallPolicyVersionWithPolicyRow{Row: r}
+		key := r.PolicyID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := firewallpolicy.New().Unordered().
+		Where(firewallpolicy.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.PolicyID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "firewall_policy_versions", "firewall_policies")
+		}
+		out[i].Policy = targets[j]
+	}
+	return out, nil
+}
+
+// FirewallRolloutWithPolicyRow is firewall_rollouts with its Policy loaded.
+type FirewallRolloutWithPolicyRow struct {
+	firewallrollout.Row
+	// A pointer because the link is optional. nil means the row has no
+	// Policy, which is different from having one that failed to load.
+	Policy *firewallpolicy.Row
+}
+
+type FirewallRolloutWithPolicyQuery struct {
+	q firewallrollout.Query
+}
+
+// FirewallRolloutWithPolicy starts the plan.
+func FirewallRolloutWithPolicy() FirewallRolloutWithPolicyQuery {
+	return FirewallRolloutWithPolicyQuery{q: firewallrollout.New()}
+}
+
+func (p FirewallRolloutWithPolicyQuery) Where(ps ...firewallrollout.Pred) FirewallRolloutWithPolicyQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p FirewallRolloutWithPolicyQuery) WhereIf(cond bool, pr firewallrollout.Pred) FirewallRolloutWithPolicyQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p FirewallRolloutWithPolicyQuery) Any(ps ...firewallrollout.Pred) FirewallRolloutWithPolicyQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p FirewallRolloutWithPolicyQuery) Not(pr firewallrollout.Pred) FirewallRolloutWithPolicyQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p FirewallRolloutWithPolicyQuery) NotAny(ps ...firewallrollout.Pred) FirewallRolloutWithPolicyQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p FirewallRolloutWithPolicyQuery) Order(ts ...firewallrollout.Sort) FirewallRolloutWithPolicyQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p FirewallRolloutWithPolicyQuery) Limit(n int64) FirewallRolloutWithPolicyQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p FirewallRolloutWithPolicyQuery) Offset(n int64) FirewallRolloutWithPolicyQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p FirewallRolloutWithPolicyQuery) After(r FirewallRolloutWithPolicyRow) FirewallRolloutWithPolicyQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p FirewallRolloutWithPolicyQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p FirewallRolloutWithPolicyQuery) All(ctx context.Context, ex runtime.Executor) ([]FirewallRolloutWithPolicyRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]FirewallRolloutWithPolicyRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = FirewallRolloutWithPolicyRow{Row: r}
+		key, ok := r.PolicyID.Get()
+		if !ok {
+			continue
+		}
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := firewallpolicy.New().Unordered().
+		Where(firewallpolicy.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key, ok := out[i].Row.PolicyID.Get()
+		if !ok {
+			continue
+		}
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "firewall_rollouts", "firewall_policies")
+		}
+		out[i].Policy = &targets[j]
+	}
+	return out, nil
+}
+
+// FirewallServerWithAssetRow is firewall_servers with its Asset loaded.
+type FirewallServerWithAssetRow struct {
+	firewallserver.Row
+	Asset asset.Row
+}
+
+type FirewallServerWithAssetQuery struct {
+	q firewallserver.Query
+}
+
+// FirewallServerWithAsset starts the plan.
+func FirewallServerWithAsset() FirewallServerWithAssetQuery {
+	return FirewallServerWithAssetQuery{q: firewallserver.New()}
+}
+
+func (p FirewallServerWithAssetQuery) Where(ps ...firewallserver.Pred) FirewallServerWithAssetQuery {
+	p.q = p.q.Where(ps...)
+	return p
+}
+
+func (p FirewallServerWithAssetQuery) WhereIf(cond bool, pr firewallserver.Pred) FirewallServerWithAssetQuery {
+	p.q = p.q.WhereIf(cond, pr)
+	return p
+}
+
+func (p FirewallServerWithAssetQuery) Any(ps ...firewallserver.Pred) FirewallServerWithAssetQuery {
+	p.q = p.q.Any(ps...)
+	return p
+}
+
+func (p FirewallServerWithAssetQuery) Not(pr firewallserver.Pred) FirewallServerWithAssetQuery {
+	p.q = p.q.Not(pr)
+	return p
+}
+
+func (p FirewallServerWithAssetQuery) NotAny(ps ...firewallserver.Pred) FirewallServerWithAssetQuery {
+	p.q = p.q.NotAny(ps...)
+	return p
+}
+
+func (p FirewallServerWithAssetQuery) Order(ts ...firewallserver.Sort) FirewallServerWithAssetQuery {
+	p.q = p.q.Order(ts...)
+	return p
+}
+
+func (p FirewallServerWithAssetQuery) Limit(n int64) FirewallServerWithAssetQuery {
+	p.q = p.q.Limit(n)
+	return p
+}
+
+func (p FirewallServerWithAssetQuery) Offset(n int64) FirewallServerWithAssetQuery {
+	p.q = p.q.Offset(n)
+	return p
+}
+
+// After pages the PARENTS past one already seen — keyset pagination over
+// the plan. It takes the plan's row type, so the cursor is a row you
+// actually received rather than one you had to unwrap.
+func (p FirewallServerWithAssetQuery) After(r FirewallServerWithAssetRow) FirewallServerWithAssetQuery {
+	p.q = p.q.After(r.Row)
+	return p
+}
+
+// Err reports a parent query that outgrew its buffers or was given a
+// mixed ordering to page. Terminals return it too; this is for checking
+// a composed plan before running it.
+func (p FirewallServerWithAssetQuery) Err() error { return p.q.Err() }
+
+// All runs the plan in exactly TWO round trips. Distinct parent keys are
+// de-duplicated before the second, so a thousand rows pointing at three
+// orgs fetch three orgs.
+func (p FirewallServerWithAssetQuery) All(ctx context.Context, ex runtime.Executor) ([]FirewallServerWithAssetRow, error) {
+	parents, err := p.q.All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return nil, nil
+	}
+	out := make([]FirewallServerWithAssetRow, len(parents))
+	seen := make(map[[16]byte]bool, len(parents))
+	ids := make([][16]byte, 0, len(parents))
+	for i, r := range parents {
+		out[i] = FirewallServerWithAssetRow{Row: r}
+		key := r.AssetID
+		if !seen[key] {
+			seen[key] = true
+			ids = append(ids, key)
+		}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	targets, err := asset.New().Unordered().
+		Where(asset.ID.In(ids...)).
+		Limit(int64(len(ids))).
+		All(ctx, ex, nil)
+	if err != nil {
+		return nil, err
+	}
+	by := make(map[[16]byte]int, len(targets))
+	for i := range targets {
+		by[targets[i].ID] = i
+	}
+	for i := range out {
+		key := out[i].Row.AssetID
+		j, ok := by[key]
+		if !ok {
+			// A foreign key pointing at a row that is not there. The database
+			// forbids it, so reaching this means the constraint was dropped.
+			return nil, fmt.Errorf("storm: %s references a missing %s row", "firewall_servers", "assets")
 		}
 		out[i].Asset = targets[j]
 	}

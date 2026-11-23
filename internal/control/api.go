@@ -51,6 +51,10 @@ type API struct {
 	// should even though the connection it sees is plain.
 	BehindTLSProxy bool
 
+	// FirewallProtect is what stays open on the control plane's own server
+	// whatever its firewall's lines say (firewall_beat.go).
+	FirewallProtect []tunnel.FirewallLine
+
 	// startedAt backs the uptime this process reports about itself.
 	startedAt time.Time
 
@@ -555,6 +559,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/assets/{id}/applications", a.getApplications)
 	mux.HandleFunc("GET /api/v1/assets/{id}/firewall", a.getAssetFirewall)
 	mux.HandleFunc("GET /api/v1/firewalls", a.getFirewalls)
+	a.registerFirewallRoutes(mux)
 	mux.HandleFunc("GET /api/v1/networks", a.getNetworks)
 	mux.HandleFunc("GET /api/v1/networks/cloudflare", a.getCloudflareAccounts)
 	mux.HandleFunc("POST /api/v1/networks/cloudflare", a.postCloudflareAccount)
@@ -1116,6 +1121,10 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// Wgnet is this server's keys for its WireGuard networks and how
 		// its last change went. Absent from an agent older than them.
 		Wgnet *WGNetBeat `json:"wgnet"`
+		// Firewall is whether the agent can change the server's firewall
+		// and how its last change went. Absent from an agent older than
+		// firewall changes.
+		Firewall *tunnel.FirewallBeat `json:"firewall"`
 		// RecoveryKey is the fingerprint of the fleet recovery key the
 		// agent holds, "" for none. Absent from an agent older than it.
 		RecoveryKey *string `json:"recovery_key"`
@@ -1245,6 +1254,10 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// WireGuard networks, likewise.
 		if o := a.heartbeatWGNet(r.Context(), in.Hostname, in.Wgnet); o != nil {
 			reply["wgnet"] = o
+		}
+		// The server's own firewall, likewise.
+		if o := a.heartbeatFirewall(r.Context(), in.Hostname, in.Firewall); o != nil {
+			reply["firewall"] = o
 		}
 	}
 	if errors.Is(err, ErrAgentUnmatched) {

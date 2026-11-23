@@ -106,7 +106,7 @@ func readLinuxFirewall(ctx context.Context, run runCmd, has func(string) bool, s
 			break
 		}
 	}
-	fw.Manageable = fw.Kind == tunnel.FirewallUFW || fw.Kind == tunnel.FirewallFirewalld
+	fw.Manageable = tunnel.ManageableFirewall(fw.Kind)
 	return fw
 }
 
@@ -121,7 +121,7 @@ func finish(fw, r tunnel.HostFirewall) tunnel.HostFirewall {
 	if r.Note != "" {
 		fw.Note = r.Note
 	}
-	fw.Manageable = fw.Kind == tunnel.FirewallUFW || fw.Kind == tunnel.FirewallFirewalld
+	fw.Manageable = tunnel.ManageableFirewall(fw.Kind)
 	return fw
 }
 
@@ -937,7 +937,7 @@ const winGroup = "Argus"
 
 func parseWinFirewall(b []byte) (tunnel.HostFirewall, error) {
 	fw := tunnel.HostFirewall{Kind: tunnel.FirewallWindows, Installed: []string{tunnel.FirewallWindows},
-		Rules: []tunnel.FirewallRule{}, ReadAt: time.Now().UTC()}
+		Rules: []tunnel.FirewallRule{}, ReadAt: time.Now().UTC(), Manageable: true}
 	var doc struct {
 		Profiles []struct {
 			Name, Enabled, In, Out string

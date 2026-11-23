@@ -43,6 +43,8 @@ type ServerFirewall struct {
 	ListeningRead bool `json:"listeningRead"`
 	// Names are servers in Argus by an address a rule names.
 	Names map[string]string `json:"names"`
+	// Manage is what changing the firewall needs (firewall_routes.go).
+	Manage *FirewallManage `json:"manage,omitempty"`
 }
 
 // ServerFirewallRule is one rule and who made it.
@@ -343,13 +345,26 @@ func (a *API) getAssetFirewall(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	if !seesWholeFleet(sess.Role) {
-		writeErr(w, http.StatusForbidden, "seeing a server's firewall requires the admin, owner or auditor role")
-		return
-	}
-	out, err := a.store.FirewallFor(r.Context(), r.PathValue("id"))
+	asset, err := a.store.AssetByID(r.Context(), r.PathValue("id"))
 	if err != nil {
 		a.failAsset(w, "firewall", err)
+		return
+	}
+	if !seesWholeFleet(sess.Role) {
+		// An operator an admin made one of the server's firewall managers.
+		_, managers, _, err := a.store.fwServerFor(r.Context(), asset.ID)
+		if err != nil || sess.Role != "operator" || !fwCanChange(sess, managers) {
+			writeErr(w, http.StatusForbidden, "seeing a server's firewall requires the admin, owner or auditor role")
+			return
+		}
+	}
+	out, err := a.store.FirewallFor(r.Context(), asset.ID)
+	if err != nil {
+		a.failAsset(w, "firewall", err)
+		return
+	}
+	if out.Manage, err = a.fwManage(r.Context(), sess, asset); err != nil {
+		a.fail(w, "firewall", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
