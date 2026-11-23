@@ -1,5 +1,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { NetworksPage, parseNetworkTab, type NetworkTab } from '~/components/Networks'
+import { NetworksPage } from '~/components/Networks'
+import { parseNetworkTab, type NetworkTab } from '~/components/networkTabs'
 import { guard } from '~/lib/guard'
 
 /** Networks: VPN links and tunnels on the servers, as their agents see them. `tab` opens one kind. */
