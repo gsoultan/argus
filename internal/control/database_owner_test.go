@@ -144,3 +144,82 @@ func TestCreateDatabaseWithANewOwner(t *testing.T) {
 		t.Fatalf("an old agent read as %d %s", w.Code, w.Body)
 	}
 }
+
+// A RabbitMQ vhost with its app's user: the password goes to rabbitmqctl on
+// stdin only, the details name the AMQP port, and Activity has the user as
+// the Users tab's own broker.user.created for the new entry.
+func TestCreateVhostWithAppUser(t *testing.T) {
+	e := newTunnelEnv(t)
+	e.withTerminal(t)
+	ctx := context.Background()
+	admin, _ := newAccount(t, e.store, "admin")
+	e.api.UserTokens = map[string]string{"admin-token": admin}
+	host := unique("mq")
+	cred, _ := enrolled(t, e.store, e.h, host)
+	asset, err := e.store.CreateAsset(ctx, AssetInput{Hostname: host, Address: host, Port: 22, Protocol: "ssh", Principals: []string{"ubuntu"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = e.store.ArchiveAsset(context.Background(), asset.ID) })
+
+	const pw = "Tr0ub4dor-and-3-more"
+	var ran []string
+	stdin := map[string]string{}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	services := agent.DefaultTunnelServices()
+	create := agent.CreateDatabases(agent.CreateDBConfig{
+		Verifier: &tunnel.GrantVerifier{Host: host}, Log: log,
+		Ctl: func(_ context.Context, args []string, in string) ([]byte, error) {
+			ran = append(ran, strings.Join(args, " "))
+			stdin[args[0]] = in
+			switch args[0] {
+			case "list_vhosts":
+				return []byte(`[{"name":"/"}]`), nil
+			case "list_users":
+				return []byte(`[{"user":"guest","tags":["administrator"]}]`), nil
+			case "status":
+				return []byte(`{"listeners":[{"protocol":"amqp","port":5672},{"protocol":"http","port":15672}]}`), nil
+			}
+			return nil, nil
+		},
+	})
+	services[agent.CreateDBService] = create
+	services[agent.CreateDBOwnedService] = create
+	actx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go agent.RunTunnel(actx, agent.TunnelConfig{Dial: e.dial(cred, host), Services: services, Log: log})
+	e.waitTunnel(t, host, "")
+
+	w := do(t, e.h, http.MethodPost, "/api/v1/assets/"+asset.ID+"/databases/create", "admin-token",
+		`{"engine":"rabbitmq","port":15672,"name":"/payments","owner":{"kind":"new","name":"payments-app"},"password":"`+pw+`"}`)
+	if strings.Contains(w.Body.String(), pw) {
+		t.Fatalf("the answer carries the password: %s", w.Body)
+	}
+	var ans CreateAnswer
+	_ = json.Unmarshal(w.Body.Bytes(), &ans)
+	if ans.State != "ok" || ans.Database == nil || ans.Connection == nil || ans.Connection.Port != 5672 || ans.Connection.User != "payments-app" {
+		t.Fatalf("create: %d %s", w.Code, w.Body)
+	}
+	for _, r := range ran {
+		if strings.Contains(r, pw) {
+			t.Fatalf("the password is on a command line: %q", r)
+		}
+	}
+	if stdin["add_user"] != pw+"\n" || stdin["authenticate_user"] != pw+"\n" {
+		t.Fatalf("stdin: %q", stdin)
+	}
+	events, err := e.store.AuditEvents(ctx, 100, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var made bool
+	for _, ev := range events {
+		if strings.Contains(ev.Detail, pw) {
+			t.Fatalf("Activity carries the password: %+v", ev)
+		}
+		made = made || (ev.Action == "broker.user.created" && strings.HasPrefix(ev.Detail, brokerUserDetail("payments-app", ans.Database.ID)))
+	}
+	if !made {
+		t.Fatal("Activity is missing the app user")
+	}
+}

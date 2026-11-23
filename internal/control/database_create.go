@@ -112,6 +112,9 @@ func ownerConnection(asset Asset, c tunnel.GrantCreate, res tunnel.CreateResult)
 	if res.Pooled && c.PoolerPort > 0 {
 		oc.Port, oc.DirectPort, oc.Pooled = c.PoolerPort, c.Port, true
 	}
+	if res.AppPort > 0 {
+		oc.Port = res.AppPort
+	}
 	return oc
 }
 
@@ -271,10 +274,15 @@ func (a *API) postCreateDatabase(w http.ResponseWriter, r *http.Request, actor s
 	}
 	a.auditDB(ctx, "db.created", "notice", actor, asset.Hostname,
 		"Created "+what+": "+strings.Join(res.Statements, "; ")+".")
-	a.auditOwnerUser(ctx, actor, asset.Hostname, c, res)
+	if !tunnel.BrokerOwnerEngine(c.Engine) {
+		a.auditOwnerUser(ctx, actor, asset.Hostname, c, res)
+	}
 	ans.Connection = ownerConnection(asset, c, res)
 
 	if !addEntry {
+		if ans.CoveredBy != nil {
+			a.auditBrokerOwner(ctx, actor, asset.Hostname, c, res, ans.CoveredBy.ID)
+		}
 		ans.Steps = append(ans.Steps, tunnel.CreateStep{OK: true,
 			Text: "Covered by the entry " + ans.CoveredBy.Name + ", so nothing new is added to Argus"})
 		writeJSON(w, http.StatusOK, ans)
@@ -294,6 +302,7 @@ func (a *API) postCreateDatabase(w http.ResponseWriter, r *http.Request, actor s
 		} else {
 			a.log.Error("create: made on the server but not added to Argus", "name", c.Name, "error", err)
 		}
+		a.auditBrokerOwner(ctx, actor, asset.Hostname, c, res, "")
 		ans.State, ans.Error = "partial", "made on "+asset.Hostname+", but not added to Argus: "+msg+". Add it from Already on "+asset.Hostname+"."
 		ans.Steps = append(ans.Steps, tunnel.CreateStep{Text: "Add it to Argus", Error: msg})
 		writeJSON(w, http.StatusOK, ans)
@@ -302,6 +311,7 @@ func (a *API) postCreateDatabase(w http.ResponseWriter, r *http.Request, actor s
 	a.auditDB(ctx, "db.added", "notice", actor, db.Hostname,
 		"Added "+engineName(db.Engine)+" "+db.Name+" ("+db.Label+") on "+db.Hostname+" at "+db.Host+":"+itoa(db.Port)+".")
 	ans.Steps = append(ans.Steps, tunnel.CreateStep{Text: "Added it to Argus as " + db.Label, OK: true})
+	a.auditBrokerOwner(ctx, actor, asset.Hostname, c, res, db.ID)
 	a.applyRulesTo(ctx, db, actor)
 	ans.Database = &db
 	writeJSON(w, http.StatusOK, ans)
@@ -469,6 +479,22 @@ func (a *API) auditOwnerUser(ctx context.Context, actor, hostname string, c tunn
 	a.auditDB(ctx, "db.user.created", "notice", actor, hostname,
 		"Made "+c.Owner.Name+" on "+hostname+" to own "+engineCreateNoun(c.Engine)+" "+c.Name+
 			". It signs in straight to the database, not through Argus."+signed)
+}
+
+// auditBrokerOwner records the app user made with a vhost or topic as the
+// Users tab's own broker.user.created, so its Made column finds it; without
+// an entry, as a database owner's is.
+func (a *API) auditBrokerOwner(ctx context.Context, actor, hostname string, c tunnel.GrantCreate, res tunnel.CreateResult, entryID string) {
+	if !tunnel.BrokerOwnerEngine(c.Engine) || !c.NewOwner() {
+		return
+	}
+	if entryID == "" {
+		a.auditOwnerUser(ctx, actor, hostname, c, res)
+		return
+	}
+	pre, post := tunnel.OwnerPlan(c, tunnel.PasswordRedacted)
+	a.auditDB(ctx, "broker.user.created", "notice", actor, hostname,
+		brokerUserDetail(c.Owner.Name, entryID)+oneLine(strings.Join(append(pre, post...), "; "))+".")
 }
 
 func engineCreateNoun(engine string) string {

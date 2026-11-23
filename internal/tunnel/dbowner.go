@@ -97,6 +97,13 @@ func OwnerEngine(engine string) bool {
 	return false
 }
 
+// BrokerOwnerEngine says whether an engine's new vhost or topic may come
+// with its app's user (plans/broker-users/design.md, picture 08). Only on
+// create: the user is changed afterwards on the entry's Users tab.
+func BrokerOwnerEngine(engine string) bool {
+	return engine == EngineRabbitMQ || engine == EngineKafka
+}
+
 // NewOwner says the operation makes a user and so needs a password.
 func (c GrantCreate) NewOwner() bool {
 	return c.Owner != nil && c.Owner.Kind == OwnerNew &&
@@ -165,7 +172,11 @@ func (c *GrantCreate) validateOwner() error {
 		}
 		return nil
 	}
-	if !OwnerEngine(c.Engine) {
+	if BrokerOwnerEngine(c.Engine) {
+		if c.Op != CreateOpCreate {
+			return errors.New("a broker's app users are changed on the entry's Users tab")
+		}
+	} else if !OwnerEngine(c.Engine) {
 		return errors.New(engineWord(c.Engine) + " has no owner to set")
 	}
 	switch o.Kind {
@@ -220,6 +231,20 @@ func (c *GrantCreate) validateOwner() error {
 		}
 		if o.From != "" {
 			return errors.New("a SQL Server login has no host part")
+		}
+	case EngineRabbitMQ:
+		if !rabbitNewUserRE.MatchString(o.Name) {
+			return errors.New("a RabbitMQ user name is 1 to 64 letters, digits, . _ @ or -")
+		}
+		if o.From != "" {
+			return errors.New("a RabbitMQ user has no host part")
+		}
+	case EngineKafka:
+		if !kafkaNewUserRE.MatchString(o.Name) {
+			return errors.New("a Kafka user name is 1 to 64 letters, digits, . _ or -")
+		}
+		if o.From != "" {
+			return errors.New("a Kafka user has no host part")
 		}
 	case EngineMongoDB:
 		if !reMongoUser.MatchString(o.Name) {
@@ -318,6 +343,17 @@ func OwnerPlan(c GrantCreate, secret string) (pre, post []string) {
 		if newUser {
 			post = append(post, "ALTER LOGIN "+MSSQLIdent(o.Name)+" WITH DEFAULT_DATABASE = "+MSSQLIdent(c.Name))
 		}
+	case EngineRabbitMQ:
+		if newUser {
+			pre = append(pre, "rabbitmqctl add_user "+shellWord(o.Name)+" "+secret)
+		}
+		post = append(post, "rabbitmqctl set_permissions -p "+shellWord(c.Name)+" "+shellWord(o.Name)+` ".*" ".*" ".*"`)
+	case EngineKafka:
+		if newUser {
+			pre = append(pre, "AlterUserSCRAMs upsert "+o.Name+" SCRAM-SHA-512 password "+secret)
+		}
+		post = append(post, "CreateACLs User:"+o.Name+" ALLOW READ, WRITE, DESCRIBE on topic LITERAL "+c.Name,
+			"CreateACLs User:"+o.Name+" ALLOW READ on group PREFIXED "+c.Name)
 	case EngineMongoDB:
 		if newUser {
 			post = append(post, fmt.Sprintf(`db.createUser({ user: %q, pwd: %s, roles: [{ role: "dbOwner", db: %q }] })`,

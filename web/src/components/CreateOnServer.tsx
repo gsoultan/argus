@@ -247,7 +247,7 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
         ) : <>{what}{details}</>}
         {leaving && (
           <Alert variant="light" color="amber" p="xs" icon={<IconAlertTriangle size={16} />}>
-            <Text size={FS.meta}>The password will not be shown again. Copy it first, or close anyway and give {result.connection?.user} a new one later from Settings.</Text>
+            <Text size={FS.meta}>The password will not be shown again. Copy it first, or close anyway and give {result.connection?.user} a new one later from {isBroker(engine) ? 'the entry’s Users tab' : 'Settings'}.</Text>
           </Alert>
         )}
         <Group justify="flex-end" gap="xs">
@@ -384,6 +384,7 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
             <NumberInput label="Most connections" value={maxConnections} onChange={setMaxConnections} min={1} placeholder="No limit" />
             <NumberInput label="Most queues" value={maxQueues} onChange={setMaxQueues} min={1} placeholder="No limit" />
           </SimpleGrid>
+          <OwnerFields engine={engine} host={host} db={n} users={users} value={ownerS} onChange={setOwnerS} />
         </>
       )}
 
@@ -411,6 +412,7 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
                 label={`Also add ${n} as its own entry, to give it to someone else`} />
             </Box>
           )}
+          <OwnerFields engine={engine} host={host} db={n} users={users} value={ownerS} onChange={setOwnerS} />
         </>
       )}
 
