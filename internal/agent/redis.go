@@ -321,7 +321,7 @@ func (s *redisSession) connect(ctx context.Context) error {
 
 func (s *redisSession) ready() tunnel.StoreAnswer {
 	ops := []string{"run", "scan", "value"}
-	for _, op := range []string{tunnel.RedisOpInfo, tunnel.RedisOpUndoList, tunnel.RedisOpEdit, tunnel.RedisOpCount,
+	for _, op := range []string{tunnel.RedisOpInfo, tunnel.RedisOpUndoList, tunnel.RedisOpStreamGroups, tunnel.RedisOpEdit, tunnel.RedisOpCount,
 		tunnel.RedisOpBulk, tunnel.RedisOpUndo, tunnel.RedisOpConfigGet, tunnel.RedisOpACLList, tunnel.RedisOpACLDryRun,
 		tunnel.RedisOpConfigSet, tunnel.RedisOpSave, tunnel.RedisOpACLSet, tunnel.RedisOpACLDel,
 		tunnel.RedisOpACLLogin, tunnel.RedisOpNetwork, tunnel.RedisOpNetworkSet, tunnel.RedisOpDefaultSecure} {
@@ -351,7 +351,8 @@ func (s *redisSession) do(ctx context.Context, req tunnel.StoreRequest, rec *stm
 	case tunnel.RedisOpInfo, tunnel.RedisOpEdit, tunnel.RedisOpCount, tunnel.RedisOpBulk, tunnel.RedisOpUndoList,
 		tunnel.RedisOpUndo, tunnel.RedisOpConfigGet, tunnel.RedisOpConfigSet, tunnel.RedisOpSave,
 		tunnel.RedisOpACLList, tunnel.RedisOpACLSet, tunnel.RedisOpACLDel, tunnel.RedisOpACLDryRun,
-		tunnel.RedisOpACLLogin, tunnel.RedisOpNetwork, tunnel.RedisOpNetworkSet, tunnel.RedisOpDefaultSecure:
+		tunnel.RedisOpACLLogin, tunnel.RedisOpNetwork, tunnel.RedisOpNetworkSet, tunnel.RedisOpDefaultSecure,
+		tunnel.RedisOpStreamGroups:
 		return s.manage(ctx, req, rec)
 	case "scan":
 		return s.scan(ctx, req)

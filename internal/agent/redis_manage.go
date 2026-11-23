@@ -70,6 +70,8 @@ func (s *redisSession) manage(ctx context.Context, req tunnel.StoreRequest, rec 
 		return s.bulk(ctx, req, rec)
 	case tunnel.RedisOpUndoList:
 		return s.undoList()
+	case tunnel.RedisOpStreamGroups:
+		return s.streamGroups(ctx, req)
 	case tunnel.RedisOpUndo:
 		return s.restore(ctx, req, rec)
 	case tunnel.RedisOpConfigGet:
@@ -260,7 +262,7 @@ func (s *redisSession) edit(ctx context.Context, req tunnel.StoreRequest, rec *s
 		return errAnswer("an edit is 1 to 200 commands")
 	}
 	for _, e := range req.Edits {
-		if !tunnel.RedisEditable(e) || e[1] != key {
+		if !tunnel.RedisEditable(e) || tunnel.RedisEditKey(e) != key {
 			return errAnswer("%s is not a change to this key the editor makes; use the console", tunnel.JoinRedisCommand(e))
 		}
 	}
