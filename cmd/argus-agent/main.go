@@ -824,6 +824,9 @@ func runDaemon(args []string) int {
 			"disks":             diskBeat,
 			"wgnet":             wgBeat,
 			"firewall":          fwBeat,
+			// Every session recorded here now, so the console ends one
+			// this agent reported and no longer has.
+			"recording": col.Recording(),
 		})
 		// Orders signed with the fleet recovery key are checked against that
 		// key alone, before the gate: a rekey is what makes a reply signed
