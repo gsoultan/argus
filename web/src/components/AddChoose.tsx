@@ -104,9 +104,12 @@ export function HowCards({ engine, host, value, onChange }: {
     <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm" role="radiogroup" aria-label="What to do">
       {opts.map((o) => {
         const on = o.v === value
+        const off = o.v === 'create' && !canCreate(engine)
         return (
-          <UnstyledButton key={o.v} role="radio" aria-checked={on} onClick={() => onChange(o.v)}
-            style={{ ...card(on), flexDirection: 'row', alignItems: 'flex-start', gap: 12, padding: '14px 16px' }}>
+          <UnstyledButton key={o.v} role="radio" aria-checked={on} aria-disabled={off || undefined} disabled={off}
+            onClick={() => { if (!off) onChange(o.v) }}
+            style={{ ...card(on), flexDirection: 'row', alignItems: 'flex-start', gap: 12, padding: '14px 16px',
+              ...(off ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}>
             <Box style={{ width: 34, height: 34, borderRadius: 9, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               background: on ? 'var(--mantine-color-body)' : 'var(--color-raised)', color: on ? 'var(--mantine-primary-color-filled)' : undefined }}>
               {o.icon}
@@ -122,6 +125,11 @@ export function HowCards({ engine, host, value, onChange }: {
   )
 }
 
+/** Whether Argus can make a new one of an engine's entries on the server. */
+export function canCreate(engine: DBEngine): boolean {
+  return engine !== 'nats'
+}
+
 export function howWords(engine: DBEngine, host: string) {
   switch (engine) {
     case 'rabbitmq':
@@ -130,6 +138,9 @@ export function howWords(engine: DBEngine, host: string) {
     case 'kafka':
       return { existing: 'Give access to topics', existingText: 'Every topic, or the ones starting with a prefix.',
         create: 'Create a new topic', createText: 'With its partitions and retention, then it is added.' }
+    case 'nats':
+      return { existing: 'Add an account that is already there', existingText: `Pick from the accounts the agent has a signing key for on ${host}.`,
+        create: 'Create a new account', createText: 'Made with nsc: Argus does not hold the operator’s key.' }
     case 'redis':
       return { existing: 'Add this Redis', existingText: `One entry covers every db of the Redis on ${host}.`,
         create: 'Create a new database', createText: 'Redis has a fixed set of numbered dbs; this explains how.' }

@@ -109,23 +109,36 @@ export const ENGINES: Record<DBEngine, EngineInfo> = {
       dba: 'Manage, and the apps\' users, their ACLs and limits inside this scope. Nothing on the cluster itself: no brokers, no settings.',
     },
   },
+  nats: {
+    label: 'NATS',
+    noun: 'account',
+    nameLabel: 'Account',
+    nameHint: 'One entry is one NATS account, as nsc names it. The agent signs a short-lived user for each session with a signing key of the account, kept in a file on the server.',
+    defaults: { dbname: '', host: '127.0.0.1', port: 4222, configPath: '/etc/argus/nats.conf' },
+    levels: {
+      read: 'See streams, consumers, subjects and connections, and read messages. Nothing is acked and no consumer moves.',
+      write: 'Publish messages too.',
+      owner: 'Create, change, purge and delete streams; create, move, pause and delete consumers.',
+      dba: 'The same as Manage. Nothing on the server itself and nothing in other accounts.',
+    },
+  },
 }
 
 /** The engines the Add database form offers, in its order. */
 export const DATABASE_ENGINES: DBEngine[] = ['postgres', 'mysql', 'mssql', 'mongodb', 'redis']
 
 /** The engines the Add broker form offers, in its order. */
-export const BROKER_ENGINES: DBEngine[] = ['rabbitmq', 'kafka']
+export const BROKER_ENGINES: DBEngine[] = ['rabbitmq', 'kafka', 'nats']
 
 /** The kinds the agent's "what runs here" report uses for an engine. */
 export const ENGINE_APPS: Record<DBEngine, string[]> = {
   postgres: ['postgres'], mysql: ['mysql', 'mariadb'], mssql: ['mssql'], mongodb: ['mongodb'],
-  redis: ['redis', 'valkey'], rabbitmq: ['rabbitmq'], kafka: ['kafka'],
+  redis: ['redis', 'valkey'], rabbitmq: ['rabbitmq'], kafka: ['kafka'], nats: ['nats'],
 }
 
 /** Engines shown under Brokers instead of Databases. */
 export function isBroker(e: string | undefined): boolean {
-  return e === 'rabbitmq' || e === 'kafka'
+  return e === 'rabbitmq' || e === 'kafka' || e === 'nats'
 }
 
 export function engineOf(e: string | undefined): EngineInfo {
@@ -134,7 +147,7 @@ export function engineOf(e: string | undefined): EngineInfo {
 
 /** A sessions-list protocol that is a database's statement recording. */
 export function isStatementProtocol(protocol: string | undefined): boolean {
-  return protocol === 'postgres' || protocol === 'mysql' || protocol === 'mssql' || protocol === 'mongodb' || protocol === 'redis' || protocol === 'rabbitmq' || protocol === 'kafka'
+  return protocol === 'postgres' || protocol === 'mysql' || protocol === 'mssql' || protocol === 'mongodb' || protocol === 'redis' || protocol === 'rabbitmq' || protocol === 'kafka' || protocol === 'nats'
 }
 
 /** An engine the SQL workspace opens: Postgres, MySQL and MariaDB, or SQL Server. */

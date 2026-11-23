@@ -81,7 +81,7 @@ var protectedGlobs = map[string]string{
 
 // keepsDataGlobs are packages whose purge can delete data.
 var keepsDataGlobs = []string{"postgresql*", "mysql-server*", "mariadb-server*", "mongodb*", "redis-server*",
-	"redis", "valkey*", "rabbitmq-server*", "elasticsearch*", "opensearch*", "kafka*", "etcd*", "influxdb*",
+	"redis", "valkey*", "rabbitmq-server*", "elasticsearch*", "opensearch*", "kafka*", "nats-server*", "etcd*", "influxdb*",
 	"clickhouse-server*", "docker-ce*", "docker.io", "containerd*", "podman*", "slapd", "389-ds-base*",
 	"bind9*", "gitlab-*", "minio*", "cassandra*", "couchdb*", "neo4j*"}
 

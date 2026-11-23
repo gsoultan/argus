@@ -6,6 +6,7 @@ import { IconInfoCircle } from '@tabler/icons-react'
 import { useCallback } from 'react'
 import { BrokerWorkspace, type BrokerTab } from '~/components/broker/BrokerWorkspace'
 import { KafkaWorkspace, type KafkaTab } from '~/components/kafka/KafkaWorkspace'
+import { NATS_TABS, NatsWorkspace, type NatsTab } from '~/components/nats/NatsWorkspace'
 import { PageBody, PageHeader } from '~/components/page'
 import { notifyError } from '~/lib/notify'
 import { databaseTicket, isConfigured, postgresEndpoint } from '~/lib/live'
@@ -22,18 +23,20 @@ import { FS, INK } from '~/theme'
  * access: the ticket route does, and the agent checks the grant again. The
  * tab, queue, exchange and topic are in the address, so a link opens the same view.
  */
-interface Search { tab?: BrokerTab | KafkaTab; queue?: string; exchange?: string; topic?: string }
-const TABS: (BrokerTab | KafkaTab)[] = ['overview', 'queues', 'routing', 'connections', 'topics', 'groups', 'users', 'network']
+interface Search { tab?: BrokerTab | KafkaTab | NatsTab; queue?: string; exchange?: string; topic?: string; stream?: string; consumer?: string }
+const TABS: (BrokerTab | KafkaTab | NatsTab)[] = ['overview', 'queues', 'routing', 'connections', 'topics', 'groups', 'users', 'network', 'streams', 'consumers', 'subjects']
 const KAFKA_TABS: KafkaTab[] = ['overview', 'topics', 'groups', 'users', 'network']
 const RABBIT_TABS: BrokerTab[] = ['overview', 'queues', 'routing', 'connections', 'users', 'network']
 
 export const Route = createFileRoute('/brokers/$brokerId')({
   component: BrokerPage,
   validateSearch: (s: Record<string, unknown>): Search => ({
-    ...(typeof s.tab === 'string' && (TABS as string[]).includes(s.tab) ? { tab: s.tab as BrokerTab | KafkaTab } : {}),
+    ...(typeof s.tab === 'string' && (TABS as string[]).includes(s.tab) ? { tab: s.tab as BrokerTab | KafkaTab | NatsTab } : {}),
     ...(typeof s.queue === 'string' ? { queue: s.queue } : {}),
     ...(typeof s.exchange === 'string' ? { exchange: s.exchange } : {}),
     ...(typeof s.topic === 'string' ? { topic: s.topic } : {}),
+    ...(typeof s.stream === 'string' ? { stream: s.stream } : {}),
+    ...(typeof s.consumer === 'string' ? { consumer: s.consumer } : {}),
   }),
   loader: ({ context, params }) =>
     Promise.all([
@@ -77,16 +80,17 @@ function BrokerPage() {
   if (!data) return null
   const { database, access } = data
   const kafka = database.engine === 'kafka'
-  if (database.engine !== 'rabbitmq' && !kafka) return <Navigate to="/databases/$dbId" params={{ dbId: brokerId }} replace />
+  const nats = database.engine === 'nats'
+  if (database.engine !== 'rabbitmq' && !kafka && !nats) return <Navigate to="/databases/$dbId" params={{ dbId: brokerId }} replace />
 
   if (!access.level) {
     return (
       <Box>
-        <PageHeader title={database.dbname} crumbs={crumbs} description={`${kafka ? 'Kafka topics' : 'RabbitMQ vhost'} on ${database.hostname} · ${database.label}`} />
+        <PageHeader title={database.dbname} crumbs={crumbs} description={`${kafka ? 'Kafka topics' : nats ? 'NATS account' : 'RabbitMQ vhost'} on ${database.hostname} · ${database.label}`} />
         <PageBody>
           <Stack gap="md" maw={560}>
             <Alert color="azure" variant="light" icon={<IconInfoCircle size={16} />}>
-              You can ask for <b>{access.approvable ? levelName(access.approvable, database.engine) : ''}</b> on {kafka ? 'these topics' : 'this vhost'}. An approver gets it straight away, and you can open it as soon as
+              You can ask for <b>{access.approvable ? levelName(access.approvable, database.engine) : ''}</b> on {kafka ? 'these topics' : nats ? 'this account' : 'this vhost'}. An approver gets it straight away, and you can open it as soon as
               they say yes.
             </Alert>
             <Button onClick={ask.open} style={{ alignSelf: 'flex-start' }}>Ask for access</Button>
@@ -94,6 +98,28 @@ function BrokerPage() {
           <AskModal what="broker" engine={data?.database.engine} dbId={brokerId} opened={asking} onClose={ask.close} top={access.approvable ?? 'read'} />
         </PageBody>
       </Box>
+    )
+  }
+
+  if (nats) {
+    const tab = (NATS_TABS as string[]).includes(search.tab ?? '') ? (search.tab as NatsTab) : 'overview'
+    return (
+      <>
+        <BrokerBar brokerId={brokerId} label={`NATS · ${database.dbname}`} />
+        <NatsWorkspace
+          database={database}
+          access={access}
+          getTicket={getTicket}
+          endpoint={postgresEndpoint}
+          onAskForAccess={access.approvable ? ask.open : undefined}
+          tab={tab}
+          stream={search.stream}
+          consumer={search.consumer}
+          onNavigate={(s) => void navigate({ search: { tab: s.tab === 'overview' ? undefined : s.tab, stream: s.stream, consumer: s.consumer } })}
+          settingsLink={canSee(me?.role, 'admin')}
+        />
+        {access.approvable && <AskModal what="broker" engine={data?.database.engine} dbId={brokerId} opened={asking} onClose={ask.close} top={access.approvable} />}
+      </>
     )
   }
 

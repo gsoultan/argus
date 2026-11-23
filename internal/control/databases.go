@@ -157,9 +157,11 @@ func (d *Database) validate() error {
 		return d.validateKafka()
 	case tunnel.EngineMSSQL:
 		return d.validateMSSQL()
+	case tunnel.EngineNATS:
+		return d.validateNATS()
 	case tunnel.EnginePostgres:
 	default:
-		return ErrInvalidDatabase{"the engine must be postgres, mysql, mssql, mongodb, redis, rabbitmq or kafka"}
+		return ErrInvalidDatabase{"the engine must be postgres, mysql, mssql, mongodb, redis, rabbitmq, kafka or nats"}
 	}
 	if d.ConfigPath != "" {
 		return ErrInvalidDatabase{"a config file is only for Redis, MySQL and MongoDB"}
@@ -301,11 +303,9 @@ func (d *Database) validateRedis() error {
 // SQL says the entry speaks SQL through the Postgres session's frames:
 // Postgres, MySQL and SQL Server. Its statements can wait for approval and its sessions
 // open the SQL workspace.
-// Broker reports whether the entry is a message broker (RabbitMQ, Kafka),
-// which the console lists under Brokers rather than Databases.
-func (d Database) Broker() bool {
-	return d.Engine == tunnel.EngineRabbitMQ || d.Engine == tunnel.EngineKafka
-}
+// Broker reports whether the entry is a message broker (RabbitMQ, Kafka,
+// NATS), which the console lists under Brokers rather than Databases.
+func (d Database) Broker() bool { return isBrokerEngine(d.Engine) }
 
 // Noun is what the console calls the entry in a sentence.
 func (d Database) Noun() string {
@@ -460,6 +460,31 @@ func (d *Database) validateKafka() error {
 	}
 	if d.ConfigPath != "" && !tunnel.ValidKafkaAdminFile(d.ConfigPath) {
 		return ErrInvalidDatabase{"the admin file must be an absolute path to a .conf file on the server"}
+	}
+	return d.validateCommon()
+}
+
+// validateNATS: one account of a NATS server in operator mode, through its
+// client port on this asset. ConfigPath is the file on the server with the
+// account's signing key; empty means tunnel.NATSAdminFile.
+func (d *Database) validateNATS() error {
+	if !tunnel.ValidNATSAccount(d.Name) {
+		return ErrInvalidDatabase{"the account must be its name as nsc knows it: 1 to 63 letters, digits, - or _, and not the system account"}
+	}
+	if d.Host == "" {
+		d.Host = "127.0.0.1"
+	}
+	if !tunnel.LocalLoopback(d.Host) {
+		return ErrInvalidDatabase{"NATS must be on the server itself: 127.0.0.1, ::1 or localhost, not " + d.Host}
+	}
+	if d.Port == 0 {
+		d.Port = tunnel.NATSDefaultPort
+	}
+	if d.Port < 1 || d.Port > 65535 {
+		return ErrInvalidDatabase{"the port must be between 1 and 65535"}
+	}
+	if d.ConfigPath != "" && !tunnel.ValidNATSAdminFile(d.ConfigPath) {
+		return ErrInvalidDatabase{"the signing key file must be an absolute path to a .conf file on the server"}
 	}
 	return d.validateCommon()
 }

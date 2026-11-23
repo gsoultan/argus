@@ -127,6 +127,8 @@ func discover(ctx context.Context, cfg DiscoverDBConfig, d tunnel.GrantDiscover,
 		return discoverMongo(ctx, d)
 	case tunnel.EngineKafka:
 		return discoverKafka(ctx, d)
+	case tunnel.EngineNATS:
+		return discoverNATS(ctx, d)
 	case tunnel.EngineMSSQL:
 		return discoverMSSQL(ctx, d)
 	}

@@ -57,7 +57,7 @@ type HomeLive struct {
 	Count    int `json:"count"`
 	Root     int `json:"root"`
 	Database int `json:"database"`
-	// Broker counts RabbitMQ and Kafka sessions, which the console calls
+	// Broker counts RabbitMQ, Kafka and NATS sessions, which the console calls
 	// brokers, not databases.
 	Broker int `json:"broker"`
 	// Silent are active on paper and unheard from; never counted as live.
@@ -189,7 +189,7 @@ func (s *Store) homeFast(ctx context.Context, h *HomeSnapshot) error {
 
 	rows, err := s.db(ctx).Query(ctx, `
 		SELECT id::text, user_email, principal, asset_hostname,
-		       CASE WHEN kind = 'database' AND protocol IN ('rabbitmq', 'kafka') THEN 'broker' ELSE kind END,
+		       CASE WHEN kind = 'database' AND protocol IN ('rabbitmq', 'kafka', 'nats') THEN 'broker' ELSE kind END,
 		       started_at
 		  FROM sessions
 		 WHERE state = 'active' AND last_reported_at > now() - $1::interval

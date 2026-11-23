@@ -20,7 +20,7 @@ import { isBroker, levelName } from '~/lib/engines'
 import { GiveAccessMany, RemoveAccessMany, SelectionBar, TickAll } from '~/components/BulkDBAccess'
 
 /**
- * Brokers: every RabbitMQ vhost and Kafka entry this person may open, apart from the
+ * Brokers: every RabbitMQ vhost, Kafka entry and NATS account this person may open, apart from the
  * databases, because a broker is not one: it is opened to see whether
  * messages keep moving, not to query rows. The entries are the same
  * `databases` rows with engine rabbitmq or kafka, so who may connect, approvals and
@@ -56,7 +56,7 @@ function Brokers() {
     .map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label)), [all])
   const picked = all.filter((d) => selected.includes(d.id))
 
-  const description = "Open a RabbitMQ vhost or Kafka topics you've been given to see whether messages keep moving: queues and routing, or topics, partitions and consumer lag. Everything you do is recorded."
+  const description = "Open a RabbitMQ vhost, Kafka topics or a NATS account you've been given to see whether messages keep moving: queues and routing, topics and consumer lag, or streams and consumers. Everything you do is recorded."
   if (!isConfigured()) {
     return (
       <Box>
@@ -101,8 +101,8 @@ function Brokers() {
                 icon={IconStack2}
                 title={admin ? 'No brokers yet' : 'No brokers for you yet'}
                 description={admin
-                  ? 'Add a RabbitMQ vhost or Kafka topics from the server’s page. The agent on that server opens them; nothing else needs installing.'
-                  : 'When an admin gives you a RabbitMQ vhost or Kafka topics they appear here.'}
+                  ? 'Add a RabbitMQ vhost, Kafka topics or a NATS account from the server’s page. The agent on that server opens them; nothing else needs installing.'
+                  : 'When an admin gives you a RabbitMQ vhost, Kafka topics or a NATS account they appear here.'}
               />
             }
             columns={[...(admin ? [{ label: <TickAll ids={rows.map((d) => d.id)} selected={selected} onChange={setSelected} label="Select every broker shown" />, width: 36 }] : []),
@@ -124,7 +124,7 @@ function Brokers() {
                       <EngineMark engine={d.engine} size={28} />
                       <Box>
                         <Text fw={600} size={FS.body} ff="monospace">{d.engine === 'kafka' && d.dbname === '*' ? 'every topic' : d.dbname}</Text>
-                        <Text size={FS.micro} c="dimmed">{d.engine === 'kafka' ? 'Kafka' : 'RabbitMQ'} on <Text span ff="monospace" size={FS.micro}>{d.hostname}</Text> · {d.engine === 'kafka' ? 'port' : 'management port'} {d.port}</Text>
+                        <Text size={FS.micro} c="dimmed">{d.engine === 'kafka' ? 'Kafka' : d.engine === 'nats' ? 'NATS account' : 'RabbitMQ'} on <Text span ff="monospace" size={FS.micro}>{d.hostname}</Text> · {d.engine === 'rabbitmq' ? 'management port' : 'port'} {d.port}</Text>
                       </Box>
                     </Group>
                   </Table.Td>

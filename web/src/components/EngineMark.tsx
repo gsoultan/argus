@@ -9,8 +9,8 @@ pending, denied and live in this console, and azure is the brand, so an
 engine told apart by colour would borrow a meaning it does not have.
 */
 
-const LETTERS: Record<DBEngine, string> = { postgres: 'Pg', mysql: 'My', mssql: 'Ms', mongodb: 'Mg', redis: 'Rd', rabbitmq: 'Mq', kafka: 'Kf' }
-const RADIUS: Record<DBEngine, string> = { postgres: '28%', mysql: '12% 40%', mssql: '40% 40% 12% 12%', mongodb: '40% 12%', redis: '50%', rabbitmq: '12%', kafka: '50% 12%' }
+const LETTERS: Record<DBEngine, string> = { postgres: 'Pg', mysql: 'My', mssql: 'Ms', mongodb: 'Mg', redis: 'Rd', rabbitmq: 'Mq', kafka: 'Kf', nats: 'Na' }
+const RADIUS: Record<DBEngine, string> = { postgres: '28%', mysql: '12% 40%', mssql: '40% 40% 12% 12%', mongodb: '40% 12%', redis: '50%', rabbitmq: '12%', kafka: '50% 12%', nats: '12% 50%' }
 
 export function EngineMark({ engine, size = 32 }: { engine: DBEngine; size?: number }) {
   return (

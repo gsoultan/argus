@@ -349,6 +349,8 @@ func engineName(engine string) string {
 		return "MongoDB database"
 	case tunnel.EngineKafka:
 		return "Kafka topics"
+	case tunnel.EngineNATS:
+		return "NATS account"
 	case tunnel.EngineMSSQL:
 		return "SQL Server database"
 	}

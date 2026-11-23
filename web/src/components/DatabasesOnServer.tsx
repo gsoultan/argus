@@ -18,7 +18,7 @@ import { targetName } from '~/lib/dbTarget'
 import { FS } from '~/theme'
 import { BROKER_ENGINES, DATABASE_ENGINES, ENGINES, engineOf, isBroker } from '~/lib/engines'
 import { kafkaCovered } from '~/lib/kafka'
-import { AddTitle, ChoiceLine, EngineCards, HowCards, useEnginesFound, type AddKind } from '~/components/AddChoose'
+import { AddTitle, ChoiceLine, EngineCards, HowCards, canCreate, useEnginesFound, type AddKind } from '~/components/AddChoose'
 import type { Asset, Database, DBAssignment, DBEngine, DBLabel } from '~/types/domain'
 
 /**
@@ -70,7 +70,7 @@ function StoreCard({ asset, canEdit, kind, list }: { asset: Asset; canEdit: bool
       title={broker ? 'Brokers' : 'Databases'}
       icon={broker ? IconStack2 : IconDatabase}
       description={broker
-        ? 'RabbitMQ vhosts and Kafka topics on this server that people can open in the browser. Tick several to give a team access to all of them at once. Every session is recorded.'
+        ? 'RabbitMQ vhosts, Kafka topics and NATS accounts on this server that people can open in the browser. Tick several to give a team access to all of them at once. Every session is recorded.'
         : 'Postgres, MySQL, SQL Server, MongoDB and Redis on this server that people can open in the browser. Tick several to give a team access to all of them at once. Every session is recorded command by command.'}
     >
       {canEdit && (
@@ -89,7 +89,7 @@ function StoreCard({ asset, canEdit, kind, list }: { asset: Asset; canEdit: bool
         <EmptyState compact icon={broker ? IconStack2 : IconDatabase} title={broker ? 'No brokers on this server yet.' : 'No databases on this server yet.'}
           description={canEdit
             ? broker
-              ? 'Add a RabbitMQ vhost or Kafka topics. The agent on this host signs in as the broker’s admin locally; nothing to install, no password to store.'
+              ? 'Add a RabbitMQ vhost, Kafka topics or a NATS account. The agent on this host signs in as the broker’s admin locally; nothing to install, no password to store.'
               : 'Add a Postgres, MySQL, SQL Server or MongoDB database, or a Redis. The agent on this host signs in as its admin locally; nothing to install, no password to store.'
             : 'An admin can add one from here.'} />
       ) : (
@@ -274,6 +274,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
     : engine === 'redis' ? /^\d{1,4}$/.test(n)
     : engine === 'mongodb' ? n.length > 0 && new TextEncoder().encode(n).length < 64 && !/[/\\. "$*<>:|?\x00]/.test(n) && !['admin', 'local', 'config'].includes(n)
     : engine === 'kafka' ? /^(\*|[A-Za-z0-9._-]{1,63})$/.test(n) && n !== '.' && n !== '..'
+    : engine === 'nats' ? /^[A-Za-z0-9_-]{1,63}$/.test(n) && n !== 'SYS'
     : n.length > 0 && n.length <= 255 && !/[\x00\n\r]/.test(n)
   const valid = names.length > 0 && names.every(nameOk) && !redisAdded
 
@@ -281,6 +282,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
   const pick = (e: DBEngine) => {
     if (e === engine) return
     setEngine(e); reset(); setManual(false); setHost(''); setPort(''); setConfigPath(''); setConn(false)
+    if (!canCreate(e)) setMode('existing')
   }
   // Where it listens is folded into one line: the agent finds it. It opens on
   // Change, or by itself when the agent could not look.
@@ -300,7 +302,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
             : viaPooler?.host ? { host: viaPooler.host } : {}),
           ...(engine === 'postgres' ? { poolerPort: Number(poolerPort) || 0 } : {}),
           ...(engine === 'redis' ? { configPath: configPath.trim() || info.defaults.configPath } : {}),
-          ...((engine === 'mysql' || engine === 'mssql' || engine === 'mongodb' || engine === 'kafka') && configPath.trim() ? { configPath: configPath.trim() } : {}),
+          ...((engine === 'mysql' || engine === 'mssql' || engine === 'mongodb' || engine === 'kafka' || engine === 'nats') && configPath.trim() ? { configPath: configPath.trim() } : {}),
         })
         added.push(n)
       }
@@ -332,7 +334,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
   }
   const whereText = engine === 'postgres'
     ? `${host.trim() || (ans?.host && !isLocalHost(ans.host) ? ans.host : `socket ${ans?.host ?? info.defaults.host}`)} · ${Number(port) || ans?.port || info.defaults.port}${Number(poolerPort) ? ` · through PgBouncer ${poolerPort}` : ''}`
-    : `${engine === 'rabbitmq' ? 'management API ' : engine === 'kafka' ? 'SASL listener ' : ''}${host.trim() || info.defaults.host}:${Number(port) || info.defaults.port}${
+    : `${engine === 'rabbitmq' ? 'management API ' : engine === 'kafka' ? 'SASL listener ' : engine === 'nats' ? 'client port ' : ''}${host.trim() || info.defaults.host}:${Number(port) || info.defaults.port}${
       configPath.trim() ? ` · ${configPath.trim()}` : engine === 'rabbitmq' ? ' · signs in with rabbitmqctl' : info.defaults.configPath ? ` · ${info.defaults.configPath}` : ''}`
   const why = found.isError ? (found.error as Error).message
     : remote.length > 0 && ans?.error ? `${ans.error}.`
@@ -377,7 +379,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
         {!manual && !scoped && (
           <Stack gap={6}>
             <Group gap="xs" wrap="nowrap">
-              <Text size={FS.meta} fw={500}>{engine === 'rabbitmq' ? 'Vhosts' : engine === 'redis' ? 'Databases in this Redis' : 'Databases on this server'}</Text>
+              <Text size={FS.meta} fw={500}>{engine === 'rabbitmq' ? 'Vhosts' : engine === 'nats' ? 'Accounts the agent has a signing key for' : engine === 'redis' ? 'Databases in this Redis' : 'Databases on this server'}</Text>
               <Group gap={6} ml="auto" wrap="nowrap">
                 {found.isFetching ? (
                   <><Loader size={12} /><Text size={FS.micro} c="dimmed">Asking the agent…</Text></>
@@ -430,7 +432,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
                 <Stack gap={0} style={{ border: '1px solid var(--color-line)', borderRadius: 8, overflow: 'hidden' }}>
                   {rows.length === 0 && (
                     <Text size={FS.meta} c="dimmed" p="sm">
-                      {filter ? 'Nothing matches.' : `No ${engine === 'rabbitmq' ? 'vhosts' : 'databases'} found. Type a name instead.`}
+                      {filter ? 'Nothing matches.' : `No ${engine === 'rabbitmq' ? 'vhosts' : engine === 'nats' ? 'accounts' : 'databases'} found. Type a name instead.`}
                     </Text>
                   )}
                   {rows.map((d) => {
@@ -469,6 +471,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
                 {engine === 'postgres' && 'Template databases and the postgres maintenance database are left out. '}
                 {engine === 'mysql' && 'MySQL’s own schemas (mysql, sys, information_schema, performance_schema) are left out. '}
                 {engine === 'mssql' && 'SQL Server’s own databases (master, model, msdb, tempdb, distribution) are left out. '}
+                {engine === 'nats' && 'Each account comes from a line in the signing key file on the server. '}
                 {engine === 'redis' && (redisAdded ? 'This Redis is already in Argus; one entry covers every db. ' : 'Pick the db sessions open in; SELECT moves between them. ')}
                 {ans?.truncated && 'Only the first 500 are listed. '}
                 Not listed? <Anchor component="button" type="button" size={FS.micro} onClick={() => setManual(true)}>Type a name instead</Anchor>
@@ -506,9 +509,10 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
           </Group>
         ) : (<>
           {engine !== 'postgres' && (
-            <TextInput label={engine === 'rabbitmq' ? 'Management API address' : engine === 'kafka' ? 'Listener address' : 'Address'} placeholder={info.defaults.host}
+            <TextInput label={engine === 'rabbitmq' ? 'Management API address' : engine === 'kafka' ? 'Listener address' : engine === 'nats' ? 'Client address' : 'Address'} placeholder={info.defaults.host}
               value={host} onChange={(e) => setHost(e.currentTarget.value)}
               description={engine === 'kafka' ? 'On this server: a SASL listener with SCRAM, and an authorizer on the cluster.'
+                : engine === 'nats' ? 'On this server, on loopback: nats-server in operator mode (accounts and users made with nsc).'
                 : engine === 'mssql' ? 'On this server, on loopback: 127.0.0.1, ::1 or localhost.'
                 : engine !== 'rabbitmq' ? 'On this server: 127.0.0.1, or the path of its unix socket.'
                 : 'On this server, with the management plugin on (rabbitmq-plugins enable rabbitmq_management).'} />
@@ -541,6 +545,11 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
               onChange={(e) => setConfigPath(e.currentTarget.value)} styles={{ input: { fontFamily: 'var(--font-mono)' } }}
               description="On the server, readable by root only: user = and password = for a SCRAM account that may manage users and ACLs. The agent gives each person their own user with ACLs on these topics, for their session only. The password never leaves the server." />
           )}
+          {engine === 'nats' && (
+            <TextInput label="Signing key file" placeholder={info.defaults.configPath} value={configPath}
+              onChange={(e) => setConfigPath(e.currentTarget.value)} styles={{ input: { fontFamily: 'var(--font-mono)' } }}
+              description="On the server, readable by root only: a line account NAME = ACCOUNT_PUBLIC_KEY SIGNING_KEY_SEED for each account, and monitor = PORT if the monitoring port is not 8222. The agent signs a user for each session with it; the key never leaves the server." />
+          )}
           {engine === 'rabbitmq' && (
             <Text size={FS.micro} c="dimmed">
               The agent uses rabbitmqctl on the server to give each person a user for their session only. No password is typed in or stored.
@@ -566,6 +575,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
               : engine === 'redis' ? 'Add this Redis'
               : engine === 'kafka' && names[0] === '*' ? 'Add every topic'
               : engine === 'kafka' ? `Add topics starting ${names[0]}`
+              : engine === 'nats' && names.length === 1 ? `Add account ${names[0]}`
               : names.length === 1 ? `Add ${names[0]}` : 'Add'}
           </Button>
         </Group>

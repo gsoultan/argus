@@ -44,7 +44,7 @@ type AccessRequest struct {
 	// (self_approval.go). The decision counts again with the same rule.
 	ApproveOwn bool `json:"approveOwn,omitempty"`
 	// Broker is set when the request is for a message broker (RabbitMQ,
-	// Kafka) rather than a database, so it is described as one.
+	// Kafka, NATS) rather than a database, so it is described as one.
 	Broker bool `json:"broker,omitempty"`
 }
 
@@ -94,7 +94,7 @@ func (e requestClosed) Error() string {
 const requestColumns = `id::text, requester_email, asset_hostnames, principal,
 	justification, duration_minutes, state, created_at, decided_at,
 	decided_by_email, decision_note, expires_at, break_glass, restore_id::text,
-	COALESCE((SELECT d.engine IN ('rabbitmq', 'kafka') FROM databases d
+	COALESCE((SELECT d.engine IN ('rabbitmq', 'kafka', 'nats') FROM databases d
 	          WHERE d.id = access_requests.database_id), false)`
 
 func scanRequest(row pgx.Row) (AccessRequest, error) {

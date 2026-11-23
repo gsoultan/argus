@@ -136,6 +136,8 @@ var appCatalogue = []appSpec{
 	{kind: "rabbitmq", name: "RabbitMQ", units: []string{"rabbitmq-server"},
 		images: []string{"rabbitmq"}, packages: regexp.MustCompile(`^rabbitmq-server$`)},
 	{kind: "kafka", name: "Kafka", units: []string{"kafka"}, images: []string{"kafka", "cp-kafka"}},
+	{kind: "nats", name: "NATS", processes: []string{"nats-server"}, units: []string{"nats-server", "nats"},
+		images: []string{"nats"}, packages: regexp.MustCompile(`^nats-server$`)},
 	{kind: "elasticsearch", name: "Elasticsearch", units: []string{"elasticsearch"},
 		images: []string{"elasticsearch"}, packages: regexp.MustCompile(`^elasticsearch$`)},
 	{kind: "opensearch", name: "OpenSearch", units: []string{"opensearch"},
