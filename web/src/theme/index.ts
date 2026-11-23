@@ -323,6 +323,12 @@ export const theme = createTheme({
     // The few controls a page is *for* (Connect, Add a server) ask for `sm`
     // explicitly, so the main action is never the same size as a filter.
     Button: { defaultProps: { size: 'sm' } },
+    // A field's help text goes under its box, with the error, not between the
+    // label and the box. Above it, a field with help text in a row of two or
+    // three had its box pushed down below its neighbours', so the boxes in a
+    // row did not line up. Under it, every box in a row starts right after a
+    // label, whatever help or error the others carry.
+    InputWrapper: { defaultProps: { inputWrapperOrder: ['label', 'input', 'description', 'error'] } },
     TextInput: { defaultProps: { size: 'sm' } },
     // The eye is a real button: reachable with Tab and announced as a toggle
     // (Mantine sets aria-pressed), so revealing a password is not mouse-only.

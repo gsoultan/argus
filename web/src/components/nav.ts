@@ -1,6 +1,6 @@
 import {
   IconBox, IconCalendarTime, IconCirclePlus, IconClipboardCheck, IconCloud, IconCoin, IconDatabase, IconFileText, IconHistory, IconHome,
-  IconInfoCircle, IconKey, IconRouter, IconTopologyStar3, IconServer2, IconSettings, IconStack2, IconUser, IconUsersGroup, IconWorld,
+  IconInfoCircle, IconKey, IconRouter, IconTopologyStar3, IconServer2, IconSettings, IconShieldLock, IconStack2, IconUser, IconUsersGroup, IconWorld,
   type IconProps,
 } from '@tabler/icons-react'
 import type { ComponentType } from 'react'
@@ -236,7 +236,12 @@ export function groupsFor(role: UserRole | undefined, seesChecks = false): NavGr
       { ...by('/websites'), label: 'Websites', ...(seesChecks ? { audience: undefined } : {}) },
       { ...by('/network-devices'), ...(seesChecks ? { audience: undefined } : {}) },
     ] },
-    { label: 'Networks', items: [{ ...by('/networks'), label: 'VPNs and tunnels' }, by('/vpn')] },
+    { label: 'Networks', items: [
+      { ...by('/networks'), label: 'VPNs and tunnels' },
+      { ...by('/networks'), label: 'WireGuard', icon: IconShieldLock, search: { tab: 'wireguard' }, tabs: ['wireguard'],
+        blurb: 'WireGuard networks between your servers, and the links found on them' },
+      by('/vpn'),
+    ] },
     { label: 'Cloud', items: [
       { ...cloud, label: 'Overview' },
       { ...cloud, label: 'Resources', icon: IconBox, search: { tab: 'instances' },

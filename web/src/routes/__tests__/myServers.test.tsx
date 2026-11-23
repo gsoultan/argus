@@ -254,7 +254,7 @@ describe('the menu follows the role', () => {
   it('shows an administrator the whole menu', async () => {
     signedInAs('admin')
     await renderRoute('/assets')
-    expect(await menu()).toEqual(['Home', 'Approvals', 'Assets', 'Databases', 'Brokers', 'Websites', 'Network devices', 'VPNs and tunnels', 'My VPN',
+    expect(await menu()).toEqual(['Home', 'Approvals', 'Assets', 'Databases', 'Brokers', 'Websites', 'Network devices', 'VPNs and tunnels', 'WireGuard', 'My VPN',
       'Overview', 'Resources', 'Costs', 'Schedules', 'Console access', 'People', 'Teams', 'Sessions', 'Audit log'])
   })
 
