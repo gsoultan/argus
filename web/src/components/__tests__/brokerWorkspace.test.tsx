@@ -117,4 +117,38 @@ describe('BrokerWorkspace', () => {
     await screen.findByText('Messages')
     expect(screen.queryByRole('button', { name: /Move/ })).toBeNull()
   })
+
+  it('makes an app user on the vhost: only the hash goes with it, then it signs in and the details show once', async () => {
+    const ws = await open('users', undefined, ['overview', 'queues', 'exchanges', 'bindings', 'queue', 'users', 'user_set', 'user_del', 'user_scope_del', 'user_login'])()
+    await waitFor(() => expect(ws.sent.some((r) => r.op === 'users')).toBe(true))
+    ws.serve({ users: { vhost: '/orders', amqpPort: 5672, notShown: 1, sessions: ['argus-ana-dba'], users: [
+      { name: 'guest', tags: ['administrator'], perms: { configure: '.*', write: '.*', read: '.*' }, topicPerms: [], limits: {}, connections: 0, hasPassword: true,
+        locked: 'tagged administrator', defaultPassword: true },
+      { name: 'billing', tags: [], perms: { configure: '^$', write: '^billing\\.', read: '^$' }, topicPerms: [], limits: {}, connections: 2, hasPassword: true, elsewhere: ['/billing'] },
+    ] } })
+    expect(await screen.findByText('guest still signs in with its default password. Give it a new one or delete it.')).toBeInTheDocument()
+    expect(screen.getByText('starting billing.')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'New user' }))
+    fireEvent.change(await screen.findByLabelText('Name'), { target: { value: 'invoices-app' } })
+    fireEvent.change(screen.getByLabelText('Reads queues starting with'), { target: { value: 'orders.' } })
+    fireEvent.change(screen.getByLabelText('Publishes to exchanges starting with'), { target: { value: 'orders.' } })
+    expect(screen.getByText(/Reads: orders.created, orders.failed/)).toBeInTheDocument()
+    const create = screen.getByRole('button', { name: 'Create invoices-app' })
+    await waitFor(() => expect(create).toBeEnabled())
+    fireEvent.click(create)
+    await waitFor(() => expect(ws.sent.some((r) => r.op === 'user_set')).toBe(true))
+    const set = ws.sent.find((r) => r.op === 'user_set') as { password?: string; brokerUser: { passwordHash: string; perms: Record<string, string>; tags: string[] } }
+    expect(set.password).toBeUndefined()
+    expect(atob(set.brokerUser.passwordHash)).toHaveLength(36)
+    expect(set.brokerUser.perms).toEqual({ configure: '^orders\\.', write: '^orders\\.', read: '^orders\\.' })
+    expect(set.brokerUser.tags).toEqual([])
+    ws.serve({ user_set: { user: 'invoices-app' } })
+    await waitFor(() => expect(ws.sent.some((r) => r.op === 'user_login')).toBe(true))
+    const login = ws.sent.find((r) => r.op === 'user_login') as { password: string }
+    expect(login.password.length).toBeGreaterThanOrEqual(12)
+    ws.serve({ user_login: { user: 'invoices-app', address: '127.0.0.1:5672', ok: true } })
+    expect(await screen.findByText('Opens /orders on 127.0.0.1:5672')).toBeInTheDocument()
+    expect(screen.getByText(/amqp:\/\/invoices-app:.*@mq-01:5672\/%2Forders/)).toBeInTheDocument()
+  })
 })

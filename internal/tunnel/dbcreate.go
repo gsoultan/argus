@@ -166,6 +166,9 @@ type CreateResult struct {
 	// Pooled says the owner signed in through PgBouncer, so the app can
 	// use its port.
 	Pooled bool `json:"pooled,omitempty"`
+	// AppPort is where apps sign in when that is not the entry's port:
+	// RabbitMQ's AMQP listener, beside its management API.
+	AppPort int `json:"appPort,omitempty"`
 }
 
 // CreateOptions is what the console's create dialog may offer.

@@ -128,9 +128,9 @@ func createOn(ctx context.Context, cfg CreateDBConfig, c tunnel.GrantCreate, ema
 		}
 		return createMongo(ctx, c, pw)
 	case tunnel.EngineRabbitMQ:
-		return createRabbit(ctx, cfg.Ctl, c)
+		return createRabbit(ctx, cfg.Ctl, c, pw)
 	case tunnel.EngineKafka:
-		return createKafka(ctx, c)
+		return createKafka(ctx, c, pw)
 	case tunnel.EngineMSSQL:
 		if c.Op == tunnel.CreateOpSetOwner || c.Op == tunnel.CreateOpSetPassword {
 			return ownMSSQL(ctx, c, pw)
@@ -513,7 +513,7 @@ func createMongo(ctx context.Context, c tunnel.GrantCreate, pw string) tunnel.Cr
 	return res
 }
 
-func createRabbit(ctx context.Context, ctl func(context.Context, []string, string) ([]byte, error), c tunnel.GrantCreate) tunnel.CreateResult {
+func createRabbit(ctx context.Context, ctl func(context.Context, []string, string) ([]byte, error), c tunnel.GrantCreate, pw string) tunnel.CreateResult {
 	found := discoverRabbit(ctx, ctl)
 	if !found.OK {
 		return tunnel.CreateResult{Error: found.Error}
@@ -523,6 +523,7 @@ func createRabbit(ctx context.Context, ctl func(context.Context, []string, strin
 		for _, d := range found.Databases {
 			o.Taken = append(o.Taken, d.Name)
 		}
+		o.Users = rabbitAppUsers(ctx, ctl)
 		return tunnel.CreateResult{OK: true, Options: o}
 	}
 	res := tunnel.CreateResult{}
@@ -533,6 +534,10 @@ func createRabbit(ctx context.Context, ctl func(context.Context, []string, strin
 		}
 	}
 	res.Steps = append(res.Steps, tunnel.CreateStep{Text: "The vhost " + c.Name + " is free", OK: true})
+	made, ok := rabbitOwnerBefore(ctx, ctl, c, pw, &res)
+	if !ok {
+		return res
+	}
 	r := c.Rabbit
 	args := []string{"add_vhost", c.Name}
 	if r.Description != "" {
@@ -543,11 +548,15 @@ func createRabbit(ctx context.Context, ctl func(context.Context, []string, strin
 	}
 	if _, err := ctl(ctx, args, ""); err != nil {
 		res.Error = err.Error()
+		if made {
+			res.Steps = append(res.Steps, rabbitUndoUser(ctx, ctl, c.Owner.Name))
+		}
 		return res
 	}
 	res.Steps = append(res.Steps, tunnel.CreateStep{Text: "Created the vhost " + c.Name, OK: true})
+	pre, post := tunnel.OwnerPlan(c, tunnel.PasswordRedacted)
 	plan := tunnel.CreateDBPlan(c)
-	res.OK, res.Statements = true, plan[:1]
+	res.OK, res.Statements = true, append(append([]string{}, pre...), plan[0])
 	if l := r.LimitsJSON(); l != "" {
 		if _, err := ctl(ctx, []string{"set_vhost_limits", "-p", c.Name, l}, ""); err != nil {
 			res.Steps = append(res.Steps, tunnel.CreateStep{Text: "Set its limits", Error: err.Error()})
@@ -555,12 +564,18 @@ func createRabbit(ctx context.Context, ctl func(context.Context, []string, strin
 			return res
 		}
 		res.Steps = append(res.Steps, tunnel.CreateStep{Text: "Set its limits", OK: true})
-		res.Statements = plan
+		res.Statements = append(res.Statements, plan[1:]...)
+	}
+	if c.OwnerName() != "" {
+		rabbitOwnerAfter(ctx, ctl, c, pw, &res)
+		if res.OK {
+			res.Statements = append(res.Statements, post...)
+		}
 	}
 	return res
 }
 
-func createKafka(ctx context.Context, c tunnel.GrantCreate) tunnel.CreateResult {
+func createKafka(ctx context.Context, c tunnel.GrantCreate, pw string) tunnel.CreateResult {
 	s := &kafkaSession{addr: net.JoinHostPort(c.Host, strconv.Itoa(c.Port)), file: c.ConfigPath}
 	if s.file == "" {
 		s.file = tunnel.KafkaAdminFile
@@ -591,6 +606,7 @@ func createKafka(ctx context.Context, c tunnel.GrantCreate) tunnel.CreateResult 
 			o.Taken = append(o.Taken, t.Topic)
 		}
 		sort.Strings(o.Taken)
+		o.Users = kafkaAppUsers(ctx, adm, s.file)
 		return tunnel.CreateResult{OK: true, Options: o}
 	}
 	res := tunnel.CreateResult{}
@@ -599,6 +615,9 @@ func createKafka(ctx context.Context, c tunnel.GrantCreate) tunnel.CreateResult 
 		return res
 	}
 	res.Steps = append(res.Steps, tunnel.CreateStep{Text: "The topic " + c.Name + " is free", OK: true})
+	if !kafkaOwnerBefore(ctx, adm, s.file, c, &res) {
+		return res
+	}
 	k := c.Kafka
 	repl := int16(-1)
 	if k.Replicas > 0 {
@@ -614,5 +633,8 @@ func createKafka(ctx context.Context, c tunnel.GrantCreate) tunnel.CreateResult 
 	}
 	res.Steps = append(res.Steps, tunnel.CreateStep{Text: "Created the topic " + c.Name, OK: true})
 	res.OK, res.Statements = true, tunnel.CreateDBPlan(c)
+	if c.OwnerName() != "" {
+		kafkaOwnerAfter(ctx, adm, s.addr, c, pw, &res)
+	}
 	return res
 }

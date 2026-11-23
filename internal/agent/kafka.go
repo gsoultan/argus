@@ -388,7 +388,7 @@ func (s *kafkaSession) ready() tunnel.StoreAnswer {
 	if s.db.Level == tunnel.LevelDBA {
 		ops = append(ops, tunnel.RabbitOpNetwork, tunnel.RabbitOpNetworkSet)
 	}
-	return tunnel.StoreAnswer{Engine: tunnel.EngineKafka, User: s.user, Ops: ops}
+	return tunnel.StoreAnswer{Engine: tunnel.EngineKafka, User: s.user, Ops: ops, ChangesNeedApproval: s.db.ChangesNeedApproval}
 }
 
 func (s *kafkaSession) close(ctx context.Context) {
@@ -413,6 +413,9 @@ func kafkaErrText(err error) string {
 func (s *kafkaSession) do(ctx context.Context, req tunnel.StoreRequest, rec *stmtRecorder) (tunnel.StoreAnswer, error) {
 	if req.Op == tunnel.RabbitOpNetwork || req.Op == tunnel.RabbitOpNetworkSet {
 		return s.network(ctx, req, rec)
+	}
+	if tunnel.BrokerUserOpLevel(req.Op) != "" {
+		return s.userOp(ctx, req, rec)
 	}
 	if !s.ops[req.Op] {
 		return tunnel.StoreAnswer{Type: "error", Error: "unknown operation " + req.Op + " for Kafka at " + s.db.Level}, nil

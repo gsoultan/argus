@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -347,6 +348,11 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 	if pg {
 		changes = newChangeTracker(ctx, a, email, db, sessionID)
 	}
+	// What a broker's Users tab changes goes to Activity once it ran.
+	var brokerAudits *brokerAudit
+	if slices.Contains(brokerUserEngines, db.Engine) {
+		brokerAudits = newBrokerAudit(a)
+	}
 
 	finish := func() {
 		recMu.Lock()
@@ -469,7 +475,13 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 						continue
 					}
 				}
-				if storeNetworkEngines[db.Engine] {
+				if users, ok := a.brokerUserGate(ctx, email, db, level, &req, brokerAudits); ok {
+					if users != nil {
+						ans, _ := json.Marshal(users)
+						_ = sendJSON(pgBrowserMessage{Type: "ans", Ans: ans})
+						continue
+					}
+				} else if storeNetworkEngines[db.Engine] {
 					if no := a.storeNetworkGate(ctx, email, db, level, &req); no != nil {
 						ans, _ := json.Marshal(no)
 						_ = sendJSON(pgBrowserMessage{Type: "ans", Ans: ans})
@@ -539,6 +551,7 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 			if changes != nil {
 				changes.answer(p)
 			}
+			brokerAudits.answer(context.WithoutCancel(ctx), p)
 			if sendJSON(pgBrowserMessage{Type: "ans", Ans: bytes.Clone(p)}) != nil {
 				return
 			}

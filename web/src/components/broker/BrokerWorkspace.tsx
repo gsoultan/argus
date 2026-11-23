@@ -21,6 +21,7 @@ import { QueueDetail } from './QueueDetail'
 import { Queues } from './Queues'
 import { Routing } from './Routing'
 
+const RabbitUsers = lazy(() => import('./RabbitUsers').then((m) => ({ default: m.RabbitUsers })))
 const StoreNetworkPanel = lazy(() => import('~/components/network/StoreNetwork').then((m) => ({ default: m.StoreNetworkPanel })))
 
 /*
@@ -34,7 +35,7 @@ five seconds while the page is visible. Peeking, publishing, moving and
 anything that changes the broker is recorded by the agent before it is sent.
 */
 
-export type BrokerTab = 'overview' | 'queues' | 'routing' | 'connections' | 'network'
+export type BrokerTab = 'overview' | 'queues' | 'routing' | 'connections' | 'users' | 'network'
 
 export type Ask = (req: Record<string, unknown> & { op: string }) => Promise<StoreAnswer>
 
@@ -245,6 +246,7 @@ export function BrokerWorkspace(props: BrokerWorkspaceProps) {
                 {narrow ? 'Routing' : 'Exchanges & routing'}
               </Tabs.Tab>
               {can('connections') && <Tabs.Tab value="connections">Connections</Tabs.Tab>}
+              {can('users') && <Tabs.Tab value="users">Users</Tabs.Tab>}
               {can('network') && <Tabs.Tab value="network">Network</Tabs.Tab>}
             </Tabs.List>
           </Tabs>
@@ -256,6 +258,12 @@ export function BrokerWorkspace(props: BrokerWorkspaceProps) {
           {tab === 'queues' && (queue ? <QueueDetail key={queue} name={queue} /> : <Queues />)}
           {tab === 'routing' && <Routing selected={exchange} onSelect={(x) => onNavigate({ tab: 'routing', exchange: x })} />}
           {tab === 'connections' && can('connections') && <Connections />}
+          {tab === 'users' && can('users') && (
+            <Suspense fallback={null}>
+              <RabbitUsers s={s} database={database} narrow={narrow}
+                names={{ queues: queues.map((q) => q.name), exchanges: exchanges.map((x) => x.name).filter(Boolean) }} />
+            </Suspense>
+          )}
           {tab === 'network' && can('network') && (
           <Suspense fallback={null}>
             <Box style={{ display: 'flex', flexDirection: 'column', height: 'calc(100dvh - 220px)', minHeight: 520, border: '1px solid var(--color-line)', borderRadius: 8, overflow: 'hidden' }}>

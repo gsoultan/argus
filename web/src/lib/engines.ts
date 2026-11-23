@@ -93,7 +93,7 @@ export const ENGINES: Record<DBEngine, EngineInfo> = {
       read: 'See queues and exchanges, and peek at messages (they are put back).',
       write: 'Publish messages too.',
       owner: 'Purge queues, create and delete queues and bindings.',
-      dba: 'See and close the vhost’s connections too.',
+      dba: 'See and close the vhost’s connections, and manage the apps’ users on it: their permissions, tags, limits and passwords.',
     },
   },
   kafka: {
@@ -106,7 +106,7 @@ export const ENGINES: Record<DBEngine, EngineInfo> = {
       read: 'See topics, partitions and consumer lag, and peek at messages. Nothing is committed for any group.',
       write: 'Publish messages too.',
       owner: 'Create and delete topics in the scope, and change their settings.',
-      dba: 'The same as Manage. Nothing on the cluster itself: no brokers, no other users, no ACLs.',
+      dba: 'Manage, and the apps\' users, their ACLs and limits inside this scope. Nothing on the cluster itself: no brokers, no settings.',
     },
   },
 }

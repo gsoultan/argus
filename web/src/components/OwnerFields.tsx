@@ -18,9 +18,11 @@ Fields side by side share one label line and one input height; hints go under
 the whole row (the layout rule asked for on 2026-11-23).
 */
 
-/** The engines a database owner means something on. */
-export const OWNER_ENGINES: DBEngine[] = ['postgres', 'mysql', 'mssql', 'mongodb']
+/** The engines a database owner, or a vhost's or topic's app user, means something on. */
+export const OWNER_ENGINES: DBEngine[] = ['postgres', 'mysql', 'mssql', 'mongodb', 'rabbitmq', 'kafka']
 export const hasOwner = (e: DBEngine) => OWNER_ENGINES.includes(e)
+/** RabbitMQ and Kafka: the user is the app's, given the new vhost or topic (plans/broker-users/design.md, picture 08). */
+export const isBrokerOwner = (e: DBEngine) => e === 'rabbitmq' || e === 'kafka'
 
 const MIN_PASSWORD = 12
 
@@ -36,6 +38,12 @@ export function ownerWords(engine: DBEngine, host: string) {
     case 'mongodb':
       return { argus: 'No app user', existing: `A user on ${host}`, made: 'A new user', noun: 'user',
         note: 'MongoDB has no owner: the user gets dbOwner on this database only.' }
+    case 'rabbitmq':
+      return { argus: 'No app user', existing: `A user on ${host}`, made: 'A new user', noun: 'user',
+        note: 'The user gets everything on the new vhost (.* .* .*) and no tag: nothing on other vhosts.' }
+    case 'kafka':
+      return { argus: 'No app user', existing: `A user on ${host}`, made: 'A new user', noun: 'user',
+        note: 'The user gets produce and consume on this topic, and consumer groups starting with its name. A new one signs in with SCRAM-SHA-512.' }
     default:
       return { argus: 'No app user', existing: `A user on ${host}`, made: 'A new user', noun: 'user',
         note: 'MySQL has no owner: the user gets every privilege on this database only.' }
@@ -155,7 +163,7 @@ export function OwnerFields({ engine, host, db, users, value, onChange, kinds = 
   return (
     <Stack gap="xs">
       <Stack gap={4}>
-        <Text size={FS.meta} fw={500}>Owner</Text>
+        <Text size={FS.meta} fw={500}>{isBrokerOwner(engine) ? 'App user' : 'Owner'}</Text>
         <SegmentedControl fullWidth value={value.kind || 'argus'}
           onChange={(v) => { const k = (v === 'argus' ? '' : v) as OwnerKind; rememberKind(k); set({ kind: k }) }}
           data={kinds.map((k) => ({ value: k || 'argus', label: label[k] }))} />
@@ -176,7 +184,7 @@ export function OwnerFields({ engine, host, db, users, value, onChange, kinds = 
       {value.kind === 'new' && (
         <Box p="sm" style={{ border: '1px solid var(--color-line)', borderRadius: 8 }}>
           <Stack gap="xs">
-            <SimpleGrid cols={engine === 'mongodb' ? 1 : 2} style={{ alignItems: 'end' }}>
+            <SimpleGrid cols={engine === 'mongodb' || isBrokerOwner(engine) ? 1 : 2} style={{ alignItems: 'end' }}>
               <TextInput label="User name" value={shownName} styles={{ input: { fontFamily: 'var(--font-mono)' }, label: { whiteSpace: 'nowrap' } }}
                 onChange={(e) => set({ name: e.currentTarget.value, named: true })} placeholder={suggestedOwner(db) || 'invoices_app'} />
               {engine === 'postgres' && (
@@ -198,7 +206,10 @@ export function OwnerFields({ engine, host, db, users, value, onChange, kinds = 
                 styles={{ input: { fontFamily: 'var(--font-mono)' } }} />
             )}
             <Text size={FS.micro} c="dimmed">
-              {value.named ? '' : 'Suggested from the database’s name. '}It can sign in, owns the database, and nothing else on {host}.
+              {value.named ? '' : `Suggested from the ${engine === 'rabbitmq' ? 'vhost' : engine === 'kafka' ? 'topic' : 'database'}’s name. `}
+              {engine === 'rabbitmq' ? `It can sign in over AMQP and use the new vhost, and nothing else on ${host}.`
+                : engine === 'kafka' ? `It can sign in and use the new topic, and nothing else on ${host}.`
+                  : `It can sign in, owns the database, and nothing else on ${host}.`}
               {engine === 'mysql' ? ' Any machine is still limited by the Network tab and the firewall.' : ''}
             </Text>
             <PasswordField value={value} onChange={onChange} error={pwErr} />
@@ -257,12 +268,26 @@ export function connectionString(engine: DBEngine, c: OwnerConnection, password:
     case 'mysql': return `mysql://${auth}/${encodeURIComponent(c.database)}`
     case 'mssql': return `sqlserver://${auth}?database=${encodeURIComponent(c.database)}`
     case 'mongodb': return `mongodb://${auth}/${encodeURIComponent(c.database)}?authSource=${encodeURIComponent(c.authSource || c.database)}`
+    case 'rabbitmq': return `amqp://${auth}/${encodeURIComponent(c.database)}`
+    case 'kafka': return `${c.host}:${c.port}`
   }
   return ''
 }
 
 /** The same, as lines for an app's .env file. */
 export function connectionEnv(engine: DBEngine, c: OwnerConnection, password: string): string {
+  if (engine === 'kafka') {
+    return [
+      `KAFKA_BOOTSTRAP_SERVERS=${c.host}:${c.port}`, 'KAFKA_SECURITY_PROTOCOL=SASL_PLAINTEXT', 'KAFKA_SASL_MECHANISM=SCRAM-SHA-512',
+      `KAFKA_USERNAME=${c.user}`, ...(password ? [`KAFKA_PASSWORD=${password}`] : []), `KAFKA_TOPIC=${c.database}`,
+    ].join('\n')
+  }
+  if (engine === 'rabbitmq') {
+    return [
+      `AMQP_HOST=${c.host}`, `AMQP_PORT=${c.port}`, `AMQP_VHOST=${c.database}`, `AMQP_USER=${c.user}`,
+      ...(password ? [`AMQP_PASSWORD=${password}`] : []), `AMQP_URL=${connectionString(engine, c, password)}`,
+    ].join('\n')
+  }
   return [
     `DB_HOST=${c.host}`, `DB_PORT=${c.port}`, `DB_NAME=${c.database}`, `DB_USER=${c.user}`,
     ...(password ? [`DB_PASSWORD=${password}`] : []),
@@ -295,11 +320,11 @@ export function ConnectionDetails({ engine, connection: c, password, onCopied }:
       </Group>
       {row('Host', c.host)}
       {row('Port', String(c.port), c.pooled ? 'PgBouncer' : undefined)}
-      {row('Database', c.database)}
+      {row(engine === 'rabbitmq' ? 'Vhost' : engine === 'kafka' ? 'Topic' : 'Database', c.database)}
       {row('User', c.user)}
       {password && row('Password', password)}
       {c.authSource && c.authSource !== c.database && row('Auth source', c.authSource)}
-      <Text size={FS.meta} fw={600} mt={4}>Connection string</Text>
+      <Text size={FS.meta} fw={600} mt={4}>{engine === 'kafka' ? 'Bootstrap servers' : 'Connection string'}</Text>
       <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontSize: 11.5 }}>{str}</Code>
       <Group gap="xs">
         <CopyButton value={connectionEnv(engine, c, password)}>
@@ -311,7 +336,8 @@ export function ConnectionDetails({ engine, connection: c, password, onCopied }:
       </Group>
       <Text size={FS.micro} c="dimmed">
         {c.pooled ? `PgBouncer ${c.poolMode === 'transaction' || c.poolMode === 'statement' ? `pools by ${c.poolMode} here: session settings and LISTEN do not last between transactions. ` : 'pools by session here. '}Straight to Postgres is port ${c.directPort}. ` : ''}
-        {password ? `Argus does not keep the password; if it is lost, give ${c.user} a new one from the database’s Settings.` : ''}
+        {engine === 'kafka' ? 'Sign in with SASL SCRAM-SHA-512; use SASL_SSL instead where the listener has TLS. ' : ''}
+        {password ? `Argus does not keep the password; if it is lost, give ${c.user} a new one from ${isBrokerOwner(engine) ? 'the entry’s Users tab' : 'the database’s Settings'}.` : ''}
       </Text>
     </Stack>
   )
