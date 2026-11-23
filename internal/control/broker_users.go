@@ -47,6 +47,13 @@ func (a *API) brokerUserGate(ctx context.Context, email string, db Database, lev
 		req.BrokerUser = nil
 		return nil, false
 	}
+	if db.Engine == tunnel.EngineKafka && tunnel.IsKafkaChange(req.Op) {
+		req.Password, req.BrokerUser = "", nil
+		return a.kafkaChangeGate(ctx, email, db, level, req), true
+	}
+	if db.Engine == tunnel.EngineKafka && req.Op != tunnel.KafkaOpTopicConfigs && req.Op != tunnel.KafkaOpGroup {
+		req.KafkaChange = nil
+	}
 	need := tunnel.BrokerUserOpLevelFor(db.Engine, req.Op)
 	if need == "" {
 		req.Password = ""
@@ -90,6 +97,43 @@ func (a *API) brokerUserGate(ctx context.Context, email string, db Database, lev
 	}
 	audit.expect(req.ID, db, email, *req, text, req.Approval)
 	return nil, true
+}
+
+// kafkaChangeGate is the gate for a Kafka topic or group change: Manage,
+// and on an entry whose changes need approval, an approval of its exact
+// text. A dry run changes nothing and passes.
+func (a *API) kafkaChangeGate(ctx context.Context, email string, db Database, level string, req *tunnel.StoreRequest) *tunnel.StoreAnswer {
+	refuse := func(why string) *tunnel.StoreAnswer {
+		return &tunnel.StoreAnswer{ID: req.ID, Type: "error", Error: why}
+	}
+	if tunnel.LevelRank(level) < tunnel.LevelRank(tunnel.LevelOwner) {
+		return refuse("this needs owner or above; this session is at " + level)
+	}
+	if why := tunnel.ValidKafkaChange(db.Name, *req); why != "" {
+		return refuse(why)
+	}
+	if req.KafkaChange != nil && req.KafkaChange.DryRun {
+		req.Approval = ""
+		return nil
+	}
+	if !db.WritesNeedApproval() {
+		req.Approval = ""
+		return nil
+	}
+	text := tunnel.KafkaChangeText(*req)
+	if req.Approval == "" {
+		return &tunnel.StoreAnswer{ID: req.ID, Type: "error", NeedsApproval: &tunnel.RedisApprovalNeed{Text: text},
+			Error: "on " + db.Hostname + approvalWhy(db) + ": this change runs once someone else approves it"}
+	}
+	if _, err := a.store.UseStatementApproval(ctx, req.Approval, email, db.ID, text, nil); err != nil {
+		var na errNoApproval
+		if errors.As(err, &na) {
+			return refuse(na.why)
+		}
+		a.log.Error("kafka: checking an approval failed", "error", err)
+		return refuse("the approval could not be checked; try again")
+	}
+	return nil
 }
 
 // brokerAudit holds the user changes sent to the agent until it answers,
