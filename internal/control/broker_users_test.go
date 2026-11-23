@@ -141,3 +141,17 @@ func TestBrokerUserGateLeavesOtherEngines(t *testing.T) {
 		t.Fatalf("a Redis request was changed: %+v", req)
 	}
 }
+
+// A RabbitMQ entry's users are its administrators' to see: the list needs DBA.
+func TestRabbitUsersNeedDBA(t *testing.T) {
+	a := &API{}
+	db := Database{Engine: tunnel.EngineRabbitMQ, Name: "/orders", Hostname: "mq-01"}
+	req := tunnel.StoreRequest{Op: tunnel.BrokerOpUsers}
+	if no, ok := a.brokerUserGate(context.Background(), "ana", db, tunnel.LevelOwner, &req, nil); !ok || no == nil || !strings.Contains(no.Error, "dba") {
+		t.Fatalf("an owner listed RabbitMQ users: %+v", no)
+	}
+	req = tunnel.StoreRequest{Op: tunnel.BrokerOpUserSet, Password: "smuggled", BrokerUser: &tunnel.BrokerUser{Name: "x", Tags: &[]string{"administrator"}}}
+	if no, _ := a.brokerUserGate(context.Background(), "ana", db, tunnel.LevelDBA, &req, nil); no == nil || req.Password != "" {
+		t.Fatalf("an administrator tag passed, or the password stayed: %+v %+v", no, req)
+	}
+}

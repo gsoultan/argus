@@ -82,6 +82,16 @@ type BrokerUser struct {
 	ACLs []KafkaACL `json:"acls"`
 	// Quotas, when not nil, replace the user's Kafka quotas.
 	Quotas *KafkaQuotas `json:"quotas,omitempty"`
+
+	// RabbitMQ: the password_hash made in the browser, the tags (nil
+	// leaves them), the permissions on the entry's vhost, its topic
+	// permissions there (nil leaves them, empty takes them away) and its
+	// limits.
+	PasswordHash string            `json:"passwordHash,omitempty"`
+	Tags         *[]string         `json:"tags,omitempty"`
+	Perms        *RabbitPerms      `json:"perms,omitempty"`
+	TopicPerms   []RabbitTopicPerm `json:"topicPerms"`
+	Limits       *RabbitLimits     `json:"limits,omitempty"`
 }
 
 // ScramCredential is a SCRAM credential as Kafka stores it: the salt and the

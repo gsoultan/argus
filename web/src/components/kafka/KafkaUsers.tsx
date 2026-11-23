@@ -1,22 +1,20 @@
 import {
   ActionIcon, Alert, Badge, Box, Button, Card, Checkbox, Code, CopyButton, Drawer, Group, Modal, NumberInput,
-  PasswordInput, SegmentedControl, Select, SimpleGrid, Stack, Table, Text, TextInput, Tooltip, UnstyledButton,
+  SegmentedControl, Select, SimpleGrid, Stack, Table, Text, TextInput, UnstyledButton,
 } from '@mantine/core'
-import { useQuery } from '@tanstack/react-query'
 import { IconAlertTriangle, IconCheck, IconCopy, IconPlus, IconSearch, IconUserPlus, IconX } from '@tabler/icons-react'
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { dataOf, useRedisChange, type ChangeAnswer } from '~/components/redis/useRedisChange'
 import type { StoreRequest, StoreSession } from '~/components/useStoreSession'
-import { get, isConfigured } from '~/lib/live'
 import {
   ACL_OPERATIONS, MB, aclKey, aclLine, appBootstrap, clientSettings, coveredTopics, kafkaUserFindings, kafkaUserNameProblem,
   madeBy, mbps, planACLs, quotaWords, signsInWith, topicProblem, userCaps, userGroups,
   type BrokerUserEvent, type KafkaACL, type KafkaLoginResult, type KafkaNetworkLite, type KafkaQuotas, type KafkaUser,
   type KafkaUserResult, type KafkaUsersData, type UserPlan,
 } from '~/lib/kafkaUsers'
-import { generatePassword } from '~/lib/password'
+import { ChoiceCards, ConfirmTyped, MONO, PasswordChoice, Section, Step, madeText, useUserEvents } from '~/components/brokerusers/parts'
 import { scramCredential, type ScramMechanism } from '~/lib/scram'
-import { FS, SP } from '~/theme'
+import { FS } from '~/theme'
 import type { Database } from '~/types/domain'
 
 /*
@@ -30,7 +28,6 @@ browser; the one exception is the sign-in check right after, which the agent
 uses once and drops. Argus does not keep it, so it is shown once.
 */
 
-const MONO = { input: { fontFamily: 'var(--font-mono)' } }
 
 const CAP_COLOR: Record<string, string> = { Produce: 'indigo', Consume: 'teal', 'Alter topics': 'amber', Deny: 'rose' }
 
@@ -49,14 +46,6 @@ function Caps({ acls }: { acls: KafkaACL[] }) {
   )
 }
 
-function useUserEvents(database: Database) {
-  return useQuery({
-    queryKey: ['broker-users', database.id],
-    queryFn: () => get<{ events: BrokerUserEvent[] }>(`/api/v1/databases/${encodeURIComponent(database.id)}/broker-users`),
-    enabled: isConfigured(),
-    staleTime: 10_000,
-  })
-}
 
 export function KafkaUsers({ s, database, topics, can, narrow }: {
   s: StoreSession
@@ -184,11 +173,6 @@ export function KafkaUsers({ s, database, topics, can, narrow }: {
   )
 }
 
-function madeText(e?: BrokerUserEvent): string {
-  if (!e) return 'Outside Argus'
-  const who = e.by.split('@')[0]
-  return `Argus · ${who}, ${new Date(e.at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`
-}
 
 /** The result of a change, as one line, or null when it did not happen. */
 function outcome(a: ChangeAnswer): { ok: boolean; text: string } {
@@ -198,34 +182,6 @@ function outcome(a: ChangeAnswer): { ok: boolean; text: string } {
   return { ok: true, text: [r.added ? `${r.added} ACL${r.added === 1 ? '' : 's'} added` : '', r.removed ? `${r.removed} removed` : ''].filter(Boolean).join(', ') }
 }
 
-/** Generate a password or type one; the same control as the Redis users. */
-function PasswordChoice({ value, onChange }: { value: string; onChange: (pw: string) => void }) {
-  const [mode, setMode] = useState<'generate' | 'type'>('generate')
-  const [generated, setGenerated] = useState(() => generatePassword())
-  const [typed, setTyped] = useState('')
-  useEffect(() => { onChange(mode === 'generate' ? generated : typed) }, [mode, generated, typed]) // eslint-disable-line react-hooks/exhaustive-deps
-  const short = mode === 'type' && typed.length > 0 && typed.length < 12
-  return (
-    <Stack gap={4}>
-      <Group gap="xs" wrap="nowrap" align="center">
-        <SegmentedControl size="xs" value={mode} onChange={(v) => setMode(v as 'generate' | 'type')} w={190}
-          data={[{ value: 'generate', label: 'Generate' }, { value: 'type', label: 'Type one' }]} />
-        {mode === 'generate' ? (
-          <Group gap={6} wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
-            <Code style={{ flex: 1, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{generated}</Code>
-            <CopyButton value={generated}>
-              {({ copied, copy }) => <Tooltip label={copied ? 'Copied' : 'Copy'}><ActionIcon variant="default" onClick={copy} aria-label="Copy password">{copied ? <IconCheck size={14} /> : <IconCopy size={14} />}</ActionIcon></Tooltip>}
-            </CopyButton>
-            <Button size="compact-xs" variant="subtle" onClick={() => setGenerated(generatePassword())}>New</Button>
-          </Group>
-        ) : (
-          <PasswordInput size="xs" style={{ flex: 1 }} value={typed} onChange={(e) => setTyped(e.currentTarget.value)} aria-label="Password" error={short ? 'At least 12 characters' : undefined} />
-        )}
-      </Group>
-      <Text size={FS.micro} c="dimmed">Shown again with the connection details once it is made. Argus does not keep it{value ? '' : ''}.</Text>
-    </Stack>
-  )
-}
 
 const WHAT: { value: UserPlan['what']; label: string; hint: string }[] = [
   { value: 'produce', label: 'Produce', hint: 'Write to topics' },
@@ -234,26 +190,6 @@ const WHAT: { value: UserPlan['what']; label: string; hint: string }[] = [
   { value: 'custom', label: 'Custom', hint: 'Pick ACLs one by one' },
 ]
 
-/** Cards of equal height whatever their text, one chosen. */
-export function ChoiceCards<T extends string>({ value, onChange, options, cols }: {
-  value: T; onChange: (v: T) => void; options: { value: T; label: string; hint: string }[]; cols?: number
-}) {
-  return (
-    <SimpleGrid cols={{ base: 2, sm: cols ?? options.length }} spacing={6} role="radiogroup">
-      {options.map((o) => {
-        const on = o.value === value
-        return (
-          <UnstyledButton key={o.value} role="radio" aria-checked={on} onClick={() => onChange(o.value)} p={8}
-            style={{ height: '100%', borderRadius: 9, border: `1px solid ${on ? 'var(--mantine-color-azure-6)' : 'var(--color-line)'}`,
-              background: on ? 'var(--mantine-color-azure-light)' : undefined, boxShadow: on ? '0 0 0 1px var(--mantine-color-azure-6) inset' : undefined }}>
-            <Text size={FS.meta} fw={600}>{o.label}</Text>
-            <Text size={FS.micro} c="dimmed">{o.hint}</Text>
-          </UnstyledButton>
-        )
-      })}
-    </SimpleGrid>
-  )
-}
 
 function quotaFields(q: { produce: number | string; consume: number | string; request?: number | string }): KafkaQuotas {
   return {
@@ -541,14 +477,6 @@ function KafkaUserDrawer({ database, user, manage, narrow, change, events, onClo
   )
 }
 
-function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
-  return (
-    <Stack gap={SP.cozy}>
-      <Text size={FS.meta} fw={600}>{title}{hint && <Text span size={FS.micro} c="dimmed" fw={400}> · {hint}</Text>}</Text>
-      {children}
-    </Stack>
-  )
-}
 
 function RenewPassword({ user, onClose, onRenew }: { user: KafkaUser; onClose: () => void; onRenew: (pw: string, m: ScramMechanism) => Promise<void> }) {
   const [password, setPassword] = useState('')
@@ -568,25 +496,6 @@ function RenewPassword({ user, onClose, onRenew }: { user: KafkaUser; onClose: (
   )
 }
 
-function ConfirmTyped({ opened, name, title, text, action, onCancel, onConfirm }: {
-  opened: boolean; name: string; title: string; text: string; action: string; onCancel: () => void; onConfirm: () => Promise<void>
-}) {
-  const [typed, setTyped] = useState('')
-  const [busy, setBusy] = useState(false)
-  useEffect(() => setTyped(''), [opened])
-  return (
-    <Modal opened={opened} onClose={onCancel} title={title} size="sm">
-      <Stack gap="sm">
-        <Text size={FS.meta}>{text}</Text>
-        <TextInput label={`Type ${name} to confirm`} value={typed} onChange={(e) => setTyped(e.currentTarget.value)} styles={MONO} />
-        <Group justify="flex-end">
-          <Button variant="default" size="xs" onClick={onCancel}>Cancel</Button>
-          <Button color="rose" size="xs" disabled={typed !== name} loading={busy} onClick={async () => { setBusy(true); await onConfirm(); setBusy(false) }}>{action}</Button>
-        </Group>
-      </Stack>
-    </Modal>
-  )
-}
 
 /** The user was made or given a new password: check it signs in, then show the connection details once. */
 function MadeKafkaUser({ s, database, made, onClose }: {
@@ -654,15 +563,3 @@ function MadeKafkaUser({ s, database, made, onClose }: {
   )
 }
 
-function Step({ ok, text }: { ok: boolean | null; text: string }) {
-  return (
-    <Group gap={8} wrap="nowrap" align="flex-start">
-      <Box w={18} h={18} style={{ borderRadius: 9, flexShrink: 0, display: 'grid', placeItems: 'center', fontSize: 11, fontWeight: 700,
-        background: ok === null ? undefined : ok ? 'var(--mantine-color-teal-light)' : 'var(--mantine-color-rose-light)',
-        color: ok ? 'var(--mantine-color-teal-6)' : 'var(--mantine-color-rose-6)', border: ok === null ? '2px solid var(--mantine-color-azure-6)' : undefined }}>
-        {ok === null ? '' : ok ? '✓' : '!'}
-      </Box>
-      <Text size={FS.meta}>{text}</Text>
-    </Group>
-  )
-}

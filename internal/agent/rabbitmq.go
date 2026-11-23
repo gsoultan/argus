@@ -277,9 +277,11 @@ func (f *rabbitFactory) releaseVhost(key, vhost string) bool {
 func (s *rabbitSession) ready() tunnel.StoreAnswer {
 	ops := tunnel.RabbitOps(s.db.Level)
 	if s.db.Level == tunnel.LevelDBA {
-		ops = append(ops, tunnel.RabbitOpNetwork, tunnel.RabbitOpNetworkSet)
+		ops = append(ops, tunnel.RabbitOpNetwork, tunnel.RabbitOpNetworkSet, tunnel.BrokerOpUsers, tunnel.BrokerOpUserSet,
+			tunnel.BrokerOpUserDel, tunnel.BrokerOpUserScopeDel, tunnel.BrokerOpUserLogin)
 	}
-	return tunnel.StoreAnswer{Engine: tunnel.EngineRabbitMQ, User: s.user, Version: s.version, Ops: ops}
+	return tunnel.StoreAnswer{Engine: tunnel.EngineRabbitMQ, User: s.user, Version: s.version, Ops: ops,
+		ChangesNeedApproval: s.db.ChangesNeedApproval}
 }
 
 // close deletes the user when this was its last session; RabbitMQ closes
@@ -402,6 +404,9 @@ const maxMove = 10_000
 func (s *rabbitSession) do(ctx context.Context, req tunnel.StoreRequest, rec *stmtRecorder) (tunnel.StoreAnswer, error) {
 	if req.Op == tunnel.RabbitOpNetwork || req.Op == tunnel.RabbitOpNetworkSet {
 		return s.network(ctx, req, rec)
+	}
+	if tunnel.BrokerUserOpLevel(req.Op) != "" {
+		return s.userOp(ctx, req, rec)
 	}
 	if !tunnel.RabbitOpAllowed(req.Op, s.db.Level) {
 		if tunnel.RabbitOpAllowed(req.Op, tunnel.LevelDBA) {

@@ -29,14 +29,14 @@ no table holds broker users.
 */
 
 // brokerUserEngines are the engines with a Users tab of this kind.
-var brokerUserEngines = []string{tunnel.EngineKafka}
+var brokerUserEngines = []string{tunnel.EngineKafka, tunnel.EngineRabbitMQ}
 
 func brokerUserText(db Database, req tunnel.StoreRequest) string {
-	return tunnel.KafkaUserText(db.Name, req)
+	return tunnel.BrokerUserText(db.Engine, db.Name, req)
 }
 
 func brokerUserProblem(db Database, req tunnel.StoreRequest) string {
-	return tunnel.ValidKafkaUserChange(db.Name, req)
+	return tunnel.ValidBrokerUserChange(db.Engine, db.Name, req)
 }
 
 // brokerUserGate decides whether a broker user request may pass to the
@@ -47,7 +47,7 @@ func (a *API) brokerUserGate(ctx context.Context, email string, db Database, lev
 		req.BrokerUser = nil
 		return nil, false
 	}
-	need := tunnel.BrokerUserOpLevel(req.Op)
+	need := tunnel.BrokerUserOpLevelFor(db.Engine, req.Op)
 	if need == "" {
 		req.Password = ""
 		req.BrokerUser = nil

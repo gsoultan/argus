@@ -93,7 +93,7 @@ export const ENGINES: Record<DBEngine, EngineInfo> = {
       read: 'See queues and exchanges, and peek at messages (they are put back).',
       write: 'Publish messages too.',
       owner: 'Purge queues, create and delete queues and bindings.',
-      dba: 'See and close the vhost’s connections too.',
+      dba: 'See and close the vhost’s connections, and manage the apps’ users on it: their permissions, tags, limits and passwords.',
     },
   },
   kafka: {

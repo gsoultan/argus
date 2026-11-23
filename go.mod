@@ -40,6 +40,7 @@ require (
 	github.com/microsoft/go-mssqldb v1.12.0
 	github.com/minio/minio-go/v7 v7.3.0
 	github.com/quic-go/quic-go v0.64.1
+	github.com/rabbitmq/amqp091-go v1.10.0
 	github.com/twmb/franz-go v1.20.5
 	github.com/twmb/franz-go/pkg/kadm v1.17.1
 	github.com/twmb/franz-go/pkg/kmsg v1.12.0

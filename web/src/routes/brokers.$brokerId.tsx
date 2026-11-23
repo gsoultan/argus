@@ -25,7 +25,7 @@ import { FS, INK } from '~/theme'
 interface Search { tab?: BrokerTab | KafkaTab; queue?: string; exchange?: string; topic?: string }
 const TABS: (BrokerTab | KafkaTab)[] = ['overview', 'queues', 'routing', 'connections', 'topics', 'groups', 'users', 'network']
 const KAFKA_TABS: KafkaTab[] = ['overview', 'topics', 'groups', 'users', 'network']
-const RABBIT_TABS: BrokerTab[] = ['overview', 'queues', 'routing', 'connections', 'network']
+const RABBIT_TABS: BrokerTab[] = ['overview', 'queues', 'routing', 'connections', 'users', 'network']
 
 export const Route = createFileRoute('/brokers/$brokerId')({
   component: BrokerPage,
