@@ -38,7 +38,7 @@ describe('AddDatabase behind PgBouncer', () => {
     expect(await screen.findByText('Adding here', {}, { timeout: 3000 })).toBeTruthy()
     expect(screen.getByText(/As Postgres on pg\.example\.id knows it/)).toBeTruthy()
     fireEvent.change(screen.getByLabelText('Database name'), { target: { value: 'athena_db' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add athena_db' }))
     await waitFor(() => expect(created).toHaveLength(1))
     expect(created[0]).toMatchObject({ dbname: 'athena_db', host: 'pg.example.id', port: 5432, poolerPort: 6432 })
   })

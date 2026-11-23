@@ -111,6 +111,18 @@ export const ENGINES: Record<DBEngine, EngineInfo> = {
   },
 }
 
+/** The engines the Add database form offers, in its order. */
+export const DATABASE_ENGINES: DBEngine[] = ['postgres', 'mysql', 'mssql', 'mongodb', 'redis']
+
+/** The engines the Add broker form offers, in its order. */
+export const BROKER_ENGINES: DBEngine[] = ['rabbitmq', 'kafka']
+
+/** The kinds the agent's "what runs here" report uses for an engine. */
+export const ENGINE_APPS: Record<DBEngine, string[]> = {
+  postgres: ['postgres'], mysql: ['mysql', 'mariadb'], mssql: ['mssql'], mongodb: ['mongodb'],
+  redis: ['redis', 'valkey'], rabbitmq: ['rabbitmq'], kafka: ['kafka'],
+}
+
 /** Engines shown under Brokers instead of Databases. */
 export function isBroker(e: string | undefined): boolean {
   return e === 'rabbitmq' || e === 'kafka'

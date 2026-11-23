@@ -31,10 +31,12 @@ import type { Asset, Database, DBEngine, DBLabel } from '~/types/domain'
  * ever run over a name that is there: a taken name offers to add the
  * existing one instead. See plans/create-databases/design.md.
  */
-export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
+export function CreateOnServer({ asset, engine, onClose, onBack, onAddExisting }: {
   asset: Asset
   engine: DBEngine
   onClose: () => void
+  /** Back to the first step of the add dialog. */
+  onBack?: () => void
   /** Switch the dialog to Already on this server with this name picked. */
   onAddExisting: (name: string) => void
 }) {
@@ -93,6 +95,7 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
   const [retentionDays, setRetentionDays] = useState<number | string>('')
   const [cleanup, setCleanup] = useState<'' | 'delete' | 'compact'>('')
   const [addEntry, setAddEntry] = useState(false)
+  const [showRuns, setShowRuns] = useState(false)
 
   const { data: ownerRole } = useQuery({
     queryKey: ['pg-level-role', 'owner', name.trim()], queryFn: () => pgLevelRole('owner', name.trim()),
@@ -212,7 +215,10 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
             For more numbers, raise <Code>databases</Code> and restart Redis. For a Redis of its own, install one from the Apps tab and add it here.
           </Text>
         </Alert>
-        <Group justify="flex-end"><Button variant="default" onClick={onClose}>Close</Button></Group>
+        <Group justify={onBack ? 'space-between' : 'flex-end'}>
+          {onBack && <Button variant="default" onClick={onBack}>Back</Button>}
+          <Button variant="default" onClick={onClose}>Close</Button>
+        </Group>
       </Stack>
     )
   }
@@ -442,26 +448,40 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
     </Stack>
   )
 
+  // What runs is folded under the form, so the form reads top to bottom; the
+  // fold says how many statements and opens to the same text Activity keeps.
+  const lines = preview.data?.statements ?? []
   const side = (
-    <Stack gap="xs">
-      <Statements title={`Runs on ${host}`} lines={preview.data?.statements ?? []}
-        loading={preview.isFetching} empty={n ? (previewError ? 'Fix the fields to see what runs.' : '') : 'Type a name to see what runs.'} />
-      <Text size={FS.micro} c="dimmed">
-        Then it is added to Argus as {label}, the server’s rules for databases added later apply, and it is backed up like the others here.
+    <Box px="sm" py={8} style={{ border: '1px solid var(--color-line)', borderRadius: 10, background: 'var(--color-raised)' }}>
+      <Group gap={8} wrap="nowrap">
+        <Text size={FS.meta} fw={600} style={{ flexShrink: 0 }}>What runs on {host}</Text>
+        {preview.isFetching && <Loader size={10} />}
+        <Text size={FS.micro} c="dimmed" truncate style={{ minWidth: 0 }}>
+          {!n ? 'Type a name to see it.' : previewError ? 'Fix the fields to see it.'
+            : lines.length ? `${lines.length} statement${lines.length === 1 ? '' : 's'}, any password as [redacted].` : ''}
+        </Text>
+        {lines.length > 0 && (
+          <Button ml="auto" size="compact-xs" variant="subtle" onClick={() => setShowRuns((x) => !x)} aria-expanded={showRuns}>
+            {showRuns ? 'Hide' : 'Show'}
+          </Button>
+        )}
+      </Group>
+      {showRuns && lines.length > 0 && <Box mt={8}><Statements title="" lines={lines} /></Box>}
+      <Text size={FS.micro} c="dimmed" mt={6}>
+        Then it is added to Argus as {label}, the server’s rules for {isBroker(engine) ? 'brokers' : 'databases'} added later apply{isBroker(engine) ? '' : ', and it is backed up like the others here'}.
         {covered && !addEntry ? ' A covered topic adds nothing to Argus.' : ''} Recorded in Activity with what ran{ownerS.kind === 'new' && owned ? ', the password left out' : ''}.
         {ownerS.kind === 'new' && owned ? ` Then the agent signs in as ${ownerN || 'the new user'} to check the password${engine === 'postgres' && o?.pooler ? `, through PgBouncer ${o.pooler.port} and straight to Postgres` : ''}.` : ''}
       </Text>
-    </Stack>
+    </Box>
   )
 
   return (
     <Stack gap="sm">
-      {narrow ? <>{form}{side}</> : (
-        <Box style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 300px', gap: 16 }}>{form}{side}</Box>
-      )}
-      <Group justify="flex-end">
-        <Button variant="default" onClick={onClose}>Cancel</Button>
-        <Button onClick={() => void submit()} loading={busy} disabled={!ready} fullWidth={narrow}>
+      {form}
+      {side}
+      <Group justify={onBack ? 'space-between' : 'flex-end'}>
+        {onBack ? <Button variant="default" onClick={onBack}>Back</Button> : <Button variant="default" onClick={onClose}>Cancel</Button>}
+        <Button onClick={() => void submit()} loading={busy} disabled={!ready}>
           {n ? `Create ${n}${owned && ownerS.kind === 'new' && ownerN ? ` and ${ownerN}` : ''}` : 'Create'}
         </Button>
       </Group>
@@ -473,7 +493,7 @@ export function CreateOnServer({ asset, engine, onClose, onAddExisting }: {
 export function Statements({ title, lines, loading, empty }: { title: string; lines: string[]; loading?: boolean; empty?: string }) {
   return (
     <Stack gap={4}>
-      <Group gap={6}><Text size={FS.meta} fw={600}>{title}</Text>{loading && <Loader size={10} />}</Group>
+      {(title || loading) && <Group gap={6}><Text size={FS.meta} fw={600}>{title}</Text>{loading && <Loader size={10} />}</Group>}
       {lines.length > 0 ? (
         <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 11.5 }}>{lines.map((l) => l.endsWith(';') || l.startsWith('use ') || l.startsWith('db.') || l.startsWith('rabbitmqctl') || l.startsWith('CreateTopics') ? l : `${l};`).join('\n')}</Code>
       ) : empty ? <Text size={FS.micro} c="dimmed">{empty}</Text> : null}

@@ -133,7 +133,7 @@ function Databases() {
         description="Open a Postgres database or a Redis you've been given. Argus signs you in for this session only and records every statement and command. Message brokers are under Brokers."
         actions={
           admin ? (
-            <Group gap="xs"><NewOnServer label="New database" engines={['postgres', 'mysql', 'mongodb', 'redis']} /><ButtonLink to="/assets" size="sm" variant="default" leftSection={<IconPlus size={16} />}>
+            <Group gap="xs"><NewOnServer label="New database" kind="database" /><ButtonLink to="/assets" size="sm" variant="default" leftSection={<IconPlus size={16} />}>
               Add from a server's page
             </ButtonLink></Group>
           ) : undefined

@@ -76,7 +76,7 @@ function Brokers() {
         title="Message brokers"
         description={description}
         actions={admin ? (
-          <Group gap="xs"><NewOnServer label="New broker" engines={['rabbitmq', 'kafka']} /><ButtonLink to="/assets" size="sm" variant="default" leftSection={<IconPlus size={16} />}>Add from a server's page</ButtonLink></Group>
+          <Group gap="xs"><NewOnServer label="New broker" kind="broker" /><ButtonLink to="/assets" size="sm" variant="default" leftSection={<IconPlus size={16} />}>Add from a server's page</ButtonLink></Group>
         ) : undefined}
       />
       <PageBody>

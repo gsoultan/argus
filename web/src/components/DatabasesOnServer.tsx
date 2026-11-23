@@ -4,7 +4,7 @@ import {
 } from '@mantine/core'
 import { useDebouncedValue, useDisclosure, useMediaQuery } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
-import { IconDatabase, IconPlus, IconRefresh, IconSearch, IconTable } from '@tabler/icons-react'
+import { IconDatabase, IconPlus, IconRefresh, IconSearch, IconStack2, IconTable } from '@tabler/icons-react'
 import { lazy, Suspense, useMemo, useState } from 'react'
 import { ButtonLink } from '~/components/links'
 import { EmptyState, SectionCard } from '~/components/page'
@@ -16,9 +16,10 @@ import { assetDBAccessQuery } from '~/lib/dbAccessQueries'
 import { GiveAccessMany, RemoveAccessMany, SelectionBar, TickAll, WhoHasWhat, whoHasIt } from '~/components/BulkDBAccess'
 import { targetName } from '~/lib/dbTarget'
 import { FS } from '~/theme'
-import { ENGINES, engineOf, isBroker } from '~/lib/engines'
+import { BROKER_ENGINES, DATABASE_ENGINES, ENGINES, engineOf, isBroker } from '~/lib/engines'
 import { kafkaCovered } from '~/lib/kafka'
-import type { Asset, DBAssignment, DBEngine, DBLabel } from '~/types/domain'
+import { AddTitle, ChoiceLine, EngineCards, HowCards, useEnginesFound, type AddKind } from '~/components/AddChoose'
+import type { Asset, Database, DBAssignment, DBEngine, DBLabel } from '~/types/domain'
 
 /**
  * The databases Argus opens on one server, on that server's page: adding one
@@ -32,13 +33,32 @@ const CreateOnServer = lazy(() => import('~/components/CreateOnServer').then((m)
 
 export function DatabasesOnServer({ asset, canEdit }: { asset: Asset; canEdit: boolean }) {
   const { data } = useQuery(databasesOnAssetQuery(asset.id))
+  const found = useEnginesFound(asset)
+  if (!isConfigured()) return null
+  const all = data?.databases ?? []
+  const brokers = all.filter((d) => isBroker(d.engine))
+  // The Brokers card shows once there is one in Argus, or for an admin when
+  // the agent sees a broker running here to add.
+  const brokerHere = BROKER_ENGINES.some((e) => found(e)?.running)
+  return (
+    <Stack gap="md">
+      <StoreCard asset={asset} canEdit={canEdit} kind="database" list={all.filter((d) => !isBroker(d.engine))} />
+      {(brokers.length > 0 || (canEdit && brokerHere)) && <StoreCard asset={asset} canEdit={canEdit} kind="broker" list={brokers} />}
+    </Stack>
+  )
+}
+
+/**
+ * One card of the server page: its databases, or its brokers. They are kept
+ * apart because they are added, opened and talked about differently.
+ */
+function StoreCard({ asset, canEdit, kind, list }: { asset: Asset; canEdit: boolean; kind: AddKind; list: Database[] }) {
   const { data: access } = useQuery({ ...assetDBAccessQuery(asset.id), enabled: canEdit && isConfigured() })
   const { data: users } = useQuery({ ...usersQuery(), enabled: canEdit })
   const [adding, add] = useDisclosure(false)
   const [selected, setSelected] = useState<string[]>([])
   const [dialog, setDialog] = useState<null | { kind: 'give'; who: string[]; ids: string[] } | { kind: 'remove' } | { kind: 'grid' }>(null)
-  if (!isConfigured()) return null
-  const list = data?.databases ?? []
+  const broker = kind === 'broker'
   const picked = list.filter((d) => selected.includes(d.id))
   const ids = list.map((d) => d.id)
   const byDB = new Map<string, DBAssignment[]>()
@@ -47,9 +67,11 @@ export function DatabasesOnServer({ asset, canEdit }: { asset: Asset; canEdit: b
   const toggle = (id: string) => setSelected((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id])
   return (
     <SectionCard
-      title="Databases and brokers"
-      icon={IconDatabase}
-      description="Postgres databases, Redis and RabbitMQ on this server that people can open in the browser. Tick several to give a team access to all of them at once. Every session is recorded command by command."
+      title={broker ? 'Brokers' : 'Databases'}
+      icon={broker ? IconStack2 : IconDatabase}
+      description={broker
+        ? 'RabbitMQ vhosts and Kafka topics on this server that people can open in the browser. Tick several to give a team access to all of them at once. Every session is recorded.'
+        : 'Postgres, MySQL, SQL Server, MongoDB and Redis on this server that people can open in the browser. Tick several to give a team access to all of them at once. Every session is recorded command by command.'}
     >
       {canEdit && (
         <Group justify="flex-end" gap="xs" mb="xs">
@@ -58,21 +80,23 @@ export function DatabasesOnServer({ asset, canEdit }: { asset: Asset; canEdit: b
               Who has what
             </Button>
           )}
-          <Button size="compact-xs" variant="default" leftSection={<IconPlus size={12} />} onClick={add.open}>
-            Add
+          <Button size="compact-xs" variant={list.length ? 'default' : 'filled'} leftSection={<IconPlus size={12} />} onClick={add.open}>
+            {broker ? 'Add broker' : 'Add database'}
           </Button>
         </Group>
       )}
       {list.length === 0 ? (
-        <EmptyState compact icon={IconDatabase} title="No databases on this server yet."
+        <EmptyState compact icon={broker ? IconStack2 : IconDatabase} title={broker ? 'No brokers on this server yet.' : 'No databases on this server yet.'}
           description={canEdit
-            ? 'Add a Postgres database, a Redis or a RabbitMQ vhost. The agent on this host signs in as its admin locally; nothing to install, no password to store.'
+            ? broker
+              ? 'Add a RabbitMQ vhost or Kafka topics. The agent on this host signs in as the broker’s admin locally; nothing to install, no password to store.'
+              : 'Add a Postgres, MySQL, SQL Server or MongoDB database, or a Redis. The agent on this host signs in as its admin locally; nothing to install, no password to store.'
             : 'An admin can add one from here.'} />
       ) : (
         <Table verticalSpacing="xs">
           {canEdit && (
             <Table.Thead><Table.Tr>
-              <Table.Th w={32}><TickAll ids={ids} selected={selected} onChange={setSelected} label="Select every database and broker" /></Table.Th>
+              <Table.Th w={32}><TickAll ids={ids} selected={selected} onChange={setSelected} label={broker ? 'Select every broker' : 'Select every database'} /></Table.Th>
               <Table.Th>Name</Table.Th><Table.Th>Label</Table.Th><Table.Th visibleFrom="sm">Who can connect</Table.Th><Table.Th />
             </Table.Tr></Table.Thead>
           )}
@@ -122,7 +146,7 @@ export function DatabasesOnServer({ asset, canEdit }: { asset: Asset; canEdit: b
             onGive={() => setDialog({ kind: 'give', who: [], ids: selected })} onRemove={() => setDialog({ kind: 'remove' })} />
         </Box>
       )}
-      {canEdit && <AddDatabase asset={asset} opened={adding} onClose={add.close} />}
+      {canEdit && adding && <AddDatabase asset={asset} opened onClose={add.close} kind={kind} />}
       {canEdit && dialog?.kind === 'give' && (
         <GiveAccessMany opened initialWho={dialog.who} targets={list.filter((d) => dialog.ids.includes(d.id))}
           onClose={() => { setDialog(null); setSelected([]) }} />
@@ -187,18 +211,22 @@ function PoolerTargets({ targets, using, onUse }: {
   )
 }
 
-export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort, initialPoolerPort, initialConfigPath, initialMode, onlyEngines }: {
+export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort, initialPoolerPort, initialConfigPath, initialMode, kind: kindIn }: {
   asset: Asset; opened: boolean; onClose: () => void; initialEngine?: DBEngine; initialPort?: number; initialPoolerPort?: number
   initialConfigPath?: string
   /** Open on Create new instead of Already on this server. */
   initialMode?: 'existing' | 'create'
-  /** The engines offered: brokers on the Brokers page, for one. */
-  onlyEngines?: DBEngine[]
+  /** Add database or Add broker; from the engine when one is given. */
+  kind?: AddKind
 }) {
+  const kind: AddKind = kindIn ?? (initialEngine && isBroker(initialEngine) ? 'broker' : 'database')
+  const offered = kind === 'broker' ? BROKER_ENGINES : DATABASE_ENGINES
+  // Opened knowing the engine (What runs here, a PgBouncer), it starts on the details.
+  const [step, setStep] = useState<1 | 2>(initialEngine ? 2 : 1)
   const [mode, setMode] = useState<'existing' | 'create'>(initialMode ?? 'existing')
   const create = useCreateDatabase()
   const narrow = useMediaQuery('(max-width: 48em)')
-  const [engine, setEngine] = useState<DBEngine>(initialEngine ?? 'postgres')
+  const [engine, setEngine] = useState<DBEngine>(initialEngine && offered.includes(initialEngine) ? initialEngine : offered[0]!)
   const info = ENGINES[engine]
   const [typed, setTyped] = useState('')
   const [manual, setManual] = useState(false)
@@ -216,7 +244,7 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
   const found = useQuery({
     queryKey: ['discover-databases', asset.id, where] as const,
     queryFn: () => discoverDatabases(asset.id, where),
-    enabled: opened && !manual && isConfigured(),
+    enabled: opened && step === 2 && !manual && isConfigured(),
     staleTime: 0,
     gcTime: 0,
     retry: false,
@@ -250,7 +278,14 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
   const valid = names.length > 0 && names.every(nameOk) && !redisAdded
 
   const reset = () => { setPicked([]); setFilter(''); setTyped('') }
-  const pick = (e: DBEngine) => { setEngine(e); reset(); setManual(false); setHost(''); setPort(''); setConfigPath('') }
+  const pick = (e: DBEngine) => {
+    if (e === engine) return
+    setEngine(e); reset(); setManual(false); setHost(''); setPort(''); setConfigPath(''); setConn(false)
+  }
+  // Where it listens is folded into one line: the agent finds it. It opens on
+  // Change, or by itself when the agent could not look.
+  const [conn, setConn] = useState(Boolean(initialPort || initialPoolerPort || initialConfigPath))
+  const host0 = asset.hostname.split('.')[0]!
   const toggle = (n: string) => setPicked((p) => !multi ? [n] : p.includes(n) ? p.filter((x) => x !== n) : [...p, n])
 
   const submit = async () => {
@@ -295,6 +330,10 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
     setHost(t.host ?? ''); setPort(t.port); reset()
     if (!Number(poolerPort) && t.pooler?.port) setPoolerPort(t.pooler.port)
   }
+  const whereText = engine === 'postgres'
+    ? `${host.trim() || (ans?.host && !isLocalHost(ans.host) ? ans.host : `socket ${ans?.host ?? info.defaults.host}`)} · ${Number(port) || ans?.port || info.defaults.port}${Number(poolerPort) ? ` · through PgBouncer ${poolerPort}` : ''}`
+    : `${engine === 'rabbitmq' ? 'management API ' : engine === 'kafka' ? 'SASL listener ' : ''}${host.trim() || info.defaults.host}:${Number(port) || info.defaults.port}${
+      configPath.trim() ? ` · ${configPath.trim()}` : engine === 'rabbitmq' ? ' · signs in with rabbitmqctl' : info.defaults.configPath ? ` · ${info.defaults.configPath}` : ''}`
   const why = found.isError ? (found.error as Error).message
     : remote.length > 0 && ans?.error ? `${ans.error}.`
     : ans?.state === 'offline' ? `The agent on ${asset.hostname} is offline, so it can't look. You can still add by name; it will connect once the agent is back.`
@@ -304,17 +343,33 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
     : ''
 
   return (
-    <Modal opened={opened} onClose={onClose} title={`Add to ${asset.hostname.split('.')[0]}`} centered={!narrow}
-      fullScreen={narrow} size={mode === 'create' ? 'xl' : 'lg'}>
+    <Modal opened={opened} onClose={onClose} title={<AddTitle kind={kind} host={host0} step={step} />} centered={!narrow}
+      fullScreen={narrow} size={step === 1 ? 900 : mode === 'create' ? 'xl' : 'lg'} styles={{ title: { flex: 1 } }}>
+      {step === 1 ? (
+        <Stack gap="md">
+          <Text size={FS.meta} c="dimmed">
+            On {host0}, the agent {kind === 'broker' ? 'signs in as the broker’s admin' : 'looks and creates'} there. No password is typed in.
+          </Text>
+          <Stack gap={8}>
+            <Text size={FS.body} fw={650}>{kind === 'broker' ? 'Which broker?' : 'Which database?'}</Text>
+            <EngineCards asset={asset} engines={offered} value={engine} onChange={pick} />
+          </Stack>
+          <Stack gap={8}>
+            <Text size={FS.body} fw={650}>What do you want to do?</Text>
+            <HowCards engine={engine} host={host0} value={mode} onChange={setMode} />
+          </Stack>
+          <Group justify="flex-end" gap="xs" mt="xs">
+            <Button variant="default" onClick={onClose}>Cancel</Button>
+            <Button onClick={() => setStep(2)} fullWidth={narrow}>Next</Button>
+          </Group>
+        </Stack>
+      ) : (
       <Stack gap="sm">
-        <SegmentedControl value={engine} onChange={(v) => pick(v as DBEngine)} fullWidth
-          data={(onlyEngines ?? (Object.keys(ENGINES) as DBEngine[])).map((e) => ({ label: ENGINES[e].label, value: e }))} />
-        <SegmentedControl value={mode} onChange={(v) => setMode(v as typeof mode)} size="xs"
-          data={[{ label: `Already on ${asset.hostname.split('.')[0]}`, value: 'existing' }, { label: 'Create new', value: 'create' }]} />
+        <ChoiceLine asset={asset} engine={engine} mode={mode} onChange={() => setStep(1)} />
 
         {mode === 'create' ? (
           <Suspense fallback={<Loader size="sm" />}>
-            <CreateOnServer key={engine} asset={asset} engine={engine} onClose={onClose}
+            <CreateOnServer key={engine} asset={asset} engine={engine} onClose={onClose} onBack={() => setStep(1)}
               onAddExisting={(n) => { setMode('existing'); setManual(true); setTyped(n) }} />
           </Suspense>
         ) : (<>
@@ -442,51 +497,60 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
             description={<>{remoteHost ? `As Postgres on ${remoteHost} knows it. This server's PgBouncer sends there; the agent signs in with a password PgBouncer has (userlist.txt or pgbouncer.ini).` : info.nameHint}{manual && <> <Anchor component="button" type="button" size={FS.micro} onClick={() => { setManual(false); setTyped('') }}>Pick from the server instead</Anchor></>}</>} />
         )}
 
-        {engine !== 'postgres' && (
-          <TextInput label={engine === 'rabbitmq' ? 'Management API address' : engine === 'kafka' ? 'Listener address' : 'Address'} placeholder={info.defaults.host}
-            value={host} onChange={(e) => setHost(e.currentTarget.value)}
-            description={engine === 'kafka' ? 'On this server: a SASL listener with SCRAM, and an authorizer on the cluster.'
-              : engine === 'mssql' ? 'On this server, on loopback: 127.0.0.1, ::1 or localhost.'
-              : engine !== 'rabbitmq' ? 'On this server: 127.0.0.1, or the path of its unix socket.'
-              : 'On this server, with the management plugin on (rabbitmq-plugins enable rabbitmq_management).'} />
-        )}
-        <NumberInput label={engine === 'rabbitmq' ? 'Management port' : 'Port'} value={port} onChange={setPort} min={1} max={65535}
-          placeholder={String(info.defaults.port)}
-          description={`Only if it is not ${info.defaults.port}. Changing it asks the agent again.`} />
-        {engine === 'redis' && (
-          <TextInput label="Config file" placeholder={info.defaults.configPath} value={configPath}
-            onChange={(e) => setConfigPath(e.currentTarget.value)}
-            description="The redis.conf or valkey.conf the agent reads requirepass from to sign in as admin. With the default and no redis.conf, it reads /etc/valkey/valkey.conf. The password never leaves the server and is never stored in Argus." />
-        )}
-        {engine === 'mysql' && (
-          <TextInput label="Option file" placeholder="none: root over the socket" value={configPath}
-            onChange={(e) => setConfigPath(e.currentTarget.value)}
-            description="Only if root cannot sign in over the socket: a .cnf on the server, private to root, with a [client] user and password that may create users and grant. The agent reads it there; it is never sent or stored in Argus." />
-        )}
-        {engine === 'mssql' && (
-          <TextInput label="Admin file" placeholder={info.defaults.configPath} value={configPath}
-            onChange={(e) => setConfigPath(e.currentTarget.value)}
-            description="A file on the server, readable by root only, with user = and password = for a sysadmin login such as sa. The agent reads it there to give each person their own login for their session; the password never leaves the server and is never stored in Argus." />
-        )}
-        {engine === 'mongodb' && (
-          <TextInput label="Admin file" placeholder={info.defaults.configPath} value={configPath}
-            onChange={(e) => setConfigPath(e.currentTarget.value)}
-            description="A file on the server, readable by root only, with user = and password = for an account that may create users in this database. The agent reads it there; the password never leaves the server and is never stored in Argus." />
-        )}
-        {engine === 'kafka' && (
-          <TextInput label="Admin file" placeholder={info.defaults.configPath} value={configPath}
-            onChange={(e) => setConfigPath(e.currentTarget.value)} styles={{ input: { fontFamily: 'var(--font-mono)' } }}
-            description="On the server, readable by root only: user = and password = for a SCRAM account that may manage users and ACLs. The agent gives each person their own user with ACLs on these topics, for their session only. The password never leaves the server." />
-        )}
-        {engine === 'rabbitmq' && (
-          <Text size={FS.micro} c="dimmed">
-            The agent uses rabbitmqctl on the server to give each person a user for their session only. No password is typed in or stored.
-          </Text>
-        )}
-        {engine === 'postgres' && (
-          <NumberInput label="PgBouncer port" value={poolerPort} onChange={setPoolerPort} min={1} max={65535} placeholder="none"
-            description="If applications here connect through PgBouncer, sessions can too. Its address and one-time setup are on the database's Connection tab." />
-        )}
+        {!conn && !(failed && !found.isFetching) ? (
+          <Group gap={10} wrap="nowrap" px="sm" py={8}
+            style={{ border: '1px solid var(--color-line)', borderRadius: 10, background: 'var(--color-raised)' }}>
+            <Text size={FS.meta} c="dimmed" style={{ flexShrink: 0 }}>Connects to</Text>
+            <Text size={FS.meta} ff="monospace" truncate style={{ minWidth: 0 }}>{whereText}</Text>
+            <Button ml="auto" size="compact-xs" variant="subtle" onClick={() => setConn(true)}>Change</Button>
+          </Group>
+        ) : (<>
+          {engine !== 'postgres' && (
+            <TextInput label={engine === 'rabbitmq' ? 'Management API address' : engine === 'kafka' ? 'Listener address' : 'Address'} placeholder={info.defaults.host}
+              value={host} onChange={(e) => setHost(e.currentTarget.value)}
+              description={engine === 'kafka' ? 'On this server: a SASL listener with SCRAM, and an authorizer on the cluster.'
+                : engine === 'mssql' ? 'On this server, on loopback: 127.0.0.1, ::1 or localhost.'
+                : engine !== 'rabbitmq' ? 'On this server: 127.0.0.1, or the path of its unix socket.'
+                : 'On this server, with the management plugin on (rabbitmq-plugins enable rabbitmq_management).'} />
+          )}
+          <NumberInput label={engine === 'rabbitmq' ? 'Management port' : 'Port'} value={port} onChange={setPort} min={1} max={65535}
+            placeholder={String(info.defaults.port)}
+            description={`Only if it is not ${info.defaults.port}. Changing it asks the agent again.`} />
+          {engine === 'redis' && (
+            <TextInput label="Config file" placeholder={info.defaults.configPath} value={configPath}
+              onChange={(e) => setConfigPath(e.currentTarget.value)}
+              description="The redis.conf or valkey.conf the agent reads requirepass from to sign in as admin. With the default and no redis.conf, it reads /etc/valkey/valkey.conf. The password never leaves the server and is never stored in Argus." />
+          )}
+          {engine === 'mysql' && (
+            <TextInput label="Option file" placeholder="none: root over the socket" value={configPath}
+              onChange={(e) => setConfigPath(e.currentTarget.value)}
+              description="Only if root cannot sign in over the socket: a .cnf on the server, private to root, with a [client] user and password that may create users and grant. The agent reads it there; it is never sent or stored in Argus." />
+          )}
+          {engine === 'mssql' && (
+            <TextInput label="Admin file" placeholder={info.defaults.configPath} value={configPath}
+              onChange={(e) => setConfigPath(e.currentTarget.value)}
+              description="A file on the server, readable by root only, with user = and password = for a sysadmin login such as sa. The agent reads it there to give each person their own login for their session; the password never leaves the server and is never stored in Argus." />
+          )}
+          {engine === 'mongodb' && (
+            <TextInput label="Admin file" placeholder={info.defaults.configPath} value={configPath}
+              onChange={(e) => setConfigPath(e.currentTarget.value)}
+              description="A file on the server, readable by root only, with user = and password = for an account that may create users in this database. The agent reads it there; the password never leaves the server and is never stored in Argus." />
+          )}
+          {engine === 'kafka' && (
+            <TextInput label="Admin file" placeholder={info.defaults.configPath} value={configPath}
+              onChange={(e) => setConfigPath(e.currentTarget.value)} styles={{ input: { fontFamily: 'var(--font-mono)' } }}
+              description="On the server, readable by root only: user = and password = for a SCRAM account that may manage users and ACLs. The agent gives each person their own user with ACLs on these topics, for their session only. The password never leaves the server." />
+          )}
+          {engine === 'rabbitmq' && (
+            <Text size={FS.micro} c="dimmed">
+              The agent uses rabbitmqctl on the server to give each person a user for their session only. No password is typed in or stored.
+            </Text>
+          )}
+          {engine === 'postgres' && (
+            <NumberInput label="PgBouncer port" value={poolerPort} onChange={setPoolerPort} min={1} max={65535} placeholder="none"
+              description="If applications here connect through PgBouncer, sessions can too. Its address and one-time setup are on the database's Connection tab." />
+          )}
+        </>)}
         <Stack gap={4}>
           <Text size={FS.meta} fw={500}>Label</Text>
           <SegmentedControl value={label} onChange={(v) => setLabel(v as DBLabel)} fullWidth={narrow}
@@ -495,14 +559,19 @@ export function AddDatabase({ asset, opened, onClose, initialEngine, initialPort
             {names.length > 1 ? 'Applies to all of them. ' : ''}On production, Write and above need approval each time unless you say otherwise.
           </Text>
         </Stack>
-        <Group justify="flex-end">
-          <Button variant="default" onClick={onClose}>Cancel</Button>
-          <Button onClick={() => void submit()} loading={busy} disabled={!valid} fullWidth={narrow}>
-            {listing && names.length > 1 ? `Add ${names.length} ${info.noun}s` : 'Add'}
+        <Group justify="space-between">
+          <Button variant="default" onClick={() => setStep(1)}>Back</Button>
+          <Button onClick={() => void submit()} loading={busy} disabled={!valid}>
+            {names.length > 1 ? `Add ${names.length} ${info.noun}s`
+              : engine === 'redis' ? 'Add this Redis'
+              : engine === 'kafka' && names[0] === '*' ? 'Add every topic'
+              : engine === 'kafka' ? `Add topics starting ${names[0]}`
+              : names.length === 1 ? `Add ${names[0]}` : 'Add'}
           </Button>
         </Group>
         </>)}
       </Stack>
+      )}
     </Modal>
   )
 }
