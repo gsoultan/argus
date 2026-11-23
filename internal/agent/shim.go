@@ -98,17 +98,15 @@ func RunShim(cfg ShimConfig) int {
 
 	stream := newStream(rc, d.sessionID)
 	stream.socket, stream.start = cfg.SocketPath, start
+	stream.listen()
 	code := execSession(cfg, origCmd, stream)
 
-	conn, dec := stream.close(code)
-	if conn == nil {
+	if conn, _ := stream.close(code); conn == nil {
 		return code
 	}
 	// Wait briefly for the daemon's acknowledgement so the chain head reaches
 	// the log before the process exits. Not fatal if it does not arrive.
-	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
-	var ack Reply
-	if err := dec.Decode(&ack); err == nil && len(ack.ChainHead) >= 12 {
+	if ack, ok := stream.ackWithin(3 * time.Second); ok && len(ack.ChainHead) >= 12 {
 		fmt.Fprintf(os.Stderr, "\r\nargus: session %s recorded (chain %s…)\r\n",
 			ack.SessionID, ack.ChainHead[:12])
 	}
@@ -301,6 +299,12 @@ type stream struct {
 	lost        bool
 	closed      bool
 	exitCode    int
+
+	// listening is whether a reader is on the collector's connection, so a
+	// quiet session notices the agent going; see listen. acks carries what
+	// that reader got: the acknowledgement at the end.
+	listening bool
+	acks      chan Reply
 }
 
 // pendingMax bounds what is kept while the agent restarts.
@@ -312,6 +316,70 @@ const resumeWait = 2 * time.Minute
 
 func newStream(rc *recording, sessionID string) *stream {
 	return &stream{enc: rc.enc, conn: rc.conn, dec: rc.dec, started: time.Now(), sessionID: sessionID}
+}
+
+// listen puts a reader on the collector's connection, and on each one
+// resume opens after it.
+//
+// A stream used to find its agent gone only by failing to write to it. A
+// login sitting at a prompt writes nothing, so after an agent restart it
+// stayed unrecorded, unknown to the new agent and impossible to watch, until
+// the person next typed -- and gave up on the new agent two minutes after
+// that, not after the restart. The agent sends nothing during a session but
+// its acknowledgement at the end, so a read that ends sooner is the agent
+// going, and the stream resumes at once.
+func (s *stream) listen() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.listening {
+		return
+	}
+	s.listening, s.acks = true, make(chan Reply, 1)
+	go s.watch(s.conn, s.dec)
+}
+
+// watch reads conn until it ends. Called with neither s.mu held nor the
+// decoder in use by anyone else.
+func (s *stream) watch(conn net.Conn, dec *json.Decoder) {
+	var ack Reply
+	err := dec.Decode(&ack)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.conn != conn {
+		return // resumed onto another connection already
+	}
+	if s.closed {
+		if err == nil {
+			select {
+			case s.acks <- ack:
+			default:
+			}
+		}
+		return
+	}
+	// The session is running and its recording is not: the agent went, or
+	// sealed it on a failure of its own. Either way, as a failed write.
+	s.dead = true
+	if s.socket != "" && !s.resuming {
+		s.resuming = true
+		go s.resume()
+	}
+}
+
+// ackWithin waits up to d for the collector's acknowledgement.
+func (s *stream) ackWithin(d time.Duration) (Reply, bool) {
+	s.mu.Lock()
+	acks := s.acks
+	s.mu.Unlock()
+	if acks == nil {
+		return Reply{}, false
+	}
+	select {
+	case ack := <-acks:
+		return ack, true
+	case <-time.After(d):
+		return Reply{}, false
+	}
 }
 
 func (s *stream) frame(kind string, data []byte) {
@@ -384,6 +452,9 @@ func (s *stream) resume() {
 			"restarted was not kept]\r\n"})
 	}
 	s.pending, s.pendingSize, s.dead, s.resuming = nil, 0, false, false
+	if s.listening {
+		go s.watch(s.conn, s.dec)
+	}
 	if s.closed {
 		_ = s.enc.Encode(SessionEnd{Type: "end", ExitCode: s.exitCode})
 	}

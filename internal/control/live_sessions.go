@@ -205,6 +205,20 @@ func (a *API) watchThroughAgent(ctx context.Context, conn *websocket.Conn,
 	id, email, client string) {
 
 	subject, err := a.store.Session(ctx, id)
+	// A login that outlived an agent restart is recorded from then on under
+	// a new id, and the old one is ended as carried on: the viewer is shown
+	// the session the login is now.
+	if err == nil && subject != nil && subject.State != "active" {
+		if next, cerr := a.store.ContinuedAs(ctx, id); cerr != nil {
+			a.log.Error("watch: find the session that carries this one on", "session", id, "error", cerr)
+		} else if next != "" {
+			if n, nerr := a.store.Session(ctx, next); nerr == nil && n != nil && n.State == "active" {
+				a.log.Info("watch: following the login to the session that carries it on",
+					"session", id, "continued_as", next)
+				id, subject = next, n
+			}
+		}
+	}
 	switch {
 	case err != nil:
 		a.log.Error("watch: load session", "session", id, "error", err)

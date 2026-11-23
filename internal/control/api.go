@@ -1128,6 +1128,10 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// RecoveryKey is the fingerprint of the fleet recovery key the
 		// agent holds, "" for none. Absent from an agent older than it.
 		RecoveryKey *string `json:"recovery_key"`
+		// Recording is every session the agent is recording now, so one
+		// it reported and no longer has is ended at once. Absent from an
+		// agent older than it.
+		Recording *AgentRecording `json:"recording"`
 	}
 	if err := decodeReport(r, &in, a.log, "report/heartbeat"); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -1146,6 +1150,11 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 	err := a.store.Heartbeat(r.Context(), in.Hostname, in.Version,
 		in.ActiveSessions, in.Posture, in.ExecTracing, in.ExecReason, in.ConsoleOnly,
 		in.DirectSSH, in.Usage)
+	// Only for an agent's own credential: the sessions ended are the ones
+	// that credential reported.
+	if host := agentHost(r); err == nil && in.Recording != nil && host != "" {
+		a.endAgentLost(r.Context(), host, *in.Recording)
+	}
 	// The direct SSH mode rides the reply. console_only is what an agent
 	// older than the setting understands, and it is on unless the mode is
 	// "allow": such an agent cannot hold a login for approval, so under

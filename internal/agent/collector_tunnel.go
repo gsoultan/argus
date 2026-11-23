@@ -2,6 +2,7 @@ package agent
 
 import (
 	"errors"
+	"time"
 
 	"github.com/gsoultan/argus/internal/recorder"
 )
@@ -171,4 +172,38 @@ func (d *directRecording) activeRecord() SessionRecord {
 		DirectLoginID:  loginID,
 		Auth:           s.start.Auth,
 	}
+}
+
+// RecordingNow is every session this agent is recording now, as the
+// heartbeat says it, so the console ends at once a session this agent
+// reported and no longer has: one an agent restart cut, or whose end never
+// reached the control plane.
+type RecordingNow struct {
+	At       time.Time          `json:"at"`
+	Sessions []RecordingSession `json:"sessions"`
+}
+
+// RecordingSession is one session being recorded, and the ids the same
+// login had before an agent restart.
+type RecordingSession struct {
+	ID        string   `json:"id"`
+	Continues []string `json:"continues,omitempty"`
+}
+
+// Recording is what this agent is recording now.
+func (c *Collector) Recording() RecordingNow {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := RecordingNow{At: time.Now().UTC(), Sessions: []RecordingSession{}}
+	seen := map[string]bool{}
+	for id, s := range c.active {
+		seen[id] = true
+		out.Sessions = append(out.Sessions, RecordingSession{ID: id, Continues: continuesFrom(s.start)})
+	}
+	for id := range c.tunnels {
+		if !seen[id] {
+			out.Sessions = append(out.Sessions, RecordingSession{ID: id})
+		}
+	}
+	return out
 }
