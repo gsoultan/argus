@@ -60,7 +60,7 @@ const DATA = {
   queue: { queue: { name: 'orders.failed', type: 'quorum', messages_ready: 12, consumers: 0 }, bindings: [] },
 }
 
-function open(tab: BrokerTab, queue?: string, ops = ['overview', 'queues', 'exchanges', 'bindings', 'queue', 'peek', 'move']) {
+function open(tab: BrokerTab, queue?: string, ops = ['overview', 'queues', 'exchanges', 'bindings', 'queue', 'peek', 'move'], data: Record<string, unknown> = DATA) {
   renderWithProviders(
     <BrokerWorkspace database={db} access={{ level: 'owner' }} endpoint="/api/v1/postgres" tab={tab} queue={queue} onNavigate={() => {}}
       getTicket={async () => ({ ticket: 't', role: 'ana', level: 'owner' })} />,
@@ -71,7 +71,7 @@ function open(tab: BrokerTab, queue?: string, ops = ['overview', 'queues', 'exch
     ws.push({ type: 'ready' })
     ws.answer({ id: 0, type: 'ready', engine: 'rabbitmq', level: 'owner', user: 'argus-ana-owner', version: '3.13.7', ops })
     await waitFor(() => expect(ws.sent.some((r) => r.op === 'overview')).toBe(true))
-    ws.serve(DATA)
+    ws.serve(data)
     return ws
   }
 }
@@ -150,5 +150,44 @@ describe('BrokerWorkspace', () => {
     ws.serve({ user_login: { user: 'invoices-app', address: '127.0.0.1:5672', ok: true } })
     expect(await screen.findByText('Opens /orders on 127.0.0.1:5672')).toBeInTheDocument()
     expect(screen.getByText(/amqp:\/\/invoices-app:.*@mq-01:5672\/%2Forders/)).toBeInTheDocument()
+  })
+  it('reads a stream from an offset, pages to newer, and lists its readers', async () => {
+    const data = { ...DATA, queue: { queue: { name: 'orders.events', type: 'stream', messages_ready: 50, consumers: 1 }, bindings: [] } }
+    const ws = await open('queues', 'orders.events', ['overview', 'queues', 'exchanges', 'bindings', 'queue', 'stream_read', 'stream_readers'], data)()
+    await waitFor(() => expect(ws.sent.some((r) => r.op === 'queue')).toBe(true))
+    ws.serve(data)
+    await waitFor(() => expect(ws.sent.some((r) => r.op === 'stream_readers')).toBe(true))
+    ws.serve({ stream_readers: { readers: [{ name: 'ledger-sync', protocol: 'stream', offset: 30, behind: 19, from: '10.20.0.61:5552' },
+      { name: 'amq.ctag-1', protocol: 'amqp' }], publishers: [] } })
+    expect(await screen.findByText('ledger-sync')).toBeInTheDocument()
+    expect(screen.getByText('AMQP readers keep no place on the server, so how far they are is not known.')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Offset' }))
+    fireEvent.change(screen.getByLabelText('Start at offset'), { target: { value: '10' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Read' }))
+    await waitFor(() => expect(ws.sent.some((r) => r.op === 'stream_read')).toBe(true))
+    expect(ws.sent.find((r) => r.op === 'stream_read')).toMatchObject({ name: 'orders.events', count: 20, stream: { from: 'offset', offset: 10 } })
+    const msgs = Array.from({ length: 20 }, (_, i) => ({ offset: 10 + i, body: `{"n":${10 + i}}`, encoding: 'string', size: 8 }))
+    ws.serve({ stream_read: { messages: msgs, first: 0, last: 49 } })
+    expect(await screen.findByText('offset 10')).toBeInTheDocument()
+    expect(screen.getByText('10 to 29 of 0 to 49')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Newer' }))
+    await waitFor(() => expect(ws.sent.filter((r) => r.op === 'stream_read')).toHaveLength(2))
+    expect(ws.sent.filter((r) => r.op === 'stream_read')[1]).toMatchObject({ stream: { from: 'offset', offset: 30 } })
+  })
+
+  it('makes a super stream from the routing tab', async () => {
+    const ws = await open('routing', undefined, ['overview', 'queues', 'exchanges', 'bindings', 'exchange', 'super_streams', 'declare_super_stream'])()
+    await waitFor(() => expect(ws.sent.some((r) => r.op === 'super_streams')).toBe(true))
+    ws.serve({ super_streams: [{ name: 'invoices', messages: 40, partitions: [{ stream: 'invoices-0', routingKey: '0', order: 0, messages: 40 }] }] })
+    expect(await screen.findByText('invoices')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'New super stream' }))
+    fireEvent.change(await screen.findByLabelText('Name'), { target: { value: 'payments' } })
+    fireEvent.change(screen.getByLabelText('Partitions'), { target: { value: '4' } })
+    fireEvent.change(screen.getByLabelText('Keep for, days'), { target: { value: '30' } })
+    expect(screen.getByLabelText('What runs').textContent).toContain('payments-0 … payments-3')
+    fireEvent.click(screen.getByRole('button', { name: 'Create payments' }))
+    await waitFor(() => expect(ws.sent.some((r) => r.op === 'declare_super_stream')).toBe(true))
+    expect(ws.sent.find((r) => r.op === 'declare_super_stream')).toMatchObject({ name: 'payments', superStream: { partitions: 4, maxAgeS: 2592000 } })
   })
 })

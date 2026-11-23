@@ -389,11 +389,13 @@ func esc(name string) string { return url.PathEscape(name) }
 // rabbitBrowse is what a person may look at without it being recorded, as
 // the Postgres object tree is not: names, counts and rates.
 var rabbitBrowse = map[string]bool{"overview": true, "queues": true, "exchanges": true, "exchange": true,
-	"bindings": true, "queue": true, "consumers": true, "connections": true, "channels": true}
+	"bindings": true, "queue": true, "consumers": true, "connections": true, "channels": true,
+	"stream_readers": true, "super_streams": true}
 
 // rabbitNamed are the operations that act on one named thing.
 var rabbitNamed = map[string]bool{"exchange": true, "queue": true, "peek": true, "purge": true, "move": true,
-	"declare_queue": true, "delete_queue": true, "declare_exchange": true, "bind": true, "close_connection": true}
+	"declare_queue": true, "delete_queue": true, "declare_exchange": true, "bind": true, "close_connection": true,
+	"stream_read": true, "stream_readers": true, "declare_super_stream": true, "delete_super_stream": true}
 
 // rabbitRates asks for ten minutes of samples, one every 30 seconds.
 const rabbitRates = "msg_rates_age=600&msg_rates_incr=30"
@@ -442,6 +444,17 @@ func (s *rabbitSession) do(ctx context.Context, req tunnel.StoreRequest, rec *st
 			return s.failed(ctx, err)
 		}
 		return tunnel.StoreAnswer{Type: "result", Data: data}, nil
+	}
+
+	switch req.Op {
+	case tunnel.RabbitOpStreamRead:
+		if why := tunnel.ValidStreamRead(req.Stream); why != "" {
+			return tunnel.StoreAnswer{Type: "error", Error: why}, nil
+		}
+	case tunnel.RabbitOpDeclareSuperStream:
+		if why := tunnel.ValidSuperStream(req.Name, req.SuperStream); why != "" {
+			return tunnel.StoreAnswer{Type: "error", Error: why}, nil
+		}
 	}
 
 	// Everything else reads messages or changes something: confirmed where
@@ -503,6 +516,17 @@ func (s *rabbitSession) do(ctx context.Context, req tunnel.StoreRequest, rec *st
 			map[string]any{"properties": props, "routing_key": req.RoutingKey, "payload": req.Payload,
 				"payload_encoding": "string"}, &out)
 		data, tag = out, map[bool]string{true: "PUBLISH routed", false: "PUBLISH not routed"}[out.Routed]
+	case tunnel.RabbitOpStreamRead:
+		var res StreamReadResult
+		res, err = s.streamRead(ctx, req.Name, min(count, tunnel.MaxStreamRead), req.Stream)
+		data, items, tag = res, int64(len(res.Messages)), "READ "+strconv.Itoa(len(res.Messages))
+	case tunnel.RabbitOpDeclareSuperStream:
+		err = s.declareSuperStream(ctx, req.Name, *req.SuperStream)
+		tag = "DECLARE SUPER STREAM " + strconv.Itoa(len(req.SuperStream.SuperStreamKeys()))
+	case tunnel.RabbitOpDeleteSuperStream:
+		var n int
+		n, err = s.deleteSuperStream(ctx, req.Name)
+		tag = "DELETE SUPER STREAM " + strconv.Itoa(n)
 	case "purge":
 		_, err = s.call(ctx, http.MethodDelete, "/api/queues/"+s.v()+"/"+esc(req.Name)+"/contents", nil, nil)
 		tag = "PURGE"
@@ -655,6 +679,10 @@ func (s *rabbitSession) browse(ctx context.Context, req tunnel.StoreRequest, cou
 		return get("/api/vhosts/" + s.v() + "/connections")
 	case "channels":
 		return get("/api/vhosts/" + s.v() + "/channels")
+	case tunnel.RabbitOpStreamReaders:
+		return s.streamReaders(ctx, req.Name)
+	case tunnel.RabbitOpSuperStreams:
+		return s.superStreams(ctx)
 	}
 	return nil, errors.New("unknown operation " + req.Op)
 }
@@ -783,6 +811,14 @@ func (s *rabbitSession) failed(ctx context.Context, err error) (tunnel.StoreAnsw
 // rabbitText is an operation as the recording shows it, quoted so it reads
 // back unambiguously.
 func rabbitText(req tunnel.StoreRequest) string {
+	switch req.Op {
+	case tunnel.RabbitOpStreamRead:
+		return tunnel.StreamReadText(req.Name, req.Count, req.Stream)
+	case tunnel.RabbitOpDeclareSuperStream:
+		return tunnel.SuperStreamText(req.Name, req.SuperStream)
+	case tunnel.RabbitOpDeleteSuperStream:
+		return "DELETE SUPER STREAM " + strconv.Quote(req.Name)
+	}
 	args := []string{strings.ToUpper(req.Op)}
 	switch req.Op {
 	case "peek":

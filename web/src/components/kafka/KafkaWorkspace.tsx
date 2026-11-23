@@ -9,6 +9,9 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { ButtonLink } from '~/components/links'
 import { ConfirmByName, FatalBanner, LABEL_COLOR } from '~/components/StoreChrome'
 import { useStoreSession, type StoreAnswer } from '~/components/useStoreSession'
+import { useRedisChange, type ChangeAnswer } from '~/components/redis/useRedisChange'
+import { AddPartitions, DeleteMessages, GroupDrawer, SettingsCard, SettingsDrawer } from '~/components/kafka/KafkaChanges'
+import type { KafkaConfig, KafkaSetting } from '~/lib/kafkaChanges'
 import {
   fmtCount, items, kafkaAttention, scopeLabel, showValue, totalLag,
   type KafkaGroup, type KafkaMessage, type KafkaOverview, type KafkaTopic, type KafkaTopicDetail,
@@ -60,6 +63,8 @@ export function KafkaWorkspace(props: KafkaWorkspaceProps) {
   const level = s.ready?.level ?? access.level
   const ops = s.ready?.ops
   const can = useCallback((op: string) => ops?.includes(op) ?? false, [ops])
+  const { change, dialog: approvalDialog } = useRedisChange(s, database)
+  const [openGroup, setOpenGroup] = useState<string | null>(null)
 
   const [overview, setOverview] = useState<KafkaOverview | null>(null)
   const [topics, setTopics] = useState<KafkaTopic[]>([])
@@ -165,10 +170,11 @@ export function KafkaWorkspace(props: KafkaWorkspaceProps) {
             {tab === 'overview' && <Overview overview={overview} topics={topics} groups={groups} needs={needs}
               onTopic={openTopic} onGroups={() => onNavigate({ tab: 'groups' })} />}
             {tab === 'topics' && (topic
-              ? <TopicDetail key={topic} name={topic} databaseId={database.id} ask={s.ask} act={act} can={can} hostname={database.hostname} narrow={narrow}
+              ? <TopicDetail key={topic} name={topic} databaseId={database.id} ask={s.ask} act={act} can={can} hostname={database.hostname} narrow={narrow} change={change}
+                  onGroup={setOpenGroup} onChanged={() => void reload()}
                   onBack={() => openTopic()} onPublish={() => setPublishing(topic)} />
               : <Topics topics={topics} narrow={narrow} onOpen={openTopic} canCreate={can('create_topic')} onCreate={() => setCreating(true)} />)}
-            {tab === 'groups' && <Groups groups={groups} onTopic={openTopic} />}
+            {tab === 'groups' && <Groups groups={groups} onTopic={openTopic} onOpen={setOpenGroup} />}
             {tab === 'users' && can('users') && (
               <Suspense fallback={null}>
                 <KafkaUsers s={s} database={database} topics={topics.map((t) => t.name)} can={can} narrow={narrow} />
@@ -184,6 +190,11 @@ export function KafkaWorkspace(props: KafkaWorkspaceProps) {
           </>
         )}
       </Box>
+      {openGroup && (
+        <GroupDrawer group={openGroup} topics={topics.map((t) => t.name)} ask={s.ask} change={change} canChange={can('group_reset')} narrow={narrow}
+          onClose={() => setOpenGroup(null)} onDone={() => void reload()} />
+      )}
+      {approvalDialog}
       {publishing !== null && (
         <PublishDrawer topics={topics} initial={publishing} narrow={narrow} ask={s.ask} onClose={() => setPublishing(null)} onDone={() => void reload()} />
       )}
@@ -355,7 +366,7 @@ function GroupState({ g }: { g: KafkaGroup }) {
   return <Badge size="sm" variant="light" color={color} radius="sm" style={{ textTransform: 'none' }}>{g.state || 'unknown'}</Badge>
 }
 
-function Groups({ groups, onTopic }: { groups: KafkaGroup[]; onTopic: (t: string) => void }) {
+function Groups({ groups, onTopic, onOpen }: { groups: KafkaGroup[]; onTopic: (t: string) => void; onOpen: (g: string) => void }) {
   const rows = groups.slice().sort((a, b) => totalLag(b) - totalLag(a) || a.group.localeCompare(b.group))
   return (
     <Stack gap="sm">
@@ -363,7 +374,7 @@ function Groups({ groups, onTopic }: { groups: KafkaGroup[]; onTopic: (t: string
         <Table.ScrollContainer minWidth={620}>
           <Table verticalSpacing={8} fz="sm">
             <Table.Thead>
-              <Table.Tr><Table.Th>Group</Table.Th><Table.Th>State</Table.Th><Table.Th ta="right">Members</Table.Th><Table.Th>Lag by topic</Table.Th><Table.Th ta="right">Total lag</Table.Th></Table.Tr>
+              <Table.Tr><Table.Th>Group</Table.Th><Table.Th>State</Table.Th><Table.Th ta="right">Members</Table.Th><Table.Th>Lag by topic</Table.Th><Table.Th ta="right">Total lag</Table.Th><Table.Th /></Table.Tr>
             </Table.Thead>
             <Table.Tbody>
               {rows.map((g) => (
@@ -381,10 +392,11 @@ function Groups({ groups, onTopic }: { groups: KafkaGroup[]; onTopic: (t: string
                     </Group>
                   </Table.Td>
                   <Table.Td ta="right" fw={totalLag(g) > 0 ? 600 : undefined}>{fmtCount(totalLag(g))}</Table.Td>
+                  <Table.Td ta="right"><Button size="compact-xs" variant="default" onClick={() => onOpen(g.group)}>Open</Button></Table.Td>
                 </Table.Tr>
               ))}
               {rows.length === 0 && (
-                <Table.Tr><Table.Td colSpan={5}><Text size={FS.meta} c="dimmed" p="sm">No consumer group reads these topics.</Text></Table.Td></Table.Tr>
+                <Table.Tr><Table.Td colSpan={6}><Text size={FS.meta} c="dimmed" p="sm">No consumer group reads these topics.</Text></Table.Td></Table.Tr>
               )}
             </Table.Tbody>
           </Table>
@@ -395,10 +407,15 @@ function Groups({ groups, onTopic }: { groups: KafkaGroup[]; onTopic: (t: string
   )
 }
 
-function TopicDetail({ name, databaseId, ask, act, can, hostname, narrow, onBack, onPublish }: {
+function TopicDetail({ name, databaseId, ask, act, can, hostname, narrow, change, onGroup, onChanged, onBack, onPublish }: {
   name: string; databaseId: string; ask: (r: Req) => Promise<StoreAnswer>; act: (r: Req, ok: string) => Promise<StoreAnswer>; can: (op: string) => boolean
-  hostname: string; narrow: boolean; onBack: () => void; onPublish: () => void
+  hostname: string; narrow: boolean; change: (r: Req) => Promise<ChangeAnswer>; onGroup: (g: string) => void; onChanged: () => void
+  onBack: () => void; onPublish: () => void
 }) {
+  const [editing, setEditing] = useState<{ configs: KafkaConfig[]; settings: KafkaSetting[] } | null>(null)
+  const [adding, setAdding] = useState(false)
+  const [trimming, setTrimming] = useState(false)
+  const [version, setVersion] = useState(0)
   const [detail, setDetail] = useState<KafkaTopicDetail | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [msgs, setMsgs] = useState<KafkaMessage[] | null>(null)
@@ -432,6 +449,8 @@ function TopicDetail({ name, databaseId, ask, act, can, hostname, narrow, onBack
         <Group gap={6} ml="auto">
           <Button size="xs" variant="default" leftSection={<IconRefresh size={12} />} onClick={() => void load()}>Refresh</Button>
           {can('publish') && <Button size="xs" variant="light" leftSection={<IconSend size={12} />} onClick={onPublish}>Publish here</Button>}
+          {can('add_partitions') && <Button size="xs" variant="default" onClick={() => setAdding(true)}>Add partitions</Button>}
+          {can('delete_records') && <Button size="xs" variant="default" color="rose" onClick={() => setTrimming(true)}>Delete messages…</Button>}
           {can('delete_topic') && <Button size="xs" variant="subtle" color="rose" leftSection={<IconTrash size={12} />} onClick={() => setDeleting(true)}>Delete topic</Button>}
         </Group>
       </Group>
@@ -464,7 +483,7 @@ function TopicDetail({ name, databaseId, ask, act, can, hostname, narrow, onBack
               <Stack gap={4}>
                 {(detail?.groups ?? []).map((g) => (
                   <Group key={g.group} gap="xs" wrap="nowrap">
-                    <Text ff="monospace" size={FS.meta} truncate style={{ flex: 1 }}>{g.group}</Text>
+                    <Text ff="monospace" size={FS.meta} truncate style={{ flex: 1, cursor: 'pointer' }} onClick={() => onGroup(g.group)}>{g.group}</Text>
                     <GroupState g={g} />
                     <Text size={FS.meta} fw={600} w={70} ta="right">{fmtCount(g.lag?.[name] ?? 0)}</Text>
                   </Group>
@@ -472,16 +491,7 @@ function TopicDetail({ name, databaseId, ask, act, can, hostname, narrow, onBack
               </Stack>
             )}
           </Card>
-          <Card withBorder radius="md" padding="sm">
-            <Text fw={600} size={FS.body} mb={6}>Settings changed from the cluster's defaults</Text>
-            {Object.keys(detail?.configs ?? {}).length === 0 ? <Text size={FS.meta} c="dimmed">None: this topic uses the broker defaults.</Text> : (
-              <Stack gap={2}>
-                {Object.entries(detail?.configs ?? {}).sort().map(([k, v]) => (
-                  <Text key={k} size={FS.meta} ff="monospace"><Text span c="dimmed" ff="monospace" size={FS.meta}>{k}</Text> = {v}</Text>
-                ))}
-              </Stack>
-            )}
-          </Card>
+          <SettingsCard topic={name} ask={ask} canEdit={can('alter_configs')} version={version} onEdit={(configs, settings) => setEditing({ configs, settings })} />
         </Stack>
       </SimpleGrid>
 
@@ -504,6 +514,13 @@ function TopicDetail({ name, databaseId, ask, act, can, hostname, narrow, onBack
       </Card>
 
       {can('users') && <TopicAccess topic={name} databaseId={databaseId} ask={ask} />}
+
+      {editing && <SettingsDrawer topic={name} configs={editing.configs} settings={editing.settings} change={change} narrow={narrow}
+        onClose={() => setEditing(null)} onDone={() => { setEditing(null); setVersion((v) => v + 1); notifyOk('Settings changed', `${name} has its new settings. Recorded.`) }} />}
+      {adding && <AddPartitions topic={name} current={parts.length} change={change} onClose={() => setAdding(false)}
+        onDone={() => { setAdding(false); void load(); onChanged(); notifyOk('Partitions added', `${name} has more partitions. Recorded.`) }} />}
+      {trimming && <DeleteMessages topic={name} partitions={parts.length} hostname={hostname} ask={ask} change={change} onClose={() => setTrimming(false)}
+        onDone={() => { setTrimming(false); void load(); onChanged(); notifyOk('Messages deleted', `The oldest messages of ${name} are gone. Recorded.`) }} />}
       <ConfirmByName opened={deleting} hostname={hostname} what={`Delete topic ${name} and every message in it, on every broker.`}
         onCancel={() => setDeleting(false)}
         onConfirm={(typed) => {

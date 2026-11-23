@@ -155,3 +155,35 @@ func TestRabbitUsersNeedDBA(t *testing.T) {
 		t.Fatalf("an administrator tag passed, or the password stayed: %+v %+v", no, req)
 	}
 }
+
+// A Kafka topic or group change needs Manage and, on production, waits for
+// approval of its exact text; a dry run waits for nothing.
+func TestKafkaChangesWait(t *testing.T) {
+	a := &API{}
+	db := Database{Engine: tunnel.EngineKafka, Name: "orders.", Hostname: "stream-01", Label: "production"}
+	add := func() *tunnel.StoreRequest {
+		return &tunnel.StoreRequest{Op: tunnel.KafkaOpAddPartitions, Name: "orders.eu", KafkaChange: &tunnel.KafkaChange{Add: 2}}
+	}
+	if no, ok := a.brokerUserGate(context.Background(), "ana", db, tunnel.LevelWrite, add(), nil); !ok || no == nil || !strings.Contains(no.Error, "owner") {
+		t.Fatalf("write added partitions: %+v", no)
+	}
+	req := add()
+	no, _ := a.brokerUserGate(context.Background(), "ana", db, tunnel.LevelOwner, req, nil)
+	if no == nil || no.NeedsApproval == nil || no.NeedsApproval.Text != "ADD 2 PARTITIONS TO TOPIC orders.eu" {
+		t.Fatalf("production did not wait: %+v", no)
+	}
+	out := &tunnel.StoreRequest{Op: tunnel.KafkaOpAlterConfigs, Name: "payments", KafkaChange: &tunnel.KafkaChange{Set: map[string]string{"retention.ms": "1"}}}
+	if no, _ := a.brokerUserGate(context.Background(), "ana", db, tunnel.LevelOwner, out, nil); no == nil || no.NeedsApproval != nil {
+		t.Fatalf("a topic outside the entry passed: %+v", no)
+	}
+	p := int32(0)
+	dry := &tunnel.StoreRequest{Op: tunnel.KafkaOpDeleteRecords, Name: "orders.eu", KafkaChange: &tunnel.KafkaChange{DryRun: true, To: "offset", Partition: &p, Offset: 5}}
+	if no, _ := a.brokerUserGate(context.Background(), "ana", db, tunnel.LevelOwner, dry, nil); no != nil {
+		t.Fatalf("a dry run waited: %+v", no)
+	}
+	peek := &tunnel.StoreRequest{Op: "peek", Name: "orders.eu", KafkaChange: &tunnel.KafkaChange{Add: 1}}
+	a.brokerUserGate(context.Background(), "ana", db, tunnel.LevelOwner, peek, nil)
+	if peek.KafkaChange != nil {
+		t.Fatal("a peek kept a change")
+	}
+}

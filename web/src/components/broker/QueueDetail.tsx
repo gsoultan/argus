@@ -11,6 +11,7 @@ import { FS } from '~/theme'
 import { useBroker } from './BrokerWorkspace'
 import { Sparkline } from './charts'
 import { TypeTag } from './Queues'
+import { StreamMessages, StreamReadersCard } from './StreamRead'
 
 /*
 One queue: its numbers, its messages, who consumes it and what it is bound
@@ -66,9 +67,11 @@ export function QueueDetail({ name }: { name: string }) {
   )
   const consumers = q.consumer_details ?? []
 
+  const stream = q.type === 'stream'
   const side = (
     <Stack gap="md">
-      {can('move') && (
+      {stream && can('stream_readers') && <StreamReadersCard name={q.name} />}
+      {!stream && can('move') && (
         <MoveCard from={q.name} ready={ready} suggest={from ?? dlq.get(q.name)?.split(', ')[0] ?? ''} queues={queues} onMoved={() => { setMsgs(null); void load() }} />
       )}
       <Card withBorder radius="md" padding="md">
@@ -89,7 +92,7 @@ export function QueueDetail({ name }: { name: string }) {
         <Card withBorder radius="md" padding="md">
           <Text fw={600} size={FS.body} c="rose">Danger</Text>
           <Group gap="xs" mt="xs">
-            {can('purge') && (
+            {can('purge') && !stream && (
               <Button size="xs" variant="light" color="rose" disabled={ready === 0}
                 onClick={() => confirm({ op: 'purge', req: { name }, what: `Purge every ready message (${fmtCount(ready)}) from ${name}.`, then: () => setMsgs(null) })}>
                 Purge {fmtCount(ready)} ready
@@ -147,19 +150,18 @@ export function QueueDetail({ name }: { name: string }) {
 
       <Box style={{ display: 'grid', gap: 'var(--mantine-spacing-md)' }} className="argus-broker-grid">
         <Box style={{ minWidth: 0 }}>
-          {tab === 'messages' && (
+          {tab === 'messages' && stream && <StreamMessages name={q.name} />}
+          {tab === 'messages' && !stream && (
             <Stack gap="sm">
               <Group gap="xs" wrap="wrap">
                 <Select size="xs" w={130} value={count} onChange={(v) => setCount(v ?? '10')} aria-label="How many to peek" allowDeselect={false}
                   data={['1', '10', '50', '100'].map((n) => ({ value: n, label: `${n} message${n === '1' ? '' : 's'}` }))} />
-                <Button size="xs" onClick={() => void peek()} loading={peeking} disabled={!can('peek') || q.type === 'stream'}>Peek</Button>
+                <Button size="xs" onClick={() => void peek()} loading={peeking} disabled={!can('peek')}>Peek</Button>
                 <SegmentedControl size="xs" value={view} onChange={(v) => setView(v as typeof view)}
                   data={[{ label: 'Pretty', value: 'pretty' }, { label: 'Raw', value: 'raw' }, { label: 'Headers', value: 'headers' }]} />
               </Group>
               <Text size={FS.micro} c="dimmed">
-                {q.type === 'stream'
-                  ? 'A stream is read by offset, not taken; peeking it from here is not supported.'
-                  : 'Peek puts every message back. RabbitMQ marks them redelivered for whoever consumes them next, and the order of the queue can change.'}
+                Peek puts every message back. RabbitMQ marks them redelivered for whoever consumes them next, and the order of the queue can change.
               </Text>
               {msgs && msgs.length === 0 && <Text size={FS.meta} c="dimmed">The queue had no ready messages.</Text>}
               {msgs?.map((m, i) => <MessageCard key={i} m={m} i={i} view={view} />)}
