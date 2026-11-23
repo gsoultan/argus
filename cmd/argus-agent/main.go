@@ -140,6 +140,10 @@ func main() {
 		// allows on one database port, or the change to who may connect.
 		// Only rules Argus added are ever removed.
 		os.Exit(agent.RunFirewall(os.Stdin, os.Stdout))
+	case "firewall-read":
+		// Run by the daemon outside its sandbox: the whole firewall, read
+		// only, for the server page's Firewall tab.
+		os.Exit(agent.RunFirewallRead(os.Stdin, os.Stdout))
 	case "packages-repair":
 		// Run by the daemon after an update run was cut short.
 		os.Exit(agent.RunPackagesRepair(os.Stdout))
@@ -1090,10 +1094,13 @@ func runDaemon(args []string) int {
 			}
 		}
 	})
+	readFirewall := agent.HostFirewallReader(exe, *stateDir)
 	go loopOrNow(log, "host facts", 10*time.Minute, stop, factsNow, func() {
 		f := agent.Discover(agent.DefaultDiscoverConfig())
 		apps := agent.DiscoverApps(ctx)
 		sys := agent.DiscoverSystem()
+		// The whole firewall, read only, for the Firewall tab.
+		fw := readFirewall(ctx)
 		writeJSON(*stateDir+"/facts.json", f, log)
 		writeJSON(*stateDir+"/applications.json", apps, log)
 		vpnMu.Lock()
@@ -1119,12 +1126,15 @@ func runDaemon(args []string) int {
 			"applications": apps,
 			"system":       sys,
 			"vpn":          vpn,
+			"firewall":     fw,
 		}
 		// Compared without the scan time, which differs every run, and with
 		// the VPN's up-or-down state rather than its counters.
 		probe := apps
 		probe.CheckedAt = time.Time{}
-		fingerprint, _ := json.Marshal([]any{f, probe, sys, vpnNow})
+		fwProbe := fw
+		fwProbe.ReadAt = time.Time{}
+		fingerprint, _ := json.Marshal([]any{f, probe, sys, vpnNow, fwProbe})
 		if bytes.Equal(fingerprint, lastFacts) && time.Since(lastSent) < time.Hour {
 			return
 		}

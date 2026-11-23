@@ -29,6 +29,7 @@ import { Route as WebsitesRouteImport } from './routes/websites'
 import { Route as AssetsIndexRouteImport } from './routes/assets.index'
 import { Route as AssetsAssetIdRouteImport } from './routes/assets.$assetId'
 import { Route as AssetsAddRouteImport } from './routes/assets.add'
+import { Route as AssetsFirewallsRouteImport } from './routes/assets.firewalls'
 import { Route as AssetsUpdatesRouteImport } from './routes/assets.updates'
 import { Route as BrokersIndexRouteImport } from './routes/brokers.index'
 import { Route as BrokersBrokerIdRouteImport } from './routes/brokers.$brokerId'
@@ -145,6 +146,11 @@ const AssetsAddRoute = AssetsAddRouteImport.update({
   path: '/assets/add',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AssetsFirewallsRoute = AssetsFirewallsRouteImport.update({
+  id: '/assets/firewalls',
+  path: '/assets/firewalls',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AssetsUpdatesRoute = AssetsUpdatesRouteImport.update({
   id: '/assets/updates',
   path: '/assets/updates',
@@ -241,6 +247,7 @@ export interface FileRoutesByFullPath {
   '/websites': typeof WebsitesRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
   '/assets/add': typeof AssetsAddRoute
+  '/assets/firewalls': typeof AssetsFirewallsRoute
   '/assets/updates': typeof AssetsUpdatesRoute
   '/brokers/$brokerId': typeof BrokersBrokerIdRoute
   '/cloud/connect': typeof CloudConnectRoute
@@ -278,6 +285,7 @@ export interface FileRoutesByTo {
   '/websites': typeof WebsitesRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
   '/assets/add': typeof AssetsAddRoute
+  '/assets/firewalls': typeof AssetsFirewallsRoute
   '/assets/updates': typeof AssetsUpdatesRoute
   '/brokers/$brokerId': typeof BrokersBrokerIdRoute
   '/cloud/connect': typeof CloudConnectRoute
@@ -316,6 +324,7 @@ export interface FileRoutesById {
   '/websites': typeof WebsitesRoute
   '/assets/$assetId': typeof AssetsAssetIdRoute
   '/assets/add': typeof AssetsAddRoute
+  '/assets/firewalls': typeof AssetsFirewallsRoute
   '/assets/updates': typeof AssetsUpdatesRoute
   '/brokers/$brokerId': typeof BrokersBrokerIdRoute
   '/cloud/connect': typeof CloudConnectRoute
@@ -355,6 +364,7 @@ export interface FileRouteTypes {
     | '/websites'
     | '/assets/$assetId'
     | '/assets/add'
+    | '/assets/firewalls'
     | '/assets/updates'
     | '/brokers/$brokerId'
     | '/cloud/connect'
@@ -392,6 +402,7 @@ export interface FileRouteTypes {
     | '/websites'
     | '/assets/$assetId'
     | '/assets/add'
+    | '/assets/firewalls'
     | '/assets/updates'
     | '/brokers/$brokerId'
     | '/cloud/connect'
@@ -429,6 +440,7 @@ export interface FileRouteTypes {
     | '/websites'
     | '/assets/$assetId'
     | '/assets/add'
+    | '/assets/firewalls'
     | '/assets/updates'
     | '/brokers/$brokerId'
     | '/cloud/connect'
@@ -467,6 +479,7 @@ export interface RootRouteChildren {
   WebsitesRoute: typeof WebsitesRoute
   AssetsAssetIdRoute: typeof AssetsAssetIdRoute
   AssetsAddRoute: typeof AssetsAddRoute
+  AssetsFirewallsRoute: typeof AssetsFirewallsRoute
   AssetsUpdatesRoute: typeof AssetsUpdatesRoute
   BrokersBrokerIdRoute: typeof BrokersBrokerIdRoute
   CloudConnectRoute: typeof CloudConnectRoute
@@ -627,6 +640,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AssetsAddRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/assets/firewalls': {
+      id: '/assets/firewalls'
+      path: '/assets/firewalls'
+      fullPath: '/assets/firewalls'
+      preLoaderRoute: typeof AssetsFirewallsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/assets/updates': {
       id: '/assets/updates'
       path: '/assets/updates'
@@ -755,6 +775,7 @@ const rootRouteChildren: RootRouteChildren = {
   WebsitesRoute: WebsitesRoute,
   AssetsAssetIdRoute: AssetsAssetIdRoute,
   AssetsAddRoute: AssetsAddRoute,
+  AssetsFirewallsRoute: AssetsFirewallsRoute,
   AssetsUpdatesRoute: AssetsUpdatesRoute,
   BrokersBrokerIdRoute: BrokersBrokerIdRoute,
   CloudConnectRoute: CloudConnectRoute,

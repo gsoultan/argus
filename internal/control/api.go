@@ -553,6 +553,8 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/assets/{id}/server-logins", a.postServerLogin)
 	mux.HandleFunc("DELETE /api/v1/assets/{id}/server-logins/{name}", a.deleteServerLogin)
 	mux.HandleFunc("GET /api/v1/assets/{id}/applications", a.getApplications)
+	mux.HandleFunc("GET /api/v1/assets/{id}/firewall", a.getAssetFirewall)
+	mux.HandleFunc("GET /api/v1/firewalls", a.getFirewalls)
 	mux.HandleFunc("GET /api/v1/networks", a.getNetworks)
 	mux.HandleFunc("GET /api/v1/networks/cloudflare", a.getCloudflareAccounts)
 	mux.HandleFunc("POST /api/v1/networks/cloudflare", a.postCloudflareAccount)

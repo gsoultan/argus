@@ -113,6 +113,9 @@ type Agent struct {
 	// WgnetState is whether the agent can set up WireGuard networks and
 	// how its last change went (migration 108).
 	WgnetState *storm.JSON
+	// Firewall is the server's whole firewall, as its agent last read it
+	// (migration 113).
+	Firewall *storm.JSON
 }
 
 func (m *Agent) Schema(t *storm.Table) {
@@ -135,6 +138,7 @@ func (m *Agent) Schema(t *storm.Table) {
 	t.Index(&m.Hostname).Where("exec_tracing").Named("agents_exec_tracing_idx")
 	t.CheckNamed("agents_vpn_check", "((vpn IS NULL) OR (octet_length((vpn)::text) <= 400000))")
 	t.CheckNamed("agents_wgnet_state_check", "((wgnet_state IS NULL) OR (octet_length((wgnet_state)::text) <= 20000))")
+	t.CheckNamed("agents_firewall_check", "((firewall IS NULL) OR (octet_length((firewall)::text) <= 400000))")
 }
 
 // AgentEnrollmentToken is table agent_enrollment_tokens: a short-lived,

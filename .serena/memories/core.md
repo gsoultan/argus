@@ -42,6 +42,7 @@ enforces all of it and CI runs it by name.
 | [mongodb-access](mongodb-access.md) | MongoDB entries: per-person users, the admin file, the mongosh-style command line |
 | [kafka-access](kafka-access.md) | Kafka under Brokers: topic scopes, per-person SCRAM users and ACLs, the admin file |
 | [app-discovery](app-discovery.md) | What the agent finds running on a server, and what it must never read |
+| [server-firewall](server-firewall.md) | The firewall on each server: reading it, the Firewall tab, Assets › Firewalls, later changes and policies |
 | [server-system](server-system.md) | The System card: OS, processor, memory, disks, load, and how fresh they are |
 | [console-alerts](console-alerts.md) | The bell in the header: who sees which alert, the SSE stream, per-person settings |
 | [multi-tenant](multi-tenant.md) | Organizations sharing one control plane: schema per organization, `scope`, per-organization keys, what is still platform-wide |

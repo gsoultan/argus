@@ -19,6 +19,7 @@ import { SettingsTab } from '~/components/server/SettingsTab'
 import { UpdatesTab } from '~/components/server/UpdatesTab'
 import { cleanable, diskFilling, LogsTab } from '~/components/server/LogsTab'
 import { DisksTab, growable, stuck } from '~/components/server/DisksTab'
+import { FirewallTab } from '~/components/server/FirewallTab'
 import { assetDisksQuery } from '~/lib/diskQueries'
 import { LOW_FRESH_MS, warningText } from '~/lib/resourcesLow'
 import { now } from '~/components/primitives'
@@ -115,8 +116,9 @@ function AssetDetail() {
   const seesSoftware = isConfigured() && asset.protocol !== 'rdp'
   const shown = TABS_BY_TYPE[assetTypeOf(asset)].filter((t) => {
     if (t === 'software') return seesSoftware
-    // Updates, disks and logs are for those who may act on them, or audit.
-    return (t !== 'updates' && t !== 'disks' && t !== 'logs' && t !== 'metrics') || seesUpdates
+    // Updates, disks, logs and the firewall are for those who may act on
+    // them, or audit; a map of open ports is not for every operator.
+    return (t !== 'updates' && t !== 'disks' && t !== 'logs' && t !== 'metrics' && t !== 'firewall') || seesUpdates
   })
   const tab: ServerTab = shown.includes(asked) ? asked : 'overview'
   const sessions = allSessions?.filter((s) => s.assetId === asset.id)
@@ -233,6 +235,7 @@ function AssetDetail() {
         {tab === 'software' && seesSoftware && <SoftwareTab asset={asset} canEdit={canEdit} />}
         {tab === 'updates' && seesUpdates && <UpdatesTab asset={asset} canEdit={canEdit} />}
         {tab === 'disks' && seesUpdates && <DisksTab asset={asset} canEdit={canEdit} />}
+        {tab === 'firewall' && seesUpdates && <FirewallTab asset={asset} />}
         {tab === 'logs' && seesUpdates && <LogsTab asset={asset} canEdit={canEdit} />}
         {tab === 'agent' && <AgentTab asset={asset} canEdit={canEdit} />}
         {tab === 'settings' && (

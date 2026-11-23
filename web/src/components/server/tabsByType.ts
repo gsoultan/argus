@@ -7,7 +7,8 @@ export const TABS_BY_TYPE: Record<AssetType, readonly ServerTab[]> = {
   server: SERVER_TABS,
   // Log cleanup and growing disks are for servers; on someone's laptop they
   // are not ours to do.
-  workstation: ['overview', 'metrics', 'access', 'sessions', 'apps', 'software', 'updates', 'agent', 'settings'],
+  // A workstation's own firewall is worth seeing too.
+  workstation: ['overview', 'metrics', 'access', 'sessions', 'apps', 'software', 'updates', 'firewall', 'agent', 'settings'],
   // Android updates itself, manages its own storage and has no host logs;
   // its app reports no processor, memory or disk figures, so no Metrics.
   device: ['overview', 'access', 'sessions', 'apps', 'agent', 'settings'],
@@ -27,6 +28,7 @@ export function tabLabel(tab: ServerTab, kind?: AssetKind): string {
     case 'software': return 'Software'
     case 'updates': return 'Updates'
     case 'disks': return 'Disks'
+    case 'firewall': return 'Firewall'
     case 'logs': return 'Logs'
     case 'agent': return type === 'device' ? 'App on device' : 'Agent'
     case 'settings': return 'Settings'

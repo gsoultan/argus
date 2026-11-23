@@ -78,6 +78,7 @@ func _assertAgentShape(m m0.Agent) {
 		m.DisksRescan,
 		m.Vpn,
 		m.WgnetState,
+		m.Firewall,
 	}
 }
 

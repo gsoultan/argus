@@ -318,6 +318,33 @@ const orgOf = (req) => {
 }
 const ACME_ASSETS = () => [asset({ hostname: 'acme-web-1', agentState: 'healthy', bypassPosture: 'enforced' })]
 
+const FIREWALL = {
+  reported: true, listeningRead: true,
+  firewall: { kind: 'ufw', installed: ['ufw'], active: true, defaultIn: 'deny', defaultOut: 'allow', manageable: true,
+    readAt: new Date(Date.now() - 4 * 60_000).toISOString(), rules: [] },
+  rules: [
+    { direction: 'in', action: 'allow', protocol: 'tcp', ports: '22', sources: ['10.8.0.0/24'], madeBy: 'outside' },
+    { direction: 'in', action: 'allow', protocol: 'tcp', ports: '80,443', madeBy: 'outside' },
+    { direction: 'in', action: 'allow', protocol: 'tcp', ports: '5432', sources: ['10.0.0.12'], argus: true, argusPort: 5432,
+      name: 'argus 5432', madeBy: 'database', database: { id: 'db-orders', name: 'orders', engine: 'postgres' } },
+    { direction: 'in', action: 'deny', protocol: 'any', sources: ['198.51.100.23'], madeBy: 'outside' },
+  ],
+  listening: [
+    { port: 22, process: 'sshd', localOnly: false, reach: { everyone: false, public: false, sources: ['10.8.0.0/24'] } },
+    { port: 443, process: 'nginx', localOnly: false, reach: { everyone: true, public: true } },
+    { port: 5432, process: 'postgres', kind: 'postgres', localOnly: false, reach: { everyone: false, public: false, sources: ['10.0.0.12'] } },
+    { port: 9100, process: 'node_exporter', localOnly: false, reach: { everyone: false, public: false, sources: [] } },
+    { port: 6379, process: 'redis-server', kind: 'redis', localOnly: true, reach: { everyone: false, public: false } },
+  ],
+  names: { '10.0.0.12': 'open-absent-2' },
+}
+const FIREWALL_FLEET = () => ASSETS.slice(0, 6).map((a, i) => ({
+  assetId: a.id, hostname: a.hostname, kind: 'server', os: 'Ubuntu 24.04', tags: [], reported: i !== 5,
+  firewall: i === 3 ? '' : i === 4 ? 'firewalld' : 'ufw', active: i !== 2 && i !== 3, manageable: true,
+  rules: i === 3 ? 0 : 3 + i, outside: i === 0 || i === 3 ? 0 : 2, openToInternet: i === 1 ? [443, 6379] : i === 2 ? [22, 3306] : [],
+  docker: i === 4,
+}))
+
 /** @param {IncomingMessage} req */
 const signedIn = (req) => (req.headers.cookie ?? '').includes(`argus_session=${SESSION}`)
 
@@ -535,6 +562,12 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { reported: { provider: 'aws', account: '999999999999', region: 'us-east-1', zone: 'us-east-1b',
         id: 'i-0123456789abcdef0', type: 't3.small' }, instance: null })
     }
+    // A server's firewall as its agent read it: ufw on, two rules made by
+    // hand, one Argus opened for a database, and a port open to the internet.
+    if (path === '/api/v1/assets/a-closed-healthy/firewall' && req.method === 'GET') {
+      return json(res, 200, FIREWALL)
+    }
+    if (path === '/api/v1/firewalls' && req.method === 'GET') return json(res, 200, { servers: FIREWALL_FLEET() })
     // Everything else about one asset (logs, disks, packages…) is not stubbed:
     // a 404 lets each card say so instead of drawing an empty list as data.
     if (/^\/api\/v1\/assets\/[^/]+\/.+/.test(path)) return json(res, 404, { error: 'not stubbed' })
