@@ -107,6 +107,56 @@ func TestCloudFirewallRulesRefused(t *testing.T) {
 	e.ask(t, "admin-token", e.storage("firewall-rules", e.account+"-sg-1", rulesSpec(`{"inbound":true,"protocol":"tcp","fromPort":443,"source":"0.0.0.0/0"}`, "")), http.StatusConflict)
 }
 
+// Removing a rule takes away the group's own copy of it, as AWS listed it,
+// and it stays gone after the account is read again. Root cause of the bug
+// this guards: removals were checked like additions, so a rule AWS lists
+// but Argus would not let be added (an ICMP type, a protocol by number, a
+// group in a peered account) could never be taken away, and an ICMP rule
+// was normalized to other ports than AWS has and then "not found".
+func TestCloudFirewallRuleRemoved(t *testing.T) {
+	e := networkAPI(t)
+	app := "sg-0000000000000aaa1"
+	ssh := cloud.Rule{Inbound: true, Protocol: "tcp", FromPort: 22, ToPort: 22, Source: "0.0.0.0/0", Description: "old bastion"}
+	ping := cloud.Rule{Inbound: true, Protocol: "icmp", FromPort: 8, ToPort: -1, Source: "10.0.0.0/8"}
+	esp := cloud.Rule{Inbound: true, Protocol: "50", FromPort: 0, ToPort: 0, Source: "10.0.0.0/8"}
+	peer := cloud.Rule{Inbound: true, Protocol: "tcp", FromPort: 5432, ToPort: 5432, Source: "sg-0000000000000fee1"}
+	web := cloud.Rule{Inbound: true, Protocol: "tcp", FromPort: 443, ToPort: 443, Source: "0.0.0.0/0"}
+	for i, r := range e.fake.Resources[storageRegion] {
+		if r.ID == app {
+			e.fake.Resources[storageRegion][i].Rules = []cloud.Rule{ssh, ping, esp, peer, web}
+		}
+	}
+	e.resync(t)
+
+	// What the console sends: the rule as Risks & waste listed it.
+	rule := func(x cloud.Rule) string { b, _ := json.Marshal(x); return string(b) }
+	c := e.ask(t, "admin-token", e.storage("firewall-rules", app, rulesSpec("",
+		`{"inbound":true,"protocol":"tcp","fromPort":22,"toPort":22,"source":"0.0.0.0/0"},`+rule(ping)+`,`+rule(esp)+`,`+rule(peer))), http.StatusOK)
+	if c.State != "applied" || c.Summary != "Change rules on app: remove tcp 22 from anywhere; remove ping (ICMP) from 10.0.0.0/8; "+
+		"remove 50 0 from 10.0.0.0/8; remove tcp 5432 from sg-0000000000000fee1" {
+		t.Fatalf("remove: %+v", c)
+	}
+	var spec cloudRulesSpec
+	_ = json.Unmarshal(c.Spec, &spec)
+	if len(spec.Remove) != 4 || spec.Remove[0].Description != "old bastion" || spec.Remove[1].FromPort != 8 {
+		t.Fatalf("what is taken away is the group's own copy: %+v", spec.Remove)
+	}
+	e.resync(t)
+	g, _ := e.s.CloudResourceOf(t.Context(), e.acct.ID, storageRegion, cloud.KindFirewall, app)
+	if len(g.Rules) != 1 || !g.Rules[0].Same(web) {
+		t.Fatalf("rules after a read: %+v", g.Rules)
+	}
+
+	// Asking again is refused with a next step, not sent to AWS.
+	e.ask(t, "admin-token", e.storage("firewall-rules", app, rulesSpec("", rule(ssh))), http.StatusConflict)
+	// An address written by hand finds its /32.
+	e.ask(t, "admin-token", e.storage("firewall-rules", app, rulesSpec(`{"inbound":true,"protocol":"tcp","fromPort":22,"source":"203.0.113.9"}`, "")), http.StatusOK)
+	e.resync(t)
+	e.ask(t, "admin-token", e.storage("firewall-rules", app, rulesSpec("", `{"inbound":true,"protocol":"tcp","fromPort":22,"toPort":22,"source":"203.0.113.9"}`)), http.StatusOK)
+	// The same rule twice is one rule.
+	e.ask(t, "admin-token", e.storage("firewall-rules", app, rulesSpec("", rule(web)+`,`+rule(web))), http.StatusConflict)
+}
+
 // A group a production instance uses is a production change, whatever its
 // own tag says.
 func TestCloudFirewallEnvironmentIsItsUsers(t *testing.T) {

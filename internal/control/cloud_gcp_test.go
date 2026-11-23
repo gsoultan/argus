@@ -747,10 +747,15 @@ func TestCloudGoogleProjectChangesFirewallRulesByNetworkTag(t *testing.T) {
 		t.Fatalf("instance: %+v", ch)
 	}
 
-	// Deleting one: not while it reaches a VM by tag.
-	ask(g, `"action":"firewall-delete","resourceId":"901","confirm":"web-in"`, http.StatusConflict)
+	// Deleting one. One that reaches a VM by tag is deleted too: it is
+	// how a Google firewall rule's last allow is taken away, so the summary
+	// names what it reaches rather than refusing.
 	ch = ask(g, `"action":"firewall-delete","resourceId":"902","confirm":"ssh-in"`, http.StatusOK)
 	if ch.Summary != "Delete firewall rule ssh-in (902)" {
 		t.Fatalf("delete: %+v", ch)
+	}
+	ch = ask(g, `"action":"firewall-delete","resourceId":"901","confirm":"901"`, http.StatusOK)
+	if ch.Level != cloud.LevelRemove || ch.Summary != "Delete firewall rule web-in (901); the 1 VM it reaches (web-1) lose what it lets in" {
+		t.Fatalf("delete one that reaches a VM: %+v", ch)
 	}
 }

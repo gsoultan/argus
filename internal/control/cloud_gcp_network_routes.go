@@ -87,13 +87,8 @@ func (a *API) planGCPNetwork(ctx context.Context, m cloudManaged, in *cloudChang
 				return ch, http.StatusBadRequest, err
 			}
 		}
-		for i := range s.Remove {
-			if err := s.Remove[i].Check(); err != nil && !strings.HasPrefix(s.Remove[i].Source, "tag:") {
-				return ch, http.StatusBadRequest, err
-			}
-			if !slices.ContainsFunc(res.Rules, s.Remove[i].Same) {
-				return ch, http.StatusConflict, fmt.Errorf("%s has no rule %s; read the project again", res.Name, ruleWords(s.Remove[i]))
-			}
+		if s.Remove, err = storedRules(res, s.Remove, "project"); err != nil {
+			return ch, http.StatusConflict, err
 		}
 		next := slices.DeleteFunc(slices.Clone(res.Rules), func(x cloud.Rule) bool { return slices.ContainsFunc(s.Remove, x.Same) })
 		for i, x := range s.Add {
@@ -135,18 +130,19 @@ func (a *API) planGCPNetwork(ctx context.Context, m cloudManaged, in *cloudChang
 		}
 		users := a.gcpFirewallUsers(ctx, m, res.ID)
 		ch.Environment = firewallEnv(res, users, m.acct.Environment)
-		tags := gcp.TargetTags(res)
-		if len(users) > 0 && len(tags) > 0 && res.Details["targetServiceAccounts"] == "" {
+		// Google deletes a rule whatever reaches it, and a VM keeps its
+		// network tag, so deleting one only ever lets in less. It is how a
+		// rule's last allow is taken away, so it is not refused while VMs
+		// are behind it: the summary names them, and the change is a
+		// remove, which waits for approval where the environment says so.
+		ch.Spec = json.RawMessage("{}")
+		ch.Summary = "Delete firewall rule " + res.Name + " (" + res.ID + ")"
+		if len(users) > 0 {
 			var names []string
 			for _, u := range users {
 				names = append(names, u.Name)
 			}
-			return ch, http.StatusConflict, errors.New(res.Name + " reaches " + strings.Join(names, ", ") + "; take it off them first")
-		}
-		ch.Spec = json.RawMessage("{}")
-		ch.Summary = "Delete firewall rule " + res.Name + " (" + res.ID + ")"
-		if len(users) > 0 {
-			ch.Summary += fmt.Sprintf("; the %d VM%s it reaches lose what it lets in", len(users), plural(len(users)))
+			ch.Summary += fmt.Sprintf("; the %d VM%s it reaches (%s) lose what it lets in", len(users), plural(len(users)), strings.Join(names, ", "))
 		}
 
 	case cloud.ActionInstanceFirewalls:

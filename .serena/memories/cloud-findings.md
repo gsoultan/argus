@@ -29,6 +29,15 @@ Cloud plan in `plans/cloud-plan/`).
 - **Nothing changes from Risks & waste.** A fix opens the ordinary change
   (rules editor with the rule struck, the resource's own panel, or one
   snapshot-delete change per picked snapshot).
+- **Removing a rule matches, it does not check.** The server swaps each rule
+  to take away for the group's stored copy (`storedRules`), so a rule the
+  cloud lists but Argus would not let be added (ICMP type, protocol by number,
+  peered group) can still go. In Google a firewall rule is the rule: striking
+  its last allow makes the editor ask for `firewall-delete`, which Google
+  allows while VMs carry its tag (the summary names them).
+- A firewall finding with a removal waiting, being made, or made since the
+  group was last read shows where that change is instead of the fix
+  (`ruleChangeFor`), so the same change is not asked for twice.
 - AWS keeps no per-rule hit count. "Firewall rules" means rules nothing needs
   (covered by a wider rule, nothing listens, group used by nothing), not rules
   with no traffic. Stale group references are not checked: inside one account

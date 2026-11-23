@@ -8,11 +8,11 @@ import { IconAlertTriangle, IconBookmark, IconCircleCheck, IconCoin, IconLockOpe
 import { useMemo, useState } from 'react'
 import { EmptyState } from '~/components/page'
 import { Field, Stat, relTime } from '~/components/primitives'
-import { cloudItemsQuery, envOf, needsApproval, useAskCloudChange, type CloudItem, type CloudKind } from '~/lib/cloud'
+import { cloudChangesQuery, cloudItemsQuery, envOf, needsApproval, useAskCloudChange, type CloudChange, type CloudItem, type CloudKind } from '~/lib/cloud'
 import { dollars } from '~/lib/cloudCosts'
 import {
   GROUP_LABEL, SEVERITY_COLOR, SEVERITY_LABEL, SOURCE_HELP, SOURCE_LABEL, cloudFindingsQuery, findingCounts, keepAllowed, useKeepFinding,
-  useUnkeepFinding, type CloudFinding, type FindingGroup, type FindingSeverity, type KeepInput,
+  useUnkeepFinding, ruleChangeFor, type CloudFinding, type FindingGroup, type FindingSeverity, type KeepInput,
 } from '~/lib/cloudFindings'
 import { notifyError, notifyOk } from '~/lib/notify'
 import { FS, INK, SP } from '~/theme'
@@ -41,6 +41,7 @@ type Filter = 'all' | FindingGroup
 
 export function FindingsPanel({ names, admin }: { names: Map<string, string>; admin: boolean }) {
   const q = useQuery(cloudFindingsQuery())
+  const changes = useQuery(cloudChangesQuery())
   const inv = useQueries({ queries: INVENTORY.map((k) => cloudItemsQuery(k)) })
   const phone = useMediaQuery('(max-width: 48em)')
   const [filter, setFilter] = useState<Filter>('all')
@@ -63,6 +64,7 @@ export function FindingsPanel({ names, admin }: { names: Map<string, string>; ad
     return m
   }, [inv])
   const itemOf = (f: CloudFinding) => items.get(f.accountId + '/' + f.resourceId)
+  const askedOf = (f: CloudFinding) => ruleChangeFor(f, changes.data, itemOf(f)?.seenAt)
   const capacityOf = (f: CloudFinding) => f.fix === 'capacity-cancel'
     ? reservations.data?.capacityReservations.find((c) => c.accountId === f.accountId && c.resource.id === f.resourceId)
     : undefined
@@ -213,7 +215,7 @@ export function FindingsPanel({ names, admin }: { names: Map<string, string>; ad
                           <Button size="compact-xs" variant="subtle" onClick={() => setOpen(f)}>Details</Button>
                         ) : (
                           <>
-                            <Button size="compact-xs" variant="default" onClick={() => fix(f)}>{fixLabel(f)}</Button>
+                            {askedOf(f) ? <Asked c={askedOf(f)!} /> : <Button size="compact-xs" variant="default" onClick={() => fix(f)}>{fixLabel(f)}</Button>}
                             {admin && <Button size="compact-xs" variant="subtle" onClick={() => setKeeping(f)}>Keep it</Button>}
                           </>
                         )}
@@ -228,6 +230,7 @@ export function FindingsPanel({ names, admin }: { names: Map<string, string>; ad
       )}
 
       <FindingDrawer f={open} onClose={() => setOpen(null)} admin={admin} hasItem={Boolean(open && (itemOf(open) || capacityOf(open)))}
+        asked={open ? askedOf(open) : undefined}
         onFix={(f) => { setOpen(null); fix(f) }} onKeep={(f) => { setOpen(null); setKeeping(f) }} />
       {keeping && <KeepModal f={keeping} onClose={() => setKeeping(null)} />}
       <ResourceDrawer it={resource} onClose={() => setResource(null)} names={names} />
@@ -258,8 +261,18 @@ function SourceTag({ f }: { f: CloudFinding }) {
   )
 }
 
-function FindingDrawer({ f, onClose, admin, hasItem, onFix, onKeep }: {
-  f: CloudFinding | null; onClose: () => void; admin: boolean; hasItem: boolean
+/** Where the change already asked for this finding has got to. */
+function Asked({ c }: { c: CloudChange }) {
+  const words = c.state === 'awaiting_approval' ? 'Waiting for approval' : c.state === 'applying' ? 'Being made' : 'Done · reading it again'
+  return (
+    <Tooltip label={c.summary} multiline maw={360} withArrow>
+      <Badge size="sm" variant="light" color={c.state === 'awaiting_approval' ? 'amber' : 'teal'} style={{ cursor: 'default' }}>{words}</Badge>
+    </Tooltip>
+  )
+}
+
+function FindingDrawer({ f, onClose, admin, hasItem, asked, onFix, onKeep }: {
+  f: CloudFinding | null; onClose: () => void; admin: boolean; hasItem: boolean; asked?: CloudChange
   onFix: (f: CloudFinding) => void; onKeep: (f: CloudFinding) => void
 }) {
   const unkeep = useUnkeepFinding()
@@ -303,7 +316,8 @@ function FindingDrawer({ f, onClose, admin, hasItem, onFix, onKeep }: {
             </Alert>
           ) : (
             <Group gap="sm" mt="xs">
-              {hasItem && <Button onClick={() => onFix(f)}>{f.fix === 'firewall-rules' ? 'Ask to remove this rule' : (f.fix && FIX_LABEL[f.fix]) || 'Open the resource'}</Button>}
+              {asked && <Text size={FS.meta} c="dimmed">Already asked for: {asked.summary}.</Text>}
+              {hasItem && !asked && <Button onClick={() => onFix(f)}>{f.fix === 'firewall-rules' ? 'Ask to remove this rule' : (f.fix && FIX_LABEL[f.fix]) || 'Open the resource'}</Button>}
               {admin && <Button variant="subtle" ml="auto" onClick={() => onKeep(f)}>Keep it…</Button>}
             </Group>
           )}
