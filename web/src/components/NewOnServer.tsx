@@ -5,7 +5,7 @@ import { IconPlus } from '@tabler/icons-react'
 import { lazy, Suspense, useState } from 'react'
 import { assetsQuery } from '~/lib/queries'
 import { FS } from '~/theme'
-import type { DBEngine } from '~/types/domain'
+import type { AddKind } from '~/components/AddChoose'
 
 const AddDatabase = lazy(() => import('~/components/DatabasesOnServer').then((m) => ({ default: m.AddDatabase })))
 
@@ -14,7 +14,7 @@ const AddDatabase = lazy(() => import('~/components/DatabasesOnServer').then((m)
  * same Create new dialog a server's page opens. The agent on that server does
  * the creating, so only servers with an agent are offered.
  */
-export function NewOnServer({ label, engines }: { label: string; engines: DBEngine[] }) {
+export function NewOnServer({ label, kind }: { label: string; kind: AddKind }) {
   const narrow = useMediaQuery('(max-width: 48em)')
   const [picking, setPicking] = useState(false)
   const [assetId, setAssetId] = useState<string | null>(null)
@@ -38,8 +38,7 @@ export function NewOnServer({ label, engines }: { label: string; engines: DBEngi
       </Modal>
       {asset && open && (
         <Suspense fallback={null}>
-          <AddDatabase asset={asset} opened onClose={() => setOpen(false)} initialMode="create"
-            initialEngine={engines[0]} onlyEngines={engines} />
+          <AddDatabase asset={asset} opened onClose={() => setOpen(false)} initialMode="create" kind={kind} />
         </Suspense>
       )}
     </>
