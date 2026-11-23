@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { fmtRate, rate, routeKey, type Binding, type Exchange } from '~/lib/rabbit'
 import { FS } from '~/theme'
 import { MONO, useBroker } from './BrokerWorkspace'
+import { SuperStreamsCard } from './SuperStreams'
 
 /*
 Where messages go. A broker's logic lives in its bindings, so this page
@@ -142,6 +143,7 @@ export function Routing({ selected, onSelect }: { selected?: string; onSelect: (
               : <Diagram ex={ex} detail={detail} bindings={out} matched={matched} />}
           </Card>
         )}
+        {can('super_streams') && <SuperStreamsCard />}
       </Stack>
       <NewExchange opened={creating} onClose={() => setCreating(false)} onCreated={onSelect} />
       {ex && <AddBinding opened={binding} onClose={() => setBinding(false)} exchange={ex.name} />}
