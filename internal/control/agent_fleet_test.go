@@ -262,3 +262,18 @@ func contains(list []string, s string) bool {
 	}
 	return false
 }
+
+// An update another package install was in the way of changed nothing: the
+// server is behind, so automatic updates and Update all ask it again, not
+// held like one that went back.
+func TestAnUpdateThePackageLockStoppedIsNotHeld(t *testing.T) {
+	locked := &AgentUpdateStatus{Supported: true, State: "failed", From: "1.0.0", Target: "1.1.0",
+		Retry: true, Message: "another package install was running on this server"}
+	if state, _ := agentState("1.0.0", "1.1.0", locked, false); state != agentBehind {
+		t.Errorf("state = %s, want %s", state, agentBehind)
+	}
+	locked.Retry = false
+	if state, _ := agentState("1.0.0", "1.1.0", locked, false); state != agentHeld {
+		t.Errorf("without retry, state = %s, want %s", state, agentHeld)
+	}
+}

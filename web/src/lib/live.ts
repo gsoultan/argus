@@ -1888,6 +1888,8 @@ export interface AgentUpdateStatus {
   message?: string
   sessions?: number
   at?: string
+  /** The update changed nothing and can simply be asked again (another package install was in the way). */
+  retry?: boolean
 }
 
 export interface AgentUpdateView {

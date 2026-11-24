@@ -170,7 +170,9 @@ func agentState(running, latest string, st *AgentUpdateStatus, asked bool) (stri
 			"upgrade the argus-agent package on the server by hand once"
 	case !st.Supported:
 		return agentCannot, st.Reason
-	case st.Target == latest && (st.State == "rolled_back" || st.State == "failed"):
+	case st.Target == latest && (st.State == "rolled_back" || st.State == "failed") && !st.Retry:
+		// One that changed nothing (another package install was in the
+		// way) is not held: it is behind, and asked again.
 		return agentHeld, st.Message
 	}
 	return agentBehind, ""

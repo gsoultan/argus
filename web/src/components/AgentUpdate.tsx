@@ -232,7 +232,7 @@ function LastUpdate({ status }: { status: AgentUpdateStatus }) {
     : {
       done: ['teal', 'Updated'],
       rolled_back: ['amber', 'Update went back'],
-      failed: ['rose', 'Update failed'],
+      failed: status.retry ? ['amber', 'Update not installed yet'] : ['rose', 'Update failed'],
       cancelled: ['slate', 'Update taken back'],
     })[status.state as 'done' | 'rolled_back' | 'failed' | 'cancelled']
   if (!tone) return null

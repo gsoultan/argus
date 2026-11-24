@@ -108,6 +108,10 @@ type UpdateStatus struct {
 	// Sessions is how many sessions the update is waiting for.
 	Sessions int       `json:"sessions,omitempty"`
 	At       time.Time `json:"at,omitempty"`
+	// Retry marks an update that changed nothing and can simply be asked
+	// again: another package install held the package manager's lock. The
+	// console does not hold the version back for it.
+	Retry bool `json:"retry,omitempty"`
 }
 
 // Finished reports whether the update has reached an end.
@@ -217,6 +221,14 @@ type updatePlatform interface {
 // and the running version's archive is not downloaded.
 type archiveInstall interface {
 	unpack(archive, dir string) (string, error)
+}
+
+// packageLock is a host whose package manager takes a lock another install
+// may be holding: Debian's dpkg, which apt and unattended-upgrades hold for
+// minutes at a time. packageBusy names who holds it, or is "" when nobody
+// does.
+type packageLock interface {
+	packageBusy(format string) string
 }
 
 // Updater carries out update requests.
@@ -436,6 +448,14 @@ func (u *Updater) run(ctx context.Context, req UpdateRequest) {
 			finish(UpdateCancelled, "taken back in the console before it started")
 			return
 		}
+		// And for any other package install to finish: the package would
+		// not install while it runs. "Now" does not skip this.
+		if !req.Restart {
+			if err := u.waitPackages(ctx, &st, plan.Format); err != nil {
+				finish(UpdateCancelled, "taken back in the console before it started")
+				return
+			}
+		}
 		// Hold new sessions, then look again: a login may have arrived
 		// between the last look and the hold.
 		if u.Hold != nil {
@@ -564,6 +584,43 @@ func (u *Updater) waitIdle(ctx context.Context, st *UpdateStatus) error {
 			u.set(*st)
 		}
 		t := time.NewTimer(busyPoll)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return ctx.Err()
+		case <-t.C:
+		}
+	}
+}
+
+// packagePoll is how often a waiting update looks at the package lock; a
+// variable for tests.
+var packagePoll = 5 * time.Second
+
+// waitPackages returns once no other package install holds the package
+// manager's lock. It waits before anything is held or stopped, so a long
+// unattended-upgrades run delays the update without keeping anyone out.
+func (u *Updater) waitPackages(ctx context.Context, st *UpdateStatus, format string) error {
+	lock, ok := u.platform.(packageLock)
+	if !ok {
+		return nil
+	}
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		holder := lock.packageBusy(format)
+		if holder == "" {
+			return nil
+		}
+		msg := fmt.Sprintf("downloaded %s; waiting for another package install on this server "+
+			"to finish (%s)", st.Target, holder)
+		if st.State != UpdateWaiting || st.Message != msg {
+			u.Log.Info("update: waiting for another package install to finish", "holder", holder)
+			st.State, st.Sessions, st.Message = UpdateWaiting, 0, msg
+			u.set(*st)
+		}
+		t := time.NewTimer(packagePoll)
 		select {
 		case <-ctx.Done():
 			t.Stop()
