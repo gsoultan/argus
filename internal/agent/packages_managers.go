@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -229,6 +230,18 @@ func aptMissingRelease(out []byte, osr map[string]string) string {
 		}
 	}
 	where := strings.Join(uris, ", ")
+	var wrong, fixed []string
+	for _, u := range uris {
+		if f := ubuntuMirrorFix(u); f != "" {
+			wrong, fixed = append(wrong, u), append(fixed, f)
+		}
+	}
+	if len(wrong) > 0 {
+		return fmt.Sprintf("apt's sources point at %s, which is not where Ubuntu's mirrors keep the archive, so apt "+
+			"finds no %s there (%s). Change that address to %s in /etc/apt/sources.list.d/ubuntu.sources "+
+			"(or /etc/apt/sources.list on older servers), then look for updates again",
+			strings.Join(wrong, ", "), base(suites[0]), strings.Join(suites, ", "), strings.Join(fixed, ", "))
+	}
 	if behind {
 		return fmt.Sprintf("apt's sources still name %s (%s from %s), but the server runs %s: a release upgrade "+
 			"left them behind, and the mirror no longer serves %s to it. Point those entries in /etc/apt/sources.list "+
@@ -239,6 +252,34 @@ func aptMissingRelease(out []byte, osr map[string]string) string {
 		"The mirror is likely broken or out of date: point those entries in /etc/apt/sources.list and "+
 		"/etc/apt/sources.list.d/ at the distribution's main archive (archive.ubuntu.com or deb.debian.org), "+
 		"then look for updates again", where, base(suites[0]), strings.Join(suites, ", "))
+}
+
+// ubuntuMirrorFix is the address an Ubuntu mirror URI should have when its
+// path is wrong, and "" when it is not one of Ubuntu's own mirrors or its
+// path is right. Ubuntu's mirrors (archive.ubuntu.com, its country mirrors
+// such as id.archive.ubuntu.com, security.ubuntu.com and ports.ubuntu.com)
+// serve the archive only at /ubuntu, or /ubuntu-ports for the ports: under
+// any other path every release is missing, which apt reports exactly as it
+// would a release the mirror dropped.
+func ubuntuMirrorFix(uri string) string {
+	u, err := url.Parse(uri)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	host := strings.ToLower(u.Hostname())
+	want := "/ubuntu"
+	switch {
+	case host == "ports.ubuntu.com" || strings.HasSuffix(host, ".ports.ubuntu.com"):
+		want = "/ubuntu-ports"
+	case host == "archive.ubuntu.com" || strings.HasSuffix(host, ".archive.ubuntu.com"),
+		host == "security.ubuntu.com":
+	default:
+		return ""
+	}
+	if p := strings.TrimSuffix(u.Path, "/"); p == want || (want == "/ubuntu" && p == "/ubuntu-ports") {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host + want
 }
 
 // aptFetchFailed reads apt-get update's output for lists it could not
