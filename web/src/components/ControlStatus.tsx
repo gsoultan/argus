@@ -279,9 +279,19 @@ function recordingLine(st: Status): string {
   if (r.lastFailure && (!r.lastUpload || r.lastFailure > r.lastUpload)) {
     return `${where}: the last recording could not be stored ${relTime(r.lastFailure)}. ${r.lastUploadError ?? ''}`
   }
-  return r.lastUpload
+  const line = r.lastUpload
     ? `${where}; last recording stored ${relTime(r.lastUpload)}`
     : `${where}; no recording has arrived since argus-control started`
+  return r.fromHost && !r.fromHost.done ? `${line}. ${fromHostLine(r.fromHost)}` : line
+}
+
+/** How far the copy of recordings kept on this server into the bucket has got. */
+function fromHostLine(c: NonNullable<Status['recordings']['fromHost']>): string {
+  const inBucket = c.copied + c.already
+  if (c.done) return `All ${inBucket.toLocaleString('en-US')} recordings kept on this server are in the bucket too`
+  if (!c.lastPass) return 'Copying the recordings kept on this server into the bucket; until each is there it replays from this server'
+  return `${inBucket.toLocaleString('en-US')} recordings kept on this server are in the bucket; ` +
+    `${c.failed.toLocaleString('en-US')} are not yet and still replay from this server`
 }
 
 function Check({ state, name, detail, action }: {
@@ -358,6 +368,7 @@ function Storage({ st }: { st: Status }) {
           </Text>
           <Rows rows={[
             ['Where', r.where === 'bucket' ? `Bucket ${r.location ?? ''}` : r.where === 'directory' ? r.location ?? '' : 'Not configured'],
+            ...(r.fromHost ? [['From this server', fromHostLine(r.fromHost)] as [string, string]] : []),
             ...(r.measuredAt ? [['Added in the last 7 days', bytes(r.weekBytes)] as [string, string]] : []),
             ...(r.oldest ? [['Oldest', day(r.oldest)] as [string, string]] : []),
           ]} />

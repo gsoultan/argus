@@ -1257,8 +1257,14 @@ export interface ControlSettings {
     host: string; port: number; name: string; user: string; sslMode: string
     passwordSet: boolean; password?: string; raw?: boolean
   }
+  /**
+   * Where recordings are copied. provider is absent from a control plane
+   * older than Azure, which means S3. For Azure, accessKey is the storage
+   * account's name, secretKey one of its keys, bucket the container, and
+   * endpoint may be empty.
+   */
   storage: {
-    enabled: boolean; endpoint: string; bucket: string; region: string; useSsl: boolean
+    enabled: boolean; provider?: 's3' | 'azure'; endpoint: string; bucket: string; region: string; useSsl: boolean
     accessKey: string; secretKeySet: boolean; secretKey?: string
   }
   email: {
@@ -1386,6 +1392,14 @@ export type EmailVia = 'smtp' | 'panmail'
  */
 export async function testEmail(e: ControlSettings['email']): Promise<{ sent: boolean; to: string[] }> {
   return post<{ sent: boolean; to: string[] }>('/api/v1/settings/test-email', e)
+}
+
+/**
+ * Writes a small object to the storage on the form and reads it back, without
+ * saving it. A secret left out is the one configured.
+ */
+export async function testStorage(st: ControlSettings['storage']): Promise<void> {
+  await post<{ ok: boolean }>('/api/v1/settings/test-storage', st)
 }
 
 export async function testDatabase(d: ControlSettings['database']): Promise<DatabaseCheck> {
@@ -2192,6 +2206,14 @@ export interface ControlStatus {
     lastUpload?: string
     lastFailure?: string
     lastUploadError?: string
+    /**
+     * The copy into the bucket of recordings this server kept on its own
+     * disk before a bucket was configured. Absent when there is none.
+     */
+    fromHost?: {
+      from: string; copied: number; already: number; failed: number; done: boolean
+      lastError?: string; lastPass?: string
+    }
   }
   certificate?: { subject: string; notAfter: string; daysLeft: number; managed: boolean }
   errors: {

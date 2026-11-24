@@ -491,6 +491,15 @@ const server = createServer(async (req, res) => {
       }
       return json(res, 200, { sent: true, to: body.to ?? [] })
     }
+    // A storage check: an Azure account with no key is refused the way the
+    // control plane refuses it; anything else wrote and read back.
+    if (path === '/api/v1/settings/test-storage' && req.method === 'POST') {
+      const st = /** @type {any} */ (await readBody(req))
+      if (st.provider === 'azure' && !st.secretKey && !st.secretKeySet) {
+        return json(res, 400, { error: "Azure Blob Storage needs the storage account's name and one of its access keys" })
+      }
+      return json(res, 200, { ok: true })
+    }
     // Who AWS says the form's identity is: an IAM user for a well-formed key,
     // the instance metadata timeout for the host's own chain, as off EC2.
     if (path === '/api/v1/settings/test-cloud/aws' && req.method === 'POST') {

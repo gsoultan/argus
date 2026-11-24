@@ -124,6 +124,10 @@ type RecordingsStatus struct {
 	LastUpload      *time.Time `json:"lastUpload,omitempty"`
 	LastUploadError string     `json:"lastUploadError,omitempty"`
 	LastFailure     *time.Time `json:"lastFailure,omitempty"`
+
+	// FromHost is the copy into the bucket of the recordings this host kept
+	// before a bucket was configured, while there is one.
+	FromHost *RecordingsCopy `json:"fromHost,omitempty"`
 }
 
 // CertificateStatus is the certificate browsers are served.
@@ -250,7 +254,10 @@ func (a *API) recordingsWhere(cfg *Settings) RecordingsStatus {
 		return RecordingsStatus{Where: "directory", Location: rec.Root()}
 	default:
 		rs := RecordingsStatus{Where: "bucket"}
-		if cfg != nil {
+		rs.FromHost = a.hostCopy.get()
+		if a.storage != nil {
+			rs.Location = a.storage.Name()
+		} else if cfg != nil {
 			rs.Location = cfg.Storage.Bucket
 		}
 		return rs
@@ -534,6 +541,10 @@ func statusProblems(st ControlStatus) []StatusProblem {
 	if r.LastFailure != nil && (r.LastUpload == nil || r.LastFailure.After(*r.LastUpload)) {
 		add("warning", "recordings", "The last recording could not be stored",
 			"Agents keep it and try again. "+r.LastUploadError)
+	}
+	if c := r.FromHost; c != nil && c.Failed > 0 {
+		add("warning", "recordings", fmt.Sprintf("%d recordings kept on this server are not in object storage yet", c.Failed),
+			"They still replay from this server. Copying them is tried again every 15 minutes, and the log names each one that failed.")
 	}
 
 	if st.Errors.LastHour >= errorsWarnHour {

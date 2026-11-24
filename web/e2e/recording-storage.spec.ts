@@ -1,0 +1,69 @@
+import { test, expect } from '@playwright/test'
+
+/**
+ * Where recordings are copied, in Settings › Storage, against
+ * e2e/authstub.mjs.
+ *
+ * What it guards: each service asks for what that service calls its
+ * credentials -- an Azure storage account is not an access key -- R2 comes
+ * with its one region, the archive offers only what the chosen service has,
+ * and a connection test reports both of its outcomes.
+ */
+test.use({ baseURL: 'http://localhost:5511', serviceWorkers: 'block' })
+
+const shots = process.env.ARGUS_SHOTS
+
+test('object storage is chosen by service and tested before saving', async ({ page }) => {
+  await page.goto('/')
+  await page.getByLabel(/^email$/i).fill('dev@northwind.id')
+  await page.getByLabel(/^password$/i).fill('stub-password')
+  await page.getByRole('button', { name: /^sign in$/i }).click()
+  await expect(page.getByText('Dev Admin')).toBeVisible()
+  await page.goto('/settings?section=storage')
+
+  await page.getByRole('switch', { name: 'Copy recordings to object storage' }).check()
+  const services = page.getByRole('radiogroup', { name: 'Storage service' })
+  await expect(services.getByRole('radio', { name: 'Amazon S3' })).toBeChecked()
+
+  // Cloudflare R2: S3's fields, R2's one region.
+  await services.getByText('Cloudflare R2').click()
+  await expect(page.getByRole('textbox', { name: 'Region' })).toHaveValue('auto')
+  await expect(page.getByRole('textbox', { name: 'Access key ID' })).toBeVisible()
+  await page.getByRole('textbox', { name: 'Endpoint' }).fill('0123abcd.r2.cloudflarestorage.com')
+  await page.getByRole('textbox', { name: 'Bucket' }).fill('argus-recordings')
+  const cls = page.getByRole('combobox', { name: 'Archive storage class' })
+  await cls.click()
+  await expect(page.getByRole('option', { name: 'Standard-IA' })).toBeVisible()
+  await expect(page.getByRole('option', { name: 'Glacier Instant Retrieval' })).toHaveCount(0)
+  await page.keyboard.press('Escape')
+
+  // Azure: an account, its key and a container; tiers, not classes.
+  await services.getByText('Azure Blob Storage').click()
+  await expect(page.getByRole('textbox', { name: 'Storage account' })).toBeVisible()
+  await expect(page.getByRole('textbox', { name: 'Region' })).toHaveCount(0)
+  await page.getByRole('textbox', { name: 'Storage account' }).fill('northwindrec')
+  await page.getByRole('textbox', { name: 'Container' }).fill('argus-recordings')
+  await expect(page.getByRole('textbox', { name: 'Blob endpoint' }))
+    .toHaveAttribute('placeholder', 'https://northwindrec.blob.core.windows.net')
+  const tier = page.getByRole('combobox', { name: 'Archive access tier' })
+  await tier.click()
+  await page.getByRole('option', { name: 'Cool' }).click()
+  await expect(tier).toHaveValue('Cool')
+
+  // Without the key the test says why; with it, it says it worked.
+  await page.getByRole('button', { name: 'Test connection' }).click()
+  await expect(page.getByText('Storage did not work')).toBeVisible()
+  await expect(page.getByText(/needs the storage account's name and one of its access keys/)).toBeVisible()
+  await page.getByLabel('Account key').fill('a2V5')
+  await page.getByRole('button', { name: 'Test connection' }).click()
+  await expect(page.getByText('Storage works')).toBeVisible()
+  if (shots) {
+    await page.getByRole('heading', { name: 'Object storage' }).scrollIntoViewIfNeeded()
+    await page.screenshot({ path: `${shots}/azure.png`, fullPage: false })
+  }
+
+  // Back to S3, the Azure tier is not carried over as an S3 class.
+  await services.getByText('Amazon S3').click()
+  await expect(cls).toHaveValue("Bucket's default")
+  await expect(page.getByRole('textbox', { name: 'Endpoint' })).toHaveValue('s3.amazonaws.com')
+})

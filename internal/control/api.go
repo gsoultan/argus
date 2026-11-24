@@ -72,10 +72,13 @@ type API struct {
 
 	// storage is the object store, when one is configured. Only it can hand
 	// out a direct download link.
-	storage *storage.Client
+	storage storage.Bucket
 	// recordings is where shipped recordings are kept and read back from:
 	// storage when it is configured, a directory on this host otherwise.
 	recordings storage.Store
+	// hostCopy is the copy of recordings kept on this host into storage,
+	// when a bucket was configured after some were made.
+	hostCopy recordingsCopy
 	// storeRecording replaces recordings.Upload for a shipped recording. Nil
 	// uses recordings; set by tests that have no object store.
 	storeRecording recordingUploader
@@ -548,6 +551,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/settings", a.getSettings)
 	mux.HandleFunc("PUT /api/v1/settings", a.putSettings)
 	mux.HandleFunc("POST /api/v1/settings/test-database", a.postTestDatabase)
+	mux.HandleFunc("POST /api/v1/settings/test-storage", a.postTestStorage)
 	mux.HandleFunc("POST /api/v1/settings/test-email", a.postTestEmail)
 	mux.HandleFunc("POST /api/v1/settings/test-cloud/{provider}", a.postTestCloud)
 	mux.HandleFunc("GET /api/v1/settings/cloud-identities/{provider}", a.getCloudIdentityStatus)

@@ -163,11 +163,11 @@ func backupRun(configPath, out string, keep int, last *controlbackup.LastRun) er
 	// one that silently omits the evidence is worse than none, because it is
 	// trusted.
 	recordings := 0
-	if cfg.Storage != nil && cfg.Storage.Endpoint != "" {
-		sc, err := storage.New(*cfg.Storage, nil)
-		if err != nil {
-			return fmt.Errorf("object storage: %w", err)
-		}
+	sc, err := openStorage(cfg)
+	if err != nil {
+		return fmt.Errorf("object storage: %w", err)
+	}
+	if sc != nil {
 		added, total, err := mirrorRecordings(ctx, sc, filepath.Join(out, "recordings"))
 		if err != nil {
 			return err
@@ -205,6 +205,14 @@ func backupRun(configPath, out string, keep int, last *controlbackup.LastRun) er
 	fmt.Printf("done. Prove it restores: argus-control -config %s backup verify -scratch-db <url> %s\n",
 		configPath, dir)
 	return nil
+}
+
+// openStorage is the bucket cfg names, or nil when it names none.
+func openStorage(cfg config) (storage.Bucket, error) {
+	if cfg.Storage == nil {
+		return nil, nil
+	}
+	return storage.Open(*cfg.Storage, nil)
 }
 
 // localRecordings is the directory the control plane keeps recordings in when

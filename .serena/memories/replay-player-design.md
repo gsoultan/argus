@@ -171,3 +171,33 @@ copies the stored, compressed object to a temp file, verifies by reading
 through it, then serves by reading through it again; the RDP replay decodes
 its frames to a temp file, not a buffer. A 260 MB recording: peak heap during
 replay 614 MB before, 75 MB after (the zstd window, not the recording).
+
+## Where recordings are stored: S3, R2, Azure (2026-11)
+
+Agents never hold object storage credentials: they ship each sealed
+recording to the control plane over the tunnel, and the control plane stores
+it. `storage.Bucket` (`internal/storage/bucket.go`) is everything the control
+plane does with a bucket; `storage.Open` builds one from `storage:` and always
+returns a nil *interface* when nothing is configured.
+
+- **S3 and S3-compatible** (`Client`, minio-go): Amazon S3, Cloudflare R2,
+  MinIO, Wasabi. An endpoint pasted with `https://` sets TLS; an R2 endpoint
+  with no region gets `auto`.
+- **Azure Blob Storage** (`Azure`, `provider: azure`): plain REST signed with
+  the account's shared key, like `internal/control/cloud/azure` -- no SDK.
+  `access_key` is the account, `secret_key` its key, `bucket` the container.
+  Metadata names must be C# identifiers, so `argus_chain_head`. Archive
+  classes are access tiers (Hot, Cool, Cold); Archive is refused like Glacier.
+  Presigned links are a read-only service SAS for one blob. Tested against
+  Azurite: `ARGUS_TEST_AZURITE=http://127.0.0.1:10000/devstoreaccount1`.
+- **Turning a bucket on after recordings were kept on this host** used to
+  strand them (replay read the bucket only). Now `CopyRecordingsFromHost`
+  wraps the bucket in `storage.WithLocal` (reads fall back to the directory,
+  deletes remove both) and `storage.CopyDir` copies every local recording in
+  under its same key with its recomputed chain head, retrying every 15
+  minutes, audited `recordings.copied`. Local copies are left in place.
+  Settings › Status shows progress (`recordings.fromHost`).
+- Settings › Storage offers the service by name and a **Test connection**
+  (`POST /api/v1/settings/test-storage`) that writes `.argus/connection-check`
+  and reads it back. `List` skips `.argus/`.
+- Switching to a *different* bucket does not move what the old one holds.

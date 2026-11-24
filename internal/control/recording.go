@@ -15,10 +15,12 @@ import (
 
 // SetStorage is called when object storage is configured: shipped recordings
 // go to the bucket, and are read back from it.
-func (a *API) SetStorage(c *storage.Client) {
-	a.storage = c
-	if c != nil {
-		a.recordings = c
+//
+// b must be a nil interface when there is no bucket, never a typed nil.
+func (a *API) SetStorage(b storage.Bucket) {
+	a.storage = b
+	if b != nil {
+		a.recordings = b
 	}
 }
 

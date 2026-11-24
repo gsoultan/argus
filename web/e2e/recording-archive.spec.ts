@@ -28,7 +28,7 @@ test('the archive age and storage class are set from Settings', async ({ page })
   await expect(after).toHaveValue('90 days')
   await expect(page.getByText('unsaved').first()).toBeVisible()
 
-  await page.getByRole('switch', { name: 'Copy recordings to a bucket' }).check()
+  await page.getByRole('switch', { name: 'Copy recordings to object storage' }).check()
   const cls = page.getByRole('combobox', { name: 'Archive storage class' })
   await expect(cls).toHaveValue("Bucket's default")
   await cls.click()

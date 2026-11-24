@@ -22,6 +22,16 @@ storage:
   secret_key: "${ARGUS_S3_SECRET_KEY}"
   bucket: "argus-recordings"
   use_ssl: false
+# Cloudflare R2 is the same block with its endpoint and region:
+#   endpoint: "<account id>.r2.cloudflarestorage.com"
+#   region: "auto"
+#   use_ssl: true
+# Azure Blob Storage names the provider; access_key is the storage account,
+# secret_key one of its keys, bucket the container, and endpoint may go:
+#   provider: azure
+#   access_key: "mystorageaccount"
+#   secret_key: "${ARGUS_AZURE_STORAGE_KEY}"
+#   bucket: "argus-recordings"
 
 signing_secret: "${ARGUS_SIGNING_SECRET}"
 console_url: ""

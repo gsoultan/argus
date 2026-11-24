@@ -3,7 +3,7 @@ import {
   Alert, Badge, Box, Button, Checkbox, Drawer, Grid, Group, Modal, MultiSelect, NumberInput, PasswordInput, Radio,
   SegmentedControl, Select, Stack, Switch, Table, TagsInput, Text, Textarea, TextInput,
 } from '@mantine/core'
-import { useDisclosure } from '@mantine/hooks'
+import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   IconAlertTriangle, IconArchive, IconBell, IconBrandAws, IconCertificate, IconCloud, IconCloudUpload, IconDatabase,
@@ -15,11 +15,12 @@ import { readiness, readinessKey, useTestOutsideCheck } from '~/lib/controlReadi
 import { PemField } from '~/components/Install'
 import {
   cloudIdentityStatus, controlSettings, organizations, saveControlSettings,
-  testCloudIdentity, testDatabase, testEmail, waitForControlPlane, type AWSIdentity,
+  testCloudIdentity, testDatabase, testEmail, testStorage, waitForControlPlane, type AWSIdentity,
   type CloudIdentityCheck, type CloudIdentityStatus, type CloudIdentityUse, type ControlSettings as Settings,
 } from '~/lib/live'
 import { cloudAccountsQuery, AWS_IDENTITY_POLICY } from '~/lib/cloud'
 import { downloadText } from '~/lib/download'
+import { STORAGE_SERVICES, archiveClassesFor, serviceOf, switchService, type StorageService } from '~/lib/objectStorage'
 import { notifyError, notifyOk, notifyWarn } from '~/lib/notify'
 import { FS, INK } from '~/theme'
 
@@ -397,23 +398,17 @@ const ARCHIVE_AFTER = [
   { value: '-1', label: 'Never' },
 ]
 
-/**
- * Bucket storage classes a recording can be read back from at once. Glacier
- * and Deep Archive are left out on purpose: a recording there cannot be
- * replayed until a restore that takes hours, and the control plane refuses
- * them for the same reason.
- */
-const ARCHIVE_CLASSES = [
-  { value: '', label: "Bucket's default" },
-  { value: 'STANDARD_IA', label: 'Standard-IA' },
-  { value: 'ONEZONE_IA', label: 'One Zone-IA' },
-  { value: 'INTELLIGENT_TIERING', label: 'Intelligent-Tiering' },
-  { value: 'GLACIER_IR', label: 'Glacier Instant Retrieval' },
-]
-
 function Storage({ s, edit }: CardProps) {
   const st = s.storage
   const set = (patch: Partial<Settings['storage']>) => edit({ storage: { ...st, ...patch } })
+  // Chosen here and kept, because two services can look alike before their
+  // endpoint is typed: an empty S3 endpoint is Amazon's or another's.
+  const [chosen, setChosen] = useState<StorageService>(() => serviceOf(st))
+  const service: StorageService = st.provider === 'azure' ? 'azure' : chosen === 'azure' ? serviceOf(st) : chosen
+  const azure = service === 'azure'
+  const [busy, setBusy] = useState(false)
+  // Four names do not fit across a phone; stacked, each stays whole.
+  const narrow = useMediaQuery('(max-width: 36em)')
   const keep = String(s.agentKeepRecordingsDays ?? 0)
   const keepOptions = KEEP_ON_SERVERS.some((o) => o.value === keep)
     ? KEEP_ON_SERVERS
@@ -425,9 +420,32 @@ function Storage({ s, edit }: CardProps) {
     : [...ARCHIVE_AFTER, { value: archiveAfter, label: `${archiveAfter} days` }]
   // A class set in the file that this list does not name is still shown as
   // what it is, rather than as the default it is not.
-  const classOptions = ARCHIVE_CLASSES.some((o) => o.value === archive.storageClass)
-    ? ARCHIVE_CLASSES
-    : [...ARCHIVE_CLASSES, { value: archive.storageClass, label: archive.storageClass }]
+  const classes = archiveClassesFor(service)
+  const classOptions = classes.some((o) => o.value === archive.storageClass)
+    ? classes
+    : [...classes, { value: archive.storageClass, label: archive.storageClass }]
+  const pick = (to: StorageService) => {
+    const patch = switchService(st, to, service)
+    setChosen(to)
+    // The secret belongs to the service it was made for; the control plane
+    // will not carry an S3 secret over to Azure either.
+    const secret = (to === 'azure') !== azure ? { secretKey: undefined, secretKeySet: false, accessKey: '' } : {}
+    const storage = { ...st, ...patch, ...secret }
+    // An archive class the new service does not have would be refused on save.
+    const keepClass = archiveClassesFor(to).some((c) => c.value === archive.storageClass)
+    edit({ storage, ...(s.archive && !keepClass ? { archive: { ...archive, storageClass: '' } } : {}) })
+  }
+  const test = async () => {
+    setBusy(true)
+    try {
+      await testStorage(st)
+      notifyOk('Storage works', `Argus wrote an object to ${st.bucket || 'argus-recordings'} and read it back.`)
+    } catch (err) {
+      notifyError('Storage did not work', err)
+    } finally {
+      setBusy(false)
+    }
+  }
   return (
     <>
     <SectionCard title="Copies on servers" icon={IconCloudUpload}
@@ -451,8 +469,10 @@ function Storage({ s, edit }: CardProps) {
           </Grid.Col>
           {st.enabled && (
             <Grid.Col span={{ base: 12, sm: 6 }}>
-              <Select size="xs" label="Archive storage class" allowDeselect={false}
-                description="Only classes that open at once, so an archived recording still replays."
+              <Select size="xs" label={azure ? 'Archive access tier' : 'Archive storage class'} allowDeselect={false}
+                description={azure
+                  ? 'Only tiers that open at once, so an archived recording still replays.'
+                  : 'Only classes that open at once, so an archived recording still replays.'}
                 data={classOptions} value={archive.storageClass}
                 onChange={(v) => edit({ archive: { ...archive, storageClass: v ?? '' } })} />
             </Grid.Col>
@@ -461,35 +481,72 @@ function Storage({ s, edit }: CardProps) {
       </SectionCard>
     )}
     <SectionCard title="Object storage" icon={IconCloudUpload}
-      description="An S3-compatible bucket recordings are copied to, so the evidence is not only on this host. Without one, recordings are kept on this host's disk. Give Argus a key that can write and not delete.">
+      description="Where recordings are copied, so the evidence is not only on this host: Amazon S3, Cloudflare R2, Azure Blob Storage or any S3-compatible service. Without one, recordings are kept on this host's disk, and are copied in when you turn this on. Give Argus a key that can write and not delete.">
       <Stack gap="xs">
-        <Switch size="xs" label="Copy recordings to a bucket" checked={st.enabled}
+        <Switch size="xs" label="Copy recordings to object storage" checked={st.enabled}
           onChange={(e) => set({ enabled: e.currentTarget.checked })} />
         {st.enabled && (
-          <Grid gap="xs">
-            <Grid.Col span={{ base: 12, sm: 8 }}>
-              <TextInput size="xs" label="Endpoint" placeholder="s3.amazonaws.com" value={st.endpoint}
-                onChange={(e) => set({ endpoint: e.currentTarget.value })} />
-            </Grid.Col>
-            <Grid.Col span={{ base: 12, sm: 4 }}>
-              <TextInput size="xs" label="Region" value={st.region} onChange={(e) => set({ region: e.currentTarget.value })} />
-            </Grid.Col>
-            <Grid.Col span={{ base: 12, sm: 6 }}>
-              <TextInput size="xs" label="Bucket" value={st.bucket} onChange={(e) => set({ bucket: e.currentTarget.value })} />
-            </Grid.Col>
-            <Grid.Col span={{ base: 12, sm: 6 }}>
-              <Switch size="xs" mt={22} label="Use HTTPS" checked={st.useSsl}
-                onChange={(e) => set({ useSsl: e.currentTarget.checked })} />
-            </Grid.Col>
-            <Grid.Col span={{ base: 12, sm: 6 }}>
-              <TextInput size="xs" label="Access key" value={st.accessKey} autoComplete="off"
-                onChange={(e) => set({ accessKey: e.currentTarget.value })} />
-            </Grid.Col>
-            <Grid.Col span={{ base: 12, sm: 6 }}>
-              <SecretInput label="Secret key" set={st.secretKeySet} value={st.secretKey}
-                onChange={(v) => set({ secretKey: v })} />
-            </Grid.Col>
-          </Grid>
+          <>
+          <SegmentedControl size="xs" data={STORAGE_SERVICES} value={service}
+            orientation={narrow ? 'vertical' : 'horizontal'} fullWidth={narrow}
+            onChange={(v) => pick(v as StorageService)} aria-label="Storage service" />
+          {azure ? (
+            <Grid gap="xs">
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <TextInput size="xs" label="Storage account" value={st.accessKey} autoComplete="off"
+                  onChange={(e) => set({ accessKey: e.currentTarget.value })} />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <SecretInput label="Account key" set={st.secretKeySet} value={st.secretKey}
+                  onChange={(v) => set({ secretKey: v })} />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <TextInput size="xs" label="Container" placeholder="argus-recordings" value={st.bucket}
+                  description="Lowercase letters, digits and hyphens. Made if it is not there."
+                  onChange={(e) => set({ bucket: e.currentTarget.value })} />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <TextInput size="xs" label="Blob endpoint"
+                  placeholder={`https://${st.accessKey || '<account>'}.blob.core.windows.net`}
+                  description="Leave empty for Azure's public cloud."
+                  value={st.endpoint} onChange={(e) => set({ endpoint: e.currentTarget.value })} />
+              </Grid.Col>
+            </Grid>
+          ) : (
+            <Grid gap="xs">
+              <Grid.Col span={{ base: 12, sm: 8 }}>
+                <TextInput size="xs" label="Endpoint" value={st.endpoint}
+                  placeholder={service === 'r2' ? '<account id>.r2.cloudflarestorage.com'
+                    : service === 'aws' ? 's3.amazonaws.com' : 'minio.example.com:9000'}
+                  description={service === 'r2' ? 'From the bucket\'s settings in Cloudflare: S3 API.' : undefined}
+                  onChange={(e) => set({ endpoint: e.currentTarget.value })} />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 4 }}>
+                <TextInput size="xs" label="Region" value={st.region}
+                  placeholder={service === 'aws' ? 'us-east-1' : service === 'r2' ? 'auto' : ''}
+                  onChange={(e) => set({ region: e.currentTarget.value })} />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <TextInput size="xs" label="Bucket" value={st.bucket} onChange={(e) => set({ bucket: e.currentTarget.value })} />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <Switch size="xs" mt={22} label="Use HTTPS" checked={st.useSsl}
+                  onChange={(e) => set({ useSsl: e.currentTarget.checked })} />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <TextInput size="xs" label={service === 'r2' ? 'Access key ID' : 'Access key'} value={st.accessKey} autoComplete="off"
+                  onChange={(e) => set({ accessKey: e.currentTarget.value })} />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <SecretInput label={service === 'r2' ? 'Secret access key' : 'Secret key'} set={st.secretKeySet} value={st.secretKey}
+                  onChange={(v) => set({ secretKey: v })} />
+              </Grid.Col>
+            </Grid>
+          )}
+          <Group justify="flex-end">
+            <Button size="xs" variant="light" loading={busy} onClick={() => void test()}>Test connection</Button>
+          </Group>
+          </>
         )}
       </Stack>
     </SectionCard>
