@@ -176,6 +176,44 @@ cluster to the new version (`pg_upgradecluster`) is a separate, deliberate step.
 Take a backup or snapshot of the server first. A release upgrade cannot be
 stopped or undone from the console.
 
+## PostgreSQL after updates and release upgrades
+
+On Debian and Ubuntu servers with PostgreSQL's own packages
+(postgresql-common, usually from apt.postgresql.org), the **Updates** tab has a
+**PostgreSQL** card when there is something to say:
+
+- **A newer psql than the server.** The `postgresql-client` package follows the
+  newest major version, so after an update `psql` may print
+  `psql (19.0, server 17.12)`. That is harmless: a newer client talks to an
+  older server. The card says so and names the server's own psql
+  (`/usr/lib/postgresql/17/bin/psql`).
+- **A newer major version available.** When one cluster runs and apt offers a
+  newer `postgresql-N`, the card offers **Upgrade to PostgreSQL N**. After you
+  type the server's name, a run takes postgresql-common's documented steps:
+  `pg_dumpall` to `/var/backups/postgresql`, install the new server and the new
+  version of each extension package, drop the empty cluster the package made
+  (only if it is empty), `pg_upgradecluster -v N -m dump|upgrade` (pg_upgrade's
+  copy for clusters over 5 GB), check the new cluster answers on the old port,
+  and `vacuumdb --all --analyze-in-stages`. The old cluster is kept, stopped, on
+  another port. The card says what stands in the way first: a missing
+  extension package for N, too little disk, replication, a non-empty cluster of
+  N with the same name, or argus-control on the server.
+- **The old cluster left behind.** Once your applications work on the new
+  version, **Remove PostgreSQL 17 main** runs `pg_dropcluster` and removes that
+  version's server packages, unless apt would remove anything else with them.
+  Until then, going back is stopping the new cluster, swapping the two `port`
+  settings, and starting the old one.
+- **apt's sources after a release upgrade.** Files apt ignores in
+  `sources.list.d` (`pgdg.list.migrate`, `*.distUpgrade`) are moved aside, but
+  only where the real `.sources` or `.list` they copy is there; and an
+  apt.postgresql.org entry left `Enabled: no` or on the old suite
+  (`noble-pgdg` on resolute) is pointed at `<codename>-pgdg`. If
+  apt.postgresql.org does not serve that suite yet, the file is put back.
+  Copies of everything changed are kept in `/var/backups/argus-apt-sources`.
+
+Each is a run of its own, asked for from the card and audited like any update
+run; a rule that asks for a second admin applies to them too.
+
 ## The argus-control server, by hand
 
 Argus will not upgrade the operating system of a server with `argus-control`

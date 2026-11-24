@@ -70,6 +70,11 @@ func (c PackageChecker) listInto(ctx context.Context, m pkgManager, r PackageRep
 	r.Updates, r.SecurityPatches = ups, patches
 	r.RebootRequired = m.rebootWanted(ctx, c.Run)
 	r.Release = c.release(ctx, r)
+	if _, apt := m.(aptManager); apt {
+		installed, pgdg := c.pgInstalled(ctx)
+		r.Postgres = c.postgres(ctx, installed)
+		r.AptSources = aptSourcesFix(osRelease(), pgdg)
+	}
 	return r, nil
 }
 
@@ -125,7 +130,7 @@ func RunPackagesApply(planPath string) int {
 	a := &PackageApplier{Plan: plan, Log: slog.New(slog.NewTextHandler(os.Stderr, nil)),
 		Windows: runtime.GOOS == "windows", WinInventory: hostWinInventory}
 	timeout := packageRunTimeout
-	if plan.Mode == PackagesRelease {
+	if plan.Mode == PackagesRelease || plan.Mode == PackagesPostgresUpgrade {
 		timeout = releaseRunTimeout
 	}
 	if plan.Script != nil && plan.Script.timeout()+10*time.Minute > timeout {
@@ -193,6 +198,14 @@ func (a *PackageApplier) Apply(ctx context.Context) PackageRunStatus {
 	}
 	if a.Plan.Mode == PackagesPrepareRabbitMQ {
 		return a.applyPrepareRabbitMQ(ctx)
+	}
+	switch a.Plan.Mode {
+	case PackagesPostgresUpgrade:
+		return a.applyPostgresUpgrade(ctx)
+	case PackagesPostgresDropOld:
+		return a.applyPostgresDropOld(ctx)
+	case PackagesAptSourcesFix:
+		return a.applyAptSourcesFix(ctx)
 	}
 
 	m := detectManager(a.Look)

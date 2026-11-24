@@ -444,6 +444,98 @@ describe('Release upgrade', () => {
   })
 })
 
+describe('PostgreSQL', () => {
+  // The server of 2026-11-24: PostgreSQL 17 runs, an update brought psql 19,
+  // apt.postgresql.org offers 19, and the release upgrade left pgdg files.
+  const pgView = (pg: Partial<NonNullable<PackagesView['report']>> = {}, over: Partial<PackagesView> = {}) => {
+    const v = view(over)
+    v.report = { ...v.report!, updates: [], postgres: {
+      clusters: [{ version: '17', name: 'main', port: 5432, online: true }],
+      newer_client: { client: '19', server: '17', server_psql: '/usr/lib/postgresql/17/bin/psql' },
+      upgrade: { from: '17', cluster: 'main', port: 5432, to: '19', packages: ['postgresql-19', 'postgresql-19-postgis-3'],
+        size_bytes: 3 * 2 ** 30, free_bytes: 40 * 2 ** 30, method: 'dump' },
+    }, apt_sources: {
+      fingerprint: 'f'.repeat(64),
+      leftovers: [{ name: 'pgdg.list.migrate', noticed: true, movable: true }, { name: 'pgdg.list.distUpgrade', movable: true }],
+    }, ...pg }
+    return v
+  }
+
+  it('says a newer psql than the server is harmless', async () => {
+    live.assetPackages.mockResolvedValue(pgView())
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    expect(await screen.findByText('psql 19 next to PostgreSQL 17 is fine')).toBeTruthy()
+    expect(screen.getByText('/usr/lib/postgresql/17/bin/psql')).toBeTruthy()
+  })
+
+  it('upgrades the cluster only after the server name is typed, naming what was shown', async () => {
+    live.assetPackages.mockResolvedValue(pgView())
+    live.startPackageRun.mockResolvedValue(runOf({ mode: 'postgres_upgrade', target: '17/main:19' }))
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Upgrade to PostgreSQL 19…' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText(/kept, stopped, on another port/)).toBeTruthy()
+    expect(within(dialog).getByText(/pg_dumpall/)).toBeTruthy()
+    const go = within(dialog).getByRole('button', { name: 'Upgrade to 19' }) as HTMLButtonElement
+    expect(go.disabled).toBe(true)
+    fireEvent.change(within(dialog).getByLabelText('Type the server name to confirm'), { target: { value: 'web-01' } })
+    fireEvent.click(go)
+    await waitFor(() => expect(live.startPackageRun).toHaveBeenCalledWith('a1',
+      { mode: 'postgres_upgrade', reboot: 'never', expect: '17/main:19' }))
+  })
+
+  it('says what stands in the way of the upgrade, with the button off', async () => {
+    const v = pgView()
+    v.report!.postgres!.upgrade!.blockers = ['this cluster sends its changes to 1 standby server(s)']
+    live.assetPackages.mockResolvedValue(v)
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    expect(await screen.findByText(/This cluster sends its changes/)).toBeTruthy()
+    expect((screen.getByRole('button', { name: 'Upgrade to PostgreSQL 19…' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('removes the old cluster an upgrade left, only when asked', async () => {
+    live.assetPackages.mockResolvedValue(pgView({ postgres: {
+      clusters: [{ version: '17', name: 'main', port: 5433, online: false }, { version: '19', name: 'main', port: 5432, online: true }],
+      old_cluster: { version: '17', cluster: 'main', port: 5433, current: '19', packages: ['postgresql-17'],
+        backups: ['/var/backups/postgresql/argus-17-main-20261124-150000.sql'] },
+    }, apt_sources: undefined }))
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    expect(await screen.findByText('PostgreSQL 17 main is kept, stopped, on port 5433')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove PostgreSQL 17 main…' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('/var/backups/postgresql/argus-17-main-20261124-150000.sql')).toBeTruthy()
+    fireEvent.change(within(dialog).getByLabelText('Type the server name to confirm'), { target: { value: 'web-01' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Remove 17 main' }))
+    await waitFor(() => expect(live.startPackageRun).toHaveBeenCalledWith('a1',
+      { mode: 'postgres_drop_old', reboot: 'never', expect: '17/main' }))
+  })
+
+  it("fixes apt's sources with the fingerprint it showed", async () => {
+    live.assetPackages.mockResolvedValue(pgView({ postgres: undefined, apt_sources: {
+      fingerprint: 'f'.repeat(64),
+      leftovers: [{ name: 'pgdg.list.migrate', noticed: true, movable: true }],
+      pgdg: { file: 'sources.list.d/pgdg.sources', disabled: true, suites: ['noble-pgdg'], want: 'resolute-pgdg' },
+    } }))
+    live.startPackageRun.mockResolvedValue(runOf({ mode: 'apt_sources_fix' }))
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    expect(await screen.findByText(/invalid filename extension/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: "Fix apt's sources…" }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText(/put back as it was/)).toBeTruthy()
+    fireEvent.click(within(dialog).getByRole('button', { name: "Fix apt's sources" }))
+    await waitFor(() => expect(live.startPackageRun).toHaveBeenCalledWith('a1',
+      { mode: 'apt_sources_fix', reboot: 'never', expect: 'f'.repeat(64) }))
+  })
+
+  it('offers no PostgreSQL buttons to someone who may not', async () => {
+    live.assetPackages.mockResolvedValue(pgView())
+    renderWith(<UpdatesTab asset={asset} canEdit={false} />)
+    expect(await screen.findByText('PostgreSQL 17 main can move to 19')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Upgrade to PostgreSQL 19…' })).toBeNull()
+    expect(screen.queryByRole('button', { name: "Fix apt's sources…" })).toBeNull()
+  })
+})
+
 describe('PackageFleetCard', () => {
   const row = (over: Partial<PackageFleetRow>): PackageFleetRow => ({
     assetId: 'a1', hostname: 'web-01', tags: [], os: 'Ubuntu 24.04', reported: true, supported: true, manager: 'apt',

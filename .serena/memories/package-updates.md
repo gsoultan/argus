@@ -100,3 +100,22 @@ zypper only through unit tests.
   an hour, until dismissed in that browser), `LastHeard` (from the view's
   `heardAt`, the agent's last_seen_at; amber after 60 s, explained while
   rebooting) and per-step times.
+
+## PostgreSQL and apt sources (2026-11)
+
+- The check adds `postgres` (agent `packages_postgres.go`) and `apt_sources`
+  (`packages_aptsources.go`) to the report, apt servers only. Runs:
+  `postgres_upgrade` (expect "17/main:19"), `postgres_drop_old` (expect
+  "17/main"), `apt_sources_fix` (expect = fingerprint of what was shown);
+  migration 116, helper in `packages_postgres_apply.go`. Control refuses a run
+  the latest report does not offer as asked (`postgresReady`); one server at a
+  time; `postgres_upgrade` goes stale after 8 h like a release upgrade.
+- Offered only for exactly one running cluster older than the newest
+  `postgresql-N` apt can install. The run re-reads everything and changes
+  nothing if it differs. Backup first; old cluster kept stopped; dropping it is
+  a separate, confirmed run.
+- A newer `postgresql-client-N` than every cluster is said to be harmless,
+  with no button: the postgresql-client metapackage depends on it.
+- Leftovers are moved only when `<base>.sources|.list` exists beside them; a
+  card appears only when apt actually prints a notice for one.
+- Console: `components/server/PostgresCard.tsx` on the Updates tab.

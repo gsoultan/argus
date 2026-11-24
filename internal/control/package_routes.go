@@ -200,6 +200,10 @@ func (a *API) packageRunEnded(ctx context.Context, r PackageRun) {
 		detail = fmt.Sprintf("Preparing RabbitMQ on %s (%s) %s", r.AssetHostname, who,
 			strings.ReplaceAll(r.State, "_", " "))
 	}
+	if isPostgresMode(r.Mode) {
+		detail = fmt.Sprintf("%s on %s (%s) %s", upperFirst(runPhrase(r)), r.AssetHostname, who,
+			strings.ReplaceAll(r.State, "_", " "))
+	}
 	if len(r.Started) > 0 {
 		detail += ", started " + strings.Join(r.Started, ", ")
 	}
@@ -223,7 +227,9 @@ func (a *API) packageRunEnded(ctx context.Context, r PackageRun) {
 	case r.State == RunFailed || r.State == RunInterrupted:
 		verb := map[string]string{PackagesInstall: "Installing on ", PackagesRemove: "Removing from ",
 			PackagesScript: "A script on ", PackagesFileInstall: "Installing on ", PackagesReboot: "Rebooting ",
-			PackagesRelease: "Upgrading the release of ", PackagesPrepareRabbitMQ: "Preparing RabbitMQ on "}[r.Mode]
+			PackagesRelease: "Upgrading the release of ", PackagesPrepareRabbitMQ: "Preparing RabbitMQ on ",
+			PackagesPostgresUpgrade: "Upgrading PostgreSQL on ", PackagesPostgresDropOld: "Removing old PostgreSQL from ",
+			PackagesAptSourcesFix: "Fixing apt sources on "}[r.Mode]
 		if verb == "" {
 			verb = "Updating "
 		}
@@ -264,6 +270,18 @@ func describeMode(r PackageRun) string {
 		return "release " + r.Release
 	case PackagesPrepareRabbitMQ:
 		return "RabbitMQ preparation"
+	case PackagesPostgresUpgrade:
+		if m := rePgUpgradeTarget.FindStringSubmatch(r.Target); m != nil {
+			return "PostgreSQL " + m[1] + " " + m[2] + " to " + m[3]
+		}
+		return "a PostgreSQL upgrade"
+	case PackagesPostgresDropOld:
+		if m := rePgClusterTarget.FindStringSubmatch(r.Target); m != nil {
+			return "old PostgreSQL " + m[1] + " " + m[2]
+		}
+		return "an old PostgreSQL cluster"
+	case PackagesAptSourcesFix:
+		return "apt sources fix"
 	case PackagesInstall, PackagesRemove:
 		return describeSoftware(r.Mode, r.Items, r.Purge)
 	case PackagesScript:
@@ -308,6 +326,12 @@ func runPhrase(r PackageRun) string {
 		return "upgrading the server to release " + r.Release
 	case PackagesPrepareRabbitMQ:
 		return "preparing RabbitMQ for the next Ubuntu release"
+	case PackagesPostgresUpgrade:
+		return "upgrading " + describeMode(r)
+	case PackagesPostgresDropOld:
+		return "removing " + describeMode(r)
+	case PackagesAptSourcesFix:
+		return "tidying apt's sources"
 	}
 	return "installing " + describeMode(r)
 }
@@ -335,6 +359,12 @@ func runNoun(r PackageRun) string {
 		return "release upgrade"
 	case PackagesPrepareRabbitMQ:
 		return "RabbitMQ preparation"
+	case PackagesPostgresUpgrade:
+		return "PostgreSQL upgrade"
+	case PackagesPostgresDropOld:
+		return "old PostgreSQL removal"
+	case PackagesAptSourcesFix:
+		return "apt sources fix"
 	}
 	return "update run"
 }
@@ -489,6 +519,62 @@ func rabbitMQReady(w http.ResponseWriter, t packageTarget, in runRequest) bool {
 	return true
 }
 
+var (
+	rePgUpgradeTarget = regexp.MustCompile(`^([0-9]{1,3})/([A-Za-z0-9_.-]{1,64}):([0-9]{1,3})$`)
+	rePgClusterTarget = regexp.MustCompile(`^([0-9]{1,3})/([A-Za-z0-9_.-]{1,64})$`)
+	reFingerprint     = regexp.MustCompile(`^[0-9a-f]{64}$`)
+)
+
+func upperFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// postgresReady refuses a PostgreSQL or apt sources run the agent's latest
+// report does not offer as asked: an older agent, something that changed
+// since the console showed it, or something standing in the way.
+func postgresReady(w http.ResponseWriter, t packageTarget, in runRequest) bool {
+	if !isPostgresMode(in.Mode) {
+		return true
+	}
+	var pg *PostgresUpkeep
+	var src *AptSourcesFix
+	if r := t.view.Report; r != nil {
+		pg, src = r.Postgres, r.AptSources
+	}
+	again := "; press Check for updates and look at the card again"
+	switch in.Mode {
+	case PackagesPostgresUpgrade:
+		switch {
+		case pg == nil || pg.Upgrade == nil:
+			writeErr(w, http.StatusConflict, "this server does not offer to upgrade PostgreSQL"+again)
+		case pg.Upgrade.expect() != in.Expect:
+			writeErr(w, http.StatusConflict, fmt.Sprintf("the server offers PostgreSQL %s %s to %s, not %s%s",
+				pg.Upgrade.From, pg.Upgrade.Cluster, pg.Upgrade.To, in.Expect, again))
+		case len(pg.Upgrade.Blockers) > 0:
+			writeErr(w, http.StatusConflict, "PostgreSQL cannot be upgraded yet: "+strings.Join(pg.Upgrade.Blockers, "; "))
+		default:
+			return true
+		}
+	case PackagesPostgresDropOld:
+		if pg == nil || pg.OldCluster == nil || pg.OldCluster.expect() != in.Expect {
+			writeErr(w, http.StatusConflict, "this server has no stopped PostgreSQL "+strings.Replace(in.Expect, "/", " ", 1)+
+				" left by an upgrade"+again)
+			return false
+		}
+		return true
+	case PackagesAptSourcesFix:
+		if src == nil || src.Fingerprint != in.Expect {
+			writeErr(w, http.StatusConflict, "apt's sources on this server changed since they were shown"+again)
+			return false
+		}
+		return true
+	}
+	return false
+}
+
 // packagesReady says whether a run can be asked of t now, answering the
 // request itself when not.
 func packagesReady(w http.ResponseWriter, t packageTarget) bool {
@@ -578,6 +664,9 @@ type runRequest struct {
 	// Release is the version a release upgrade goes to, as the console
 	// showed it.
 	Release string `json:"release"`
+	// Expect is what a PostgreSQL or apt sources run is for, as the console
+	// showed it: "17/main:19", "17/main", or the sources' fingerprint.
+	Expect string `json:"expect"`
 }
 
 // reRelease is a VERSION_ID: 24.04, 13, 9.
@@ -592,6 +681,14 @@ func (in *runRequest) validate() error {
 		in.Packages, in.Reboot, in.Release = nil, "if_needed", ""
 		return nil
 	case PackagesPrepareRabbitMQ:
+		in.Packages, in.Reboot, in.Release, in.Expect = nil, "never", "", ""
+		return nil
+	case PackagesPostgresUpgrade, PackagesPostgresDropOld, PackagesAptSourcesFix:
+		ok := map[string]*regexp.Regexp{PackagesPostgresUpgrade: rePgUpgradeTarget,
+			PackagesPostgresDropOld: rePgClusterTarget, PackagesAptSourcesFix: reFingerprint}[in.Mode]
+		if !ok.MatchString(in.Expect) {
+			return errors.New("say what this run is for, as the server's Updates tab shows it")
+		}
 		in.Packages, in.Reboot, in.Release = nil, "never", ""
 		return nil
 	case PackagesRelease:
@@ -599,7 +696,7 @@ func (in *runRequest) validate() error {
 		if !reRelease.MatchString(in.Release) {
 			return errors.New("say which release to upgrade to, as the server offers it")
 		}
-		in.Packages, in.Reboot = nil, "if_needed"
+		in.Packages, in.Reboot, in.Expect = nil, "if_needed", ""
 		return nil
 	case "selected":
 		if len(in.Packages) == 0 {
@@ -615,9 +712,10 @@ func (in *runRequest) validate() error {
 		}
 		in.Packages = dedupe(in.Packages)
 	default:
-		return errors.New("say what to do: all, security, selected, reboot, release_upgrade or prepare_rabbitmq")
+		return errors.New("say what to do: all, security, selected, reboot, release_upgrade, prepare_rabbitmq, " +
+			"postgres_upgrade, postgres_drop_old or apt_sources_fix")
 	}
-	in.Release = ""
+	in.Release, in.Expect = "", ""
 	switch in.Reboot {
 	case "", "never":
 		in.Reboot = "never"
@@ -645,6 +743,9 @@ func (a *API) newManualRun(ctx context.Context, t packageTarget, in runRequest, 
 	}
 	if in.Mode == PackagesPrepareRabbitMQ {
 		n.Holds = []string{}
+	}
+	if isPostgresMode(in.Mode) {
+		n.Holds, n.Expect = []string{}, in.Expect
 	}
 	if a.runWaits(ctx, t.view.Rule.NeedsApproval, KindServerRuns, t.asset.Tags, by, t.asset.Hostname, dr) {
 		n.State = RunAwaitingApproval
@@ -680,7 +781,8 @@ func (a *API) postAssetPackageRun(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "package updates", err)
 		return
 	}
-	if !packagesReady(w, t) || !rebootReady(w, t, in) || !releaseReady(w, t, in) || !rabbitMQReady(w, t, in) {
+	if !packagesReady(w, t) || !rebootReady(w, t, in) || !releaseReady(w, t, in) || !rabbitMQReady(w, t, in) ||
+		!postgresReady(w, t, in) {
 		return
 	}
 	dr := directRuns{}
@@ -720,6 +822,10 @@ func (a *API) postPackageRuns(w http.ResponseWriter, r *http.Request) {
 	req := runRequest{Mode: in.Mode, Reboot: in.Reboot}
 	if in.Mode == "selected" {
 		writeErr(w, http.StatusBadRequest, "pick packages on one server at a time; for several, install all or security updates")
+		return
+	}
+	if isPostgresMode(in.Mode) {
+		writeErr(w, http.StatusBadRequest, "fix PostgreSQL and apt sources one server at a time, from its Updates tab")
 		return
 	}
 	if in.Mode == PackagesRelease || in.Mode == PackagesPrepareRabbitMQ {
@@ -825,6 +931,16 @@ func (a *API) packageRunsAsked(r *http.Request, by string, runs []PackageRun, li
 				run.Release, waits)
 			title = by + " asks to upgrade " + run.AssetHostname + " to release " + run.Release
 			ask = "Upgrade the operating system to release " + run.Release + " and reboot"
+		}
+		if isPostgresMode(run.Mode) {
+			what := map[string]string{
+				PackagesPostgresUpgrade: "upgrade " + describeMode(run) + " (a backup first, the old cluster kept stopped)",
+				PackagesPostgresDropOld: "drop " + describeMode(run) + " and remove its packages",
+				PackagesAptSourcesFix:   "move aside the files apt ignores and point apt.postgresql.org at the server's release",
+			}[run.Mode]
+			detail = fmt.Sprintf("Asked to %s on %s%s.", what, run.AssetHostname, waits)
+			title = by + " asks for " + runPhrase(run) + " on " + run.AssetHostname
+			ask = upperFirst(what)
 		}
 		if run.Mode == PackagesPrepareRabbitMQ {
 			detail = fmt.Sprintf("Asked to prepare RabbitMQ on %s for the next Ubuntu release (3.13 from "+

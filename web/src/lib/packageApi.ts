@@ -28,9 +28,12 @@ export async function startPackageRun(
   assetId: string,
   body: {
     mode: 'all' | 'security' | 'selected' | 'reboot' | 'release_upgrade' | 'prepare_rabbitmq'
+      | 'postgres_upgrade' | 'postgres_drop_old' | 'apt_sources_fix'
     packages?: string[]
     reboot: PackageReboot
     release?: string
+    /** What a PostgreSQL or apt sources run is for, as the card showed it. */
+    expect?: string
   },
 ): Promise<PackageRun> {
   return send('POST', `/api/v1/assets/${encodeURIComponent(assetId)}/packages/runs`, body)
