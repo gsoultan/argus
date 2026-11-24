@@ -377,6 +377,18 @@ button.argus-navsection:hover {
   flex-shrink: 0;
 }
 
+/* A choice that opens somewhere else, drawn as a bordered tile: the border
+   lights on hover so it reads as something to press. */
+.argus-setup-choice {
+  display: block;
+  border: 1px solid var(--color-line);
+  border-radius: var(--mantine-radius-md);
+  transition: border-color 120ms ease;
+}
+.argus-setup-choice:hover {
+  border-color: var(--mantine-color-azure-5);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

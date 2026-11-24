@@ -79,6 +79,15 @@ export function Sidebar({ role, counts, folded, onFold, phone }: {
   )
 }
 
+/*
+ * The router marks a link aria-current, which Mantine paints as lit, whenever
+ * the page matches it partly: on /networks?tab=wireguard both "VPNs and
+ * tunnels" and "WireGuard" were lit, and on /cloud?tab=costs both "Overview"
+ * and "Costs". Which entry is lit is isItemActive's to decide, so the router
+ * only agrees on an exact match.
+ */
+const EXACT = { exact: true } as const
+
 function Entry({ item, icons, counts, active }: { item: SideItem; icons: boolean; counts: NavCounts; active: boolean }) {
   const count = item.badge ? item.badge(counts) : 0
   const Icon = item.icon
@@ -89,6 +98,7 @@ function Entry({ item, icons, counts, active }: { item: SideItem; icons: boolean
           component={Link}
           to={item.to as never}
           search={(item.search ?? {}) as never}
+          activeOptions={EXACT}
           aria-label={count > 0 ? `${item.label}, ${count} waiting` : item.label}
           active={active}
           variant="light"
@@ -111,6 +121,7 @@ function Entry({ item, icons, counts, active }: { item: SideItem; icons: boolean
       component={Link}
       to={item.to as never}
       search={(item.search ?? {}) as never}
+      activeOptions={EXACT}
       label={item.label}
       active={active}
       variant="light"

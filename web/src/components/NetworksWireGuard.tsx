@@ -1,4 +1,4 @@
-import { Alert, Badge, Button, Checkbox, Group, Modal, MultiSelect, NumberInput, Radio, SegmentedControl, Stack, Table, Text, TextInput, Tooltip } from '@mantine/core'
+import { Alert, Anchor, Badge, Button, Checkbox, Group, Modal, MultiSelect, NumberInput, Radio, SegmentedControl, Stack, Table, Text, TextInput, Tooltip } from '@mantine/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { IconCheck, IconPencil, IconPlus, IconShieldLock, IconTrash, IconX } from '@tabler/icons-react'
 import { useMemo, useState } from 'react'
@@ -32,16 +32,17 @@ function draftWords(d: WGNetworkDraft): string {
   return `${SHAPE[d.shape].label} · ${d.cidr} · UDP ${d.port} · ${d.members.map((m) => `${m.hostname ?? m.assetId} ${m.address ?? ''}${m.hub ? ' (hub)' : ''}${m.routes?.length ? ` routing ${m.routes.join(', ')}` : ''}`).join(', ')}`
 }
 
-export function ServerNetworksCard({ canManage, me }: { canManage: boolean; me?: string }) {
+export function ServerNetworksCard({ canManage, me, onStaff }: { canManage: boolean; me?: string; onStaff?: () => void }) {
   const { data, isLoading } = useQuery({ ...wgNetworksQuery(), enabled: isConfigured() })
   const [editing, setEditing] = useState<WGNetwork | 'new' | null>(null)
   const nets = (data ?? []).filter((n) => n.shape !== 'staff')
   return (
-    <SectionCard title="Server networks" icon={IconShieldLock} iconColor="teal"
-      description="WireGuard networks Argus sets up between your servers, on premises and in the cloud. Each server makes its own key, and every change waits for another admin."
-      action={canManage && <Button size="xs" variant="default" leftSection={<IconPlus size={14} />} onClick={() => setEditing('new')}>New network</Button>}>
+    <SectionCard title="WireGuard between servers" icon={IconShieldLock} iconColor="teal"
+      description={<>WireGuard networks Argus sets up between your servers, on premises and in the cloud. Each server makes its own key, and every change waits for another admin.
+        {onStaff && <> For people&apos;s laptops and phones, see <Anchor component="button" type="button" size={FS.body} onClick={onStaff}>Staff VPN</Anchor>.</>}</>}
+      action={canManage && <Button size="xs" leftSection={<IconPlus size={14} />} onClick={() => setEditing('new')}>New WireGuard network</Button>}>
       {isLoading ? null : nets.length === 0 ? (
-        <EmptyState icon={IconShieldLock} title="No server networks yet."
+        <EmptyState icon={IconShieldLock} title="No WireGuard networks yet."
           description="Pick the servers and a private range, and Argus sets up WireGuard on each: keys, addresses, peers and the firewall port. A change that would cut a server off from Argus undoes itself." />
       ) : (
         <Stack gap="lg">{nets.map((n) => <ServerNetwork key={n.id} n={n} canManage={canManage} me={me} onEdit={() => setEditing(n)} />)}</Stack>
@@ -208,7 +209,7 @@ function NetworkEditor({ n, taken, onClose }: { n: WGNetwork | null; taken: WGNe
       })),
     }), { failure: 'Not asked', success: ['Asked', 'It waits for another admin to approve. Nothing changes on the servers before then.'] }).then((ok) => { if (ok) onClose() })
   return (
-    <Modal opened onClose={onClose} title={n ? `Change ${n.name}` : 'New server network'} size="xl">
+    <Modal opened onClose={onClose} title={n ? `Change ${n.name}` : 'New WireGuard network'} size="xl">
       <Stack gap="md">
         <Group grow align="flex-start">
           <TextInput label="Name" placeholder="Database mesh" value={name} onChange={(e) => setName(e.currentTarget.value)} maxLength={80} />

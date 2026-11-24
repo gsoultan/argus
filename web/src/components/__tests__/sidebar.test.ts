@@ -37,6 +37,11 @@ describe('the sidebar', () => {
     expect(lit('/cloud', 'reservations')).toEqual(['Costs'])
     expect(lit('/cloud', 'access')).toEqual(['Console access'])
     expect(lit('/cloud/connect')).toEqual(['Overview'])
+    const nets = groupsFor('admin').find((g) => g.label === 'Networks')!.items
+    const litNet = (tab?: string) => nets.filter((i) => isItemActive('/networks', tab, i, nets)).map((i) => i.label)
+    expect(litNet()).toEqual(['VPNs and tunnels'])
+    expect(litNet('wireguard')).toEqual(['WireGuard'])
+    expect(litNet('staff')).toEqual(['VPNs and tunnels'])
     const people = groupsFor('admin').find((g) => g.label === 'People')!.items
     expect(people.filter((i) => isItemActive('/teams', 'people', i, people)).map((i) => i.label)).toEqual(['People'])
     expect(people.filter((i) => isItemActive('/teams', undefined, i, people)).map((i) => i.label)).toEqual(['Teams'])

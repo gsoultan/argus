@@ -1,6 +1,6 @@
-import { Alert, Badge, Box, Group, SimpleGrid, Stack, Table, Text, Tooltip } from '@mantine/core'
+import { Alert, Badge, Box, Group, SimpleGrid, Stack, Table, Tabs, Text, Tooltip, UnstyledButton } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
-import { IconAlertTriangle, IconBrandCloudflare, IconInfoCircle, IconTopologyStar3 } from '@tabler/icons-react'
+import { IconAlertTriangle, IconBrandCloudflare, IconChevronRight, IconInfoCircle, IconShieldLock, IconTopologyStar3 } from '@tabler/icons-react'
 import { useMemo } from 'react'
 import { AnchorLink } from '~/components/links'
 import { DataTable, EmptyState, PageBody, PageHeader, SectionCard } from '~/components/page'
@@ -14,28 +14,46 @@ import { isConfigured } from '~/lib/live'
 import { meQuery } from '~/lib/queries'
 import { formatBytes, linksOf, networksQuery, PEER_STATE, type Link, type NetworkTunnel, type NetworksView } from '~/lib/networks'
 import { FS, SP } from '~/theme'
+import { NETWORK_TABS, NETWORK_TAB_LABEL as TAB_LABEL, type NetworkTab } from '~/components/networkTabs'
 
 /**
  * Networks: every VPN link and tunnel on the servers Argus manages, as their
- * agents see them. WireGuard links between servers (matched by key, so a link
- * between two Argus servers is one row), Cloudflare Tunnels, and other VPN
- * software found. Read-only: setting links up comes later.
+ * agents see them, and the WireGuard networks, IPsec links and staff VPN Argus
+ * sets up. One tab per kind, so WireGuard is a place you can find rather than
+ * the fourth card down a long page.
  */
-export function NetworksPage() {
+export function NetworksPage({ tab = 'overview', onTab }: { tab?: NetworkTab; onTab: (t: NetworkTab) => void }) {
   const { data, isLoading, error } = useQuery({ ...networksQuery(), enabled: isConfigured() })
   const { data: me } = useQuery({ ...meQuery(), enabled: isConfigured() })
   const canManage = me?.role === 'admin' || me?.role === 'owner'
   const links = useMemo(() => linksOf(data?.interfaces ?? []), [data])
   const down = data?.problems.filter((p) => p.severity === 'down').length ?? 0
+  const downIn: Partial<Record<NetworkTab, number>> = data ? {
+    wireguard: links.filter((l) => l.state === 'down' || l.state === 'never').length,
+    cloud: data.cloudVpns.filter((v) => v.state === 'down').length,
+    cloudflare: data.tunnels.filter((t) => t.state === 'down').length + data.cloudflare.flatMap((a) => a.tunnels).filter((t) => t.status === 'down').length,
+  } : {}
 
   return (
     <Box>
       <PageHeader
         title="Networks"
-        description="VPN links and tunnels on your servers, in your clouds and in Cloudflare: WireGuard between servers, cloud site-to-site VPNs, Cloudflare Tunnels, and other VPN software. Checked every minute."
+        description="VPN links and tunnels on your servers, in your clouds and in Cloudflare: WireGuard between servers and for staff, IPsec links to clouds and offices, cloud site-to-site VPNs, Cloudflare Tunnels, and other VPN software. Checked every minute."
         status={data ? (down > 0
           ? <Badge color="rose" variant="filled">{down} down</Badge>
           : links.length + data.tunnels.length + data.cloudVpns.length > 0 ? <Badge color="teal" variant="light">All up</Badge> : undefined) : undefined}
+        tabs={isConfigured() ? (
+          <Tabs value={tab} onChange={(v) => v && onTab(v as NetworkTab)} keepMounted={false}>
+            <Tabs.List className="argus-tabs-scroll" style={{ borderBottom: 0 }}>
+              {NETWORK_TABS.map((t) => (
+                <Tabs.Tab key={t} value={t} fz="sm" leftSection={t === 'wireguard' ? <IconShieldLock size={14} /> : undefined}
+                  rightSection={downIn[t] ? <Badge size="xs" variant="filled" color="rose" circle={false}>{downIn[t]} down</Badge> : undefined}>
+                  {TAB_LABEL[t]}
+                </Tabs.Tab>
+              ))}
+            </Tabs.List>
+          </Tabs>
+        ) : undefined}
       />
       <PageBody>
         {!isConfigured() ? (
@@ -44,21 +62,58 @@ export function NetworksPage() {
           <Alert color="rose"><Text size={FS.body}>Could not read the networks: {error.message}</Text></Alert>
         ) : (
           <Stack gap="lg">
-            {data && <Figures data={data} links={links} />}
-            {data && data.problems.length > 0 && <Problems data={data} />}
-            <LinksCard links={links} loading={isLoading} />
-            <ServerNetworksCard canManage={canManage} me={me?.email} />
-            <IPsecLinksCard canManage={canManage} me={me?.email} />
-            <StaffVPNCard canManage={canManage} me={me?.email} />
-            <CloudVPNsCard vpns={data?.cloudVpns ?? []} loading={isLoading} />
-            <TunnelsCard tunnels={data?.tunnels ?? []} loading={isLoading} />
-            <CloudflareCard accounts={data?.cloudflare ?? []} loading={isLoading} canManage={canManage} />
-            <SoftwareCard data={data} loading={isLoading} />
-            {data && <HowItReads data={data} />}
+            {tab === 'overview' && <>
+              {data && <Figures data={data} links={links} />}
+              {data && data.problems.length > 0 && <Problems data={data} />}
+              <SetUp onTab={onTab} />
+              {data && <HowItReads data={data} />}
+            </>}
+            {tab === 'wireguard' && <>
+              <ServerNetworksCard canManage={canManage} me={me?.email} onStaff={() => onTab('staff')} />
+              <LinksCard links={links} loading={isLoading} />
+            </>}
+            {tab === 'links' && <IPsecLinksCard canManage={canManage} me={me?.email} />}
+            {tab === 'staff' && <StaffVPNCard canManage={canManage} me={me?.email} />}
+            {tab === 'cloud' && <CloudVPNsCard vpns={data?.cloudVpns ?? []} loading={isLoading} />}
+            {tab === 'cloudflare' && <>
+              <TunnelsCard tunnels={data?.tunnels ?? []} loading={isLoading} />
+              <CloudflareCard accounts={data?.cloudflare ?? []} loading={isLoading} canManage={canManage} />
+            </>}
+            {tab === 'software' && <SoftwareCard data={data} loading={isLoading} />}
           </Stack>
         )}
       </PageBody>
     </Box>
+  )
+}
+
+/** What Argus sets up, with the protocol named, each opening its tab. */
+function SetUp({ onTab }: { onTab: (t: NetworkTab) => void }) {
+  const rows: { tab: NetworkTab; title: string; protocol: string; detail: string }[] = [
+    { tab: 'wireguard', title: 'Between your servers', protocol: 'WireGuard',
+      detail: 'A mesh or a hub between servers on premises and in the cloud, optionally routing a site behind one of them.' },
+    { tab: 'links', title: 'To a cloud or an office', protocol: 'IPsec',
+      detail: 'From one of your servers to an AWS, Azure or Google Cloud VPN gateway, or to an office firewall. These only speak IPsec.' },
+    { tab: 'staff', title: "For people's laptops and phones", protocol: 'WireGuard',
+      detail: 'Each person gets their own profile, tied to their Argus account, reaching what their teams are given.' },
+  ]
+  return (
+    <SectionCard title="What Argus sets up" icon={IconShieldLock} iconColor="teal"
+      description="Argus sets these up through the agents and checks them every minute. Every change waits for another admin.">
+      <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
+        {rows.map((r) => (
+          <UnstyledButton key={r.tab} onClick={() => onTab(r.tab)} className="argus-setup-choice" data-testid="network-setup"
+            p="md">
+            <Group gap="xs" mb={4} wrap="nowrap">
+              <Text size={FS.body} fw={600}>{r.title}</Text>
+              <Badge variant="light" color={r.protocol === 'WireGuard' ? 'teal' : 'sky'}>{r.protocol}</Badge>
+            </Group>
+            <Text size={FS.meta} c="dimmed">{r.detail}</Text>
+            <Group gap={4} mt="xs" c="azure"><Text size={FS.meta} fw={500} c="azure">Open {TAB_LABEL[r.tab]}</Text><IconChevronRight size={12} /></Group>
+          </UnstyledButton>
+        ))}
+      </SimpleGrid>
+    </SectionCard>
   )
 }
 
@@ -118,8 +173,8 @@ function StateBadge({ state }: { state: keyof typeof PEER_STATE }) {
 
 function LinksCard({ links, loading }: { links: Link[]; loading: boolean }) {
   return (
-    <SectionCard title="WireGuard links" icon={IconTopologyStar3} flush
-      description="Each peer of each WireGuard interface. A link between two Argus servers is one row, named at both ends.">
+    <SectionCard title="WireGuard links found on servers" icon={IconTopologyStar3} flush
+      description="Each peer of each WireGuard interface, whether Argus set it up or not. A link between two Argus servers is one row, named at both ends.">
       <DataTable columns={['From', 'To', 'State', 'Last handshake', 'Carries', 'Traffic']} minWidth={860}
         loading={loading} isEmpty={links.length === 0}
         empty={<EmptyState icon={IconTopologyStar3} title="No WireGuard links found."

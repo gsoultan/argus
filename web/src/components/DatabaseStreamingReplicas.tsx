@@ -311,7 +311,7 @@ export function AskReplica({ database, replicas, onClose }: { database: Database
           data={options.map(({ a, why }) => ({ value: a.id, label: why ? `${assetName(a)} · ${why}` : assetName(a), disabled: Boolean(why) }))} />
         <Group grow align="flex-start">
           <TextInput label="Replica name" value={name} styles={MONO} error={nameError} maxLength={40}
-            description={name && validReplicaName(name) ? `Role argus_repl_${name}, slot argus_replica_${name}` : ' '}
+            description={name && validReplicaName(name) ? `Role argus_repl_${name}, slot argus_replica_${name}` : undefined}
             onChange={(e) => { setName(e.currentTarget.value.toLowerCase()); setNamed(true) }} />
           <AddressInput label={`Replica’s address, as ${database.hostname} sees it`} value={replicaAddr} onChange={setReplicaAddr}
             choices={target ? serverAddresses(target) : []} error={replicaError} />
