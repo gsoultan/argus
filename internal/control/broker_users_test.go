@@ -187,3 +187,44 @@ func TestKafkaChangesWait(t *testing.T) {
 		t.Fatal("a peek kept a change")
 	}
 }
+
+// A NATS entry's users: listing is Manage, signing one is Admin and on
+// production waits for approval of its text, which names the key and never
+// a seed; the entry's other operations pass to their own gate.
+func TestNATSUsersGate(t *testing.T) {
+	a := &API{}
+	ctx := context.Background()
+	db := Database{Engine: tunnel.EngineNATS, Name: "ORDERS", Hostname: "nats-01", Label: "production"}
+	list := tunnel.StoreRequest{Op: tunnel.BrokerOpUsers}
+	if no, ok := a.brokerUserGate(ctx, "ana", db, tunnel.LevelOwner, &list, nil); !ok || no != nil {
+		t.Fatalf("Manage could not list NATS users: %+v", no)
+	}
+	key := "UDXU4RCSJNZOIQHZNWXHXORDPRTGNJAHAHFRGZNEEJCPQTT2M7NLCNF4"
+	set := func() tunnel.StoreRequest {
+		return tunnel.StoreRequest{ID: 3, Op: tunnel.BrokerOpUserSet, Password: "smuggled", BrokerUser: &tunnel.BrokerUser{Name: "orders-api", Create: true,
+			PublicKey: key, NATS: &tunnel.NATSAppUser{PubAllow: []string{"orders.>"}, Days: 90}}}
+	}
+	req := set()
+	if no, _ := a.brokerUserGate(ctx, "ana", db, tunnel.LevelOwner, &req, nil); no == nil || !strings.Contains(no.Error, "dba") {
+		t.Fatalf("Manage signed a user: %+v", no)
+	}
+	req = set()
+	no, _ := a.brokerUserGate(ctx, "ana", db, tunnel.LevelDBA, &req, nil)
+	if no == nil || no.NeedsApproval == nil || !strings.Contains(no.NeedsApproval.Text, `CREATE USER "orders-api" in account ORDERS, key `+key) {
+		t.Fatalf("production did not wait: %+v", no)
+	}
+	req = set()
+	req.BrokerUser.NATS.SubAllow = []string{"$SYS.>"}
+	if no, _ := a.brokerUserGate(ctx, "ana", db, tunnel.LevelDBA, &req, nil); no == nil || no.NeedsApproval != nil {
+		t.Fatalf("$SYS was offered for approval: %+v", no)
+	}
+	db.Label = "staging"
+	req = set()
+	if no, _ := a.brokerUserGate(ctx, "ana", db, tunnel.LevelDBA, &req, newBrokerAudit(a)); no != nil || req.Password != "" {
+		t.Fatalf("staging: %+v %+v", no, req)
+	}
+	other := tunnel.StoreRequest{Op: "stream_create", BrokerUser: &tunnel.BrokerUser{Name: "x"}}
+	if _, ok := a.brokerUserGate(ctx, "ana", db, tunnel.LevelOwner, &other, nil); ok || other.BrokerUser != nil {
+		t.Fatalf("a stream change was taken as a user change: %+v", other)
+	}
+}

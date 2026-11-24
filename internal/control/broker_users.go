@@ -29,7 +29,7 @@ no table holds broker users.
 */
 
 // brokerUserEngines are the engines with a Users tab of this kind.
-var brokerUserEngines = []string{tunnel.EngineKafka, tunnel.EngineRabbitMQ}
+var brokerUserEngines = []string{tunnel.EngineKafka, tunnel.EngineRabbitMQ, tunnel.EngineNATS}
 
 func brokerUserText(db Database, req tunnel.StoreRequest) string {
 	return tunnel.BrokerUserText(db.Engine, db.Name, req)

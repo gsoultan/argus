@@ -52,8 +52,9 @@ func TestNATSNamesAndLevels(t *testing.T) {
 			t.Errorf("read was given %s", op)
 		}
 	}
-	if len(NATSStoreOps(LevelDBA)) != len(natsOps) || len(owner) != len(natsOps)-2 || slices.Contains(owner, RabbitOpNetworkSet) {
-		t.Fatal("admin has every operation, manage every one but the network")
+	if len(NATSStoreOps(LevelDBA)) != len(natsOps) || len(owner) != len(natsOps)-4 || slices.Contains(owner, RabbitOpNetworkSet) ||
+		slices.Contains(owner, BrokerOpUserSet) || !slices.Contains(owner, BrokerOpUsers) {
+		t.Fatal("admin has every operation, manage every one but the network and signing users")
 	}
 	if !NATSNeedsConfirm(NATSOpKVDelete, nil) {
 		t.Fatal("removing a bucket needs its name")

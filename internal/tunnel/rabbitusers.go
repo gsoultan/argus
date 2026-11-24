@@ -263,6 +263,9 @@ func BrokerUserOpLevelFor(engine, op string) string {
 
 // BrokerUserText is a broker user operation's text for the engine.
 func BrokerUserText(engine, scope string, req StoreRequest) string {
+	if engine == EngineNATS {
+		return NATSUserText(scope, req)
+	}
 	if engine == EngineRabbitMQ {
 		return RabbitUserText(scope, req)
 	}
@@ -271,6 +274,9 @@ func BrokerUserText(engine, scope string, req StoreRequest) string {
 
 // ValidBrokerUserChange is the engine's check of a broker user operation.
 func ValidBrokerUserChange(engine, scope string, req StoreRequest) string {
+	if engine == EngineNATS {
+		return ValidNATSUserChange(req)
+	}
 	if engine == EngineRabbitMQ {
 		return ValidRabbitUserChange(scope, req)
 	}

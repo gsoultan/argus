@@ -358,7 +358,8 @@ func (s *natsSession) do(ctx context.Context, req tunnel.StoreRequest, rec *stmt
 	}
 	if s.noJS {
 		switch req.Op {
-		case "overview", "subjects", "connections", "tail", "publish", tunnel.RabbitOpNetwork, tunnel.RabbitOpNetworkSet:
+		case "overview", "subjects", "connections", "tail", "publish", tunnel.RabbitOpNetwork, tunnel.RabbitOpNetworkSet,
+			tunnel.BrokerOpUsers, tunnel.BrokerOpUserSet, tunnel.BrokerOpUserDel:
 		default:
 			return tunnel.StoreAnswer{Type: "error", Error: "JetStream is not on for the account " + s.db.Name}, nil
 		}
@@ -418,6 +419,12 @@ func (s *natsSession) do(ctx context.Context, req tunnel.StoreRequest, rec *stmt
 		return s.kvDelete(cctx, req, n, rec)
 	case tunnel.RabbitOpNetwork, tunnel.RabbitOpNetworkSet:
 		return s.network(ctx, req, rec)
+	case tunnel.BrokerOpUsers:
+		return s.users(cctx)
+	case tunnel.BrokerOpUserSet:
+		return s.userSet(req, rec)
+	case tunnel.BrokerOpUserDel:
+		return s.userDel(req, rec)
 	}
 	return tunnel.StoreAnswer{Type: "error", Error: "unknown operation " + req.Op}, nil
 }
@@ -554,7 +561,7 @@ type NATSSubDetail struct {
 
 func (s *natsSession) conns(ctx context.Context) ([]NATSConn, bool, error) {
 	limit := 1000
-	b, err := s.monitorGet(ctx, "/connz", url.Values{"acc": {s.account.ID}, "subs": {"detail"},
+	b, err := s.monitorGet(ctx, "/connz", url.Values{"acc": {s.account.ID}, "subs": {"detail"}, "auth": {"true"},
 		"limit": {strconv.Itoa(limit)}, "sort": {"msgs_to"}})
 	if err != nil {
 		return nil, false, err
@@ -579,7 +586,7 @@ func (s *natsSession) conns(ctx context.Context) ([]NATSConn, bool, error) {
 			NumSubs  uint32    `json:"subscriptions"`
 			Account  string    `json:"account"`
 			User     string    `json:"authorized_user"`
-			JWTName  string    `json:"name_tag"`
+			JWT      string    `json:"jwt"`
 			Subs     []struct {
 				Subject string `json:"subject"`
 				Queue   string `json:"qgroup"`
@@ -597,7 +604,7 @@ func (s *natsSession) conns(ctx context.Context) ([]NATSConn, bool, error) {
 		}
 		nc := NATSConn{CID: c.CID, Name: c.Name, Lang: c.Lang, Version: c.Version, IP: c.IP, Port: c.Port, Start: c.Start,
 			Last: c.Last, RTT: c.RTT, Pending: c.Pending, InMsgs: c.InMsgs, OutMsgs: c.OutMsgs, InBytes: c.InBytes,
-			OutBytes: c.OutBytes, Subs: c.NumSubs, User: c.JWTName, Argus: strings.HasPrefix(c.Name, "argus · ")}
+			OutBytes: c.OutBytes, Subs: c.NumSubs, User: natsJWTName(c.JWT), Argus: strings.HasPrefix(c.Name, "argus · ")}
 		for _, sd := range c.Subs {
 			if strings.HasPrefix(sd.Subject, "_INBOX") {
 				continue
