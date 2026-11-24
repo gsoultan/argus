@@ -61,3 +61,46 @@ func TestAptLockHeldByTheUpgrader(t *testing.T) {
 		t.Error("read a lock that was not there")
 	}
 }
+
+// The look that failed on a server upgraded to 26.04: its sources named the
+// right release, but under a path Ubuntu's mirrors do not have, and Argus
+// called the mirror broken.
+const aptWrongPath = `Ign:1 http://id.archive.ubuntu.com/os/linux/ubuntu resolute InRelease
+Err:2 http://id.archive.ubuntu.com/os/linux/ubuntu resolute Release
+  404  Not Found [IP: 103.28.149.66 80]
+Reading package lists...
+E: The repository 'http://id.archive.ubuntu.com/os/linux/ubuntu resolute Release' does not have a Release file.
+E: The repository 'http://id.archive.ubuntu.com/os/linux/ubuntu resolute-updates Release' does not have a Release file.
+E: The repository 'http://id.archive.ubuntu.com/os/linux/ubuntu resolute-backports Release' does not have a Release file.
+`
+
+func TestAptMissingReleaseUnderAWrongPath(t *testing.T) {
+	got := aptMissingRelease([]byte(aptWrongPath), map[string]string{
+		"VERSION_CODENAME": "resolute", "PRETTY_NAME": "Ubuntu 26.04.1 LTS"})
+	for _, want := range []string{"http://id.archive.ubuntu.com/os/linux/ubuntu",
+		"resolute, resolute-updates, resolute-backports", "to http://id.archive.ubuntu.com/ubuntu in"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in %q", want, got)
+		}
+	}
+	if strings.Contains(got, "broken") {
+		t.Errorf("blamed the mirror: %q", got)
+	}
+}
+
+func TestUbuntuMirrorFix(t *testing.T) {
+	for uri, want := range map[string]string{
+		"http://id.archive.ubuntu.com/os/linux/ubuntu": "http://id.archive.ubuntu.com/ubuntu",
+		"http://archive.ubuntu.com/":                   "http://archive.ubuntu.com/ubuntu",
+		"http://ports.ubuntu.com/ubuntu":               "http://ports.ubuntu.com/ubuntu-ports",
+		"http://id.archive.ubuntu.com/ubuntu/":         "",
+		"http://security.ubuntu.com/ubuntu":            "",
+		"http://ports.ubuntu.com/ubuntu-ports":         "",
+		"http://mirror.example.id/os/linux/ubuntu":     "",
+		"http://deb.debian.org/debian":                 "",
+	} {
+		if got := ubuntuMirrorFix(uri); got != want {
+			t.Errorf("ubuntuMirrorFix(%q) = %q, want %q", uri, got, want)
+		}
+	}
+}
