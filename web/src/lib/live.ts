@@ -2383,6 +2383,56 @@ export interface PackageReport {
   utc_offset_minutes: number
   /** The operating system's release and the next one it can move to; absent from an older agent. */
   release?: ReleaseInfo
+  /** PostgreSQL's major versions on the server; apt servers with postgresql-common, newer agents only. */
+  postgres?: PostgresUpkeep
+  /** What an apt_sources_fix run can put right in apt's sources; absent when nothing needs it. */
+  apt_sources?: AptSourcesFix
+}
+
+/** A PostgreSQL cluster, as pg_lsclusters lists it. */
+export interface PgCluster {
+  version: string
+  name: string
+  port: number
+  online: boolean
+  data_dir?: string
+}
+
+/** PostgreSQL around updates: a newer client, a cluster that can move up, an old one left behind. */
+export interface PostgresUpkeep {
+  clusters: PgCluster[]
+  /** psql from a newer major version than any cluster: harmless. */
+  newer_client?: { client: string; server: string; server_psql?: string }
+  /** The one running cluster a postgres_upgrade run can move to a newer major version. */
+  upgrade?: {
+    from: string
+    cluster: string
+    port: number
+    to: string
+    packages: string[]
+    /** An empty cluster of the new version the package made, dropped first. */
+    drop_empty?: boolean
+    size_bytes: number
+    free_bytes: number
+    method: 'dump' | 'upgrade' | string
+    blockers?: string[]
+  }
+  /** The stopped cluster an upgrade left, which a postgres_drop_old run removes. */
+  old_cluster?: {
+    version: string
+    cluster: string
+    port: number
+    current: string
+    packages?: string[]
+    backups?: string[]
+  }
+}
+
+/** Files apt ignores, and apt.postgresql.org turned off or on another release. */
+export interface AptSourcesFix {
+  leftovers?: { name: string; noticed?: boolean; movable: boolean; why?: string }[]
+  pgdg?: { file: string; disabled?: boolean; suites: string[]; want: string }
+  fingerprint: string
 }
 
 /** A server's operating system release, and the next one, as its agent works it out. */
@@ -2454,9 +2504,11 @@ export interface PackageRun {
   assetId?: string
   mode: 'all' | 'security' | 'selected' | 'reboot' | 'install' | 'remove' | 'script'
     | 'file_install' | 'app_install' | 'app_uninstall' | 'app_disable' | 'app_restore' | 'release_upgrade'
-    | 'prepare_rabbitmq'
+    | 'prepare_rabbitmq' | 'postgres_upgrade' | 'postgres_drop_old' | 'apt_sources_fix'
   /** A release upgrade: the version it goes to, as it was approved. */
   release?: string
+  /** A PostgreSQL run: "17/main:19" for an upgrade, "17/main" for removing the old cluster. */
+  target?: string
   packages: string[]
   holds: string[]
   reboot: PackageReboot

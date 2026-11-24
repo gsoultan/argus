@@ -1252,3 +1252,74 @@ func TestPackagePrepareRabbitMQ(t *testing.T) {
 		t.Fatalf("orders = %+v", o)
 	}
 }
+
+// PostgreSQL's card: each run is asked for only as the agent's latest report
+// offers it, one server at a time, never rebooting, and audited as what it
+// is. A run asked for 17 to 18 when the server offers 19 is refused.
+func TestPackagePostgresRuns(t *testing.T) {
+	e := packagesAPI(t)
+	asset, cred := e.server(t)
+	now := time.Now().UTC()
+	fp := strings.Repeat("ab", 32)
+	report := func(blockers ...string) *PackageReport {
+		now = now.Add(time.Second)
+		r := pkgReport(now)
+		r.Postgres = &PostgresUpkeep{
+			Clusters:    []PgCluster{{Version: "17", Name: "main", Port: 5432, Online: true}},
+			NewerClient: &PgNewerClient{Client: "19", Server: "17"},
+			Upgrade: &PgUpgrade{From: "17", Cluster: "main", Port: 5432, To: "19", Method: "dump",
+				Packages: []string{"postgresql-19"}, Blockers: blockers},
+		}
+		r.AptSources = &AptSourcesFix{Fingerprint: fp,
+			Leftovers: []AptLeftover{{Name: "pgdg.list.migrate", Noticed: true, Movable: true}}}
+		return r
+	}
+	e.ask(t, asset, "admin-token", `{"mode":"postgres_upgrade","expect":"17/main:19"}`, http.StatusConflict)
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, Reboot: true, Report: report("not enough space")})
+	w := do(t, e.h, http.MethodPost, "/api/v1/assets/"+asset.ID+"/packages/runs", "admin-token",
+		`{"mode":"postgres_upgrade","expect":"17/main:19"}`)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "not enough space") {
+		t.Fatalf("blocked: %d %s", w.Code, w.Body)
+	}
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, Reboot: true, Report: report()})
+	if v := e.view(t, asset); v.Report == nil || v.Report.Postgres == nil || v.Report.Postgres.NewerClient == nil ||
+		v.Report.AptSources == nil || v.Report.AptSources.Fingerprint != fp {
+		t.Fatalf("view = %+v", v.Report)
+	}
+	for _, bad := range []string{`{"mode":"postgres_upgrade","expect":"17/main:18"}`,
+		`{"mode":"postgres_drop_old","expect":"17/main"}`,
+		`{"mode":"apt_sources_fix","expect":"` + strings.Repeat("cd", 32) + `"}`} {
+		e.ask(t, asset, "admin-token", bad, http.StatusConflict)
+	}
+	e.ask(t, asset, "admin-token", `{"mode":"postgres_upgrade","expect":"17/main:19 --link"}`, http.StatusBadRequest)
+	w = do(t, e.h, http.MethodPost, "/api/v1/package-runs", "admin-token",
+		`{"assetIds":["`+asset.ID+`"],"mode":"apt_sources_fix"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("fleet: %d %s", w.Code, w.Body)
+	}
+	e.ask(t, asset, "operator-token", `{"mode":"postgres_upgrade","expect":"17/main:19"}`, http.StatusForbidden)
+	run := e.ask(t, asset, "admin-token", `{"mode":"postgres_upgrade","expect":"17/main:19","reboot":"if_needed"}`,
+		http.StatusAccepted)
+	if run.Mode != PackagesPostgresUpgrade || run.Reboot != "never" || run.Target != "17/main:19" {
+		t.Fatalf("run = %+v", run)
+	}
+	if a := lastAuditOn(t, e.s, asset.Hostname); a.Action != "packages.run_requested" ||
+		!strings.Contains(a.Detail, "Asked to upgrade PostgreSQL 17 main to 19 (a backup first") {
+		t.Errorf("audit = %s: %s", a.Action, a.Detail)
+	}
+	_, o := e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, Reboot: true})
+	if o == nil || o.Run == nil || o.Run.ID != run.ID || o.Run.Mode != PackagesPostgresUpgrade ||
+		o.Run.Expect != "17/main:19" {
+		t.Fatalf("orders = %+v", o)
+	}
+	e.beat(t, cred, asset.Hostname, &PackageBeat{Supported: true, Reboot: true,
+		Run: &PackageRunStatus{ID: run.ID, State: "done", Message: "PostgreSQL main is now 19 on port 5432"}})
+	if a := lastAuditOn(t, e.s, asset.Hostname); !strings.Contains(a.Detail, "Upgrading PostgreSQL 17 main to 19 on "+
+		asset.Hostname) || !strings.Contains(a.Detail, "now 19") {
+		t.Errorf("ended audit = %s: %s", a.Action, a.Detail)
+	}
+	fix := e.ask(t, asset, "admin-token", `{"mode":"apt_sources_fix","expect":"`+fp+`"}`, http.StatusAccepted)
+	if fix.Mode != PackagesAptSourcesFix || fix.Reboot != "never" {
+		t.Fatalf("fix = %+v", fix)
+	}
+}

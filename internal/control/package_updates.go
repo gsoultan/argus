@@ -78,6 +78,87 @@ type PackageReport struct {
 	// Release is the server's operating system release and the next one it
 	// can be upgraded to; absent from an older agent.
 	Release *ReleaseInfo `json:"release,omitempty"`
+	// Postgres is what the agent found about PostgreSQL's major versions,
+	// and AptSources what it can put right in apt's sources; absent from an
+	// older agent and from servers without them.
+	Postgres   *PostgresUpkeep `json:"postgres,omitempty"`
+	AptSources *AptSourcesFix  `json:"apt_sources,omitempty"`
+}
+
+// PostgresUpkeep mirrors the agent's (internal/agent/packages_postgres.go).
+type PostgresUpkeep struct {
+	Clusters    []PgCluster    `json:"clusters"`
+	NewerClient *PgNewerClient `json:"newer_client,omitempty"`
+	Upgrade     *PgUpgrade     `json:"upgrade,omitempty"`
+	OldCluster  *PgOldCluster  `json:"old_cluster,omitempty"`
+}
+
+// PgCluster is one PostgreSQL cluster on the server.
+type PgCluster struct {
+	Version string `json:"version"`
+	Name    string `json:"name"`
+	Port    int    `json:"port"`
+	Online  bool   `json:"online"`
+	DataDir string `json:"data_dir,omitempty"`
+}
+
+// PgNewerClient is a client newer than every cluster, which is harmless.
+type PgNewerClient struct {
+	Client     string `json:"client"`
+	Server     string `json:"server"`
+	ServerPsql string `json:"server_psql,omitempty"`
+}
+
+// PgUpgrade is the cluster a postgres_upgrade run can move.
+type PgUpgrade struct {
+	From      string   `json:"from"`
+	Cluster   string   `json:"cluster"`
+	Port      int      `json:"port"`
+	To        string   `json:"to"`
+	Packages  []string `json:"packages"`
+	DropEmpty bool     `json:"drop_empty,omitempty"`
+	SizeBytes int64    `json:"size_bytes"`
+	FreeBytes int64    `json:"free_bytes"`
+	Method    string   `json:"method"`
+	Blockers  []string `json:"blockers,omitempty"`
+}
+
+func (u *PgUpgrade) expect() string { return u.From + "/" + u.Cluster + ":" + u.To }
+
+// PgOldCluster is the stopped cluster an upgrade left.
+type PgOldCluster struct {
+	Version  string   `json:"version"`
+	Cluster  string   `json:"cluster"`
+	Port     int      `json:"port"`
+	Current  string   `json:"current"`
+	Packages []string `json:"packages,omitempty"`
+	Backups  []string `json:"backups,omitempty"`
+}
+
+func (o *PgOldCluster) expect() string { return o.Version + "/" + o.Cluster }
+
+// AptSourcesFix is what an apt_sources_fix run can put right.
+type AptSourcesFix struct {
+	Leftovers   []AptLeftover `json:"leftovers,omitempty"`
+	PGDG        *PGDGSource   `json:"pgdg,omitempty"`
+	Fingerprint string        `json:"fingerprint"`
+}
+
+// AptLeftover is a file apt ignores in sources.list.d.
+type AptLeftover struct {
+	Name    string `json:"name"`
+	Noticed bool   `json:"noticed,omitempty"`
+	Movable bool   `json:"movable"`
+	Why     string `json:"why,omitempty"`
+}
+
+// PGDGSource is apt.postgresql.org's entry when it is off or on another
+// release.
+type PGDGSource struct {
+	File     string   `json:"file"`
+	Disabled bool     `json:"disabled,omitempty"`
+	Suites   []string `json:"suites"`
+	Want     string   `json:"want"`
 }
 
 // ReleaseInfo is a server's release and the one it can move to, as the
@@ -178,8 +259,67 @@ func (r *PackageReport) bounded() {
 			}
 		}
 	}
+	r.boundPostgres(clip)
 	if r.UTCOffsetMinutes < -14*60 || r.UTCOffsetMinutes > 14*60 {
 		r.UTCOffsetMinutes = 0
+	}
+}
+
+// boundPostgres bounds the PostgreSQL and apt sources parts of a report.
+func (r *PackageReport) boundPostgres(clip func(*string, int)) {
+	list := func(l []string, n, each int) []string {
+		if len(l) > n {
+			l = l[:n]
+		}
+		for i := range l {
+			clip(&l[i], each)
+		}
+		return l
+	}
+	if pg := r.Postgres; pg != nil {
+		if len(pg.Clusters) > 50 {
+			pg.Clusters = pg.Clusters[:50]
+		}
+		for i := range pg.Clusters {
+			clip(&pg.Clusters[i].Version, 10)
+			clip(&pg.Clusters[i].Name, 64)
+			clip(&pg.Clusters[i].DataDir, 300)
+		}
+		if c := pg.NewerClient; c != nil {
+			clip(&c.Client, 10)
+			clip(&c.Server, 10)
+			clip(&c.ServerPsql, 200)
+		}
+		if u := pg.Upgrade; u != nil {
+			clip(&u.From, 10)
+			clip(&u.Cluster, 64)
+			clip(&u.To, 10)
+			clip(&u.Method, 20)
+			u.Packages = list(u.Packages, 100, 200)
+			u.Blockers = list(u.Blockers, 20, 500)
+		}
+		if o := pg.OldCluster; o != nil {
+			clip(&o.Version, 10)
+			clip(&o.Cluster, 64)
+			clip(&o.Current, 10)
+			o.Packages = list(o.Packages, 100, 200)
+			o.Backups = list(o.Backups, 20, 300)
+		}
+	}
+	if a := r.AptSources; a != nil {
+		if len(a.Leftovers) > 100 {
+			a.Leftovers = a.Leftovers[:100]
+		}
+		for i := range a.Leftovers {
+			clip(&a.Leftovers[i].Name, 200)
+			clip(&a.Leftovers[i].Why, 300)
+		}
+		if p := a.PGDG; p != nil {
+			clip(&p.File, 300)
+			clip(&p.Want, 100)
+			p.Suites = list(p.Suites, 10, 100)
+		}
+		clip(&a.Fingerprint, 64)
 	}
 }
 
@@ -389,6 +529,9 @@ type PackageRun struct {
 	SoftwareFileName string  `json:"softwareFileName,omitempty"`
 	// Release is the version a release upgrade goes to, as it was approved.
 	Release string `json:"release,omitempty"`
+	// Target is what a PostgreSQL run was approved for: "17/main:19" for an
+	// upgrade, "17/main" for dropping the old cluster.
+	Target string `json:"target,omitempty"`
 }
 
 const packageRunCols = `id::text, hostname, asset_hostname, mode, packages, holds, reboot, trigger, state,
@@ -447,6 +590,9 @@ func scanPackageRun(row pgx.Row, withLog bool) (PackageRun, error) {
 	if r.Mode == PackagesRelease {
 		r.Release = r.expect
 	}
+	if r.Mode == PackagesPostgresUpgrade || r.Mode == PackagesPostgresDropOld {
+		r.Target = r.expect
+	}
 	if r.Items == nil {
 		r.Items = []tunnel.SoftwareItem{}
 	}
@@ -494,6 +640,23 @@ const PackagesRelease = "release_upgrade"
 // Ubuntu's upgrader requires: 3.13 from Canonical's PPA and its feature
 // flags on. Offered only when the agent says it can (PrepareRabbitMQ).
 const PackagesPrepareRabbitMQ = "prepare_rabbitmq"
+
+// PackagesPostgresUpgrade moves a PostgreSQL cluster to a newer major
+// version; expect is "17/main:19". PackagesPostgresDropOld drops the stopped
+// cluster an upgrade left; expect is "17/main". PackagesAptSourcesFix moves
+// aside files apt ignores and points apt.postgresql.org at the server's
+// release; expect is the fingerprint the console showed. Each is offered
+// only when the agent's report says it can be done.
+const (
+	PackagesPostgresUpgrade = "postgres_upgrade"
+	PackagesPostgresDropOld = "postgres_drop_old"
+	PackagesAptSourcesFix   = "apt_sources_fix"
+)
+
+// isPostgresMode is a run of the PostgreSQL card on the Updates tab.
+func isPostgresMode(m string) bool {
+	return m == PackagesPostgresUpgrade || m == PackagesPostgresDropOld || m == PackagesAptSourcesFix
+}
 
 // PackageRule says what happens on servers with a tag.
 type PackageRule struct {
@@ -1306,12 +1469,16 @@ func (s *Store) expireStaleRuns(ctx context.Context, host string) ([]PackageRun,
 		       message = CASE WHEN mode = 'release_upgrade'
 		                 THEN 'the server stopped reporting on this release upgrade for eight hours; it may be ' ||
 		                      'part way between releases, so look at the server before trying again'
+		                 WHEN mode = 'postgres_upgrade'
+		                 THEN 'the server stopped reporting on this PostgreSQL upgrade for eight hours; look at ' ||
+		                      'sudo pg_lsclusters on the server before trying again'
 		                 ELSE 'the server stopped reporting on this run for three hours; look at the server ' ||
 		                      'before trying again' END
 		 WHERE state IN ('running','rebooting')
 		   -- A release upgrade goes quiet for longer: leapp upgrades in a
 		   -- boot of its own, with no agent running.
-		   AND updated_at < now() - CASE WHEN mode = 'release_upgrade' THEN interval '8 hours'
+		   -- A big database's pg_upgrade and analyze take as long.
+		   AND updated_at < now() - CASE WHEN mode IN ('release_upgrade', 'postgres_upgrade') THEN interval '8 hours'
 		                                 ELSE interval '3 hours' END
 		   AND ($1 = '' OR lower(hostname) = lower($1))
 		RETURNING `+packageRunCols, host)

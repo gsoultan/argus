@@ -101,6 +101,12 @@ type PackageReport struct {
 	// Release is the operating system's own release and the next one it
 	// can be upgraded to, when the agent can tell (packages_release.go).
 	Release *ReleaseInfo `json:"release,omitempty"`
+	// Postgres is what the check found about PostgreSQL's major versions
+	// (packages_postgres.go); apt servers with postgresql-common only.
+	Postgres *PostgresUpkeep `json:"postgres,omitempty"`
+	// AptSources is what an apt_sources_fix run can put right in apt's
+	// sources (packages_aptsources.go).
+	AptSources *AptSourcesFix `json:"apt_sources,omitempty"`
 	// UTCOffsetMinutes is the server's clock against UTC, so a maintenance
 	// window is the server's own 02:00.
 	UTCOffsetMinutes int `json:"utc_offset_minutes"`
@@ -147,6 +153,17 @@ const (
 	// PackagesPrepareRabbitMQ readies RabbitMQ for the next Ubuntu release,
 	// as Ubuntu's upgrader requires (packages_rabbitmq.go).
 	PackagesPrepareRabbitMQ = "prepare_rabbitmq"
+	// PackagesPostgresUpgrade moves a PostgreSQL cluster to a newer major
+	// version, keeping the old one stopped beside it; Expect is
+	// "17/main:19" (packages_postgres_apply.go).
+	PackagesPostgresUpgrade = "postgres_upgrade"
+	// PackagesPostgresDropOld drops the stopped cluster an upgrade left and
+	// removes its version's server packages; Expect is "17/main".
+	PackagesPostgresDropOld = "postgres_drop_old"
+	// PackagesAptSourcesFix moves aside files apt ignores and points
+	// apt.postgresql.org at this release; Expect is the fingerprint the
+	// console showed (packages_aptsources.go).
+	PackagesAptSourcesFix = "apt_sources_fix"
 )
 
 // PackageRunRequest is an install the console asked for.
@@ -516,6 +533,11 @@ func (p *Packages) startLocked(ctx context.Context, req PackageRunRequest) {
 	}
 	switch req.Mode {
 	case PackagesAll, PackagesSecurity, PackagesReboot, PackagesPrepareRabbitMQ:
+	case PackagesPostgresUpgrade, PackagesPostgresDropOld, PackagesAptSourcesFix:
+		if !validPostgresExpect(req.Mode, req.Expect) {
+			fail("the run does not say what it was approved for")
+			return
+		}
 	case PackagesRelease:
 		if !reOSVersion.MatchString(req.Expect) {
 			fail("the run does not say which release it was approved for")

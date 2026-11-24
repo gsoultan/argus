@@ -28,7 +28,8 @@ import { assetName } from '~/lib/assetType'
 import { ConfirmPreview } from '~/components/server/InstalledSoftware'
 import type { SoftwarePreview } from '~/lib/softwareApi'
 import { usePreviewSoftware } from '~/lib/softwareQueries'
-import { clock, LastHeard, resultToShow, RunResult, stepTimes, useTicker } from '~/components/server/RunPanel'
+import { clock, headline, LastHeard, resultToShow, RunResult, stepTimes, useTicker } from '~/components/server/RunPanel'
+import { PostgresCard } from '~/components/server/PostgresCard'
 
 /**
  * A server's operating system updates: what its package manager says can be
@@ -93,6 +94,7 @@ export function UpdatesTab({ asset, canEdit }: { asset: Asset; canEdit: boolean 
           {v.report?.release && active?.mode !== 'release_upgrade' && (
             <ReleaseUpgrade view={v} release={v.report.release} asset={asset} assetId={asset.id} name={assetName(asset)} canEdit={canEdit} busy={Boolean(active)} />
           )}
+          <PostgresCard view={v} assetId={asset.id} name={assetName(asset)} canEdit={canEdit} busy={Boolean(active)} />
           <Packages view={v} assetId={asset.id} name={assetName(asset)} canEdit={canEdit} busy={Boolean(active)} />
         </>
       )}
@@ -766,6 +768,32 @@ const RELEASE_STEPS: { key: string; label: string; detail: string }[] = [
   { key: 'reboot', label: 'Reboot into the new release', detail: 'Argus confirms the server is on it once it is back' },
 ]
 
+const POSTGRES_STEPS: { key: string; label: string; detail: string }[] = [
+  { key: 'preflight', label: 'Check it can go ahead', detail: 'and that the server still offers what was approved' },
+  { key: 'backup', label: 'Back up the cluster', detail: 'pg_dumpall to /var/backups/postgresql' },
+  { key: 'install', label: 'Install the new version', detail: 'the server and its extensions' },
+  { key: 'drop_empty', label: 'Drop the empty new cluster', detail: 'the one the package made, only if empty' },
+  { key: 'upgrade', label: 'Upgrade the cluster', detail: 'pg_upgradecluster; it is down until this ends' },
+  { key: 'verify', label: 'Check it answers', detail: 'on its usual port' },
+  { key: 'analyze', label: 'Refresh statistics', detail: 'vacuumdb --analyze-in-stages' },
+]
+
+const DROP_STEPS: { key: string; label: string; detail: string }[] = [
+  { key: 'preflight', label: 'Check it is stopped and replaced', detail: 'a newer cluster of the same name runs' },
+  { key: 'drop', label: 'Drop the old cluster', detail: 'pg_dropcluster deletes its data' },
+  { key: 'remove', label: 'Remove its packages', detail: 'only if apt would remove nothing else' },
+]
+
+const SOURCES_STEPS: { key: string; label: string; detail: string }[] = [
+  { key: 'preflight', label: "Read apt's sources", detail: 'and check they are as they were shown' },
+  { key: 'move', label: 'Move aside what apt ignores', detail: 'to /var/backups/argus-apt-sources' },
+  { key: 'pgdg', label: 'Point apt.postgresql.org at this release', detail: 'put back if apt cannot read it' },
+]
+
+const OWN_STEPS: Partial<Record<PackageRun['mode'], typeof STEPS>> = {
+  postgres_upgrade: POSTGRES_STEPS, postgres_drop_old: DROP_STEPS, apt_sources_fix: SOURCES_STEPS,
+}
+
 const REBOOT_STEPS: { key: string; label: string; detail: string }[] = [
   { key: 'reboot', label: 'Reboot', detail: 'the server restarts; Argus confirms it came back on a new boot' },
 ]
@@ -777,10 +805,20 @@ const STEPS: { key: string; label: string; detail: string }[] = [
   { key: 'reboot', label: 'Reboot', detail: 'only if asked, and only if an update needs it' },
 ]
 
+/** "17/main:19" as people say it: "17 main to 19". */
+export function pgTarget(t: string | undefined): string {
+  if (!t) return 'PostgreSQL'
+  const [cl, to] = t.split(':')
+  return `${(cl ?? '').replace('/', ' ')}${to ? ` to ${to}` : ''}`
+}
+
 export function runTitle(r: PackageRun): string {
   if (r.mode === 'reboot') return 'Reboot'
   if (r.mode === 'release_upgrade') return `Release upgrade · to ${r.release ?? 'the next release'}`
   if (r.mode === 'prepare_rabbitmq') return 'Prepare RabbitMQ for the next release'
+  if (r.mode === 'postgres_upgrade') return `Upgrade PostgreSQL · ${pgTarget(r.target)}`
+  if (r.mode === 'postgres_drop_old') return `Remove old PostgreSQL · ${pgTarget(r.target)}`
+  if (r.mode === 'apt_sources_fix') return "Fix apt's sources"
   if (r.mode === 'script') return `Script · ${r.scriptName ?? ''}`
   if (r.mode === 'install' || r.mode === 'remove') {
     const names = (r.items ?? []).map((i) => i.name)
@@ -817,13 +855,14 @@ function ActiveRun({ run: r, canEdit, heardAt }: { run: PackageRun; canEdit: boo
   const going = r.startedAt ? clock(t - Date.parse(r.startedAt)) : null
   const reboot = r.mode === 'reboot'
   const release = r.mode === 'release_upgrade'
-  const steps = reboot ? REBOOT_STEPS : release ? RELEASE_STEPS : STEPS
+  const own = OWN_STEPS[r.mode]
+  const steps = own ?? (reboot ? REBOOT_STEPS : release ? RELEASE_STEPS : STEPS)
   const at = steps.findIndex((s) => s.key === (r.state === 'rebooting' || reboot ? 'reboot' : r.step))
   return (
-    <SectionCard title={reboot ? 'Reboot' : release ? 'Release upgrade' : 'Update run'}
+    <SectionCard title={own ? runTitle(r) : reboot ? 'Reboot' : release ? 'Release upgrade' : 'Update run'}
       icon={reboot ? IconPower : release ? IconArrowBigUpLines : IconPackage}
       badge={<Group gap={SP.snug} wrap="nowrap"><RunState state={r.state} />{started && going && <Text size={FS.meta} c="dimmed" data-testid="run-elapsed">{going}</Text>}</Group>}
-      description={reboot || release
+      description={reboot || release || own
         ? `${release ? `To ${r.release ?? 'the next release'} · ` : ''}Asked by ${r.requestedBy} ${relTime(r.requestedAt)}`
         : `${runTitle(r)} · ${r.trigger === 'automatic' ? 'started by its rule' : `asked by ${r.requestedBy}`} ${relTime(r.requestedAt)}${r.reboot === 'if_needed' ? ' · reboot if needed' : ''}`}
       action={<RunActions run={r} canEdit={canEdit} />}>
@@ -944,7 +983,9 @@ function RecentRuns({ runs, canEdit }: { runs: PackageRun[]; canEdit: boolean })
 
 function RunRow({ run: r, open, onToggle }: { run: PackageRun; open: boolean; canEdit: boolean; onToggle: () => void }) {
   const { data: full } = useQuery(packageRunQuery(r.id, open))
-  const outcome = r.mode === 'release_upgrade'
+  const outcome = OWN_STEPS[r.mode]
+    ? (r.state === 'done' ? headline(r) : '')
+    : r.mode === 'release_upgrade'
     ? [r.state === 'done' && r.rebooted ? `on ${r.release ?? 'the new release'}` : '', r.rebootRequired ? 'reboot needed' : '']
       .filter(Boolean).join(' · ')
     : [
