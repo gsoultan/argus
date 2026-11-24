@@ -276,7 +276,7 @@ func (a *API) watchThroughAgent(ctx context.Context, conn *websocket.Conn,
 		refuseWatch(ctx, conn, watchRefusal(host, why, subject))
 		return
 	case err != nil:
-		refuseWatch(ctx, conn, "could not reach the agent on "+host+": "+err.Error())
+		refuseWatch(ctx, conn, agentUnreachable(host, err))
 		return
 	}
 	defer st.Close()

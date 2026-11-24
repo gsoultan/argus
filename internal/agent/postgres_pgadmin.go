@@ -7,6 +7,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -49,6 +50,8 @@ func pgAdminDial(ctx context.Context, req PGAdminRequest) PGAdminResult {
 	cfg.Host, cfg.Port, cfg.User, cfg.Database = req.Socket, uint16(req.Port), user, req.Database
 	cfg.TLSConfig, cfg.Fallbacks, cfg.Password = nil, nil, ""
 	cfg.RuntimeParams = map[string]string{"application_name": "argus-admin"}
+	// A socket on this server answers at once or not at all.
+	cfg.ConnectTimeout = 10 * time.Second
 	conn, err := pgconn.ConnectConfig(ctx, cfg)
 	if err != nil {
 		return PGAdminResult{Error: fmt.Sprintf("could not sign in to Postgres as %s over %s (port %s): %v",

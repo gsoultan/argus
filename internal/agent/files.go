@@ -5,6 +5,8 @@ package agent
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +15,7 @@ import (
 	"os/exec"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -118,11 +121,15 @@ func runAs(ctx context.Context, h helperRun) error {
 		}
 	}
 	var cmd *exec.Cmd
+	unit := ""
 	if mode == SpawnSystemd {
 		// --pipe hands the unit our stdin and stdout; the unit runs outside
 		// the agent's sandbox, as the account.
+		// Named, so it can be stopped: killing systemd-run when ctx ends
+		// leaves the unit running, still holding our pipes.
+		unit = helperUnitName()
 		sargs := []string{"--pipe", "--wait", "--quiet", "--collect",
-			"--service-type=exec", "--uid=" + h.acct.name,
+			"--service-type=exec", "--uid=" + h.acct.name, "--unit=" + unit,
 			"--setenv=ARGUS_SESSION_FOR=" + h.actor}
 		if h.home {
 			sargs = append(sargs, "-p", "WorkingDirectory=~")
@@ -152,11 +159,41 @@ func runAs(ctx context.Context, h helperRun) error {
 	if h.stderr != nil {
 		cmd.Stderr = io.MultiWriter(h.stderr, &stderr)
 	}
-	if err := cmd.Run(); err != nil {
+	// Without a bound, Run waits for the helper's pipes to close rather than
+	// for the helper: a unit or child still holding them kept the agent
+	// waiting long past ctx, and the control plane with it, until it gave up
+	// with "i/o deadline reached" and no word of why.
+	cmd.WaitDelay = helperWaitDelay
+	err := cmd.Run()
+	if err != nil && ctx.Err() != nil {
+		if unit != "" {
+			stopHelperUnit(unit)
+		}
+		return fmt.Errorf("the helper did not finish in time (%w)", ctx.Err())
+	}
+	if err != nil {
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
 			return errors.New(lastLine(msg))
 		}
 		return fmt.Errorf("the helper failed: %w", err)
 	}
 	return nil
+}
+
+// helperWaitDelay is how long runAs waits for a helper's output once it has
+// exited or been killed.
+const helperWaitDelay = 3 * time.Second
+
+// helperUnitName is a fresh name for a helper's transient unit.
+func helperUnitName() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return "argus-helper-" + hex.EncodeToString(b)
+}
+
+// stopHelperUnit ends a helper's unit that outlived its caller.
+func stopHelperUnit(unit string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = exec.CommandContext(ctx, "systemctl", "stop", unit).Run()
 }

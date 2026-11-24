@@ -359,7 +359,7 @@ func (a *API) relayTerminal(ctx context.Context, conn *websocket.Conn,
 		fail("the agent on " + host + " refused the session: " + answer.Error)
 		return
 	case err != nil:
-		fail("could not reach the agent on " + host + ": " + err.Error())
+		fail(agentUnreachable(host, err))
 		return
 	}
 
@@ -476,7 +476,7 @@ func (a *API) resumeFromAgent(ctx context.Context, conn *websocket.Conn,
 		say("gone", answer.Error)
 		return
 	case err != nil:
-		say("retry", "could not reach the agent on "+host+": "+err.Error())
+		say("retry", agentUnreachable(host, err))
 		return
 	}
 	ts := a.newTermSession(ctx, email, host, principal, client, st, answer)
@@ -919,7 +919,9 @@ func (h *TunnelHub) OpenWith(ctx context.Context, host string, hd tunnel.Header)
 	if t == nil {
 		return nil, tunnel.Answer{}, ErrNoTunnel
 	}
-	return tunnel.OpenWith(ctx, t.sess, hd)
+	started := time.Now()
+	st, ans, err := tunnel.OpenWith(ctx, t.sess, hd)
+	return st, ans, h.silent(t, host, started, err)
 }
 
 // grantKeyPublic is what agents are sent; empty when sessions are off.

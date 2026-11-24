@@ -281,7 +281,7 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 		fail("the agent on " + db.Hostname + " refused the session: " + answer.Error)
 		return
 	case err != nil:
-		fail("could not reach the agent on " + db.Hostname + ": " + err.Error())
+		fail(agentUnreachable(db.Hostname, err))
 		return
 	}
 	defer st.Close()

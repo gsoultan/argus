@@ -223,7 +223,7 @@ func (a *API) askLogons(ctx context.Context, actor, hostname string, q tunnel.Gr
 	case tunnel.IsRefused(err):
 		return res, "failed", open.Error
 	case err != nil:
-		return res, "failed", "could not reach the agent on " + hostname + ": " + err.Error()
+		return res, "failed", agentUnreachable(hostname, err)
 	}
 	defer st.Close()
 	go func() {

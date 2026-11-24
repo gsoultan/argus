@@ -98,7 +98,7 @@ func (a *API) reachCheck(ctx context.Context, actor, hostname string, q tunnel.G
 		ans.Error = open.Error
 		return ans
 	case err != nil:
-		ans.Error = "could not reach the agent on " + hostname + ": " + err.Error()
+		ans.Error = agentUnreachable(hostname, err)
 		return ans
 	}
 	defer st.Close()

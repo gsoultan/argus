@@ -363,7 +363,7 @@ func (a *API) replicaJob(ctx context.Context, email string, db Database, b tunne
 	case tunnel.IsRefused(err):
 		return tunnel.BackupResult{}, fmt.Errorf("the agent on %s refused: %s", db.Hostname, ans.Error)
 	case err != nil:
-		return tunnel.BackupResult{}, fmt.Errorf("could not reach the agent on %s: %w", db.Hostname, err)
+		return tunnel.BackupResult{}, agentUnreachableErr(db.Hostname, err)
 	}
 	defer st.Close()
 	var wmu sync.Mutex

@@ -280,7 +280,9 @@ func (h *TunnelHub) Open(ctx context.Context, host, service string) (tunnel.Stre
 	if t == nil {
 		return nil, ErrNoTunnel
 	}
-	return tunnel.Open(ctx, t.sess, service)
+	started := time.Now()
+	st, err := tunnel.Open(ctx, t.sess, service)
+	return st, h.silent(t, host, started, err)
 }
 
 // Close ends every tunnel, for shutdown. Agents reconnect to whichever
