@@ -12,6 +12,9 @@ password from anywhere.
 Kafka: the firewall alone, for the entry's listener port. Argus leaves the
 broker's listeners as server.properties says, since they are tied to
 advertised.listeners and the cluster's other brokers.
+
+NATS: the firewall alone, for the client port. Argus leaves nats-server's
+listen address as its config says; it reads it from the monitoring port.
 */
 
 export interface RabbitNetworkData extends ReachView {
@@ -38,6 +41,15 @@ export interface KafkaNetworkData extends ReachView {
   brokerId: number
   brokers: number
   tls: boolean
+  reach: Reach
+  host: string
+}
+
+export interface NatsNetworkData extends ReachView {
+  bind: string
+  port: number
+  tls: boolean
+  cluster?: string
   reach: Reach
   host: string
 }
@@ -151,4 +163,28 @@ export function rabbitNowText(n: RabbitNetworkData) {
 
 export function kafkaNowText(n: KafkaNetworkData) {
   return nowFor('Kafka', n, '')
+}
+
+export function natsReachPlan(n: NatsNetworkData, reach: Reach, sources: string[]): Plan {
+  const steps: PlanStep[] = []
+  let blocked: string | null = null
+  const block = (why: string) => { blocked ??= why }
+  const sent = reach === 'network' ? privateNetworks(n) : reach === 'selected' ? sources : []
+  const local = n.bind === '127.0.0.1' || n.bind === '::1'
+
+  if (reach !== 'local' && n.firewallError) block(`the firewall could not be read: ${n.firewallError}`)
+  if (reach !== 'local' && local) block(`NATS listens on ${n.bind} only; set listen in nats-server.conf on the server first`)
+  if (reach === 'local' && !local) block('NATS listens past this server, and Argus does not change nats-server’s config')
+  if (reach === 'selected' && sources.length === 0) block('add at least one machine')
+  if (reach === 'network' && sent.length === 0) block(`${n.host || 'this server'} has no private address`)
+
+  steps.push({ state: 'ok', title: 'nats-server’s config stays as it is', detail: `It listens on ${n.bind === '*' ? 'every address' : n.bind}, port ${n.port}${n.cluster ? `, in cluster ${n.cluster}` : ''}. Argus does not change it: routes, gateways and leaf nodes depend on it.` })
+  if (reach !== 'local' && !n.tls) steps.push({ state: 'warn', title: 'TLS is off', detail: 'User JWTs are signed, so no password crosses the network, but messages do unencrypted.' })
+  firewallSteps(n, reach, sent, 'NATS', block, steps, 'Nothing on this server limits who reaches the port; NATS users and their permissions do.')
+  steps.push({ state: 'ok', title: 'No restart' })
+  return { steps, blocked }
+}
+
+export function natsNowText(n: NatsNetworkData) {
+  return nowFor('NATS', n, '')
 }

@@ -78,7 +78,7 @@ func TestMongoNetworkChangeWaits(t *testing.T) {
 	}
 }
 
-// RabbitMQ and Kafka wait on their own text, which an approval can be asked
+// RabbitMQ, Kafka and NATS wait on their own text, which an approval can be asked
 // for.
 func TestBrokerNetworkChangesWait(t *testing.T) {
 	a, s, h, pg, admin := dbFixture(t)
@@ -88,6 +88,7 @@ func TestBrokerNetworkChangesWait(t *testing.T) {
 	for _, c := range []struct{ engine, name, want string }{
 		{tunnel.EngineRabbitMQ, "/", "SET listeners.tcp = 127.0.0.1,10.0.0.183 (from the next start)"},
 		{tunnel.EngineKafka, "*", "FIREWALL ALLOW 10.0.0.61"},
+		{tunnel.EngineNATS, "ORDERS", "FIREWALL ALLOW 10.0.0.61"},
 	} {
 		db, err := s.CreateDatabase(ctx, Database{AssetID: pg.AssetID, Engine: c.engine, Name: c.name, Host: "127.0.0.1", Port: 5672}, admin)
 		if err != nil {

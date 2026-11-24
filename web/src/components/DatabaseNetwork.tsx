@@ -11,12 +11,14 @@ import { ADDRESS_STATE, REACH, listenFor, privateNetworks, type Reach } from '~/
 import { pgNowText, pgReachPlan, type PGNetworkData, type PGNetworkResult } from '~/lib/pgNetwork'
 import { mysqlNowText, mysqlReachPlan, type MySQLNetworkData } from '~/lib/mysqlNetwork'
 import { mongoNowText, mongoReachPlan, type MongoNetworkData } from '~/lib/mongoNetwork'
-import { kafkaNowText, kafkaReachPlan, rabbitNowText, rabbitReachPlan, type KafkaNetworkData, type RabbitNetworkData } from '~/lib/brokerNetwork'
+import {
+  kafkaNowText, kafkaReachPlan, natsNowText, natsReachPlan, rabbitNowText, rabbitReachPlan, type KafkaNetworkData, type NatsNetworkData, type RabbitNetworkData,
+} from '~/lib/brokerNetwork'
 
 type NetData = PGNetworkData | MySQLNetworkData | MongoNetworkData | RabbitNetworkData | KafkaNetworkData
-export type NetworkEngine = 'postgres' | 'mysql' | 'mongodb' | 'rabbitmq' | 'kafka'
+export type NetworkEngine = 'postgres' | 'mysql' | 'mongodb' | 'rabbitmq' | 'kafka' | 'nats'
 
-const NAMES: Record<NetworkEngine, string> = { postgres: 'Postgres', mysql: 'MySQL', mongodb: 'MongoDB', rabbitmq: 'RabbitMQ', kafka: 'Kafka' }
+const NAMES: Record<NetworkEngine, string> = { postgres: 'Postgres', mysql: 'MySQL', mongodb: 'MongoDB', rabbitmq: 'RabbitMQ', kafka: 'Kafka', nats: 'NATS' }
 import { assetsQuery } from '~/lib/queries'
 import { isConfigured } from '~/lib/live'
 
@@ -83,6 +85,8 @@ export function NetworkPanel({ admin, level, narrow, onBack, onAskForAccess, ass
       ? `Which machines can connect: the addresses ${NAMES[engine]} listens on, and the server’s firewall.`
       : engine === 'kafka'
       ? 'Which machines can connect: the server’s firewall, for the broker’s listener port.'
+      : engine === 'nats'
+      ? 'Which machines can connect: the server’s firewall, for NATS’s client port.'
       : 'Which machines can connect: the addresses Postgres listens on, pg_hba.conf, and the server’s firewall.'
   if (level !== 'dba') {
     return (
@@ -108,12 +112,14 @@ export function NetworkPanel({ admin, level, narrow, onBack, onAskForAccess, ass
   const mongo = engine === 'mongodb'
   const rabbit = engine === 'rabbitmq'
   const kafka = engine === 'kafka'
+  const nats = engine === 'nats'
   const pg = engine === 'postgres'
   const name = my ? ((n as MySQLNetworkData).mariadb ? 'MariaDB' : 'MySQL') : NAMES[engine]
   const plan = my ? mysqlReachPlan(n as MySQLNetworkData, reach, sources, restart)
     : mongo ? mongoReachPlan(n as MongoNetworkData, reach, sources, restart)
     : rabbit ? rabbitReachPlan(n as RabbitNetworkData, reach, sources, restart)
     : kafka ? kafkaReachPlan(n as KafkaNetworkData, reach, sources)
+    : nats ? natsReachPlan(n as NatsNetworkData, reach, sources)
     : pgReachPlan(n as PGNetworkData, reach, sources, restart)
   const service = (n as { service?: string }).service
   const pendingRestart = (n as { pendingRestart?: boolean }).pendingRestart ?? false
@@ -125,8 +131,8 @@ export function NetworkPanel({ admin, level, narrow, onBack, onAskForAccess, ass
     (reach !== 'any' || confirmName.trim().toLowerCase() === host.toLowerCase()) &&
     (reach !== 'network' || understood)
   const now = my ? mysqlNowText(n as MySQLNetworkData) : mongo ? mongoNowText(n as MongoNetworkData)
-    : rabbit ? rabbitNowText(n as RabbitNetworkData) : kafka ? kafkaNowText(n as KafkaNetworkData) : pgNowText(n as PGNetworkData)
-  const tls = mongo || rabbit || kafka ? (n as MongoNetworkData).tls : (n as PGNetworkData | MySQLNetworkData).ssl
+    : rabbit ? rabbitNowText(n as RabbitNetworkData) : kafka ? kafkaNowText(n as KafkaNetworkData) : nats ? natsNowText(n as NatsNetworkData) : pgNowText(n as PGNetworkData)
+  const tls = mongo || rabbit || kafka || nats ? (n as MongoNetworkData).tls : (n as PGNetworkData | MySQLNetworkData).ssl
   const publicIPs = n.addresses.filter((a) => !a.private).map((a) => a.ip)
 
   const apply = async () => {
@@ -179,6 +185,7 @@ export function NetworkPanel({ admin, level, narrow, onBack, onAskForAccess, ass
       <Text size={FS.micro} c="dimmed">
         {my ? `${name} ${(n as MySQLNetworkData).version} · port ${n.port}`
           : mongo || rabbit ? `${name} ${(n as MongoNetworkData).version} · port ${n.port}${(n as MongoNetworkData).configFile ? ` · ${(n as MongoNetworkData).configFile}` : ''}`
+          : nats ? `NATS · port ${n.port}${(n as NatsNetworkData).cluster ? ` · cluster ${(n as NatsNetworkData).cluster}` : ''}`
           : kafka ? `Broker ${(n as KafkaNetworkData).brokerId} of ${(n as KafkaNetworkData).brokers} · port ${n.port} · ${(n as KafkaNetworkData).protocol ?? 'listener'}`
           : `Port ${n.port} · ${(n as PGNetworkData).hbaFile} · passwords ${(n as PGNetworkData).method}`} · TLS {tls ? 'on' : 'off'} · firewall: {n.firewall ? `${n.firewall} (${n.firewallActive ? 'on' : 'off'})` : n.firewallError ? 'could not be read' : 'none'}
         {remote > 0 && ` · ${remote} ${plural(remote, 'connection', 'connections')} from other machines now`}
@@ -260,7 +267,7 @@ export function NetworkPanel({ admin, level, narrow, onBack, onAskForAccess, ass
         <ClientTest n={n} engine={engine} sources={n.reach === 'selected' ? n.firewallSources ?? [] : []} servers={servers}
           command={(ip) => my ? `mysql -h ${ip} -P ${n.port} -u <user> -p -e 'select 1'`
             : mongo ? `mongosh "mongodb://<user>@${ip}:${n.port}/admin" --eval 'db.runCommand({ ping: 1 })'`
-            : rabbit ? `nc -vz ${ip} ${n.port}`
+            : rabbit || nats ? `nc -vz ${ip} ${n.port}`
             : kafka ? `kcat -b ${ip}:${n.port} -X security.protocol=${(n as KafkaNetworkData).protocol ?? 'SASL_PLAINTEXT'} -X sasl.mechanisms=SCRAM-SHA-512 -X sasl.username=<user> -X sasl.password=<password> -L`
             : `psql "host=${ip} port=${n.port} dbname=postgres user=<role>" -c 'select 1'`} />
       )}

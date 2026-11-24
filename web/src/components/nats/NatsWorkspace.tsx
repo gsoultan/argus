@@ -4,12 +4,13 @@ import {
 import { useMediaQuery } from '@mantine/hooks'
 import { Link } from '@tanstack/react-router'
 import { IconAlertTriangle, IconLock, IconPlus, IconSearch, IconSend } from '@tabler/icons-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ButtonLink } from '~/components/links'
 import { FatalBanner, LABEL_COLOR } from '~/components/StoreChrome'
 import { useStoreSession, type StoreAnswer } from '~/components/useStoreSession'
 import { ConsumerDrawer, ConsumerForm, PublishDrawer, StreamForm } from '~/components/nats/NatsForms'
 import { StreamDetail } from '~/components/nats/NatsStream'
+import { KeyValue } from '~/components/nats/NatsKV'
 import { levelName } from '~/lib/engines'
 import {
   ago, consumerFilters, consumerKind, fmtBytes, fmtCount, fmtNanos, items, natsAttention, streamsFor, subjectMatches, validSubject,
@@ -32,8 +33,10 @@ every change to a stream or consumer are recorded by the agent before they
 run.
 */
 
-export type NatsTab = 'overview' | 'streams' | 'consumers' | 'subjects' | 'connections'
-export const NATS_TABS: NatsTab[] = ['overview', 'streams', 'consumers', 'subjects', 'connections']
+export type NatsTab = 'overview' | 'streams' | 'consumers' | 'kv' | 'subjects' | 'connections' | 'network'
+export const NATS_TABS: NatsTab[] = ['overview', 'streams', 'consumers', 'kv', 'subjects', 'connections', 'network']
+
+const StoreNetworkPanel = lazy(() => import('~/components/network/StoreNetwork').then((m) => ({ default: m.StoreNetworkPanel })))
 
 export type Req = Record<string, unknown> & { op: string }
 export type Ask = (r: Req) => Promise<StoreAnswer>
@@ -163,15 +166,17 @@ export function NatsWorkspace(props: NatsWorkspaceProps) {
             <Tabs.Tab value="overview">Overview</Tabs.Tab>
             <Tabs.Tab value="streams" rightSection={<Badge size="xs" variant="light" color={needs.some((n) => n.stream && !n.consumer) ? 'amber' : 'slate'}>{streams.length}</Badge>}>Streams</Tabs.Tab>
             <Tabs.Tab value="consumers" rightSection={<Badge size="xs" variant="light" color={needs.some((n) => n.consumer) ? 'amber' : 'slate'}>{consumers.length}</Badge>}>Consumers</Tabs.Tab>
+            {js && can('kv_buckets') && <Tabs.Tab value="kv">Key-value</Tabs.Tab>}
             <Tabs.Tab value="subjects">Subjects</Tabs.Tab>
             <Tabs.Tab value="connections" rightSection={overview?.stat ? <Badge size="xs" variant="light" color="slate">{overview.stat.conns}</Badge> : undefined}>Connections</Tabs.Tab>
+            {can('network') && <Tabs.Tab value="network">Network</Tabs.Tab>}
           </Tabs.List>
         </Tabs>
       </Box>
       <FatalBanner fatal={s.fatal} />
       <Box px={{ base: 'sm', sm: 'md', lg: 'xl' }} py="md">
         {err && <Text size={FS.meta} c="rose" mb="sm">{err}</Text>}
-        {!js && loaded && tab !== 'subjects' && tab !== 'connections' && (
+        {!js && loaded && tab !== 'subjects' && tab !== 'connections' && tab !== 'network' && (
           <Text size={FS.meta} c="dimmed" mb="sm">JetStream is not on for this account, so there are no streams or consumers. Subjects, Connections and Publish still work.</Text>
         )}
         {!loaded ? <Text size={FS.meta} c="dimmed">Reading the account…</Text> : (
@@ -188,6 +193,14 @@ export function NatsWorkspace(props: NatsWorkspaceProps) {
               onNew={() => setConsumerForm({})} onOpen={openConsumer} onStream={openStream} />}
             {tab === 'subjects' && <Subjects ask={s.ask} streams={streams} canPublish={can('publish')} onPublish={(x) => setPublishing(x)} onStream={openStream} />}
             {tab === 'connections' && <Connections ask={s.ask} />}
+            {tab === 'kv' && js && <KeyValue ask={s.ask} act={act} can={can} narrow={narrow} />}
+            {tab === 'network' && can('network') && (
+              <Suspense fallback={null}>
+                <Box style={{ display: 'flex', flexDirection: 'column', height: 'calc(100dvh - 220px)', minHeight: 520, border: '1px solid var(--color-line)', borderRadius: 8, overflow: 'hidden' }}>
+                  <StoreNetworkPanel s={s} database={database} engine="nats" narrow={narrow} />
+                </Box>
+              </Suspense>
+            )}
           </>
         )}
       </Box>

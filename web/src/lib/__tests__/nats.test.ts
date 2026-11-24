@@ -96,3 +96,18 @@ describe('nats forms', () => {
     expect(fmtNanos(30e9)).toBe('30 s')
   })
 })
+
+describe('nats key-value', () => {
+  it('knows a key from a filter', async () => {
+    const { validKey } = await import('~/lib/nats')
+    expect(['c1', 'eu.c3', 'a/b=c_d-e'].every((k) => validKey(k))).toBe(true)
+    expect(['_kv.x', 'a..b', 'a b', 'a*', '*'].some((k) => validKey(k))).toBe(false)
+    expect(validKey('eu.*', true) && validKey('>', true) && !validKey('eu.>.x', true)).toBe(true)
+  })
+  it('refuses a bucket that is there already', async () => {
+    const { bucketProblems } = await import('~/lib/nats')
+    const b = { bucket: 'carts', values: 0, history: 1, ttlS: 0, bytes: 0, storage: 'file', replicas: 1, maxBytes: -1, maxValueSize: -1 }
+    expect(bucketProblems({ bucket: 'carts' }, [b])).toEqual(['There is already a bucket carts.'])
+    expect(bucketProblems({ bucket: 'a.b', history: 65 }, [])).toHaveLength(2)
+  })
+})
