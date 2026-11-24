@@ -147,6 +147,10 @@ func levelsUpTo(level string) []string {
 	return all[:tunnel.LevelRank(level)]
 }
 
+// pgAdminLockWait is how long one statement of opening or closing a session
+// waits for a lock before it gives up, as Postgres writes it.
+const pgAdminLockWait = "10s"
+
 // RunPGAdmin performs req on conn, which is signed in as a superuser to
 // req.Database. It is what the helper runs.
 func RunPGAdmin(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAdminResult {
@@ -171,10 +175,27 @@ func RunPGAdmin(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PG
 		return PGAdminResult{Error: "unknown access level " + req.Level}
 	}
 	switch req.Op {
-	case "open":
-		return pgOpen(ctx, conn, req)
-	case "close":
-		return pgClose(ctx, conn, req)
+	case "open", "close":
+		// Granting the levels, and at DBA handing over what postgres owns,
+		// take locks on tables. Behind a long query or a transaction left
+		// open they would wait for good, and the console with them; this
+		// way the person is told what is in the way.
+		if err := execAll(ctx, conn, "SET lock_timeout = '"+pgAdminLockWait+"'"); err != nil {
+			return PGAdminResult{Error: err.Error()}
+		}
+		var res PGAdminResult
+		if req.Op == "open" {
+			res = pgOpen(ctx, conn, req)
+		} else {
+			res = pgClose(ctx, conn, req)
+		}
+		if strings.Contains(res.Error, "lock timeout") {
+			res.Error = "Postgres kept setting up the session's role waiting more than " + pgAdminLockWait +
+				" for a lock another session holds on a table in " + req.Database +
+				" (a long query, or a transaction left open). Finish or end that session, " +
+				"for example from pg_stat_activity, and try again: " + res.Error
+		}
+		return res
 	case "admin":
 		return pgAdminOp(ctx, conn, req)
 	}

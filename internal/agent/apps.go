@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -396,6 +397,10 @@ func classify(raw hostScan, now time.Time) AppInventory {
 		}
 	}
 
+	if a := byKind["postgres"]; a != nil {
+		preferRunningPostgres(a, raw)
+	}
+
 	for _, a := range byKind {
 		inv.Applications = append(inv.Applications, *a)
 	}
@@ -521,4 +526,48 @@ func decodeContainers(r io.Reader) ([]Container, error) {
 		out = append(out, ct)
 	}
 	return out, nil
+}
+
+// rePGUnitMajor reads a Postgres major version from a cluster's unit:
+// Debian's postgresql@17-main, or the PGDG RPMs' postgresql-17.
+var rePGUnitMajor = regexp.MustCompile(`^postgresql[@-](\d+)(?:[-.]|$)`)
+
+// rePGPackageMajor reads it from a server package: postgresql-17,
+// postgresql17-server.
+var rePGPackageMajor = regexp.MustCompile(`^postgresql-?(\d+)(?:-server)?$`)
+
+// preferRunningPostgres names the version of the Postgres that runs, not the
+// newest one installed. PGDG's repository installs each new major beside the
+// old one -- an upgrade of the postgresql metapackage pulls postgresql-19 in
+// -- while the cluster in use stays on 17, and the console showed 19.
+func preferRunningPostgres(a *Application, raw hostScan) {
+	units := append([]string(nil), raw.services...)
+	for _, l := range raw.listeners {
+		if l.Unit != "" {
+			units = append(units, l.Unit)
+		}
+	}
+	running := -1
+	for _, u := range units {
+		m := rePGUnitMajor.FindStringSubmatch(strings.TrimSuffix(u, ".service"))
+		if m == nil {
+			continue
+		}
+		if n, err := strconv.Atoi(m[1]); err == nil && n > running {
+			running = n
+		}
+	}
+	if running < 0 {
+		return
+	}
+	for _, p := range raw.packages {
+		m := rePGPackageMajor.FindStringSubmatch(p.name)
+		if m == nil {
+			continue
+		}
+		if n, err := strconv.Atoi(m[1]); err == nil && n == running {
+			a.Package, a.Version = p.name, p.version
+			return
+		}
+	}
 }

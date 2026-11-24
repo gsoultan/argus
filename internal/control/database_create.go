@@ -546,7 +546,7 @@ func (a *API) askCreate(ctx context.Context, actor, hostname string, c tunnel.Gr
 	case tunnel.IsRefused(err):
 		return none, "failed", open.Error
 	case err != nil:
-		return none, "failed", "could not reach the agent on " + hostname + ": " + err.Error()
+		return none, "failed", agentUnreachable(hostname, err)
 	}
 	defer st.Close()
 	go func() {

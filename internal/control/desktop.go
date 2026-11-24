@@ -241,7 +241,7 @@ func (a *API) relayDesktop(ctx context.Context, conn *websocket.Conn,
 		fail("the agent on " + host + " refused the session: " + answer.Error)
 		return
 	case err != nil:
-		fail("could not reach the agent on " + host + ": " + err.Error())
+		fail(agentUnreachable(host, err))
 		return
 	}
 	defer st.Close()

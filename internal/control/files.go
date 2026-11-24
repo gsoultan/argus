@@ -149,7 +149,7 @@ func (a *API) relayFiles(ctx context.Context, conn *websocket.Conn,
 		fail("the agent on " + host + " refused file transfer: " + answer.Error)
 		return
 	case err != nil:
-		fail("could not reach the agent on " + host + ": " + err.Error())
+		fail(agentUnreachable(host, err))
 		return
 	}
 	defer st.Close()

@@ -107,3 +107,32 @@ func TestDecodeContainersKeepsNoLabels(t *testing.T) {
 		t.Errorf("container = %+v", c)
 	}
 }
+
+// PGDG installs a new major beside the one in use: the version shown is the
+// running cluster's, not the newest package's.
+func TestClassifyNamesTheRunningPostgresVersion(t *testing.T) {
+	raw := hostScan{
+		listeners: []Listener{{Address: "127.0.0.1", Port: 5432, Process: "postgres",
+			Unit: "postgresql@17-main.service"}},
+		services: []string{"postgresql@17-main.service", "postgresql.service"},
+		packages: []installedPackage{
+			{"postgresql", "19+287.pgdg24.04+1"}, {"postgresql-19", "19.0-2.pgdg24.04+1"},
+			{"postgresql-17", "17.12-1.pgdg24.04+1"}, {"postgresql-client-19", "19.0-2.pgdg24.04+1"},
+		},
+	}
+	inv := classify(raw, time.Unix(0, 0))
+	if len(inv.Applications) != 1 {
+		t.Fatalf("got %+v", inv.Applications)
+	}
+	pg := inv.Applications[0]
+	if pg.Package != "postgresql-17" || pg.Version != "17.12-1.pgdg24.04+1" {
+		t.Errorf("postgres = %s %s, want postgresql-17 17.12", pg.Package, pg.Version)
+	}
+
+	// Nothing running: the newest installed, as before.
+	raw.listeners, raw.services = nil, nil
+	inv = classify(raw, time.Unix(0, 0))
+	if pg := inv.Applications[0]; pg.Package != "postgresql-19" {
+		t.Errorf("stopped postgres = %s, want the newest package", pg.Package)
+	}
+}

@@ -178,7 +178,7 @@ func (a *API) discoverDatabases(ctx context.Context, actor, hostname string, d t
 		ans.State, ans.Error = "failed", open.Error
 		return ans
 	case err != nil:
-		ans.State, ans.Error = "failed", "could not reach the agent on "+hostname+": "+err.Error()
+		ans.State, ans.Error = "failed", agentUnreachable(hostname, err)
 		return ans
 	}
 	defer st.Close()

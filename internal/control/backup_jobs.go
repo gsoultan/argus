@@ -113,7 +113,7 @@ func (a *API) openBackupStream(ctx context.Context, db Database, grant string) (
 	case tunnel.IsRefused(err):
 		return nil, ans, fmt.Errorf("the agent on %s refused the job: %s", db.Hostname, ans.Error)
 	case err != nil:
-		return nil, ans, fmt.Errorf("could not reach the agent on %s: %w", db.Hostname, err)
+		return nil, ans, agentUnreachableErr(db.Hostname, err)
 	}
 	return st, ans, nil
 }
