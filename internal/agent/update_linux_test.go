@@ -3,6 +3,11 @@
 package agent
 
 import (
+	"errors"
+	"io"
+	"os"
+	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -166,5 +171,104 @@ func TestARestartThatDoesNotReconnectFails(t *testing.T) {
 	if !strings.Contains(s.Message, "did not reconnect to Argus") ||
 		!strings.Contains(s.Message, "systemctl status argus-agent") {
 		t.Errorf("status = %+v", s)
+	}
+}
+
+// dpkg refuses to run while unattended-upgrades holds its lock. The helper
+// tries again, and installs once the lock is free.
+func TestAnUpdateWaitsForDpkgsLock(t *testing.T) {
+	dir := t.TempDir()
+	plan := UpdatePlan{ID: "r1", From: "1.0.0", Target: "1.1.0", Format: "deb",
+		Package: dir + "/new.deb", Rollback: dir + "/old.deb", StateDir: dir, Unit: "argus-agent"}
+	tries := 0
+	a := &Applier{Plan: plan, ReadyWait: 2 * time.Second, LockWait: 5 * time.Second,
+		LockPoll: 10 * time.Millisecond, LockHolder: func() string { return "process 812, unattended-upgr" },
+		Run: func(name string, args ...string) error {
+			switch {
+			case name == "dpkg":
+				tries++
+				if tries < 3 {
+					return dpkgLockedErr
+				}
+			case name == "systemctl" && args[0] == "restart":
+				WriteReady(dir, "1.1.0", true, true)
+			}
+			return nil
+		}}
+	if got := a.Apply(); got != UpdateDone {
+		t.Fatalf("Apply = %s after %d tries", got, tries)
+	}
+	if tries != 3 {
+		t.Errorf("dpkg ran %d times", tries)
+	}
+}
+
+var dpkgLockedErr = errors.New("dpkg: exit status 2: dpkg: error: dpkg frontend lock was locked by " +
+	"/usr/bin/python3.14 process with pid 485091")
+
+// A lock that stays held changes nothing: no package goes back in, the agent
+// restarts on the version it runs, and the outcome says plainly what was in
+// the way and that it can be asked again.
+func TestAnUpdateTheLockStaysOnChangesNothing(t *testing.T) {
+	dir := t.TempDir()
+	plan := UpdatePlan{ID: "r1", From: "1.0.0", Target: "1.1.0", Format: "deb",
+		Package: dir + "/new.deb", Rollback: dir + "/old.deb", StateDir: dir, Unit: "argus-agent"}
+	var ran []string
+	a := &Applier{Plan: plan, ReadyWait: 2 * time.Second, LockWait: 50 * time.Millisecond,
+		LockPoll: 10 * time.Millisecond, LockHolder: func() string { return "process 812, unattended-upgr" },
+		Run: func(name string, args ...string) error {
+			ran = append(ran, name+" "+strings.Join(args, " "))
+			switch {
+			case name == "dpkg":
+				return dpkgLockedErr
+			case name == "systemctl" && args[0] == "restart":
+				WriteReady(dir, "1.0.0", true, true)
+			}
+			return nil
+		}}
+	if got := a.Apply(); got != UpdateFailed {
+		t.Fatalf("Apply = %s", got)
+	}
+	for _, r := range ran {
+		if strings.Contains(r, plan.Rollback) {
+			t.Errorf("reinstalled the old package though nothing changed: %v", ran)
+		}
+	}
+	if !strings.Contains(strings.Join(ran, "\n"), "systemctl restart argus-agent") {
+		t.Errorf("the agent holding logins was not restarted: %v", ran)
+	}
+	s, _ := ReadUpdateStatus(dir)
+	if !s.Retry || !strings.Contains(s.Message, "another package install was running on this server "+
+		"(process 812, unattended-upgr)") || !strings.Contains(s.Message, "nothing changed") ||
+		!strings.Contains(s.Message, "still on 1.0.0") {
+		t.Errorf("status = %+v", s)
+	}
+}
+
+// Another process holding a lock on dpkg's lock file is found, by pid and
+// name; a free one is not.
+func TestLockHolderFindsTheProcess(t *testing.T) {
+	path := t.TempDir() + "/lock-frontend"
+	if err := os.WriteFile(path, nil, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if who := lockHolder(path); who != "" {
+		t.Fatalf("a free lock is held by %q", who)
+	}
+	// fcntl locks belong to a process, so the holder must be another one.
+	hold := exec.Command("python3", "-c", `import fcntl,sys,time
+f=open(sys.argv[1],"w"); fcntl.lockf(f, fcntl.LOCK_EX); print("held", flush=True); time.sleep(30)`, path)
+	out, _ := hold.StdoutPipe()
+	if err := hold.Start(); err != nil {
+		t.Skip("no python3 here")
+	}
+	defer func() { _ = hold.Process.Kill(); _ = hold.Wait() }()
+	buf := make([]byte, 5)
+	if _, err := io.ReadFull(out, buf); err != nil {
+		t.Skip("the holder did not start")
+	}
+	who := lockHolder(path)
+	if !strings.HasPrefix(who, "process "+strconv.Itoa(hold.Process.Pid)) {
+		t.Errorf("holder = %q, want process %d", who, hold.Process.Pid)
 	}
 }

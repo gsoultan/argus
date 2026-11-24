@@ -64,6 +64,9 @@ type AgentUpdateStatus struct {
 	Message  string     `json:"message,omitempty"`
 	Sessions int        `json:"sessions,omitempty"`
 	At       *time.Time `json:"at,omitempty"`
+	// Retry marks an update that changed nothing and can simply be asked
+	// again, like one another package install was in the way of.
+	Retry bool `json:"retry,omitempty"`
 }
 
 func (s AgentUpdateStatus) finished() bool {

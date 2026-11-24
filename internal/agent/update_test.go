@@ -349,3 +349,42 @@ func TestARedirectToPlainHTTPIsRefused(t *testing.T) {
 		t.Fatal("followed a redirect to plain http")
 	}
 }
+
+// lockedUpdates is a host whose package lock another install holds until
+// it is let go.
+type lockedUpdates struct {
+	fakeUpdates
+	holder atomic.Value
+}
+
+func (f *lockedUpdates) packageBusy(string) string { s, _ := f.holder.Load().(string); return s }
+
+// While another package install holds the lock, the update waits before it
+// holds sessions or restarts anything, says who it waits for, and goes on
+// once the lock is free -- even when asked to go ahead now.
+func TestAnUpdateWaitsForAnotherPackageInstall(t *testing.T) {
+	old := packagePoll
+	packagePoll = 20 * time.Millisecond
+	t.Cleanup(func() { packagePoll = old })
+	srv := releases(t, map[string]string{"v1.1.0/argus-agent_1.1.0_linux_amd64.deb": "new"}, false)
+	var busy atomic.Int64
+	plat := &lockedUpdates{}
+	plat.holder.Store("process 812, unattended-upgr")
+	u := testUpdater(t, plat, &busy)
+	var held atomic.Bool
+	u.Hold = func(on bool) { held.Store(on) }
+
+	u.Handle(context.Background(), &UpdateRequest{ID: "r1", Version: "1.1.0", URL: srv.URL, Now: true})
+	s := waitState(t, u, UpdateWaiting)
+	if !strings.Contains(s.Message, "waiting for another package install on this server to finish "+
+		"(process 812, unattended-upgr)") {
+		t.Errorf("waiting status = %+v", s)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if plat.count() != 0 || held.Load() {
+		t.Fatal("the agent restarted, or held new sessions, while dpkg was locked")
+	}
+	plat.holder.Store("")
+	waitState(t, u, UpdateRestarting)
+	waitLaunched(t, &plat.fakeUpdates, 1)
+}
