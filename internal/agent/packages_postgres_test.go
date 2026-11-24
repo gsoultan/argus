@@ -206,7 +206,8 @@ func TestApplyPostgresUpgrade(t *testing.T) {
 		t.Fatalf("run = %+v\n%q", st, sr.calls)
 	}
 	order := []string{"apt-get -o DPkg::Lock::Timeout=120 -q update", "install -d -m 0700 -o postgres",
-		"runuser -u postgres -- /usr/lib/postgresql/17/bin/pg_dumpall -p 5432 -f " + pgBackupDir + "/argus-17-main-",
+		"runuser -u postgres -- /usr/lib/postgresql/17/bin/pg_dumpall -p 5432 -f " +
+			filepath.Join(pgBackupDir, "argus-17-main-"),
 		"apt-get install -y", "pg_upgradecluster -v 19 -m dump 17 main",
 		"runuser -u postgres -- /usr/lib/postgresql/19/bin/vacuumdb -p 5432 --all --analyze-in-stages"}
 	i := 0

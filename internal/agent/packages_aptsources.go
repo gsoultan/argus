@@ -198,7 +198,8 @@ func rel(p string) string {
 	if err != nil {
 		return p
 	}
-	return r
+	// Shown as it is under /etc/apt, whatever the separator here.
+	return filepath.ToSlash(r)
 }
 
 // pgdgSuiteFits is a suite of this release: resolute-pgdg, or its testing
