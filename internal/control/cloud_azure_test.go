@@ -829,6 +829,14 @@ func TestCloudAzureSubscriptionChangesSecurityGroups(t *testing.T) {
 	if !strings.HasSuffix(ch.Summary, "its network interface is left with none of its own") {
 		t.Fatalf("only the subnet's group: %+v", ch)
 	}
+	// The inventory is read again after a change in the background: what the
+	// delete below checks is that read, not the change just made.
+	for deadline := time.Now().Add(10 * time.Second); len(e.a.firewallUsers(context.Background(), c.ID, "eastus", app)) > 0; {
+		if time.Now().After(deadline) {
+			t.Fatal("the read after taking app-nsg off web-1 never showed it off")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 
 	// Deleting: its name typed, and nothing behind it.
 	ask("firewall-delete", app, `"spec":{}`, bad, "type the")
