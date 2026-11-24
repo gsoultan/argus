@@ -165,7 +165,7 @@ func runAs(ctx context.Context, h helperRun) error {
 	// with "i/o deadline reached" and no word of why.
 	cmd.WaitDelay = helperWaitDelay
 	err := cmd.Run()
-	if ctx.Err() != nil {
+	if err != nil && ctx.Err() != nil {
 		if unit != "" {
 			stopHelperUnit(unit)
 		}
