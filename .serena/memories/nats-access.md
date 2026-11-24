@@ -47,4 +47,19 @@ Migration 115 widens the engine CHECK.
   `/varz` and never changed. Goes through control's storeNetworkGate
   (approval for anywhere or where writes need approval); text
   `tunnel.NATSNetworkText`.
-- Later PR planned: NATS users for apps (.creds).
+- **Users for apps** (`internal/tunnel/natsusers.go`, `internal/agent/natsusers.go`,
+  `web/src/components/nats/NatsUsers.tsx`, `web/src/lib/nkeys.ts`, `natsUsers.ts`):
+  the broker-users ops (users at Manage; user_set/user_del at Admin) through
+  control's brokerUserGate (approval of `tunnel.NATSUserText`, Activity).
+  The browser makes the user's Ed25519 nkey (WebCrypto) and sends only the
+  public key (U…); the agent signs a user JWT (rules from
+  `NATSAppUserPerms`: pub/sub allow+deny, requests -> `_INBOX.>`, replies ->
+  resp perm, JetStream none/use/manage, source CIDRs, $SYS always denied,
+  1-365 days) and the browser builds the .creds file (shown once). The
+  server stores no users, so the agent keeps a root-only ledger
+  `<StateDir>/nats-users/<ACCOUNT_ID>.json` (public facts only; expired
+  entries dropped after 30 days). Users tab also lists connected users
+  Argus did not sign (from `/connz?auth=true`, name from the JWT). No
+  revocation from Argus (user chose this, 2026-11-24): users expire, and
+  the tab gives `nsc revocations add-user … && nsc push`; user_del only
+  takes a user off the list. Signed users cannot be changed: sign a new one.

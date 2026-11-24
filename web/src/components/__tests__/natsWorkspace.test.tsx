@@ -61,7 +61,7 @@ const consumer = {
   num_ack_pending: 0, num_redelivered: 0, num_waiting: 0, num_pending: 1190,
 }
 
-function Harness({ start = 'overview', level = 'owner' }: { start?: NatsTab; level?: 'owner' | 'write' }) {
+function Harness({ start = 'overview', level = 'owner' }: { start?: NatsTab; level?: 'owner' | 'write' | 'dba' }) {
   const [at, setAt] = useState<{ tab: NatsTab; stream?: string; consumer?: string }>({ tab: start })
   return (
     <NatsWorkspace database={db} access={{ level }} endpoint="/api/v1/postgres"
@@ -169,5 +169,43 @@ describe('NatsWorkspace', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Put' }))
     const put = await answerAll(ws, 'kv_put', { type: 'result', data: { revision: 5 } })
     expect(put).toMatchObject({ nats: { bucket: 'carts', key: 'c1' }, payload: '{"items":4}' })
+  })
+
+  it('signs a user for a key this browser made and offers its .creds file once', async () => {
+    renderWithProviders(<Harness start="users" level="dba" />)
+    await waitFor(() => expect(FakeSocket.last).not.toBeNull())
+    const ws = FakeSocket.last!
+    ws.push({ type: 'ready' })
+    ws.answer({ id: 0, type: 'ready', engine: 'nats', level: 'dba', user: 'argus-ana-dba',
+      ops: ['overview', 'streams', 'consumers', 'users', 'user_set', 'user_del'] })
+    await answerAll(ws, 'overview', { type: 'result', data: { account: 'ORDERS', accountId: 'ADXX', jetstream: true } })
+    await answerAll(ws, 'streams', { type: 'result', data: [] })
+    await answerAll(ws, 'consumers', { type: 'result', data: [] })
+    const soon = new Date(Date.now() + 5 * 86_400_000).toISOString()
+    await answerAll(ws, 'users', { type: 'result', data: { account: 'ORDERS', accountId: 'ADXX', users: [
+      { name: 'billing', publicKey: 'UBILLING', expires: soon, by: 'bo@example.com', inArgus: true, connections: 2, spec: { pubAllow: ['billing.>'], subAllow: [], days: 30 } },
+      { name: 'legacy-worker', publicKey: 'ULEGACY', inArgus: false, connections: 1, spec: { pubAllow: [], subAllow: [], days: 0 } },
+    ] } })
+    expect(await screen.findByText(/billing: expires in 5 days, with 2 connections now/)).toBeInTheDocument()
+    expect(screen.getByText('Signed outside Argus')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'New user' }))
+    fireEvent.change(await screen.findByLabelText('Name'), { target: { value: 'orders-api' } })
+    const subjects = screen.getAllByLabelText('Its subjects').find((e) => e.tagName === 'INPUT' && (e as HTMLInputElement).type !== 'hidden')!
+    act(() => { subjects.focus() })
+    fireEvent.change(subjects, { target: { value: 'orders.>' } })
+    fireEvent.keyDown(subjects, { key: 'Enter' })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Sign user' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Sign user' }))
+    const set = await answerAll(ws, 'user_set', { type: 'result', data: { jwt: 'eyJ.signed.jwt', user: {} } }) as {
+      brokerUser: { name: string; create: boolean; publicKey: string; seed?: string; nats: Record<string, unknown> }
+    }
+    expect(set.brokerUser).toMatchObject({ name: 'orders-api', create: true, nats: { pubAllow: ['orders.>'], subAllow: [], days: 90 } })
+    expect(set.brokerUser.publicKey).toMatch(/^U[A-Z2-7]{55}$/)
+    expect(JSON.stringify(set)).not.toMatch(/SU[A-Z2-7]{56}/)
+
+    expect(await screen.findByText('orders-api is signed')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download ORDERS-orders-api.creds' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'I have saved it' })).toBeDisabled()
   })
 })

@@ -223,13 +223,16 @@ var natsOps = map[string]string{
 	NATSOpKVDelete:     LevelOwner,
 	RabbitOpNetwork:    LevelDBA,
 	RabbitOpNetworkSet: LevelDBA,
+	BrokerOpUsers:      LevelOwner,
+	BrokerOpUserSet:    LevelDBA,
+	BrokerOpUserDel:    LevelDBA,
 }
 
 var natsOpOrder = []string{"overview", "streams", "stream", "consumers", "consumer", "subjects", "connections",
 	"get", "tail", "publish", "stream_create", "stream_update", "stream_purge", "stream_delete", "msg_delete",
 	"consumer_create", "consumer_delete", "consumer_pause", "consumer_move",
 	NATSOpKVBuckets, NATSOpKVKeys, NATSOpKVGet, NATSOpKVPut, NATSOpKVDel, NATSOpKVCreate, NATSOpKVDelete,
-	RabbitOpNetwork, RabbitOpNetworkSet}
+	RabbitOpNetwork, RabbitOpNetworkSet, BrokerOpUsers, BrokerOpUserSet, BrokerOpUserDel}
 
 // NATSOpAllowed reports whether level may ask for op.
 func NATSOpAllowed(op, level string) bool {

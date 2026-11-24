@@ -92,6 +92,11 @@ type BrokerUser struct {
 	Perms        *RabbitPerms      `json:"perms,omitempty"`
 	TopicPerms   []RabbitTopicPerm `json:"topicPerms"`
 	Limits       *RabbitLimits     `json:"limits,omitempty"`
+
+	// NATS: the user's public key (U…), made in the browser with its seed,
+	// which never leaves the browser, and what the user may do.
+	PublicKey string       `json:"publicKey,omitempty"`
+	NATS      *NATSAppUser `json:"nats,omitempty"`
 }
 
 // ScramCredential is a SCRAM credential as Kafka stores it: the salt and the
