@@ -318,13 +318,18 @@ const orgOf = (req) => {
 }
 /**
  * Acme's own recording storage: the control plane's until it chooses one.
- * @type {Record<string, any>}
+ * Kept per browser (the stub_run cookie a test sets), so the same test in
+ * another browser, or a retry, starts from nothing saved.
  */
-let ORG_STORAGE = {
+const orgStorageFresh = () => ({
   storage: { enabled: false, provider: 's3', endpoint: '', bucket: '', region: '', useSsl: true, accessKey: '', secretKeySet: false },
   archive: { afterDays: 0, storageClass: '' }, agentKeepRecordingsDays: 0,
   platform: { where: 'bucket', keepDays: 7, archiveDays: 30 }, moving: 0,
-}
+})
+/** @type {Map<string, Record<string, any>>} */
+const ORG_STORAGE = new Map()
+/** @param {IncomingMessage} req */
+const runOf = (req) => /(?:^|;\s*)stub_run=([A-Za-z0-9-]+)/.exec(req.headers.cookie ?? '')?.[1] ?? ''
 const ACME_ASSETS = () => [asset({ hostname: 'acme-web-1', agentState: 'healthy', bypassPosture: 'enforced' })]
 
 const FIREWALL = {
@@ -509,6 +514,8 @@ const server = createServer(async (req, res) => {
       if (org.default) {
         return json(res, 409, { error: "the default organization's recordings are kept where the control plane's settings say: Settings › Storage" })
       }
+      const run = runOf(req)
+      const saved = ORG_STORAGE.get(run) ?? orgStorageFresh()
       if (path === '/api/v1/recording-storage/test' && req.method === 'POST') {
         const st = /** @type {any} */ (await readBody(req))
         if (!st.secretKey && !st.secretKeySet) return json(res, 400, { error: 'object storage needs a secret key' })
@@ -516,16 +523,17 @@ const server = createServer(async (req, res) => {
       }
       if (path === '/api/v1/recording-storage' && req.method === 'PUT') {
         const body = /** @type {any} */ (await readBody(req))
-        const was = ORG_STORAGE.storage
+        const was = saved.storage
         const moved = was.enabled !== body.storage.enabled || was.bucket !== body.storage.bucket
         const { secretKey, ...st } = body.storage
-        ORG_STORAGE = { ...ORG_STORAGE, storage: { ...st, secretKeySet: Boolean(secretKey) || st.secretKeySet },
+        const next = { ...saved, storage: { ...st, secretKeySet: Boolean(secretKey) || st.secretKeySet },
           archive: body.archive, agentKeepRecordingsDays: body.agentKeepRecordingsDays,
           moving: moved && was.enabled ? 1 : 0,
           copy: moved ? { from: was.enabled ? was.bucket : "the control plane's storage", copied: 12, already: 0, failed: 0, done: false } : undefined }
-        return json(res, 200, ORG_STORAGE)
+        ORG_STORAGE.set(run, next)
+        return json(res, 200, next)
       }
-      if (path === '/api/v1/recording-storage' && req.method === 'GET') return json(res, 200, ORG_STORAGE)
+      if (path === '/api/v1/recording-storage' && req.method === 'GET') return json(res, 200, saved)
     }
     // A storage check: an Azure account with no key is refused the way the
     // control plane refuses it; anything else wrote and read back.

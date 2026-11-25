@@ -74,7 +74,11 @@ test("outside the default organization, Storage is the organization's own", asyn
   await page.getByLabel(/^password$/i).fill('stub-password')
   await page.getByRole('button', { name: /^sign in$/i }).click()
   await expect(page.getByText('Dev Admin')).toBeVisible()
-  await context.addCookies([{ name: 'argus_org', value: 'acme', url: 'http://localhost:5511' }])
+  // stub_run: a fresh organization for this browser and this try.
+  await context.addCookies([
+    { name: 'argus_org', value: 'acme', url: 'http://localhost:5511' },
+    { name: 'stub_run', value: `${test.info().project.name}-${test.info().retry}-${Date.now()}`, url: 'http://localhost:5511' },
+  ])
   await page.goto('/settings?section=storage')
 
   // The control plane's own say what an organization gets by default, and
