@@ -726,6 +726,10 @@ func (s *mysqlSession) serve(ctx context.Context, st tunnel.Stream) {
 					err = s.network(ctx, req)
 					break
 				}
+				if req.Admin != nil && req.Admin.Kind == tunnel.AdminMySQLPerf {
+					err = s.perf(ctx, req)
+					break
+				}
 				err = s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: "extensions and replication are Postgres's"})
 			default:
 				// check and admin are Postgres's: the console treats this

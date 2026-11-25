@@ -82,3 +82,29 @@ func PoolerSettingKey(key string) bool {
 	}
 	return false
 }
+
+// AdminMySQLPerf reads what the Performance panel needs from a MySQL or
+// MariaDB server, as its administrator: the person's own user has no
+// SELECT on performance_schema, and must not get one, since it shows every
+// schema's statements. Read-only, not recorded, DBA only.
+const AdminMySQLPerf = "mysql.perf"
+
+// MySQLPerf answers AdminMySQLPerf. Every table is read with its own
+// statement; one the server refuses (an older version, performance_schema
+// off) is left out and named in Missing, and the rest still answer.
+type MySQLPerf struct {
+	Version   string            `json:"version"`
+	Status    map[string]string `json:"status"`
+	Variables map[string]string `json:"variables"`
+	// Digests are this schema's statements from performance_schema.
+	Digests *PoolerTable `json:"digests,omitempty"`
+	// Tables, Indexes (information_schema.STATISTICS) and IndexUsage are
+	// this schema's; Trx are InnoDB transactions open longer than a few
+	// seconds; Processes is a count of connections by user and command.
+	Tables     *PoolerTable `json:"tables,omitempty"`
+	Indexes    *PoolerTable `json:"indexes,omitempty"`
+	IndexUsage *PoolerTable `json:"indexUsage,omitempty"`
+	Trx        *PoolerTable `json:"trx,omitempty"`
+	Processes  *PoolerTable `json:"processes,omitempty"`
+	Missing    []string     `json:"missing,omitempty"`
+}

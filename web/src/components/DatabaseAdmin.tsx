@@ -159,12 +159,12 @@ export function PanelFrame({ title, blurb, narrow, onBack, right, children }: {
 }
 
 /** The one-line gate below DBA: visible, labelled, with the way to ask. */
-export function NeedsDBA({ level, what, onAskForAccess }: { level: DBLevel | ''; what: string; onAskForAccess?: () => void }) {
+export function NeedsDBA({ level, what, account = 'postgres account', onAskForAccess }: { level: DBLevel | ''; what: string; account?: string; onAskForAccess?: () => void }) {
   return (
     <Box p="md">
       <Group gap="xs"><IconLock size={16} /><Text fw={600} size={FS.body}>Needs DBA access</Text></Group>
       <Text size={FS.meta} c="dimmed" mt={4}>
-        Your level here is {level ? level.toUpperCase() : 'not known yet'}. {what} run through the server’s own postgres account,
+        Your level here is {level ? level.toUpperCase() : 'not known yet'}. {what} run through the server’s own {account},
         so this panel opens at DBA only; on a production database that is one approval away.
       </Text>
       {onAskForAccess && <Button mt="sm" size="xs" variant="default" onClick={onAskForAccess} leftSection={<IconLock size={12} />}>Ask for access</Button>}

@@ -32,3 +32,27 @@ Code: `internal/tunnel/mysql.go` (names, quoting, grants),
   (explain, builder, generate, change tracker) via `MySQLDialect` context.
 - **Testing.** Agent tests need `ARGUS_TEST_MYSQL_SOCKET` (+ `_PORT`); they
   passed against MariaDB 10.11 and MySQL 8.0.
+
+## Performance analysis (2026-11)
+
+- **Manage › Performance** for mysql (DBA only, badge in the nav). One
+  read-only admin op `mysql.perf` (`tunnel.MySQLPerf`), allowed for the mysql
+  engine in `internal/control/postgres.go`, refused below DBA by the control
+  plane and the agent. Not recorded (`Mutates()` false).
+- **Why admin.** The person's `argus-` user has one schema only and no
+  performance_schema or PROCESS view of other schemas, so the agent reads as
+  the admin sign-in (`adminConn`). `internal/agent/mysql_perf.go`:
+  `events_statements_summary_by_digest` (top 25 by SUM_TIMER_WAIT for the
+  schema, picosecond timers, with share), global status/variables
+  (performance_schema, else information_schema; fixed key lists),
+  information_schema TABLES/STATISTICS/INNODB_TRX (open > 5 s)/PROCESSLIST
+  grouped, `table_io_waits_summary_by_index_usage`. A source that fails goes
+  to `Missing`, the rest still answers.
+- **Analysis.** `web/src/lib/mysqlPerformance.ts` (pure, shares Finding and
+  formatters with pgPerformance). One-off statements (calls < 5) are never
+  heavy; unused indexes only after 7 days of counting; PRIMARY and unique
+  indexes are never proposed for dropping. Index fixes use
+  `ALGORITHM=INPLACE, LOCK=NONE`. Panel: `DatabaseMySQLPerformance.tsx`,
+  reusing `FindingsList`/`Stat` from DatabasePerformance.
+- **Testing.** `mysqlPerformance.fixture.json` is a real MariaDB 10.11 answer;
+  `TestMySQLPerfOnARealServer` needs `ARGUS_TEST_MYSQL_SOCKET`.

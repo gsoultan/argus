@@ -305,7 +305,7 @@ type PGConnInfo struct {
 // and is neither recorded nor audited.
 func (o *PGAdminOp) Mutates() bool {
 	switch o.Kind {
-	case AdminExtensionList, AdminPublicationList, AdminSubscriptionList, AdminNetwork, AdminPoolerStats,
+	case AdminExtensionList, AdminPublicationList, AdminSubscriptionList, AdminNetwork, AdminPoolerStats, AdminMySQLPerf,
 		AdminRoleList, AdminRolePrivileges, AdminGrantObjects,
 		AdminMSPrincipals, AdminMSPermissions, AdminMSObjects,
 		AdminMSActivity, AdminMSPerformance, AdminMSIndexes, AdminMSIntegrity, AdminMSJobs, AdminMSSettings,
