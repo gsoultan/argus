@@ -96,12 +96,16 @@ func (a *API) RunRecordingArchive(ctx context.Context, interval time.Duration) {
 // ArchiveRecordings archives, in every organization, the recordings that
 // started before now less ArchiveAfter. It returns how many it moved.
 func (a *API) ArchiveRecordings(ctx context.Context, now time.Time) (int, error) {
-	if a.ArchiveAfter <= 0 || a.recordings == nil {
-		return 0, nil
-	}
-	cutoff := now.Add(-a.ArchiveAfter)
 	moved := 0
 	err := a.store.ForEachTenant(ctx, func(tctx context.Context, _ *Tenant) {
+		// Each organization's own age and store: one that keeps its
+		// recordings in a bucket of its own archives there, by its own
+		// setting, whether or not the control plane archives at all.
+		after := a.archiveAfterFor(tctx)
+		if after <= 0 || a.scopedRecordings(tctx) == nil {
+			return
+		}
+		cutoff := now.Add(-after)
 		list, err := a.store.RecordingsToArchive(tctx, cutoff, archiveBatch)
 		if err != nil {
 			a.log.Error("listing recordings to archive failed", "error", err)
@@ -141,7 +145,10 @@ var errArchiveUnverified = errors.New("the stored recording does not verify agai
 // archiveRecording moves one recording into the archive. false with no
 // error is a session another replica moved first.
 func (a *API) archiveRecording(ctx context.Context, c archiveCandidate) (bool, error) {
-	store := storage.ForTenant(a.recordings, tenantIDOf(ctx))
+	store := a.scopedRecordings(ctx)
+	if store == nil {
+		return false, errors.New("recording storage is not configured")
+	}
 	if !store.Owns(c.Key) {
 		return false, fmt.Errorf("recording %q is not this organization's", c.Key)
 	}
@@ -191,7 +198,7 @@ func (a *API) archiveRecording(ctx context.Context, c archiveCandidate) (bool, e
 
 	key := store.ArchiveKey(c.StartedAt, c.ID, archiveExt(c.Key))
 	if _, err := store.PutArchive(ctx, tmp.Name(), key, c.ID, c.ChainHead, c.StartedAt,
-		storage.PutOptions{StorageClass: a.ArchiveStorageClass}); err != nil {
+		storage.PutOptions{StorageClass: a.archiveClassFor(ctx)}); err != nil {
 		return false, fmt.Errorf("store archive: %w", err)
 	}
 	moved, err := a.store.MoveRecordingKey(ctx, c.ID, c.Key, key)

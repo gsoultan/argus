@@ -67,3 +67,45 @@ test('object storage is chosen by service and tested before saving', async ({ pa
   await expect(cls).toHaveValue("Bucket's default")
   await expect(page.getByRole('textbox', { name: 'Endpoint' })).toHaveValue('s3.amazonaws.com')
 })
+
+test("outside the default organization, Storage is the organization's own", async ({ page, context }) => {
+  await page.goto('/')
+  await page.getByLabel(/^email$/i).fill('dev@northwind.id')
+  await page.getByLabel(/^password$/i).fill('stub-password')
+  await page.getByRole('button', { name: /^sign in$/i }).click()
+  await expect(page.getByText('Dev Admin')).toBeVisible()
+  await context.addCookies([{ name: 'argus_org', value: 'acme', url: 'http://localhost:5511' }])
+  await page.goto('/settings?section=storage')
+
+  // The control plane's own say what an organization gets by default, and
+  // nothing of where they are.
+  const own = page.getByRole('switch', { name: "Keep recordings in this organization's own storage" })
+  await expect(own).not.toBeChecked()
+  await expect(page.getByText(/Recordings go to the control plane's object storage, kept apart/)).toBeVisible()
+  await expect(page.getByRole('combobox', { name: 'Keep on servers for' }))
+    .toHaveValue("Control plane's setting (7 days)")
+  await expect(page.getByRole('switch', { name: 'Copy recordings to object storage' })).toHaveCount(0)
+
+  await own.check()
+  await page.getByRole('radiogroup', { name: 'Storage service' }).getByText('Cloudflare R2').click()
+  await page.getByRole('textbox', { name: 'Endpoint' }).fill('acme.r2.cloudflarestorage.com')
+  await page.getByRole('textbox', { name: 'Bucket' }).fill('acme-recordings')
+  await page.getByRole('textbox', { name: 'Access key ID' }).fill('acmekey')
+  await page.getByRole('button', { name: 'Test connection' }).click()
+  await expect(page.getByText(/needs a secret key/)).toBeVisible()
+  await page.getByLabel('Secret access key').fill('acmesecret')
+  await page.getByRole('button', { name: 'Test connection' }).click()
+  await expect(page.getByText('Storage works')).toBeVisible()
+  await page.getByRole('combobox', { name: 'Keep on servers for' }).click()
+  await page.getByRole('option', { name: '3 days' }).click()
+
+  await expect(page.getByText(/Unsaved changes to where this organization's recordings are kept/)).toBeVisible()
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(page.getByText('Recording storage saved')).toBeVisible()
+  await expect(page.getByText('Copying recordings across')).toBeVisible()
+  await expect(page.getByText(/12 copied from the control plane's storage/)).toBeVisible()
+  if (shots) {
+    await page.locator('.mantine-Notification-root').evaluateAll((els) => els.forEach((e) => e.remove()))
+    await page.screenshot({ path: `${shots}/organization-storage.png`, fullPage: true })
+  }
+})

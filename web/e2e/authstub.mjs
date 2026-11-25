@@ -316,6 +316,15 @@ const orgOf = (req) => {
   const m = /(?:^|;\s*)argus_org=([a-z0-9-]+)/.exec(req.headers.cookie ?? '')
   return ORGS.find((o) => o.slug === m?.[1]) ?? /** @type {typeof ORGS[number]} */ (ORGS[0])
 }
+/**
+ * Acme's own recording storage: the control plane's until it chooses one.
+ * @type {Record<string, any>}
+ */
+let ORG_STORAGE = {
+  storage: { enabled: false, provider: 's3', endpoint: '', bucket: '', region: '', useSsl: true, accessKey: '', secretKeySet: false },
+  archive: { afterDays: 0, storageClass: '' }, agentKeepRecordingsDays: 0,
+  platform: { where: 'bucket', keepDays: 7, archiveDays: 30 }, moving: 0,
+}
 const ACME_ASSETS = () => [asset({ hostname: 'acme-web-1', agentState: 'healthy', bypassPosture: 'enforced' })]
 
 const FIREWALL = {
@@ -454,7 +463,8 @@ const server = createServer(async (req, res) => {
     if (orgOf(req).slug !== 'default') {
       // Everything an organization holds is its own: one server, nothing else.
       if (path === '/api/v1/assets') return json(res, 200, ACME_ASSETS())
-      if (path === '/api/v1/stats' || path === '/api/v1/coverage') {
+      if (path === '/api/v1/stats' || path === '/api/v1/coverage' || path.startsWith('/api/v1/recording-storage') ||
+        path === '/api/v1/settings') {
         // Fall through to the shared shapes; the counts are not under test.
       } else if (path.startsWith('/api/v1/platform/')) {
         return json(res, 404, { error: 'not found' })
@@ -490,6 +500,32 @@ const server = createServer(async (req, res) => {
         return json(res, 400, { error: 'the test email was not sent: alerts.email: not configured: set panmail.api_key' })
       }
       return json(res, 200, { sent: true, to: body.to ?? [] })
+    }
+    // An organization's own recording storage: refused in the default
+    // organization as the control plane refuses it; saved per organization
+    // otherwise, the key kept and never returned.
+    if (path.startsWith('/api/v1/recording-storage')) {
+      const org = orgOf(req)
+      if (org.default) {
+        return json(res, 409, { error: "the default organization's recordings are kept where the control plane's settings say: Settings › Storage" })
+      }
+      if (path === '/api/v1/recording-storage/test' && req.method === 'POST') {
+        const st = /** @type {any} */ (await readBody(req))
+        if (!st.secretKey && !st.secretKeySet) return json(res, 400, { error: 'object storage needs a secret key' })
+        return json(res, 200, { ok: true })
+      }
+      if (path === '/api/v1/recording-storage' && req.method === 'PUT') {
+        const body = /** @type {any} */ (await readBody(req))
+        const was = ORG_STORAGE.storage
+        const moved = was.enabled !== body.storage.enabled || was.bucket !== body.storage.bucket
+        const { secretKey, ...st } = body.storage
+        ORG_STORAGE = { ...ORG_STORAGE, storage: { ...st, secretKeySet: Boolean(secretKey) || st.secretKeySet },
+          archive: body.archive, agentKeepRecordingsDays: body.agentKeepRecordingsDays,
+          moving: moved && was.enabled ? 1 : 0,
+          copy: moved ? { from: was.enabled ? was.bucket : "the control plane's storage", copied: 12, already: 0, failed: 0, done: false } : undefined }
+        return json(res, 200, ORG_STORAGE)
+      }
+      if (path === '/api/v1/recording-storage' && req.method === 'GET') return json(res, 200, ORG_STORAGE)
     }
     // A storage check: an Azure account with no key is refused the way the
     // control plane refuses it; anything else wrote and read back.

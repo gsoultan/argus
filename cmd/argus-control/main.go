@@ -678,6 +678,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	}
 	// After the store is set: the archive reads and writes it.
 	go api.RunRecordingArchive(ctx, time.Hour)
+	go api.RunOrgRecordingCopies(ctx, 15*time.Minute)
 	api.SetCloudIdentities("aws", cfg.Cloud.cloudIdentities())
 	api.SetCloudIdentities("gcp", cfg.Cloud.gcpCloudIdentities())
 	api.SetCloudIdentities("azure", cfg.Cloud.azureCloudIdentities())

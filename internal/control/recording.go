@@ -77,12 +77,13 @@ func (a *API) getRecording(w http.ResponseWriter, r *http.Request, actor string)
 			"recording is not in object storage; it exists only on the host that produced it")
 		return
 	}
-	if a.recordings == nil {
+	recs := a.recordingsFor(r.Context())
+	if recs == nil {
 		writeErr(w, http.StatusServiceUnavailable, "recording storage is not configured")
 		return
 	}
 
-	obj, err := a.recordingsFor(r.Context()).Get(r.Context(), *sess.RecordingKey)
+	obj, err := recs.Get(r.Context(), *sess.RecordingKey)
 	if err != nil {
 		a.fail(w, "fetch recording", err)
 		return
@@ -196,18 +197,19 @@ func (a *API) presignRecording(w http.ResponseWriter, r *http.Request, actor str
 		writeErr(w, http.StatusNotFound, "session not found")
 		return
 	}
-	if sess.RecordingKey == nil || a.storage == nil {
+	bucket := a.presignStore(r.Context())
+	if sess.RecordingKey == nil || bucket == nil {
 		writeErr(w, http.StatusNotFound, "recording is not in object storage")
 		return
 	}
 	// The key came from a session row an agent reported. A link is only
 	// issued for an object this organization owns.
-	if !storage.ForTenant(a.storage, tenantIDOf(r.Context())).Owns(*sess.RecordingKey) {
+	if !storage.ForTenant(bucket, tenantIDOf(r.Context())).Owns(*sess.RecordingKey) {
 		writeErr(w, http.StatusNotFound, "recording is not in object storage")
 		return
 	}
 
-	u, err := a.storage.PresignedURL(r.Context(), *sess.RecordingKey, 5*time.Minute)
+	u, err := bucket.PresignedURL(r.Context(), *sess.RecordingKey, 5*time.Minute)
 	if err != nil {
 		a.fail(w, "presign", err)
 		return

@@ -100,7 +100,7 @@ func dirWith(t *testing.T, files map[string]string) *Dir {
 // Turning a bucket on after recordings were kept on this host copies them
 // in under the keys the database already names, with their chain heads, and
 // leaves this host's copies where they are.
-func TestCopyDirMovesRecordingsKeptOnThisHostIntoTheBucket(t *testing.T) {
+func TestCopyObjectsMovesRecordingsKeptOnThisHostIntoTheBucket(t *testing.T) {
 	ctx := context.Background()
 	d := dirWith(t, map[string]string{
 		"2026/11/01/s1.cast.zst":                  "one",
@@ -116,7 +116,7 @@ func TestCopyDirMovesRecordingsKeptOnThisHostIntoTheBucket(t *testing.T) {
 		return "head:" + string(body), nil
 	}
 
-	res, err := CopyDir(ctx, d, b, head, nil)
+	res, err := CopyObjects(ctx, d, b, head, nil)
 	if err == nil {
 		t.Error("a pass that left a recording behind reported no error")
 	}
@@ -135,7 +135,7 @@ func TestCopyDirMovesRecordingsKeptOnThisHostIntoTheBucket(t *testing.T) {
 
 	// The next pass copies what was refused and nothing twice.
 	delete(b.fail, "2026/11/04/s4.cast.zst")
-	res, err = CopyDir(ctx, d, b, head, nil)
+	res, err = CopyObjects(ctx, d, b, head, nil)
 	if err != nil || res.Copied != 1 || res.Already != 3 {
 		t.Errorf("second pass %+v, %v; want only the refused one copied", res, err)
 	}
@@ -143,12 +143,12 @@ func TestCopyDirMovesRecordingsKeptOnThisHostIntoTheBucket(t *testing.T) {
 
 // While the copy runs, a recording only this host has still replays, and
 // removing one from the console removes both copies.
-func TestWithLocalReadsWhatTheBucketDoesNotHaveYet(t *testing.T) {
+func TestLayeredReadsWhatTheBucketDoesNotHaveYet(t *testing.T) {
 	ctx := context.Background()
 	d := dirWith(t, map[string]string{"2026/11/01/old.cast.zst": "kept here"})
 	b := newMemBucket()
 	b.objs["2026/11/20/new.cast.zst"] = []byte("in the bucket")
-	w := &WithLocal{Bucket: b, Local: d}
+	w := &Layered{Primary: b, Fallbacks: []Store{d}}
 
 	if got := readAll(t, w, "2026/11/01/old.cast.zst"); string(got) != "kept here" {
 		t.Errorf("old recording read %q", got)

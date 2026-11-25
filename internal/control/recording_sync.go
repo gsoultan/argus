@@ -55,7 +55,8 @@ func (a *API) CopyRecordingsFromHost(ctx context.Context, b storage.Bucket, d *s
 	if b == nil || d == nil {
 		return
 	}
-	a.SetStorage(&storage.WithLocal{Bucket: b, Local: d})
+	a.storage = b
+	a.recordings = &storage.Layered{Primary: b, Fallbacks: []storage.Store{d}}
 	a.hostCopy.mu.Lock()
 	a.hostCopy.state = &RecordingsCopy{From: d.Root()}
 	a.hostCopy.mu.Unlock()
@@ -65,7 +66,7 @@ func (a *API) CopyRecordingsFromHost(ctx context.Context, b storage.Bucket, d *s
 func (a *API) runRecordingsCopy(ctx context.Context, b storage.Bucket, d *storage.Dir, interval time.Duration) {
 	copied := 0
 	for {
-		res, err := storage.CopyDir(ctx, d, b, chainHeadOf, a.log)
+		res, err := storage.CopyObjects(ctx, d, b, chainHeadOf, a.log)
 		if ctx.Err() != nil {
 			return
 		}

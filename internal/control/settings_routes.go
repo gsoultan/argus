@@ -347,6 +347,11 @@ func (a *API) getSettings(w http.ResponseWriter, r *http.Request) {
 		// platform sees or changes them. Others see the ones they may use
 		// under Cloud, without anything about where they come from.
 		s.Cloud = nil
+		// Where the control plane keeps recordings, and for how long, is
+		// the platform's; an organization has its own (org_storage.go).
+		s.Storage = StorageSettings{}
+		s.Archive = nil
+		s.AgentKeepRecordingsDays = 0
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, s)
@@ -364,6 +369,18 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if !platformScope(r.Context()) {
 		in.Cloud = nil // kept as configured
+		// The control plane's recording storage, archive and keep-days are
+		// the platform's to change, kept as configured whatever was sent:
+		// an organization's own are at /api/v1/recording-storage.
+		cur, err := a.Settings.Settings()
+		if err != nil {
+			a.fail(w, "settings", err)
+			return
+		}
+		in.Storage = cur.Storage
+		in.Storage.SecretKey = nil // kept as configured
+		in.Archive = nil
+		in.AgentKeepRecordingsDays = cur.AgentKeepRecordingsDays
 	}
 	var before *CloudSettings
 	if in.Cloud != nil && in.Cloud.AWS.Identities != nil {
@@ -426,6 +443,12 @@ func (a *API) postTestDatabase(w http.ResponseWriter, r *http.Request) {
 // and read from, before the control plane restarts on it.
 func (a *API) postTestStorage(w http.ResponseWriter, r *http.Request) {
 	if _, ok := a.admin(w, r, "testing object storage"); !ok {
+		return
+	}
+	if !platformScope(r.Context()) {
+		// It would test the control plane's key; an organization tests its
+		// own destination at /api/v1/recording-storage/test.
+		writeErr(w, http.StatusForbidden, "only the default organization tests the control plane's storage")
 		return
 	}
 	var in StorageSettings

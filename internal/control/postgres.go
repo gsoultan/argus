@@ -375,8 +375,10 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 			s.State, s.TerminatedBy, s.TerminationReason = "terminated", &by, &why
 		}
 		store := a.storeRecording
-		if store == nil && a.recordings != nil {
-			store = a.recordingsFor(ctx).Upload
+		if store == nil {
+			if recs := a.recordingsFor(ctx); recs != nil {
+				store = recs.Upload
+			}
 		}
 		if store != nil && head != "" {
 			if fi, err := rec.Stat(); err == nil {

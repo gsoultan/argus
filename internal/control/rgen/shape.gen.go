@@ -1281,6 +1281,38 @@ func _assertPackageUpdateRuleShape(m m0.PackageUpdateRule) {
 	}
 }
 
+// _assertRecordingPolicyShape fails to compile if m0.RecordingPolicy gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertRecordingPolicyShape(m m0.RecordingPolicy) {
+	type shape m0.RecordingPolicy
+	_ = shape{
+		m.Model,
+		m.Singleton,
+		m.KeepDays,
+		m.ArchiveDays,
+		m.UpdatedBy,
+	}
+}
+
+// _assertRecordingStorageShape fails to compile if m0.RecordingStorage gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertRecordingStorageShape(m m0.RecordingStorage) {
+	type shape m0.RecordingStorage
+	_ = shape{
+		m.Model,
+		m.State,
+		m.Provider,
+		m.Endpoint,
+		m.Bucket,
+		m.Region,
+		m.UseSsl,
+		m.AccessKey,
+		m.SecretSealed,
+		m.ArchiveClass,
+		m.CreatedBy,
+	}
+}
+
 // _assertRecoveryCodeShape fails to compile if m0.RecoveryCode gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertRecoveryCodeShape(m m0.RecoveryCode) {

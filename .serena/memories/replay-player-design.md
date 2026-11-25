@@ -201,3 +201,9 @@ returns a nil *interface* when nothing is configured.
   (`POST /api/v1/settings/test-storage`) that writes `.argus/connection-check`
   and reads it back. `List` skips `.argus/`.
 - Switching to a *different* bucket does not move what the old one holds.
+
+Per organization (2026-11): an organization other than the default one can
+keep its recordings in its own bucket or container; see multi-tenant.md,
+"Recording storage is per organization". Replay reads through
+`recordingsFor(ctx)`, which falls back to wherever the organization's
+recordings were before until the copy across has finished.

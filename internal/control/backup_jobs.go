@@ -681,10 +681,7 @@ func (a *API) BackupSweep(ctx context.Context) {
 // backupStore is where control-plane copies go: the recordings store,
 // scoped to the organization. Nil when the install has none.
 func (a *API) backupStore(ctx context.Context) *storage.Scoped {
-	if a.recordings == nil {
-		return nil
-	}
-	return storage.ForTenant(a.recordings, tenantIDOf(ctx))
+	return a.scopedRecordings(ctx)
 }
 
 func fileSHA256(path string) (string, error) {

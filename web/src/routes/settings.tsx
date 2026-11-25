@@ -36,7 +36,7 @@ import { ControlReadinessSection, useReadinessNeeds } from '~/components/Control
 import { OutageLoginsCard } from '~/components/OutageLogins'
 import { FleetRecoveryKey } from '~/components/FleetRecoveryKey'
 import {
-  CONTROL_SECTIONS, ControlSection, useControlSettings, type ControlSectionId,
+  CONTROL_SECTIONS, ControlSection, OrgStorage, useControlSettings, type ControlSectionId,
   type ControlSettingsState,
 } from '~/components/ControlSettings'
 
@@ -399,7 +399,10 @@ function Settings() {
             {active === 'control-backups' && statusItems.length > 0 && <ControlBackupsSection />}
             {active === 'control-readiness' && statusItems.length > 0 && <ControlReadinessSection onOpen={open} />}
 
-            {showControl && controlItems.some((c) => c.id === active) && (
+            {/* Outside the default organization, Storage is the organization's own. */}
+            {showControl && active === 'storage' && me?.org && !me.org.default && <OrgStorage />}
+
+            {showControl && controlItems.some((c) => c.id === active) && !(active === 'storage' && me?.org && !me.org.default) && (
               <>
                 <ControlSaveBar ctl={ctl} />
                 {ctl.loading ? (

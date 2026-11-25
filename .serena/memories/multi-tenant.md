@@ -131,8 +131,33 @@ kind; `TestEveryGrantTableHasAnAccessKind` fails on any migration table with
 explain. Grants are per organization by construction (each is a row in that
 organization's schema), so a shared person needs nothing special per feature.
 
+## Recording storage is per organization
+
+`org_storage.go`, migration 117. Outside the default organization, Settings ›
+Storage is the organization's own (`GET/PUT /api/v1/recording-storage`,
+`POST .../test`, admin/owner, 409 in platform scope): its own S3/R2/Azure
+destination (`recording_storages`, at most one `active`, key sealed with
+`"argus recording storage v1"` over its grant key) or the control plane's
+storage under `tenants/<id>/`; archive age and class and keep-on-servers days
+(`recording_policies`, 0 = the control plane's, -1 for ever/never). A new
+destination is `storage.Check`ed before it is saved.
+
+- Every reader and writer of recordings and control-plane backups goes through
+  `recordingsFor`/`scopedRecordings(ctx)`, never `a.recordings` directly:
+  `storage.Layered` puts the active destination in front of retired ones and
+  the control plane's, so nothing stops replaying during a move.
+- `RunOrgRecordingCopies` copies retired destinations (and the control plane's
+  storage, once per active row) into the active one, then deletes the drained
+  retired row; audits `recordings.copied`.
+- Presign, archive age/class (`archiveAfterFor`, `archiveClassFor`) and the
+  heartbeat's `keep_recordings_hours` (`keepRecordingsFor`) follow it.
+- `GET/PUT /api/v1/settings` outside platform scope hide and keep Storage,
+  Archive and AgentKeepRecordingsDays; `test-storage` is platform-only.
+
 ## What is still platform-wide
 
 Config file and Settings, first-run setup, backups, alert channels (session
 alerts go out for the default organization only). Follow-ups are listed at the
-end of the design.
+end of the design. Open: every organization's admins can still read and save
+the other platform sections of Settings (addresses, certificate, database,
+sign-in, security, alerts); only Cloud identities and Storage are guarded.

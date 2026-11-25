@@ -79,6 +79,10 @@ type API struct {
 	// hostCopy is the copy of recordings kept on this host into storage,
 	// when a bucket was configured after some were made.
 	hostCopy recordingsCopy
+	// orgStorage is each organization's own recording storage, and
+	// orgCopies the copies out of where its recordings were kept before.
+	orgStorage orgStores
+	orgCopies  orgCopy
 	// storeRecording replaces recordings.Upload for a shipped recording. Nil
 	// uses recordings; set by tests that have no object store.
 	storeRecording recordingUploader
@@ -402,6 +406,9 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/checks/{id}/group", a.putCheckGroupOf)
 	mux.HandleFunc("GET /api/v1/checks/{id}/viewers", a.getViewers("check"))
 	mux.HandleFunc("PUT /api/v1/checks/{id}/viewers", a.putViewers("check"))
+	mux.HandleFunc("GET /api/v1/recording-storage", a.getOrgStorage)
+	mux.HandleFunc("PUT /api/v1/recording-storage", a.putOrgStorage)
+	mux.HandleFunc("POST /api/v1/recording-storage/test", a.postOrgStorageTest)
 	mux.HandleFunc("GET /api/v1/telegram", a.getTelegram)
 	mux.HandleFunc("POST /api/v1/telegram/bots", a.postTelegramBot)
 	mux.HandleFunc("PUT /api/v1/telegram/bots/{id}", a.putTelegramBot)
@@ -1179,7 +1186,7 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// zstd, packed or not; an agent sends one plain to a control plane
 		// that does not say so.
 		"recording_encodings": []string{"zstd", recorder.EncodingPacked}}
-	switch k := a.AgentKeepRecordings; {
+	switch k := a.keepRecordingsFor(r.Context()); {
 	case k < 0:
 		reply["keep_recordings_hours"] = 0
 	case k > 0:

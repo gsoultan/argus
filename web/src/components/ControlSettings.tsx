@@ -16,6 +16,7 @@ import { PemField } from '~/components/Install'
 import {
   cloudIdentityStatus, controlSettings, organizations, saveControlSettings,
   testCloudIdentity, testDatabase, testEmail, testStorage, waitForControlPlane, type AWSIdentity,
+  orgRecordingStorage, saveOrgRecordingStorage, testOrgRecordingStorage, type OrgRecordingStorage,
   type CloudIdentityCheck, type CloudIdentityStatus, type CloudIdentityUse, type ControlSettings as Settings,
 } from '~/lib/live'
 import { cloudAccountsQuery, AWS_IDENTITY_POLICY } from '~/lib/cloud'
@@ -398,7 +399,26 @@ const ARCHIVE_AFTER = [
   { value: '-1', label: 'Never' },
 ]
 
-function Storage({ s, edit }: CardProps) {
+/**
+ * What changes when Storage is an organization's own rather than the control
+ * plane's: a setting left at 0 is the control plane's, and the test goes to
+ * the organization's own route.
+ */
+interface OrgScope {
+  platform: OrgRecordingStorage['platform']
+  test: (st: Settings['storage']) => Promise<void>
+}
+
+const daysLabel = (d: number, never: string) => (d < 0 ? never : d === 1 ? '1 day' : `${d} days`)
+
+/** The options with 0 named as the control plane's own setting. */
+function orgOptions(options: { value: string; label: string }[], platformDays: number, never: string) {
+  return options.map((o) => (o.value === '0'
+    ? { value: '0', label: `Control plane's setting (${daysLabel(platformDays, never.toLowerCase())})` }
+    : o))
+}
+
+function Storage({ s, edit, org }: CardProps & { org?: OrgScope }) {
   const st = s.storage
   const set = (patch: Partial<Settings['storage']>) => edit({ storage: { ...st, ...patch } })
   // Chosen here and kept, because two services can look alike before their
@@ -410,14 +430,16 @@ function Storage({ s, edit }: CardProps) {
   // Four names do not fit across a phone; stacked, each stays whole.
   const narrow = useMediaQuery('(max-width: 36em)')
   const keep = String(s.agentKeepRecordingsDays ?? 0)
-  const keepOptions = KEEP_ON_SERVERS.some((o) => o.value === keep)
-    ? KEEP_ON_SERVERS
-    : [...KEEP_ON_SERVERS, { value: keep, label: `${keep} days` }]
+  const keepBase = org ? orgOptions(KEEP_ON_SERVERS, org.platform.keepDays, 'For ever') : KEEP_ON_SERVERS
+  const keepOptions = keepBase.some((o) => o.value === keep)
+    ? keepBase
+    : [...keepBase, { value: keep, label: `${keep} days` }]
   const archive = s.archive ?? { afterDays: 0, storageClass: '' }
   const archiveAfter = String(archive.afterDays)
-  const archiveOptions = ARCHIVE_AFTER.some((o) => o.value === archiveAfter)
-    ? ARCHIVE_AFTER
-    : [...ARCHIVE_AFTER, { value: archiveAfter, label: `${archiveAfter} days` }]
+  const archiveBase = org ? orgOptions(ARCHIVE_AFTER, org.platform.archiveDays, 'Never') : ARCHIVE_AFTER
+  const archiveOptions = archiveBase.some((o) => o.value === archiveAfter)
+    ? archiveBase
+    : [...archiveBase, { value: archiveAfter, label: `${archiveAfter} days` }]
   // A class set in the file that this list does not name is still shown as
   // what it is, rather than as the default it is not.
   const classes = archiveClassesFor(service)
@@ -438,7 +460,7 @@ function Storage({ s, edit }: CardProps) {
   const test = async () => {
     setBusy(true)
     try {
-      await testStorage(st)
+      await (org ? org.test(st) : testStorage(st))
       notifyOk('Storage works', `Argus wrote an object to ${st.bucket || 'argus-recordings'} and read it back.`)
     } catch (err) {
       notifyError('Storage did not work', err)
@@ -481,10 +503,19 @@ function Storage({ s, edit }: CardProps) {
       </SectionCard>
     )}
     <SectionCard title="Object storage" icon={IconCloudUpload}
-      description="Where recordings are copied, so the evidence is not only on this host: Amazon S3, Cloudflare R2, Azure Blob Storage or any S3-compatible service. Without one, recordings are kept on this host's disk, and are copied in when you turn this on. Give Argus a key that can write and not delete.">
+      description={org
+        ? 'Where this organization\'s recordings and backups are kept: the control plane\'s storage, or a bucket or container of its own on Amazon S3, Cloudflare R2, Azure Blob Storage or any S3-compatible service. Recordings already kept are copied across when this changes, and replay from where they are until they have been. Give Argus a key that can write and not delete.'
+        : 'Where recordings are copied, so the evidence is not only on this host: Amazon S3, Cloudflare R2, Azure Blob Storage or any S3-compatible service. Without one, recordings are kept on this host\'s disk, and are copied in when you turn this on. Give Argus a key that can write and not delete.'}>
       <Stack gap="xs">
-        <Switch size="xs" label="Copy recordings to object storage" checked={st.enabled}
-          onChange={(e) => set({ enabled: e.currentTarget.checked })} />
+        <Switch size="xs" label={org ? 'Keep recordings in this organization\'s own storage' : 'Copy recordings to object storage'}
+          checked={st.enabled} onChange={(e) => set({ enabled: e.currentTarget.checked })} />
+        {org && !st.enabled && (
+          <Text size={FS.meta} c="dimmed">
+            {org.platform.where === ''
+              ? 'This control plane has no storage of its own: recordings stay on the servers that made them until this organization has storage.'
+              : `Recordings go to the control plane's ${org.platform.where === 'bucket' ? 'object storage' : 'disk'}, kept apart from every other organization's.`}
+          </Text>
+        )}
         {st.enabled && (
           <>
           <SegmentedControl size="xs" data={STORAGE_SERVICES} value={service}
@@ -1471,5 +1502,91 @@ function SecretInput({ label, description, set, value, onChange, required, first
       withAsterisk={required} {...(first ? { 'data-first-field': true } : {})}
       placeholder={set ? 'Set. Type to replace it.' : 'Not set'}
       value={value ?? ''} onChange={(e) => onChange(e.currentTarget.value || undefined)} />
+  )
+}
+
+const orgStorageKey = ['org-recording-storage'] as const
+
+/**
+ * Settings › Storage outside the default organization: the organization's
+ * own destination, archive and keep-on-servers, saved on their own. The
+ * control plane's are the default organization's to change and are not shown.
+ */
+export function OrgStorage() {
+  const qc = useQueryClient()
+  const { data, error, isPending } = useQuery({ queryKey: orgStorageKey, queryFn: orgRecordingStorage })
+  type Draft = Pick<OrgRecordingStorage, 'storage' | 'archive' | 'agentKeepRecordingsDays'>
+  const [draft, setDraft] = useState<Draft | null>(null)
+  const [saving, setSaving] = useState(false)
+  if (error) {
+    return (
+      <Alert color="amber" icon={<IconAlertTriangle size={16} />} title="Recording storage">
+        <Text size={FS.body}>{error instanceof Error ? error.message : 'Could not read it.'}</Text>
+      </Alert>
+    )
+  }
+  if (isPending || !data) return <Text size={FS.body} c="dimmed">Loading…</Text>
+  const cur: Draft = draft ?? { storage: data.storage, archive: data.archive, agentKeepRecordingsDays: data.agentKeepRecordingsDays }
+  // Storage edits a Settings; only the three fields it touches are kept.
+  const s = { ...cur, archive: cur.archive } as unknown as Settings
+  const edit = (patch: Partial<Settings>) => setDraft({
+    storage: patch.storage ?? cur.storage,
+    archive: patch.archive ?? cur.archive,
+    agentKeepRecordingsDays: patch.agentKeepRecordingsDays ?? cur.agentKeepRecordingsDays,
+  })
+  const save = async () => {
+    if (!draft) return
+    setSaving(true)
+    try {
+      const next = await saveOrgRecordingStorage(draft)
+      qc.setQueryData(orgStorageKey, next)
+      setDraft(null)
+      notifyOk('Recording storage saved', next.storage.enabled
+        ? `This organization's recordings now go to ${next.storage.bucket}.`
+        : 'This organization\'s recordings now go to the control plane\'s storage.')
+    } catch (err) {
+      notifyError('Recording storage not saved', err)
+    } finally {
+      setSaving(false)
+    }
+  }
+  const copy = data.copy
+  return (
+    <Stack gap="sm">
+      {draft && (
+        <Alert color="amber" variant="light" p="xs">
+          <Group justify="space-between" wrap="wrap" gap="xs">
+            <Text size={FS.body}>Unsaved changes to where this organization's recordings are kept.</Text>
+            <Group gap="xs">
+              <Button variant="subtle" color="slate" size="xs" onClick={() => setDraft(null)} disabled={saving}>
+                Discard
+              </Button>
+              <Button size="xs" loading={saving} onClick={() => void save()}>Save</Button>
+            </Group>
+          </Group>
+        </Alert>
+      )}
+      {data.error && (
+        <Alert color="rose" icon={<IconAlertTriangle size={16} />} title="The saved storage cannot be used" p="xs">
+          <Text size={FS.body}>{data.error}</Text>
+        </Alert>
+      )}
+      {(data.moving > 0 || (copy && !copy.done)) && (
+        <Alert color="blue" icon={<IconCloudUpload size={16} />} title="Copying recordings across" p="xs">
+          <Text size={FS.body}>
+            {copy
+              ? `${copy.copied} copied${copy.failed > 0 ? `, ${copy.failed} to try again` : ''} from ${copy.from}. `
+              : 'Recordings kept where they went before are being copied across. '}
+            Until they are, they replay from where they are.
+            {copy?.lastError ? ` Last error: ${copy.lastError}` : ''}
+          </Text>
+        </Alert>
+      )}
+      <Storage s={s} edit={edit} org={{ platform: data.platform, test: testOrgRecordingStorage }} />
+      <Text size={FS.micro} c="dimmed">
+        These are this organization's own. A new destination is written to and read back before it is saved,
+        and its key is kept sealed, never shown again.
+      </Text>
+    </Stack>
   )
 }
