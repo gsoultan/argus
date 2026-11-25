@@ -77,6 +77,16 @@ func main() {
 		// Run by the postgres service as the postgres account: one request
 		// on stdin, one answer on stdout, over the local socket.
 		os.Exit(agent.PGAdminMain(context.Background(), os.Stdin, os.Stdout))
+	case "pgbouncer-stats":
+		// Run by the postgres service as the account PgBouncer runs as, to
+		// read its admin console's SHOW commands over its unix socket.
+		in, _ := io.ReadAll(io.LimitReader(os.Stdin, 1<<16))
+		res := agent.PoolerConsoleMain(context.Background(), in)
+		_ = json.NewEncoder(os.Stdout).Encode(res)
+		if res.Error != "" {
+			os.Exit(1)
+		}
+		os.Exit(0)
 	case "update-apply":
 		// Run by the daemon in a unit of its own to install an update the
 		// console asked for, restart the agent, and go back if it fails.

@@ -94,6 +94,13 @@ type pgBouncerSeen struct {
 	// its Postgres with. They stay in the agent: Targets go to the
 	// control plane, these never do.
 	Logins []pgLogin
+	// Settings are its tuning settings as written, only the keys in
+	// tunnel.PoolerSettingKeys; DatabasePools are a [databases] line's
+	// pool_size, max_db_connections and pool_mode overrides.
+	Settings      map[string]string
+	DatabasePools map[string]map[string]string
+	// Pid is the running pgbouncer that was started with this file, if any.
+	Pid string
 }
 
 // pgLogin is a user and password PgBouncer signs in to host:port with.
@@ -170,13 +177,18 @@ func (l pgLocator) locate() pgLocation {
 	// PgBouncer first: its port must never be taken for Postgres's.
 	bouncerPorts := map[int]bool{}
 	confs := []string{}
+	pidOf := map[string]string{}
 	for _, p := range procs {
 		if p.comm != "pgbouncer" {
 			continue
 		}
 		for _, a := range p.args[1:] {
 			if strings.HasSuffix(a, ".ini") {
-				confs = append(confs, l.inRoot(p, a))
+				c := l.inRoot(p, a)
+				confs = append(confs, c)
+				if pidOf[c] == "" {
+					pidOf[c] = p.pid
+				}
 			}
 		}
 	}
@@ -188,6 +200,7 @@ func (l pgLocator) locate() pgLocation {
 		}
 		doneConf[c] = true
 		if b, ok := l.pgbouncer(c); ok {
+			b.Pid = pidOf[c]
 			loc.Bouncers = append(loc.Bouncers, b)
 			bouncerPorts[b.Port] = true
 		}
@@ -613,6 +626,12 @@ func (l pgLocator) pgbouncer(path string) (pgBouncerSeen, bool) {
 		ok = true
 		switch section {
 		case "pgbouncer":
+			if tunnel.PoolerSettingKey(key) {
+				if b.Settings == nil {
+					b.Settings = map[string]string{}
+				}
+				b.Settings[key] = val
+			}
 			switch key {
 			case "listen_port":
 				b.Port = atoiOr(val, 6432)
@@ -632,6 +651,17 @@ func (l pgLocator) pgbouncer(path string) (pgBouncerSeen, bool) {
 		case "databases":
 			t := poolerTarget(key, val)
 			b.Targets = append(b.Targets, t)
+			for k, v := range parseConnStr(val) {
+				if k == "pool_size" || k == "pool_mode" || k == "max_db_connections" || k == "reserve_pool" || k == "min_pool_size" {
+					if b.DatabasePools == nil {
+						b.DatabasePools = map[string]map[string]string{}
+					}
+					if b.DatabasePools[key] == nil {
+						b.DatabasePools[key] = map[string]string{}
+					}
+					b.DatabasePools[key][k] = v
+				}
+			}
 			if kv := parseConnStr(val); kv["user"] != "" {
 				b.Logins = append(b.Logins, pgLogin{Host: t.Host, Port: t.Port, User: kv["user"], Password: kv["password"]})
 			}
