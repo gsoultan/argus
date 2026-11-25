@@ -1502,6 +1502,8 @@ func All() []any {
 		&WebsiteAlertSetting{},
 		&TelegramBot{},
 		&TelegramRoute{},
+		&RecordingStorage{},
+		&RecordingPolicy{},
 		&CloudflareAccount{},
 		&WgNetwork{},
 		&WgMember{},
@@ -3306,4 +3308,54 @@ func (m *FirewallChange) Schema(t *storm.Table) {
 	t.Index(&m.Asset, storm.Desc(&m.RequestedAt)).Named("firewall_changes_asset")
 	t.Index(storm.Lower(&m.Hostname)).Where("state = ANY (ARRAY['queued'::text, 'sent'::text, 'trial'::text, 'waiting_keep'::text])").Named("firewall_changes_host")
 	t.Index(&m.Rollout, &m.Wave).Where("rollout_id IS NOT NULL").Named("firewall_changes_rollout")
+}
+
+// RecordingStorage is table recording_storages: where an organization's
+// recordings are copied, when it has its own (org_storage.go).
+type RecordingStorage struct {
+	storm.Model
+
+	State        string
+	Provider     string
+	Endpoint     string
+	Bucket       string
+	Region       string
+	UseSsl       bool
+	AccessKey    string
+	SecretSealed []byte
+	ArchiveClass string
+	CreatedBy    string
+}
+
+func (m *RecordingStorage) Schema(t *storm.Table) {
+	t.Col(&m.Endpoint).Default("''::text")
+	t.Col(&m.Region).Default("''::text")
+	t.Col(&m.UseSsl).Default("true")
+	t.Col(&m.SecretSealed).NotNull()
+	t.Col(&m.ArchiveClass).Default("''::text")
+	t.CheckNamed("recording_storages_bucket_check", "(length(bucket) >= 1) AND (length(bucket) <= 255)")
+	t.CheckNamed("recording_storages_provider_check", "provider = ANY (ARRAY['s3'::text, 'azure'::text])")
+	t.CheckNamed("recording_storages_state_check", "state = ANY (ARRAY['active'::text, 'retired'::text])")
+	t.Index(&m.State).Unique().Where("state = 'active'::text").Named("recording_storages_one_active")
+}
+
+// RecordingPolicy is table recording_policies: an organization's own keep and
+// archive ages, 0 for the control plane's.
+type RecordingPolicy struct {
+	storm.Model
+
+	Singleton   bool
+	KeepDays    int32
+	ArchiveDays int32
+	UpdatedBy   string
+}
+
+func (m *RecordingPolicy) Schema(t *storm.Table) {
+	t.Col(&m.Singleton).Default("true")
+	t.Col(&m.KeepDays).Default("0")
+	t.Col(&m.ArchiveDays).Default("0")
+	t.CheckNamed("recording_policies_archive_days_check", "(archive_days >= '-1'::integer) AND (archive_days <= 3650)")
+	t.CheckNamed("recording_policies_keep_days_check", "(keep_days >= '-1'::integer) AND (keep_days <= 3650)")
+	t.CheckNamed("recording_policies_singleton_check", "singleton")
+	t.Index(&m.Singleton).Unique().Named("recording_policies_singleton")
 }

@@ -199,9 +199,17 @@ type DatabaseSettings struct {
 	Raw bool `json:"raw,omitempty"`
 }
 
-// StorageSettings is the S3-compatible bucket recordings are copied to.
+// StorageSettings is the object storage recordings are copied to: an
+// S3-compatible bucket (Amazon S3, Cloudflare R2, MinIO, ...) or an Azure
+// Blob Storage container.
+//
+// For Azure, AccessKey is the storage account's name, SecretKey one of its
+// access keys, Bucket the container, and Endpoint may be left empty.
 type StorageSettings struct {
-	Enabled      bool    `json:"enabled"`
+	Enabled bool `json:"enabled"`
+	// Provider is "s3" or "azure". Empty, from a console older than Azure,
+	// is "s3".
+	Provider     string  `json:"provider"`
 	Endpoint     string  `json:"endpoint"`
 	Bucket       string  `json:"bucket"`
 	Region       string  `json:"region"`
@@ -297,6 +305,9 @@ type SettingsBackend interface {
 	// did, the control plane reloads itself shortly after.
 	SaveSettings(ctx context.Context, in Settings, actor string) ([]string, error)
 	TestDatabase(ctx context.Context, d DatabaseSettings) (DatabaseCheck, error)
+	// TestStorage writes an object to the storage in s and reads it back,
+	// without saving s. A secret s leaves out is the one configured.
+	TestStorage(ctx context.Context, s StorageSettings) error
 	// TestEmail sends one message with e, unsaved, to its recipients. A
 	// secret e leaves out is the one configured.
 	TestEmail(ctx context.Context, e EmailSettings) error
@@ -336,6 +347,11 @@ func (a *API) getSettings(w http.ResponseWriter, r *http.Request) {
 		// platform sees or changes them. Others see the ones they may use
 		// under Cloud, without anything about where they come from.
 		s.Cloud = nil
+		// Where the control plane keeps recordings, and for how long, is
+		// the platform's; an organization has its own (org_storage.go).
+		s.Storage = StorageSettings{}
+		s.Archive = nil
+		s.AgentKeepRecordingsDays = 0
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, s)
@@ -353,6 +369,18 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if !platformScope(r.Context()) {
 		in.Cloud = nil // kept as configured
+		// The control plane's recording storage, archive and keep-days are
+		// the platform's to change, kept as configured whatever was sent:
+		// an organization's own are at /api/v1/recording-storage.
+		cur, err := a.Settings.Settings()
+		if err != nil {
+			a.fail(w, "settings", err)
+			return
+		}
+		in.Storage = cur.Storage
+		in.Storage.SecretKey = nil // kept as configured
+		in.Archive = nil
+		in.AgentKeepRecordingsDays = cur.AgentKeepRecordingsDays
 	}
 	var before *CloudSettings
 	if in.Cloud != nil && in.Cloud.AWS.Identities != nil {
@@ -409,6 +437,30 @@ func (a *API) postTestDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, check)
+}
+
+// postTestStorage checks the object storage on the form can be written to
+// and read from, before the control plane restarts on it.
+func (a *API) postTestStorage(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.admin(w, r, "testing object storage"); !ok {
+		return
+	}
+	if !platformScope(r.Context()) {
+		// It would test the control plane's key; an organization tests its
+		// own destination at /api/v1/recording-storage/test.
+		writeErr(w, http.StatusForbidden, "only the default organization tests the control plane's storage")
+		return
+	}
+	var in StorageSettings
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := a.Settings.TestStorage(r.Context(), in); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // postTestEmail sends a test message with the email settings on the form, so

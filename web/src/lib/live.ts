@@ -1257,8 +1257,14 @@ export interface ControlSettings {
     host: string; port: number; name: string; user: string; sslMode: string
     passwordSet: boolean; password?: string; raw?: boolean
   }
+  /**
+   * Where recordings are copied. provider is absent from a control plane
+   * older than Azure, which means S3. For Azure, accessKey is the storage
+   * account's name, secretKey one of its keys, bucket the container, and
+   * endpoint may be empty.
+   */
   storage: {
-    enabled: boolean; endpoint: string; bucket: string; region: string; useSsl: boolean
+    enabled: boolean; provider?: 's3' | 'azure'; endpoint: string; bucket: string; region: string; useSsl: boolean
     accessKey: string; secretKeySet: boolean; secretKey?: string
   }
   email: {
@@ -1386,6 +1392,51 @@ export type EmailVia = 'smtp' | 'panmail'
  */
 export async function testEmail(e: ControlSettings['email']): Promise<{ sent: boolean; to: string[] }> {
   return post<{ sent: boolean; to: string[] }>('/api/v1/settings/test-email', e)
+}
+
+/**
+ * Writes a small object to the storage on the form and reads it back, without
+ * saving it. A secret left out is the one configured.
+ */
+export async function testStorage(st: ControlSettings['storage']): Promise<void> {
+  await post<{ ok: boolean }>('/api/v1/settings/test-storage', st)
+}
+
+/**
+ * An organization's own recording storage, outside the default organization:
+ * where its recordings are copied (enabled false is the control plane's
+ * storage), when they are archived, and how long its servers keep theirs.
+ */
+export interface OrgRecordingStorage {
+  storage: ControlSettings['storage']
+  /** afterDays: 0 is the control plane's age, -1 never. storageClass: only with a destination of its own. */
+  archive: { afterDays: number; storageClass: string }
+  /** 0 is the control plane's setting, -1 for ever. */
+  agentKeepRecordingsDays: number
+  /** What the control plane does for a setting left to it. keepDays and archiveDays: -1 for ever and never. */
+  platform: { where: 'bucket' | 'directory' | ''; keepDays: number; archiveDays: number }
+  /** The copy out of where its recordings were kept before, while there is one. */
+  copy?: { from: string; copied: number; already: number; failed: number; done: boolean; lastError?: string; lastPass?: string }
+  /** How many earlier destinations are still being copied out of. */
+  moving: number
+  /** Why the saved destination cannot be used now. */
+  error?: string
+}
+
+export async function orgRecordingStorage(): Promise<OrgRecordingStorage> {
+  return get<OrgRecordingStorage>('/api/v1/recording-storage')
+}
+
+/** Saves the organization's own; a new destination is written to and read from first. */
+export async function saveOrgRecordingStorage(
+  s: Pick<OrgRecordingStorage, 'storage' | 'archive' | 'agentKeepRecordingsDays'>,
+): Promise<OrgRecordingStorage> {
+  return send('PUT', '/api/v1/recording-storage', s)
+}
+
+/** Writes to and reads from the organization's destination on the form, unsaved. */
+export async function testOrgRecordingStorage(st: ControlSettings['storage']): Promise<void> {
+  await post<{ ok: boolean }>('/api/v1/recording-storage/test', st)
 }
 
 export async function testDatabase(d: ControlSettings['database']): Promise<DatabaseCheck> {
@@ -2192,6 +2243,14 @@ export interface ControlStatus {
     lastUpload?: string
     lastFailure?: string
     lastUploadError?: string
+    /**
+     * The copy into the bucket of recordings this server kept on its own
+     * disk before a bucket was configured. Absent when there is none.
+     */
+    fromHost?: {
+      from: string; copied: number; already: number; failed: number; done: boolean
+      lastError?: string; lastPass?: string
+    }
   }
   certificate?: { subject: string; notAfter: string; daysLeft: number; managed: boolean }
   errors: {

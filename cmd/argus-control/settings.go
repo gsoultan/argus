@@ -92,7 +92,11 @@ func (b *settingsBackend) Settings() (control.Settings, error) {
 		s.Database = control.DatabaseSettings{Raw: true, PasswordSet: true}
 	}
 	if st := c.Storage; st != nil {
-		s.Storage = control.StorageSettings{Enabled: true, Endpoint: st.Endpoint, Bucket: st.Bucket,
+		provider := st.Provider
+		if provider == "" {
+			provider = storage.ProviderS3
+		}
+		s.Storage = control.StorageSettings{Enabled: true, Provider: provider, Endpoint: st.Endpoint, Bucket: st.Bucket,
 			Region: st.Region, UseSSL: st.UseSSL, AccessKey: st.AccessKey, SecretKeySet: st.SecretKey != ""}
 	}
 	if a := c.Alerts; a != nil {
@@ -310,9 +314,10 @@ func (b *settingsBackend) apply(ctx context.Context, c *config, in control.Setti
 			return control.BadInput(fmt.Errorf("recordings are archived after 1 to 3650 days, " +
 				"0 for the default or -1 for never"))
 		}
-		if !control.ValidArchiveStorageClass(ar.StorageClass) {
-			return control.BadInput(fmt.Errorf("storage class %q cannot be replayed from at once; use one of %s",
-				ar.StorageClass, strings.Join(control.ArchiveStorageClasses[1:], ", ")))
+		if !control.ValidArchiveStorageClass(ar.StorageClass) && !slices.Contains(storage.AzureTiers, ar.StorageClass) {
+			return control.BadInput(fmt.Errorf("storage class %q cannot be replayed from at once; use one of %s, "+
+				"or on Azure one of %s", ar.StorageClass, strings.Join(control.ArchiveStorageClasses[1:], ", "),
+				strings.Join(storage.AzureTiers, ", ")))
 		}
 		c.RecordingsArchiveAfterDays, c.RecordingsArchiveStorageClass = ar.AfterDays, ar.StorageClass
 	}
@@ -366,20 +371,65 @@ func applyStorage(c *config, in control.StorageSettings, st *secretStage) error 
 		c.Storage = nil
 		return nil
 	}
-	prev := c.Storage
-	c.Storage = &storage.Config{Endpoint: strings.TrimSpace(in.Endpoint), Bucket: strings.TrimSpace(in.Bucket),
-		Region: strings.TrimSpace(in.Region), UseSSL: in.UseSSL, AccessKey: strings.TrimSpace(in.AccessKey)}
-	switch {
-	case in.SecretKey != nil:
-		ref, err := st.write("storage-secret-key", *in.SecretKey)
+	next, err := storageConfigFrom(in, c.Storage)
+	if err != nil {
+		return err
+	}
+	if in.SecretKey != nil {
+		ref, err := st.write("storage-secret-key", strings.TrimSpace(*in.SecretKey))
 		if err != nil {
 			return err
 		}
-		c.Storage.SecretKey = ref
-	case prev != nil:
-		c.Storage.SecretKey = prev.SecretKey
+		next.SecretKey = ref
 	}
+	c.Storage = next
 	return nil
+}
+
+// storageConfigFrom is the storage block in describes. A secret in leaves
+// out is prev's, and only when prev is the same provider: an S3 secret key
+// is not an Azure account key, and carrying it over would save a setting
+// that cannot start.
+func storageConfigFrom(in control.StorageSettings, prev *storage.Config) (*storage.Config, error) {
+	provider := strings.TrimSpace(in.Provider)
+	if provider == storage.ProviderS3 {
+		// Written as nothing, so a file from before Azure reads the same.
+		provider = ""
+	}
+	if !storage.ValidProvider(provider) {
+		return nil, control.BadInput(fmt.Errorf("unknown object storage provider %q", in.Provider))
+	}
+	next := &storage.Config{Provider: provider, Endpoint: strings.TrimSpace(in.Endpoint),
+		Bucket: strings.TrimSpace(in.Bucket), Region: strings.TrimSpace(in.Region), UseSSL: in.UseSSL,
+		AccessKey: strings.TrimSpace(in.AccessKey)}
+	if in.SecretKey != nil {
+		next.SecretKey = strings.TrimSpace(*in.SecretKey)
+	} else if prev != nil && prev.Provider == provider {
+		next.SecretKey = prev.SecretKey
+	}
+	return next, nil
+}
+
+// TestStorage writes an object to the storage on the form and reads it
+// back, without saving it.
+func (b *settingsBackend) TestStorage(ctx context.Context, in control.StorageSettings) error {
+	cfg, err := storageConfigFrom(in, b.cfg.Storage)
+	if err != nil {
+		return err
+	}
+	if err := validateStorage(cfg); err != nil {
+		return err
+	}
+	sc, err := storage.Open(*cfg, nil)
+	if err != nil {
+		return err
+	}
+	if sc != nil {
+		defer storage.Release(sc)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	return storage.Check(ctx, sc)
 }
 
 func applyAlerts(c *config, in control.Settings, st *secretStage) error {
@@ -685,16 +735,67 @@ func validateConfig(c config) error {
 			}
 		}
 	}
-	if c.Storage != nil {
-		if c.Storage.Endpoint == "" || c.Storage.Bucket == "" {
-			return errors.New("object storage needs an endpoint and a bucket")
-		}
-		if c.Storage.AccessKey == "" || c.Storage.SecretKey == "" {
-			return errors.New("object storage needs an access key and a secret key")
-		}
+	if err := validateStorage(c.Storage); err != nil {
+		return err
+	}
+	if err := checkArchiveClass(c.Storage, c.RecordingsArchiveStorageClass); err != nil {
+		return err
 	}
 	if _, err := alertSenders(c.Alerts); err != nil {
 		return fmt.Errorf("alerts: %w", err)
+	}
+	return nil
+}
+
+// checkArchiveClass refuses an archive storage class the configured
+// provider does not have, or one a recording cannot be replayed from at
+// once. Azure calls them access tiers.
+func checkArchiveClass(st *storage.Config, class string) error {
+	if class == "" {
+		return nil
+	}
+	if st != nil && st.Provider == storage.ProviderAzure {
+		if !slices.Contains(storage.AzureTiers, class) {
+			return fmt.Errorf("recordings_archive_storage_class is %q, which is not an Azure access tier "+
+				"a recording can be replayed from; use one of %s", class, strings.Join(storage.AzureTiers, ", "))
+		}
+		return nil
+	}
+	if !control.ValidArchiveStorageClass(class) {
+		return fmt.Errorf("recordings_archive_storage_class is %q; use one of %s",
+			class, strings.Join(control.ArchiveStorageClasses[1:], ", "))
+	}
+	return nil
+}
+
+// validateStorage checks c has what its provider needs, and builds a client
+// from it, so a setting that cannot start is refused when it is saved.
+func validateStorage(c *storage.Config) error {
+	if c == nil {
+		return nil
+	}
+	switch c.Provider {
+	case storage.ProviderAzure:
+		if c.AccessKey == "" || c.SecretKey == "" {
+			return errors.New("Azure Blob Storage needs the storage account's name and one of its access keys")
+		}
+		if c.Bucket == "" {
+			return errors.New("Azure Blob Storage needs a container")
+		}
+	default:
+		if c.Endpoint == "" || c.Bucket == "" {
+			return errors.New("object storage needs an endpoint and a bucket")
+		}
+		if c.AccessKey == "" || c.SecretKey == "" {
+			return errors.New("object storage needs an access key and a secret key")
+		}
+	}
+	if strings.Contains(c.SecretKey, "${") {
+		// A reference not resolved yet; the client is built once it is.
+		return nil
+	}
+	if _, err := storage.Open(*c, nil); err != nil {
+		return err
 	}
 	return nil
 }

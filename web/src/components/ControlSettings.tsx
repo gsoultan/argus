@@ -3,7 +3,7 @@ import {
   Alert, Badge, Box, Button, Checkbox, Drawer, Grid, Group, Modal, MultiSelect, NumberInput, PasswordInput, Radio,
   SegmentedControl, Select, Stack, Switch, Table, TagsInput, Text, Textarea, TextInput,
 } from '@mantine/core'
-import { useDisclosure } from '@mantine/hooks'
+import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   IconAlertTriangle, IconArchive, IconBell, IconBrandAws, IconCertificate, IconCloud, IconCloudUpload, IconDatabase,
@@ -15,11 +15,13 @@ import { readiness, readinessKey, useTestOutsideCheck } from '~/lib/controlReadi
 import { PemField } from '~/components/Install'
 import {
   cloudIdentityStatus, controlSettings, organizations, saveControlSettings,
-  testCloudIdentity, testDatabase, testEmail, waitForControlPlane, type AWSIdentity,
+  testCloudIdentity, testDatabase, testEmail, testStorage, waitForControlPlane, type AWSIdentity,
+  orgRecordingStorage, saveOrgRecordingStorage, testOrgRecordingStorage, type OrgRecordingStorage,
   type CloudIdentityCheck, type CloudIdentityStatus, type CloudIdentityUse, type ControlSettings as Settings,
 } from '~/lib/live'
 import { cloudAccountsQuery, AWS_IDENTITY_POLICY } from '~/lib/cloud'
 import { downloadText } from '~/lib/download'
+import { STORAGE_SERVICES, archiveClassesFor, serviceOf, switchService, type StorageService } from '~/lib/objectStorage'
 import { notifyError, notifyOk, notifyWarn } from '~/lib/notify'
 import { FS, INK } from '~/theme'
 
@@ -398,36 +400,74 @@ const ARCHIVE_AFTER = [
 ]
 
 /**
- * Bucket storage classes a recording can be read back from at once. Glacier
- * and Deep Archive are left out on purpose: a recording there cannot be
- * replayed until a restore that takes hours, and the control plane refuses
- * them for the same reason.
+ * What changes when Storage is an organization's own rather than the control
+ * plane's: a setting left at 0 is the control plane's, and the test goes to
+ * the organization's own route.
  */
-const ARCHIVE_CLASSES = [
-  { value: '', label: "Bucket's default" },
-  { value: 'STANDARD_IA', label: 'Standard-IA' },
-  { value: 'ONEZONE_IA', label: 'One Zone-IA' },
-  { value: 'INTELLIGENT_TIERING', label: 'Intelligent-Tiering' },
-  { value: 'GLACIER_IR', label: 'Glacier Instant Retrieval' },
-]
+interface OrgScope {
+  platform: OrgRecordingStorage['platform']
+  test: (st: Settings['storage']) => Promise<void>
+}
 
-function Storage({ s, edit }: CardProps) {
+const daysLabel = (d: number, never: string) => (d < 0 ? never : d === 1 ? '1 day' : `${d} days`)
+
+/** The options with 0 named as the control plane's own setting. */
+function orgOptions(options: { value: string; label: string }[], platformDays: number, never: string) {
+  return options.map((o) => (o.value === '0'
+    ? { value: '0', label: `Control plane's setting (${daysLabel(platformDays, never.toLowerCase())})` }
+    : o))
+}
+
+function Storage({ s, edit, org }: CardProps & { org?: OrgScope }) {
   const st = s.storage
   const set = (patch: Partial<Settings['storage']>) => edit({ storage: { ...st, ...patch } })
+  // Chosen here and kept, because two services can look alike before their
+  // endpoint is typed: an empty S3 endpoint is Amazon's or another's.
+  const [chosen, setChosen] = useState<StorageService>(() => serviceOf(st))
+  const service: StorageService = st.provider === 'azure' ? 'azure' : chosen === 'azure' ? serviceOf(st) : chosen
+  const azure = service === 'azure'
+  const [busy, setBusy] = useState(false)
+  // Four names do not fit across a phone; stacked, each stays whole.
+  const narrow = useMediaQuery('(max-width: 36em)')
   const keep = String(s.agentKeepRecordingsDays ?? 0)
-  const keepOptions = KEEP_ON_SERVERS.some((o) => o.value === keep)
-    ? KEEP_ON_SERVERS
-    : [...KEEP_ON_SERVERS, { value: keep, label: `${keep} days` }]
+  const keepBase = org ? orgOptions(KEEP_ON_SERVERS, org.platform.keepDays, 'For ever') : KEEP_ON_SERVERS
+  const keepOptions = keepBase.some((o) => o.value === keep)
+    ? keepBase
+    : [...keepBase, { value: keep, label: `${keep} days` }]
   const archive = s.archive ?? { afterDays: 0, storageClass: '' }
   const archiveAfter = String(archive.afterDays)
-  const archiveOptions = ARCHIVE_AFTER.some((o) => o.value === archiveAfter)
-    ? ARCHIVE_AFTER
-    : [...ARCHIVE_AFTER, { value: archiveAfter, label: `${archiveAfter} days` }]
+  const archiveBase = org ? orgOptions(ARCHIVE_AFTER, org.platform.archiveDays, 'Never') : ARCHIVE_AFTER
+  const archiveOptions = archiveBase.some((o) => o.value === archiveAfter)
+    ? archiveBase
+    : [...archiveBase, { value: archiveAfter, label: `${archiveAfter} days` }]
   // A class set in the file that this list does not name is still shown as
   // what it is, rather than as the default it is not.
-  const classOptions = ARCHIVE_CLASSES.some((o) => o.value === archive.storageClass)
-    ? ARCHIVE_CLASSES
-    : [...ARCHIVE_CLASSES, { value: archive.storageClass, label: archive.storageClass }]
+  const classes = archiveClassesFor(service)
+  const classOptions = classes.some((o) => o.value === archive.storageClass)
+    ? classes
+    : [...classes, { value: archive.storageClass, label: archive.storageClass }]
+  const pick = (to: StorageService) => {
+    const patch = switchService(st, to, service)
+    setChosen(to)
+    // The secret belongs to the service it was made for; the control plane
+    // will not carry an S3 secret over to Azure either.
+    const secret = (to === 'azure') !== azure ? { secretKey: undefined, secretKeySet: false, accessKey: '' } : {}
+    const storage = { ...st, ...patch, ...secret }
+    // An archive class the new service does not have would be refused on save.
+    const keepClass = archiveClassesFor(to).some((c) => c.value === archive.storageClass)
+    edit({ storage, ...(s.archive && !keepClass ? { archive: { ...archive, storageClass: '' } } : {}) })
+  }
+  const test = async () => {
+    setBusy(true)
+    try {
+      await (org ? org.test(st) : testStorage(st))
+      notifyOk('Storage works', `Argus wrote an object to ${st.bucket || 'argus-recordings'} and read it back.`)
+    } catch (err) {
+      notifyError('Storage did not work', err)
+    } finally {
+      setBusy(false)
+    }
+  }
   return (
     <>
     <SectionCard title="Copies on servers" icon={IconCloudUpload}
@@ -451,8 +491,10 @@ function Storage({ s, edit }: CardProps) {
           </Grid.Col>
           {st.enabled && (
             <Grid.Col span={{ base: 12, sm: 6 }}>
-              <Select size="xs" label="Archive storage class" allowDeselect={false}
-                description="Only classes that open at once, so an archived recording still replays."
+              <Select size="xs" label={azure ? 'Archive access tier' : 'Archive storage class'} allowDeselect={false}
+                description={azure
+                  ? 'Only tiers that open at once, so an archived recording still replays.'
+                  : 'Only classes that open at once, so an archived recording still replays.'}
                 data={classOptions} value={archive.storageClass}
                 onChange={(v) => edit({ archive: { ...archive, storageClass: v ?? '' } })} />
             </Grid.Col>
@@ -461,35 +503,81 @@ function Storage({ s, edit }: CardProps) {
       </SectionCard>
     )}
     <SectionCard title="Object storage" icon={IconCloudUpload}
-      description="An S3-compatible bucket recordings are copied to, so the evidence is not only on this host. Without one, recordings are kept on this host's disk. Give Argus a key that can write and not delete.">
+      description={org
+        ? 'Where this organization\'s recordings and backups are kept: the control plane\'s storage, or a bucket or container of its own on Amazon S3, Cloudflare R2, Azure Blob Storage or any S3-compatible service. Recordings already kept are copied across when this changes, and replay from where they are until they have been. Give Argus a key that can write and not delete.'
+        : 'Where recordings are copied, so the evidence is not only on this host: Amazon S3, Cloudflare R2, Azure Blob Storage or any S3-compatible service. Without one, recordings are kept on this host\'s disk, and are copied in when you turn this on. Give Argus a key that can write and not delete.'}>
       <Stack gap="xs">
-        <Switch size="xs" label="Copy recordings to a bucket" checked={st.enabled}
-          onChange={(e) => set({ enabled: e.currentTarget.checked })} />
+        <Switch size="xs" label={org ? 'Keep recordings in this organization\'s own storage' : 'Copy recordings to object storage'}
+          checked={st.enabled} onChange={(e) => set({ enabled: e.currentTarget.checked })} />
+        {org && !st.enabled && (
+          <Text size={FS.meta} c="dimmed">
+            {org.platform.where === ''
+              ? 'This control plane has no storage of its own: recordings stay on the servers that made them until this organization has storage.'
+              : `Recordings go to the control plane's ${org.platform.where === 'bucket' ? 'object storage' : 'disk'}, kept apart from every other organization's.`}
+          </Text>
+        )}
         {st.enabled && (
-          <Grid gap="xs">
-            <Grid.Col span={{ base: 12, sm: 8 }}>
-              <TextInput size="xs" label="Endpoint" placeholder="s3.amazonaws.com" value={st.endpoint}
-                onChange={(e) => set({ endpoint: e.currentTarget.value })} />
-            </Grid.Col>
-            <Grid.Col span={{ base: 12, sm: 4 }}>
-              <TextInput size="xs" label="Region" value={st.region} onChange={(e) => set({ region: e.currentTarget.value })} />
-            </Grid.Col>
-            <Grid.Col span={{ base: 12, sm: 6 }}>
-              <TextInput size="xs" label="Bucket" value={st.bucket} onChange={(e) => set({ bucket: e.currentTarget.value })} />
-            </Grid.Col>
-            <Grid.Col span={{ base: 12, sm: 6 }}>
-              <Switch size="xs" mt={22} label="Use HTTPS" checked={st.useSsl}
-                onChange={(e) => set({ useSsl: e.currentTarget.checked })} />
-            </Grid.Col>
-            <Grid.Col span={{ base: 12, sm: 6 }}>
-              <TextInput size="xs" label="Access key" value={st.accessKey} autoComplete="off"
-                onChange={(e) => set({ accessKey: e.currentTarget.value })} />
-            </Grid.Col>
-            <Grid.Col span={{ base: 12, sm: 6 }}>
-              <SecretInput label="Secret key" set={st.secretKeySet} value={st.secretKey}
-                onChange={(v) => set({ secretKey: v })} />
-            </Grid.Col>
-          </Grid>
+          <>
+          <SegmentedControl size="xs" data={STORAGE_SERVICES} value={service}
+            orientation={narrow ? 'vertical' : 'horizontal'} fullWidth={narrow}
+            onChange={(v) => pick(v as StorageService)} aria-label="Storage service" />
+          {azure ? (
+            <Grid gap="xs">
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <TextInput size="xs" label="Storage account" value={st.accessKey} autoComplete="off"
+                  onChange={(e) => set({ accessKey: e.currentTarget.value })} />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <SecretInput label="Account key" set={st.secretKeySet} value={st.secretKey}
+                  onChange={(v) => set({ secretKey: v })} />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <TextInput size="xs" label="Container" placeholder="argus-recordings" value={st.bucket}
+                  description="Lowercase letters, digits and hyphens. Made if it is not there."
+                  onChange={(e) => set({ bucket: e.currentTarget.value })} />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <TextInput size="xs" label="Blob endpoint"
+                  placeholder={`https://${st.accessKey || '<account>'}.blob.core.windows.net`}
+                  description="Leave empty for Azure's public cloud."
+                  value={st.endpoint} onChange={(e) => set({ endpoint: e.currentTarget.value })} />
+              </Grid.Col>
+            </Grid>
+          ) : (
+            <Grid gap="xs">
+              <Grid.Col span={{ base: 12, sm: 8 }}>
+                <TextInput size="xs" label="Endpoint" value={st.endpoint}
+                  placeholder={service === 'r2' ? '<account id>.r2.cloudflarestorage.com'
+                    : service === 'aws' ? 's3.amazonaws.com' : 'minio.example.com:9000'}
+                  description={service === 'r2' ? 'From the bucket\'s settings in Cloudflare: S3 API.' : undefined}
+                  onChange={(e) => set({ endpoint: e.currentTarget.value })} />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 4 }}>
+                <TextInput size="xs" label="Region" value={st.region}
+                  placeholder={service === 'aws' ? 'us-east-1' : service === 'r2' ? 'auto' : ''}
+                  onChange={(e) => set({ region: e.currentTarget.value })} />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <TextInput size="xs" label="Bucket" value={st.bucket} onChange={(e) => set({ bucket: e.currentTarget.value })} />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <Switch size="xs" mt={22} label="Use HTTPS" checked={st.useSsl}
+                  onChange={(e) => set({ useSsl: e.currentTarget.checked })} />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <TextInput size="xs" label={service === 'r2' ? 'Access key ID' : 'Access key'} value={st.accessKey} autoComplete="off"
+                  onChange={(e) => set({ accessKey: e.currentTarget.value })} />
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <SecretInput label={service === 'r2' ? 'Secret access key' : 'Secret key'} set={st.secretKeySet} value={st.secretKey}
+                  onChange={(v) => set({ secretKey: v })} />
+              </Grid.Col>
+            </Grid>
+          )}
+          <Group justify="flex-end">
+            <Button size="xs" variant="light" loading={busy} onClick={() => void test()}>Test connection</Button>
+          </Group>
+          </>
         )}
       </Stack>
     </SectionCard>
@@ -1414,5 +1502,91 @@ function SecretInput({ label, description, set, value, onChange, required, first
       withAsterisk={required} {...(first ? { 'data-first-field': true } : {})}
       placeholder={set ? 'Set. Type to replace it.' : 'Not set'}
       value={value ?? ''} onChange={(e) => onChange(e.currentTarget.value || undefined)} />
+  )
+}
+
+const orgStorageKey = ['org-recording-storage'] as const
+
+/**
+ * Settings › Storage outside the default organization: the organization's
+ * own destination, archive and keep-on-servers, saved on their own. The
+ * control plane's are the default organization's to change and are not shown.
+ */
+export function OrgStorage() {
+  const qc = useQueryClient()
+  const { data, error, isPending } = useQuery({ queryKey: orgStorageKey, queryFn: orgRecordingStorage })
+  type Draft = Pick<OrgRecordingStorage, 'storage' | 'archive' | 'agentKeepRecordingsDays'>
+  const [draft, setDraft] = useState<Draft | null>(null)
+  const [saving, setSaving] = useState(false)
+  if (error) {
+    return (
+      <Alert color="amber" icon={<IconAlertTriangle size={16} />} title="Recording storage">
+        <Text size={FS.body}>{error instanceof Error ? error.message : 'Could not read it.'}</Text>
+      </Alert>
+    )
+  }
+  if (isPending || !data) return <Text size={FS.body} c="dimmed">Loading…</Text>
+  const cur: Draft = draft ?? { storage: data.storage, archive: data.archive, agentKeepRecordingsDays: data.agentKeepRecordingsDays }
+  // Storage edits a Settings; only the three fields it touches are kept.
+  const s = { ...cur, archive: cur.archive } as unknown as Settings
+  const edit = (patch: Partial<Settings>) => setDraft({
+    storage: patch.storage ?? cur.storage,
+    archive: patch.archive ?? cur.archive,
+    agentKeepRecordingsDays: patch.agentKeepRecordingsDays ?? cur.agentKeepRecordingsDays,
+  })
+  const save = async () => {
+    if (!draft) return
+    setSaving(true)
+    try {
+      const next = await saveOrgRecordingStorage(draft)
+      qc.setQueryData(orgStorageKey, next)
+      setDraft(null)
+      notifyOk('Recording storage saved', next.storage.enabled
+        ? `This organization's recordings now go to ${next.storage.bucket}.`
+        : 'This organization\'s recordings now go to the control plane\'s storage.')
+    } catch (err) {
+      notifyError('Recording storage not saved', err)
+    } finally {
+      setSaving(false)
+    }
+  }
+  const copy = data.copy
+  return (
+    <Stack gap="sm">
+      {draft && (
+        <Alert color="amber" variant="light" p="xs">
+          <Group justify="space-between" wrap="wrap" gap="xs">
+            <Text size={FS.body}>Unsaved changes to where this organization's recordings are kept.</Text>
+            <Group gap="xs">
+              <Button variant="subtle" color="slate" size="xs" onClick={() => setDraft(null)} disabled={saving}>
+                Discard
+              </Button>
+              <Button size="xs" loading={saving} onClick={() => void save()}>Save</Button>
+            </Group>
+          </Group>
+        </Alert>
+      )}
+      {data.error && (
+        <Alert color="rose" icon={<IconAlertTriangle size={16} />} title="The saved storage cannot be used" p="xs">
+          <Text size={FS.body}>{data.error}</Text>
+        </Alert>
+      )}
+      {(data.moving > 0 || (copy && !copy.done)) && (
+        <Alert color="blue" icon={<IconCloudUpload size={16} />} title="Copying recordings across" p="xs">
+          <Text size={FS.body}>
+            {copy
+              ? `${copy.copied} copied${copy.failed > 0 ? `, ${copy.failed} to try again` : ''} from ${copy.from}. `
+              : 'Recordings kept where they went before are being copied across. '}
+            Until they are, they replay from where they are.
+            {copy?.lastError ? ` Last error: ${copy.lastError}` : ''}
+          </Text>
+        </Alert>
+      )}
+      <Storage s={s} edit={edit} org={{ platform: data.platform, test: testOrgRecordingStorage }} />
+      <Text size={FS.micro} c="dimmed">
+        These are this organization's own. A new destination is written to and read back before it is saved,
+        and its key is kept sealed, never shown again.
+      </Text>
+    </Stack>
   )
 }

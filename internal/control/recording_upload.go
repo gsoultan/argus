@@ -99,7 +99,7 @@ func (a *API) putRecording(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "stored", "key": *sess.RecordingKey})
 		return
 	}
-	if a.recordings == nil && a.storeRecording == nil {
+	if a.storeRecording == nil && a.recordingsFor(r.Context()) == nil {
 		writeErr(w, http.StatusServiceUnavailable, "recording storage is not configured")
 		return
 	}

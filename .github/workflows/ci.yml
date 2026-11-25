@@ -33,6 +33,12 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # Azure Blob Storage as Microsoft publishes it for development: the
+      # Azure client, and an organization keeping its recordings in a
+      # container of its own, are tested against it rather than skipped.
+      azurite:
+        image: mcr.microsoft.com/azure-storage/azurite:3.33.0
+        ports: ["10000:10000"]
 
     steps:
       - uses: actions/checkout@v4
@@ -73,6 +79,7 @@ jobs:
       - name: Test
         env:
           ARGUS_TEST_DATABASE_URL: postgres://argus:argus@localhost:5433/argus?sslmode=disable
+          ARGUS_TEST_AZURITE: http://127.0.0.1:10000/devstoreaccount1
         # -race is the point of running these in CI: the concurrency tests
         # around ticket redemption and audit chaining are exactly where a data
         # race would hide.

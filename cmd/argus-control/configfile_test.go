@@ -184,6 +184,7 @@ func TestSettingsRefuseAnArchiveThatCannotBeReplayed(t *testing.T) {
 	for _, ar := range []control.RecordingArchiveSettings{
 		{AfterDays: 30, StorageClass: "DEEP_ARCHIVE"},
 		{AfterDays: 30, StorageClass: "GLACIER"},
+		{AfterDays: 30, StorageClass: "Archive"}, // Azure's, and as slow to read as Glacier
 		{AfterDays: -2},
 		{AfterDays: 4000},
 	} {

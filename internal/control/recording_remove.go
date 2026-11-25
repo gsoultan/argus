@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/gsoultan/argus/internal/storage"
 )
 
 /*
@@ -101,11 +99,11 @@ func (a *API) deleteRecording(w http.ResponseWriter, r *http.Request) {
 
 	remove := a.removeObject
 	if remove == nil {
-		if a.recordings == nil {
+		store := a.scopedRecordings(r.Context())
+		if store == nil {
 			writeErr(w, http.StatusServiceUnavailable, "recording storage is not configured")
 			return
 		}
-		store := storage.ForTenant(a.recordings, tenantIDOf(r.Context()))
 		if !store.Owns(key) {
 			writeErr(w, http.StatusNotFound, "session not found")
 			return

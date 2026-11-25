@@ -72,10 +72,17 @@ type API struct {
 
 	// storage is the object store, when one is configured. Only it can hand
 	// out a direct download link.
-	storage *storage.Client
+	storage storage.Bucket
 	// recordings is where shipped recordings are kept and read back from:
 	// storage when it is configured, a directory on this host otherwise.
 	recordings storage.Store
+	// hostCopy is the copy of recordings kept on this host into storage,
+	// when a bucket was configured after some were made.
+	hostCopy recordingsCopy
+	// orgStorage is each organization's own recording storage, and
+	// orgCopies the copies out of where its recordings were kept before.
+	orgStorage orgStores
+	orgCopies  orgCopy
 	// storeRecording replaces recordings.Upload for a shipped recording. Nil
 	// uses recordings; set by tests that have no object store.
 	storeRecording recordingUploader
@@ -399,6 +406,9 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/checks/{id}/group", a.putCheckGroupOf)
 	mux.HandleFunc("GET /api/v1/checks/{id}/viewers", a.getViewers("check"))
 	mux.HandleFunc("PUT /api/v1/checks/{id}/viewers", a.putViewers("check"))
+	mux.HandleFunc("GET /api/v1/recording-storage", a.getOrgStorage)
+	mux.HandleFunc("PUT /api/v1/recording-storage", a.putOrgStorage)
+	mux.HandleFunc("POST /api/v1/recording-storage/test", a.postOrgStorageTest)
 	mux.HandleFunc("GET /api/v1/telegram", a.getTelegram)
 	mux.HandleFunc("POST /api/v1/telegram/bots", a.postTelegramBot)
 	mux.HandleFunc("PUT /api/v1/telegram/bots/{id}", a.putTelegramBot)
@@ -548,6 +558,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/settings", a.getSettings)
 	mux.HandleFunc("PUT /api/v1/settings", a.putSettings)
 	mux.HandleFunc("POST /api/v1/settings/test-database", a.postTestDatabase)
+	mux.HandleFunc("POST /api/v1/settings/test-storage", a.postTestStorage)
 	mux.HandleFunc("POST /api/v1/settings/test-email", a.postTestEmail)
 	mux.HandleFunc("POST /api/v1/settings/test-cloud/{provider}", a.postTestCloud)
 	mux.HandleFunc("GET /api/v1/settings/cloud-identities/{provider}", a.getCloudIdentityStatus)
@@ -1175,7 +1186,7 @@ func (a *API) postHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// zstd, packed or not; an agent sends one plain to a control plane
 		// that does not say so.
 		"recording_encodings": []string{"zstd", recorder.EncodingPacked}}
-	switch k := a.AgentKeepRecordings; {
+	switch k := a.keepRecordingsFor(r.Context()); {
 	case k < 0:
 		reply["keep_recordings_hours"] = 0
 	case k > 0:

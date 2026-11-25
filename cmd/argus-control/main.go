@@ -476,7 +476,8 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	var storageClient *storage.Client
+	// A nil interface when there is no bucket; see storage.Open.
+	var storageClient storage.Bucket
 
 	store, err := control.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -495,16 +496,15 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	go sealAuthenticatorSecrets(pctx, store, log)
 
 	if cfg.Storage != nil {
-		sc, err := storage.New(*cfg.Storage, log)
+		sc, err := storage.Open(*cfg.Storage, log)
 		if err != nil {
-			return err
+			return fmt.Errorf("object storage: %w", err)
 		}
 		if sc != nil {
 			if err := sc.EnsureBucket(ctx); err != nil {
 				return fmt.Errorf("object storage: %w", err)
 			}
-			log.Info("serving recordings from object storage", "bucket", cfg.Storage.Bucket)
-			defer func() { _ = sc }()
+			log.Info("serving recordings from object storage", "bucket", sc.Name())
 			storageClient = sc
 		}
 	}
@@ -581,9 +581,8 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 		}
 	}
 	api.AgentKeepRecordings = agentKeepRecordings(cfg.AgentKeepRecordingsDays)
-	if !control.ValidArchiveStorageClass(cfg.RecordingsArchiveStorageClass) {
-		return fmt.Errorf("recordings_archive_storage_class is %q; use one of %s",
-			cfg.RecordingsArchiveStorageClass, strings.Join(control.ArchiveStorageClasses[1:], ", "))
+	if err := checkArchiveClass(cfg.Storage, cfg.RecordingsArchiveStorageClass); err != nil {
+		return err
 	}
 	api.ArchiveAfter = archiveAfter(cfg.RecordingsArchiveAfterDays)
 	api.ArchiveStorageClass = cfg.RecordingsArchiveStorageClass
@@ -657,6 +656,13 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	}
 	api.SetThrottles(throttles)
 	api.SetStorage(storageClient)
+	if storageClient != nil {
+		// Recordings this host kept before the bucket was configured are
+		// copied into it, and replay from here until they are.
+		if dir, ok := localRecordings(cfg, loc.Path); ok {
+			api.CopyRecordingsFromHost(ctx, storageClient, dir, 15*time.Minute)
+		}
+	}
 	if storageClient == nil {
 		// No bucket: keep what agents ship on this host, so a session can
 		// still be replayed from the console. Without this, an install
@@ -672,6 +678,7 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	}
 	// After the store is set: the archive reads and writes it.
 	go api.RunRecordingArchive(ctx, time.Hour)
+	go api.RunOrgRecordingCopies(ctx, 15*time.Minute)
 	api.SetCloudIdentities("aws", cfg.Cloud.cloudIdentities())
 	api.SetCloudIdentities("gcp", cfg.Cloud.gcpCloudIdentities())
 	api.SetCloudIdentities("azure", cfg.Cloud.azureCloudIdentities())

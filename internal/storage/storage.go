@@ -26,8 +26,20 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
-// Config describes an S3-compatible endpoint.
+// Config describes where recordings are copied to.
+//
+// For S3 and every S3-compatible service (Cloudflare R2, MinIO, ...),
+// Endpoint is the service's host, AccessKey and SecretKey its key pair and
+// Bucket the bucket. Cloudflare R2's endpoint is
+// <account id>.r2.cloudflarestorage.com, in region "auto".
+//
+// For Azure Blob Storage, AccessKey is the storage account's name, SecretKey
+// one of its access keys and Bucket the container. Endpoint may be left out:
+// it is then https://<account>.blob.core.windows.net. Region and UseSSL do
+// not apply to an endpoint that names its own scheme.
 type Config struct {
+	// Provider is "s3" or "azure". Empty is S3.
+	Provider  string `yaml:"provider,omitempty"`
 	Endpoint  string `yaml:"endpoint,omitempty"`
 	AccessKey string `yaml:"access_key,omitempty"`
 	SecretKey string `yaml:"secret_key,omitempty"`
@@ -46,7 +58,7 @@ type Client struct {
 // ErrNotConfigured means no object storage is set up, so recordings stay local.
 var ErrNotConfigured = errors.New("object storage is not configured")
 
-// New builds a client. A zero Endpoint returns nil, which every caller treats
+// New builds an S3 client. A zero Endpoint returns nil, which every caller treats
 // as "keep recordings local" rather than as an error — object storage is a
 // hardening step, not a prerequisite for recording.
 func New(cfg Config, log *slog.Logger) (*Client, error) {
@@ -59,6 +71,7 @@ func New(cfg Config, log *slog.Logger) (*Client, error) {
 	if cfg.Bucket == "" {
 		cfg.Bucket = "argus-recordings"
 	}
+	cfg = s3Defaults(cfg)
 
 	mc, err := minio.New(cfg.Endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
@@ -70,6 +83,26 @@ func New(cfg Config, log *slog.Logger) (*Client, error) {
 	}
 	return &Client{mc: mc, bucket: cfg.Bucket, log: log}, nil
 }
+
+// s3Defaults is cfg with what an operator commonly pastes made into what
+// the client takes: an endpoint copied with its https:// says to use TLS,
+// and Cloudflare R2 has the single region "auto" -- left empty, the client
+// would ask R2 where the bucket is before every first request.
+func s3Defaults(cfg Config) Config {
+	if u, err := url.Parse(cfg.Endpoint); err == nil && u.Host != "" &&
+		(u.Scheme == "https" || u.Scheme == "http") {
+		cfg.Endpoint = u.Host
+		cfg.UseSSL = u.Scheme == "https"
+	}
+	cfg.Endpoint = strings.TrimSuffix(cfg.Endpoint, "/")
+	if cfg.Region == "" && strings.HasSuffix(strings.ToLower(cfg.Endpoint), ".r2.cloudflarestorage.com") {
+		cfg.Region = "auto"
+	}
+	return cfg
+}
+
+// Name is the bucket.
+func (c *Client) Name() string { return c.bucket }
 
 // EnsureBucket creates the bucket if it does not exist.
 func (c *Client) EnsureBucket(ctx context.Context) error {
@@ -293,6 +326,9 @@ func (c *Client) List(ctx context.Context) ([]Object, error) {
 	for info := range c.mc.ListObjects(ctx, c.bucket, minio.ListObjectsOptions{Recursive: true}) {
 		if info.Err != nil {
 			return nil, fmt.Errorf("list %s: %w", c.bucket, info.Err)
+		}
+		if isInternal(info.Key) {
+			continue
 		}
 		out = append(out, Object{Key: info.Key, Size: info.Size})
 	}

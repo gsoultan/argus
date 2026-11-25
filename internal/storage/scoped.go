@@ -160,3 +160,23 @@ func (s *Scoped) List(ctx context.Context) ([]Object, error) {
 	}
 	return out, nil
 }
+
+// UploadKey stores a file at key, which must already be the organization's
+// own, as a copy from another store names it.
+func (s *Scoped) UploadKey(ctx context.Context, path, key, sessionID, chainHead string,
+	startedAt time.Time) (string, error) {
+	if s == nil || s.inner == nil {
+		return "", ErrNotConfigured
+	}
+	if !s.Owns(key) {
+		return "", fmt.Errorf("object %q is not this organization's", key)
+	}
+	ku, ok := s.inner.(keyUploader)
+	if !ok {
+		return "", fmt.Errorf("%T cannot store an object under a key", s.inner)
+	}
+	return ku.UploadKey(ctx, path, key, sessionID, chainHead, startedAt)
+}
+
+// Inner is the store s scopes.
+func (s *Scoped) Inner() Store { return s.inner }
