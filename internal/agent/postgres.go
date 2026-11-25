@@ -67,6 +67,9 @@ type PostgresConfig struct {
 	// PGRoot is where pgbouncer.ini is looked for, for a Postgres on another
 	// server (pgremote.go); empty is "/".
 	PGRoot string
+	// PoolerConsole reads a PgBouncer's admin console for the Performance
+	// panel; nil runs the pgbouncer-stats helper as PgBouncer's account.
+	PoolerConsole poolerConsoleFunc
 	// Executable and StateDir run and remember the server's firewall rules
 	// (firewall.go); Firewall and Restart stand in for the firewall and for
 	// restarting Postgres's service, in tests.
@@ -1149,6 +1152,9 @@ func (s *pgSession) adminOp(ctx context.Context, req tunnel.PGRequest) error {
 	}
 	if op.Kind == tunnel.AdminNetwork || op.Kind == tunnel.AdminNetworkSet {
 		return s.network(ctx, req)
+	}
+	if op.Kind == tunnel.AdminPoolerStats {
+		return s.poolerStats(ctx, req)
 	}
 	// A role's password becomes a SCRAM verifier here, before it is
 	// recorded, built or sent anywhere; only the verifier reaches the helper.

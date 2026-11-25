@@ -344,3 +344,35 @@ role and grant forms. Below DBA, `RolesPanel` is only the labelled gate.
 - Tests: `TestPostgresRolesAndGrants` (agent, real Postgres, reproduces the
   warning-only GRANT first), `TestPostgresRoleChangeWaits` (control),
   `databaseRoles.test.tsx`.
+
+## Performance analysis (2026-11)
+
+Manage › Performance (Postgres only; `postgresOnly` in `MANAGE`) says why a
+database is heavy and what to change. `web/src/lib/pgPerformance.ts` is pure
+and tested: `PG_PERF_SQL` (catalog reads: pg_stat_database, pg_stat_activity
+grouped, pg_settings, pg_stat_statements with the pre-13 column names,
+pg_stat_user_tables/indexes, unindexed foreign keys, slots, checkpoints with
+pg_stat_checkpointer from 17), `parse`, then `analyzePostgres` → findings
+(severity, area, why, evidence, fix, optional SQL). `DatabasePerformance.tsx`
+gathers with `collect()` (recorded SELECTs as the person's role, so Postgres
+hides other roles' query text below DBA) and never runs a fix: "Open in
+editor" puts it in a tab, where the guard, checks and approvals apply.
+
+- Rules stay quiet on small numbers and the report states how long the
+  counters cover (stats_reset or uptime). One-off statements (calls < 5) are
+  never "the heavy query". A duplicate index is reported once, not also as
+  unused; an index behind a constraint is never offered for dropping.
+- The index suggestion is a guess from the statement text
+  (`statementsOn` + `filterColumns`) and says to confirm with Explain.
+  Explain of a pg_stat_statements query uses `EXPLAIN (GENERIC_PLAN)` on 16+.
+- **PgBouncer** is admin op `pooler.stats` (`tunnel/pgperf.go`, read-only,
+  not recorded, DBA only). The agent (`pgbouncer_stats.go`) picks the
+  PgBouncer the entry's PoolPort (or Port) names, sends its tuning settings
+  (only `tunnel.PoolerSettingKeys`, never auth_file/auth_query/passwords),
+  and runs `argus-agent pgbouncer-stats` as the account PgBouncer runs as
+  (from /proc/<pid>/status), which opens the admin console as user
+  `pgbouncer` over the unix socket with no password -- PgBouncer allows
+  that to a process of its own uid -- and runs SHOW VERSION, CONFIG, POOLS,
+  STATS, DATABASES only. No socket, a container, root, or a refusal: the
+  answer says why in `liveError` and keeps the pgbouncer.ini settings.
+  `TestReadPoolerConsole` runs a real PgBouncer when it is on PATH.
