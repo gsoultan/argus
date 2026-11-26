@@ -34,6 +34,7 @@ import { NetworkPanel } from '~/components/DatabaseNetwork'
 import { ReplicationPanel } from '~/components/DatabaseReplication'
 import { BackupsPanel } from '~/components/DatabaseBackups'
 import { PerformancePanel } from '~/components/DatabasePerformance'
+import { MySQLPerformancePanel } from '~/components/DatabaseMySQLPerformance'
 import { ExplainView, planSummary, type PlanRun } from '~/components/ExplainView'
 import { SchemaDiagram } from '~/components/SchemaDiagram'
 import { WriteCheckDialog, dropFactsSQL, type PGCheck, type WriteCheckState } from '~/components/WriteCheck'
@@ -277,7 +278,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   // Statements the administration panels run: collected whole, by request
   // id, without touching the editor's result.
   const collectors = useRef(new Map<number, Collected>())
-  const [panel, setPanel] = useState<Panel>((dialect === 'mssql' && MSSQL_MANAGE.some((m) => m.key === initialPanel)) || (initialPanel === 'network' && dialect !== 'mssql') || (!notPg && (initialPanel === 'changes' || initialPanel === 'trash' || initialPanel === 'backups' || initialPanel === 'performance')) ? initialPanel as Panel : 'query')
+  const [panel, setPanel] = useState<Panel>((dialect === 'mssql' && MSSQL_MANAGE.some((m) => m.key === initialPanel)) || (initialPanel === 'network' && dialect !== 'mssql') || (!notPg && (initialPanel === 'changes' || initialPanel === 'trash' || initialPanel === 'backups' || initialPanel === 'performance')) || (dialect === 'mysql' && initialPanel === 'performance') ? initialPanel as Panel : 'query')
   const [view, setView] = useState<'query' | 'diagram'>('query')
   // The three tabs under the header. Manage is any administration panel;
   // it reopens the one last looked at.
@@ -1453,6 +1454,10 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
           <PerformancePanel {...adminProps} database={database.dbname} viaPooler={ready?.via === 'pgbouncer'}
             onOpenSql={(text, name) => { if (openTab({ sql: text, name })) { setPanel('query'); setView('query') } }} />
         )}
+        {view === 'query' && panel === 'performance' && dialect === 'mysql' && (
+          <MySQLPerformancePanel {...adminProps} database={database.dbname}
+            onOpenSql={(text, name) => { if (openTab({ sql: text, name })) { setPanel('query'); setView('query') } }} />
+        )}
         {view === 'query' && dialect === 'mssql' && panel in MSSQL_PANELS && (() => {
           const P = MSSQL_PANELS[panel as keyof typeof MSSQL_PANELS]
           return level === 'dba'
@@ -1926,9 +1931,10 @@ function WorkspaceHeader({ database, narrow, level, status, version, viaPooler, 
   )
 }
 
-const MANAGE: { key: ManagePanel; label: string; icon: typeof IconTable; hint: string; dba?: boolean; group: 'care' | 'dba'; postgresOnly?: boolean }[] = [
+const MANAGE: { key: ManagePanel; label: string; icon: typeof IconTable; hint: string; dba?: boolean; group: 'care' | 'dba'; only?: Dialect }[] = [
   { key: 'activity', label: 'Activity & locks', icon: IconActivity, hint: 'What is running on this database now, and what waits on what', group: 'care' },
-  { key: 'performance', label: 'Performance', icon: IconGauge, hint: 'Why this database is slow or heavy, and what to change, PgBouncer included', group: 'care', postgresOnly: true },
+  { key: 'performance', label: 'Performance', icon: IconGauge, hint: 'Why this database is slow or heavy, and what to change, PgBouncer included', group: 'care', only: 'postgres' },
+  { key: 'performance', label: 'Performance', icon: IconGauge, hint: 'Why this database is slow or heavy, and what to change: costly queries, indexes, InnoDB settings', dba: true, group: 'care', only: 'mysql' },
   { key: 'backups', label: 'Backups', icon: IconArchive, hint: 'Backups of this database, and putting one back', group: 'care' },
   { key: 'changes', label: 'Data changes', icon: IconHistory, hint: 'Who inserted, updated or deleted what, from the console', group: 'care' },
   { key: 'trash', label: 'Trash', icon: IconTrash, hint: 'Deleted rows, dropped tables and schemas, kept so they can be put back', group: 'care' },
@@ -1966,7 +1972,7 @@ function NeedsDBA({ what, onAskForAccess }: { what: string; onAskForAccess?: () 
 function ManageNav({ panel, level, dialect, narrow, onPick }: {
   panel: ManagePanel; level: DBLevel | ''; dialect: Dialect; narrow: boolean; onPick: (p: ManagePanel) => void
 }) {
-  const items = dialect === 'mssql' ? MSSQL_MANAGE : MANAGE.filter((m) => !m.postgresOnly || dialect === 'postgres')
+  const items = dialect === 'mssql' ? MSSQL_MANAGE : MANAGE.filter((m) => !m.only || m.only === dialect)
   if (narrow) {
     return (
       <Group gap={6} px="sm" py={8} wrap="nowrap" role="tablist" aria-label="Manage"

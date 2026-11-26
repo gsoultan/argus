@@ -432,7 +432,8 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 					continue
 				}
 				network := req.Admin != nil && (req.Admin.Kind == tunnel.AdminNetwork || req.Admin.Kind == tunnel.AdminNetworkSet)
-				if req.Op == "admin" && !pg && !(network && db.Engine == tunnel.EngineMySQL) {
+				mysqlPerf := req.Admin != nil && req.Admin.Kind == tunnel.AdminMySQLPerf
+				if req.Op == "admin" && !pg && !((network || mysqlPerf) && db.Engine == tunnel.EngineMySQL) {
 					ans, _ := json.Marshal(tunnel.PGAnswer{ID: req.ID, Type: "error",
 						Error: "extensions and replication are Postgres's"})
 					_ = sendJSON(pgBrowserMessage{Type: "ans", Ans: ans})
@@ -445,6 +446,9 @@ func (a *API) relayPostgres(ctx context.Context, conn *websocket.Conn, email str
 					what := "extensions and replication are"
 					if network {
 						what = "changing which machines can connect is"
+					}
+					if mysqlPerf {
+						what = "reading the server's performance statistics is"
 					}
 					ans, _ := json.Marshal(tunnel.PGAnswer{ID: req.ID, Type: "error", Code: "42501",
 						Error: what + " DBA work; this session is at " + level})

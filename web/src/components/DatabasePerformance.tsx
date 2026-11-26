@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ActionIcon, Badge, Box, Button, Code, Group, Loader, Paper, ScrollArea, SegmentedControl, Stack, Table, Text, Tooltip,
 } from '@mantine/core'
@@ -93,7 +93,6 @@ export function PerformancePanel(props: PerformancePanelProps) {
   const [loaded, setLoaded] = useState<Loaded | null>(null)
   const [error, setError] = useState<Collected['error'] | null>(null)
   const [busy, setBusy] = useState(false)
-  const [filter, setFilter] = useState('all')
   const alive = useRef(true)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   const propsRef = useRef(props)
@@ -108,11 +107,6 @@ export function PerformancePanel(props: PerformancePanelProps) {
     setLoaded({ facts: r.facts, report: analyzePostgres(r.facts), asOf: new Date() })
   }, [])
   useEffect(() => { void refresh() }, [refresh])
-
-  const shown = useMemo(() => {
-    const f = FILTERS.find((x) => x.value === filter)!
-    return (loaded?.report.findings ?? []).filter((x) => f.areas.length === 0 || f.areas.includes(x.area))
-  }, [loaded, filter])
 
   return (
     <PanelFrame title="Performance" narrow={narrow} onBack={onBack}
@@ -137,25 +131,8 @@ export function PerformancePanel(props: PerformancePanelProps) {
         <ScrollArea style={{ flex: 1 }} type="auto">
           <Stack gap="md" p="md" maw={1100}>
             <Summary loaded={loaded} level={level} />
-            <Box>
-              <Group justify="space-between" mb={6} wrap="wrap" gap="xs">
-                <Text fw={650} size={FS.body}>What makes it heavy</Text>
-                {!narrow && <SegmentedControl size="xs" value={filter} onChange={setFilter} data={FILTERS.map(({ value, label }) => ({ value, label }))} />}
-              </Group>
-              {shown.length === 0 ? (
-                <Paper withBorder p="sm" radius="md">
-                  <Text size={FS.body} c={INK.verified} fw={600}>Nothing stands out{filter !== 'all' ? ' here' : ''}.</Text>
-                  <Text size={FS.meta} c="dimmed" mt={2}>
-                    The checks found no problem in the numbers Postgres keeps{loaded.facts.statements === null ? ' (queries could not be checked, see above)' : ''}.
-                    They cover {duration(loaded.report.countingS)} of activity.
-                  </Text>
-                </Paper>
-              ) : (
-                <Stack gap="xs">
-                  {shown.map((f) => <FindingCard key={f.id} f={f} onOpen={() => onOpenSql(f.sql!, f.title.slice(0, 40))} />)}
-                </Stack>
-              )}
-            </Box>
+            <FindingsList findings={loaded.report.findings} narrow={narrow} onOpenSql={onOpenSql} countingS={loaded.report.countingS}
+              engine="Postgres" connLabel="Connections & PgBouncer" partial={loaded.facts.statements === null} />
             {loaded.facts.statements && loaded.facts.statements.length > 0 && (
               <CostliestQueries facts={loaded.facts} narrow={narrow} onOpenSql={onOpenSql} />
             )}
@@ -167,7 +144,39 @@ export function PerformancePanel(props: PerformancePanelProps) {
   )
 }
 
-function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
+/** The findings, filtered by area: shared by every engine's panel. */
+export function FindingsList({ findings, narrow, onOpenSql, countingS, engine, connLabel, partial }: {
+  findings: Finding[]; narrow: boolean; onOpenSql: (sql: string, name: string) => void; countingS: number
+  engine: string; connLabel: string; partial?: boolean
+}) {
+  const [filter, setFilter] = useState('all')
+  const filters = FILTERS.map((f) => (f.value === 'conn' ? { ...f, label: connLabel } : f))
+  const areas = filters.find((x) => x.value === filter)?.areas ?? []
+  const shown = findings.filter((x) => areas.length === 0 || areas.includes(x.area))
+  return (
+    <Box>
+      <Group justify="space-between" mb={6} wrap="wrap" gap="xs">
+        <Text fw={650} size={FS.body}>What makes it heavy</Text>
+        {!narrow && <SegmentedControl size="xs" value={filter} onChange={setFilter} data={filters.map(({ value, label }) => ({ value, label }))} />}
+      </Group>
+      {shown.length === 0 ? (
+        <Paper withBorder p="sm" radius="md">
+          <Text size={FS.body} c={INK.verified} fw={600}>Nothing stands out{filter !== 'all' ? ' here' : ''}.</Text>
+          <Text size={FS.meta} c="dimmed" mt={2}>
+            The checks found no problem in the numbers {engine} keeps{partial ? ' (queries could not be checked, see above)' : ''}.
+            They cover {duration(countingS)} of activity.
+          </Text>
+        </Paper>
+      ) : (
+        <Stack gap="xs">
+          {shown.map((f) => <FindingCard key={f.id} f={f} onOpen={() => onOpenSql(f.sql!, f.title.slice(0, 40))} />)}
+        </Stack>
+      )}
+    </Box>
+  )
+}
+
+export function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
     <Box style={{ minWidth: 110 }}>
       <Text size={FS.micro} c="dimmed">{label}</Text>
