@@ -64,3 +64,28 @@ roles, `MSSQLWrites`), `internal/agent/mssql.go` (sessions, go-mssqldb),
 - Create database (PR 4a): dbcreate service takes `mssql:{collation,recovery}`; plan is `CREATE DATABASE [n] COLLATE c` then optional `ALTER DATABASE [n] SET RECOVERY r`. Agent `createMSSQL` checks name free and collation in sys.fn_helpcollations(); options list collations + model's recovery. Web: CreateOnServer mssql fields; the "Create new" toggle is now shown for every engine.
 - Backup/restore (PR 4b): GrantBackup gained Engine+ConfigPath; mssql jobs = dump, restore, catalog, prune, drop, undo (no test/checks). Agent `backup_mssql.go`: BACKUP DATABASE ... COPY_ONLY, CHECKSUM (+COMPRESSION unless Express) to a staging folder (admin file `backup_dir` / `backup_dir_local`, default InstanceDefaultBackupPath), RESTORE VERIFYONLY, encrypt to .argusdump, read back, delete .bak. Restore decrypts to staging (chown like folder), FILELISTONLY, WITH MOVE to `<target>_<id8>_<fileid>.mdf/ndf/ldf`. Replace renames via SINGLE_USER + MODIFY NAME. Control: `backupEngines` = postgres+mssql; test-restore routes `withPostgres`; schedule forces TestEvery off for mssql. Live test needs container volume: ARGUS_TEST_MSSQL_BACKUP_DIR=/tmp/argus-msbak:/var/opt/mssql/argus-backup (dir chowned 10001).
 - Replication (PR 5): `tunnel/mssqlrepl.go` kinds `ms.replication` (read), `ms.ag.add/remove/suspend/resume/failover`, `ms.repl.distributor/publish/pub.add/pub.drop/article.add/article.drop/sub.add/sub.drop/snapshot`, `ms.ls.backup/copy/restore`; spec on `PGAdminOp.MSRepl`. Texts keep placeholders `{admin login}`, `{admin password}`, `{subscriber password}`; agent `mssql_repl.go` fills them only at run time, so recordings hold no password. AG DDL runs from `USE master`. Dropping the last publication / publish off stops the Log Reader Agent job first (error 18752), with one retry. Always approval: distributor, ag.remove, ag.failover, pub.drop, publish off. Log shipping is monitor + run its jobs only (set up in SSMS). Console `DatabaseMSSQLRepl.tsx` (Manage > Replication, DBA). Live test needs the container started with `MSSQL_ENABLE_HADR=1`, `MSSQL_AGENT_ENABLED=true` and a `--hostname`; AG tested with one replica, CLUSTER_TYPE NONE.
+
+## Performance analysis (2026-11)
+
+- **Manage › Performance** (was "Waits & queries"), DBA only like every SQL
+  Server panel. It reads four fixed read-only ops at once: `ms.performance`
+  (CPU sort), `ms.indexes` (now with each index's key columns, `keys`),
+  `ms.settings`, and the new `ms.health` (`internal/agent/mssql_health.go`):
+  version/edition, uptime, CPUs, memory, process memory, performance counters
+  (page life expectancy, memory grants pending, batches, compilations,
+  recompiles, deadlocks, page splits), tempdb data files and sizes, VLFs
+  (`sys.dm_db_log_info`, 2016 SP2+), plan cache and single-use ad hoc MB,
+  blocked requests and oldest transaction now, Query Store state. A source
+  that fails goes to `Missing`.
+- **Analysis.** `web/src/lib/mssqlPerformance.ts`, pure, shares Finding with
+  pgPerformance. Waits are explained only when ≥10% of waiting, ≥60 s and
+  ≥0.5% of uptime. A heavy statement is tied to SQL Server's own missing
+  index on the table it reads (then the missing index is not repeated).
+  Unused indexes only after 7 days; PK, unique and clustered never dropped.
+  CREATE INDEX / REBUILD get `WITH (ONLINE = ON)` on Enterprise/Developer.
+  Server options use `sp_configure`; database ones `ALTER DATABASE CURRENT`.
+- **Testing.** `mssqlPerformance.fixture.json` is a real SQL Server 2022
+  answer. A local SQL Server runs as `dockerd &` then `docker run ...
+  mcr.microsoft.com/mssql/server:2022-latest`; `TestMSSQLHealthOnARealServer`
+  needs `ARGUS_TEST_MSSQL_SA_PASSWORD`. `TestMSSQLReplication` fails on such
+  a plain container on main too ("no recording at dba").

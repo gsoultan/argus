@@ -47,6 +47,11 @@ const (
 	// AdminMSSettings lists the database's settings and files, and the
 	// server's configuration (to read).
 	AdminMSSettings = "ms.settings"
+	// AdminMSHealth reads what the Performance advice needs beyond waits,
+	// queries, indexes and settings: memory, CPUs, page life expectancy,
+	// memory grants, compilations, deadlocks, tempdb's files, the log's
+	// virtual log files, the plan cache and Query Store's state.
+	AdminMSHealth = "ms.health"
 
 	AdminMSKill         = "ms.kill"
 	AdminMSIndexRebuild = "ms.index.rebuild"
@@ -96,7 +101,7 @@ type MSSQLDBASpec struct {
 // MSSQLDBAKind says whether kind is a SQL Server DBA operation.
 func MSSQLDBAKind(kind string) bool {
 	switch kind {
-	case AdminMSActivity, AdminMSPerformance, AdminMSIndexes, AdminMSIntegrity, AdminMSJobs, AdminMSSettings,
+	case AdminMSActivity, AdminMSPerformance, AdminMSIndexes, AdminMSIntegrity, AdminMSJobs, AdminMSSettings, AdminMSHealth,
 		AdminMSKill, AdminMSIndexRebuild, AdminMSIndexReorg, AdminMSStatsUpdate, AdminMSCheckDB,
 		AdminMSJobStart, AdminMSJobStop, AdminMSJobEnable, AdminMSDBSet:
 		return true
@@ -150,7 +155,7 @@ func MSSQLDBASQL(op *PGAdminOp, database string) (string, error) {
 		d = &MSSQLDBASpec{}
 	}
 	switch op.Kind {
-	case AdminMSActivity, AdminMSPerformance, AdminMSIndexes, AdminMSIntegrity, AdminMSJobs, AdminMSSettings:
+	case AdminMSActivity, AdminMSPerformance, AdminMSIndexes, AdminMSIntegrity, AdminMSJobs, AdminMSSettings, AdminMSHealth:
 		return "", nil
 
 	case AdminMSKill:

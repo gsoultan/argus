@@ -110,6 +110,8 @@ type MSIndex struct {
 	Lookups       int64   `json:"lookups"`
 	Updates       int64   `json:"updates"`
 	LastUsed      string  `json:"lastUsed,omitempty"`
+	// Keys are the index's key columns, in order; empty for a heap.
+	Keys []string `json:"keys,omitempty"`
 }
 
 // MSStatistic is one statistics object on a table or view.
@@ -309,6 +311,8 @@ func (s *mssqlSession) dbaOp(ctx context.Context, req tunnel.PGRequest) error {
 			data, err = msJobs(actx, c, d.Job)
 		case tunnel.AdminMSSettings:
 			data, err = msSettingsOf(actx, c)
+		case tunnel.AdminMSHealth:
+			data, err = msHealth(actx, c)
 		}
 		if err != nil {
 			return s.send(tunnel.PGAnswer{ID: req.ID, Type: "error", Error: mssqlMessage(err)})
@@ -573,7 +577,11 @@ func msIndexes(ctx context.Context, c *sql.Conn) (*MSIndexes, error) {
 	SELECT TOP (@p1) sc.name, o.name, ISNULL(i.name, ''), i.type_desc, i.is_primary_key, i.is_unique, i.is_disabled,
 	  ISNULL(ps.pages, 0), CAST(ISNULL(ps.frag, 0) AS float),
 	  ISNULL(us.user_seeks, 0), ISNULL(us.user_scans, 0), ISNULL(us.user_lookups, 0), ISNULL(us.user_updates, 0),
-	  (SELECT MAX(d) FROM (VALUES (us.last_user_seek), (us.last_user_scan), (us.last_user_lookup)) v(d))
+	  (SELECT MAX(d) FROM (VALUES (us.last_user_seek), (us.last_user_scan), (us.last_user_lookup)) v(d)),
+	  ISNULL(STUFF((SELECT N',' + c.name FROM sys.index_columns ic
+	    JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+	    WHERE ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.key_ordinal > 0
+	    ORDER BY ic.key_ordinal FOR XML PATH(''), TYPE).value('.', 'nvarchar(max)'), 1, 1, N''), N'')
 	FROM sys.indexes i
 	JOIN sys.objects o ON o.object_id = i.object_id AND o.is_ms_shipped = 0 AND o.type IN ('U', 'V')
 	JOIN sys.schemas sc ON sc.schema_id = o.schema_id
@@ -587,13 +595,17 @@ func msIndexes(ctx context.Context, c *sql.Conn) (*MSIndexes, error) {
 	for rows.Next() {
 		var x MSIndex
 		var last sql.NullTime
+		var keys string
 		if err := rows.Scan(&x.Schema, &x.Table, &x.Name, &x.Type, &x.Primary, &x.Unique, &x.Disabled, &x.Pages,
-			&x.Fragmentation, &x.Seeks, &x.Scans, &x.Lookups, &x.Updates, &last); err != nil {
+			&x.Fragmentation, &x.Seeks, &x.Scans, &x.Lookups, &x.Updates, &last, &keys); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		x.LastUsed = msTime(last)
 		x.Type = strings.ToLower(x.Type)
+		if keys != "" {
+			x.Keys = strings.Split(keys, ",")
+		}
 		out.Indexes = append(out.Indexes, x)
 	}
 	rows.Close()
