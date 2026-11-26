@@ -24,6 +24,15 @@ var storeNetworkEngines = map[string]bool{tunnel.EngineMongoDB: true, tunnel.Eng
 func (a *API) storeNetworkGate(ctx context.Context, email string, db Database, level string, req *tunnel.StoreRequest) *tunnel.StoreAnswer {
 	switch req.Op {
 	case tunnel.MongoOpNetwork, tunnel.MongoOpNetworkSet:
+	case tunnel.MongoOpPerf:
+		// Reading the server's statistics changes nothing, but shows every
+		// database's load: DBA's, like the other engines' Performance panels.
+		req.Approval = ""
+		if db.Engine == tunnel.EngineMongoDB && level != tunnel.LevelDBA {
+			return &tunnel.StoreAnswer{ID: req.ID, Type: "error",
+				Error: "reading the server's performance statistics is DBA work; this session is at " + level}
+		}
+		return nil
 	default:
 		// Not a network change: no approval rides along, and RabbitMQ's
 		// own operations are its agent's to judge, as before.

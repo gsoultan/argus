@@ -145,9 +145,11 @@ export function PerformancePanel(props: PerformancePanelProps) {
 }
 
 /** The findings, filtered by area: shared by every engine's panel. */
-export function FindingsList({ findings, narrow, onOpenSql, countingS, engine, connLabel, partial }: {
+export function FindingsList({ findings, narrow, onOpenSql, countingS, engine, connLabel, partial, openLabel = 'Open in editor', statement = 'statement' }: {
   findings: Finding[]; narrow: boolean; onOpenSql: (sql: string, name: string) => void; countingS: number
   engine: string; connLabel: string; partial?: boolean
+  /** Where a fix goes, on its button; and what a fix is called. */
+  openLabel?: string; statement?: string
 }) {
   const [filter, setFilter] = useState('all')
   const filters = FILTERS.map((f) => (f.value === 'conn' ? { ...f, label: connLabel } : f))
@@ -169,7 +171,7 @@ export function FindingsList({ findings, narrow, onOpenSql, countingS, engine, c
         </Paper>
       ) : (
         <Stack gap="xs">
-          {shown.map((f) => <FindingCard key={f.id} f={f} onOpen={() => onOpenSql(f.sql!, f.title.slice(0, 40))} />)}
+          {shown.map((f) => <FindingCard key={f.id} f={f} openLabel={openLabel} statement={statement} onOpen={() => onOpenSql(f.sql!, f.title.slice(0, 40))} />)}
         </Stack>
       )}
     </Box>
@@ -214,7 +216,7 @@ function Summary({ loaded, level }: { loaded: Loaded; level: AdminPanelProps['le
   )
 }
 
-function FindingCard({ f, onOpen }: { f: Finding; onOpen: () => void }) {
+function FindingCard({ f, onOpen, openLabel, statement }: { f: Finding; onOpen: () => void; openLabel: string; statement: string }) {
   const [showSql, setShowSql] = useState(false)
   const sev = SEVERITY[f.severity]
   return (
@@ -233,9 +235,9 @@ function FindingCard({ f, onOpen }: { f: Finding; onOpen: () => void }) {
         <>
           <Group gap="xs" mt={8}>
             <Button size="compact-xs" variant="default" leftSection={<IconCode size={12} />} onClick={() => setShowSql((v) => !v)}>
-              {showSql ? 'Hide statement' : 'Show statement'}
+              {showSql ? `Hide ${statement}` : `Show ${statement}`}
             </Button>
-            <Button size="compact-xs" variant="light" leftSection={<IconPlayerPlay size={12} />} onClick={onOpen}>Open in editor</Button>
+            <Button size="compact-xs" variant="light" leftSection={<IconPlayerPlay size={12} />} onClick={onOpen}>{openLabel}</Button>
           </Group>
           {showSql && <Code block mt={6} style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{f.sql}</Code>}
         </>

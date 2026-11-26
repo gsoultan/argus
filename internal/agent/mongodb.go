@@ -344,7 +344,7 @@ func (s *mongoSession) connect(ctx context.Context) error {
 func (s *mongoSession) ready() tunnel.StoreAnswer {
 	ops := []string{"run", "scan", "value"}
 	if s.db.Level == tunnel.LevelDBA {
-		ops = append(ops, tunnel.MongoOpNetwork, tunnel.MongoOpNetworkSet)
+		ops = append(ops, tunnel.MongoOpNetwork, tunnel.MongoOpNetworkSet, tunnel.MongoOpPerf)
 	}
 	return tunnel.StoreAnswer{Engine: tunnel.EngineMongoDB, User: s.user, Version: s.version,
 		Ops: ops, ChangesNeedApproval: s.db.ChangesNeedApproval}
@@ -367,6 +367,8 @@ func (s *mongoSession) do(ctx context.Context, req tunnel.StoreRequest, rec *stm
 		return s.value(ctx, req, rec)
 	case tunnel.MongoOpNetwork, tunnel.MongoOpNetworkSet:
 		return s.network(ctx, req, rec)
+	case tunnel.MongoOpPerf:
+		return s.perf(ctx)
 	}
 	return tunnel.StoreAnswer{Type: "error", Error: "unknown operation " + req.Op + " for MongoDB"}, nil
 }
