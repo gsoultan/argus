@@ -1,12 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ActionIcon, Badge, Box, Button, Code, Group, Loader, Modal, NumberInput, ScrollArea, SegmentedControl, Select,
-  Switch, Table, Tabs, Text, TextInput, Tooltip,
+  ActionIcon, Badge, Box, Button, Code, Group, Loader, Modal, NumberInput, Paper, ScrollArea, SegmentedControl, Select,
+  Stack, Switch, Table, Tabs, Text, TextInput, Tooltip,
 } from '@mantine/core'
 import { IconRefresh } from '@tabler/icons-react'
 import { FS, INK } from '~/theme'
 import { notifyOk } from '~/lib/notify'
 import { usePreview } from '~/components/DatabaseExtensions'
+import { FindingsList, Stat } from '~/components/DatabasePerformance'
+import { duration } from '~/lib/pgPerformance'
+import { analyzeMSSQL, type MSFacts, type MSReport } from '~/lib/mssqlPerformance'
 import { AdminRefused, PanelFrame, type Admin, type AdminFailure, type AdminOp, type AdminPanelProps } from '~/components/DatabaseAdmin'
 
 /*
@@ -28,8 +31,6 @@ interface Session {
   wait?: string; waitMs?: number; resource?: string; blockedBy?: number; elapsedMs?: number; cpuMs?: number
   reads?: number; openTran?: number; lastRequest?: string; statement?: string; elsewhere?: boolean; yours?: boolean; argus?: boolean
 }
-interface Wait { wait: string; tasks: number; waitMs: number; signalMs: number; percent: number }
-interface QueryStat { statement: string; executions: number; cpuMs: number; avgCpuMs: number; avgMs: number; avgReads: number; lastRun?: string }
 export interface MSIndexRow {
   schema: string; table: string; name?: string; type: string; primary?: boolean; unique?: boolean; disabled?: boolean
   pages: number; fragmentation: number; seeks: number; scans: number; lookups: number; updates: number; lastUsed?: string
@@ -240,20 +241,65 @@ export const WAIT_WORDS: Record<string, string> = {
   HADR_SYNC_COMMIT: 'waiting for an availability group replica to harden the log',
 }
 
-export function MSSQLPerformance({ admin, narrow, onBack }: AdminPanelProps) {
+/** Everything the advice reads, at once: four read-only operations. */
+function useHealth(admin: Admin) {
+  const [facts, setFacts] = useState<MSFacts | null>(null)
+  const [failure, setFailure] = useState<AdminFailure | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [asOf, setAsOf] = useState<Date | null>(null)
+  const alive = useRef(true)
+  useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
+  const refresh = useCallback(async () => {
+    setBusy(true)
+    const [p, i, st, h] = await Promise.all([
+      admin<MSFacts['performance']>({ kind: 'ms.performance', msdba: { sort: 'cpu' } }),
+      admin<MSFacts['indexes']>({ kind: 'ms.indexes' }),
+      admin<MSFacts['settings']>({ kind: 'ms.settings' }),
+      admin<MSFacts['health']>({ kind: 'ms.health' }),
+    ])
+    if (!alive.current) return
+    setBusy(false)
+    const bad = [p, i, st, h].find((r) => r.error || !r.data)
+    if (bad) { setFailure(bad.error ?? { error: 'no answer' }); return }
+    setFailure(null)
+    setFacts({ performance: p.data!, indexes: i.data!, settings: st.data!, health: h.data! })
+    setAsOf(new Date())
+  }, [admin])
+  useEffect(() => { void refresh() }, [refresh])
+  return { facts, failure, busy, asOf, refresh }
+}
+
+export function MSSQLPerformance({ admin, narrow, onBack, onOpenSql }: AdminPanelProps) {
   const [sort, setSort] = useState('cpu')
-  const { data, failure, busy, refresh } = useRead<{ since: string; waits: Wait[]; queries: QueryStat[] }>(admin, { kind: 'ms.performance', msdba: { sort } })
+  const { facts, failure, busy, asOf, refresh } = useHealth(admin)
+  const report = useMemo(() => (facts ? analyzeMSSQL(facts) : null), [facts])
+  // The statements table sorted another way is its own read; by CPU it is
+  // the one the advice already has.
+  const [other, setOther] = useState<{ sort: string; perf: MSFacts['performance'] } | null>(null)
+  useEffect(() => {
+    if (sort === 'cpu') return
+    let live = true
+    void admin<MSFacts['performance']>({ kind: 'ms.performance', msdba: { sort } }).then((r) => { if (live && r.data) setOther({ sort, perf: r.data }) })
+    return () => { live = false }
+  }, [admin, sort, asOf])
+  const perf = sort === 'cpu' ? facts?.performance : other?.sort === sort ? other.perf : undefined
+  const open = onOpenSql ?? (() => {})
   return (
-    <PanelFrame title="Waits & costly queries" narrow={narrow} onBack={onBack} right={<RefreshButton busy={busy} onClick={() => void refresh()} />}
-      blurb="What the whole server has waited on most since it started, and the statements of this database that cost most while their plans stayed cached.">
-      {failure ? <Failed failure={failure} /> : !data ? <Loader size={16} m="md" /> : (
+    <PanelFrame title="Performance" narrow={narrow} onBack={onBack}
+      right={<Group gap="xs" wrap="nowrap">{asOf && !narrow && <Text size={FS.micro} c="dimmed">as of {asOf.toLocaleTimeString()}</Text>}<RefreshButton busy={busy} onClick={() => void refresh()} /></Group>}
+      blurb="Why this database is slow or heavy, and what to change: what the server waits on, the costly statements, indexes, memory and settings. Nothing is changed unless you run it.">
+      {failure ? <Failed failure={failure} /> : !facts || !report ? <Loader size={16} m="md" /> : (
         <ScrollArea style={{ flex: 1 }} type="auto">
+          <Stack gap="md" p="md" maw={1100}>
+            <HealthSummary facts={facts} report={report} />
+            <FindingsList findings={report.findings} narrow={narrow} onOpenSql={open} countingS={report.countingS} engine="SQL Server" connLabel="Blocking" />
+          </Stack>
           <Box px="md" py="sm">
-            <Text size={FS.body} fw={600}>Waits, since {when(data.since)}</Text>
+            <Text size={FS.body} fw={600}>Waits, since {when(facts.performance.since)}</Text>
             <Table verticalSpacing={3} fz={12} mt={4}>
               <Table.Thead><Table.Tr><Table.Th>Wait</Table.Th><Table.Th>Share</Table.Th>{!narrow && <Table.Th>Total</Table.Th>}{!narrow && <Table.Th>Of it, waiting for CPU</Table.Th>}<Table.Th>Usually</Table.Th></Table.Tr></Table.Thead>
               <Table.Tbody>
-                {data.waits.map((w) => (
+                {facts.performance.waits.map((w) => (
                   <Table.Tr key={w.wait}>
                     <Table.Td style={mono}>{w.wait}</Table.Td>
                     <Table.Td style={{ whiteSpace: 'nowrap' }}>{w.percent.toFixed(1)}%</Table.Td>
@@ -271,26 +317,54 @@ export function MSSQLPerformance({ admin, narrow, onBack }: AdminPanelProps) {
               <SegmentedControl size="xs" value={sort} onChange={setSort}
                 data={[{ value: 'cpu', label: 'CPU' }, { value: 'duration', label: 'Time' }, { value: 'reads', label: 'Reads' }, { value: 'executions', label: 'Runs' }]} />
             </Group>
-            <Table verticalSpacing={3} fz={12} mt={4} striped>
-              <Table.Thead><Table.Tr><Table.Th>Statement</Table.Th><Table.Th>Runs</Table.Th><Table.Th>CPU, all</Table.Th>{!narrow && <Table.Th>Each: CPU</Table.Th>}{!narrow && <Table.Th>time</Table.Th>}{!narrow && <Table.Th>reads</Table.Th>}</Table.Tr></Table.Thead>
-              <Table.Tbody>
-                {data.queries.map((q, i) => (
-                  <Table.Tr key={i}>
-                    <Table.Td style={{ ...mono, maxWidth: narrow ? 180 : 520, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={q.statement}>{q.statement}</Table.Td>
-                    <Table.Td>{count(q.executions)}</Table.Td>
-                    <Table.Td style={{ whiteSpace: 'nowrap' }}>{ms(q.cpuMs) || '0 ms'}</Table.Td>
-                    {!narrow && <Table.Td style={{ whiteSpace: 'nowrap' }}>{ms(q.avgCpuMs) || '<1 ms'}</Table.Td>}
-                    {!narrow && <Table.Td style={{ whiteSpace: 'nowrap' }}>{ms(q.avgMs) || '<1 ms'}</Table.Td>}
-                    {!narrow && <Table.Td>{count(q.avgReads)}</Table.Td>}
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-            {data.queries.length === 0 && <Text size={FS.meta} c="dimmed" mt="xs">No cached statements of this database yet.</Text>}
+            {!perf ? <Loader size={14} mt="xs" /> : (
+              <>
+                <Table verticalSpacing={3} fz={12} mt={4} striped>
+                  <Table.Thead><Table.Tr><Table.Th>Statement</Table.Th><Table.Th>Runs</Table.Th><Table.Th>CPU, all</Table.Th>{!narrow && <Table.Th>Each: CPU</Table.Th>}{!narrow && <Table.Th>time</Table.Th>}{!narrow && <Table.Th>reads</Table.Th>}</Table.Tr></Table.Thead>
+                  <Table.Tbody>
+                    {perf.queries.map((q, i) => (
+                      <Table.Tr key={i}>
+                        <Table.Td style={{ ...mono, maxWidth: narrow ? 180 : 520, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={q.statement}>{q.statement}</Table.Td>
+                        <Table.Td>{count(q.executions)}</Table.Td>
+                        <Table.Td style={{ whiteSpace: 'nowrap' }}>{ms(q.cpuMs) || '0 ms'}</Table.Td>
+                        {!narrow && <Table.Td style={{ whiteSpace: 'nowrap' }}>{ms(q.avgCpuMs) || '<1 ms'}</Table.Td>}
+                        {!narrow && <Table.Td style={{ whiteSpace: 'nowrap' }}>{ms(q.avgMs) || '<1 ms'}</Table.Td>}
+                        {!narrow && <Table.Td>{count(q.avgReads)}</Table.Td>}
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
+                {perf.queries.length === 0 && <Text size={FS.meta} c="dimmed" mt="xs">No cached statements of this database yet.</Text>}
+              </>
+            )}
           </Box>
         </ScrollArea>
       )}
     </PanelFrame>
+  )
+}
+
+function HealthSummary({ facts, report }: { facts: MSFacts; report: MSReport }) {
+  const h = facts.health
+  const high = report.findings.filter((f) => f.severity === 'high').length
+  const medium = report.findings.filter((f) => f.severity === 'medium').length
+  const data = facts.settings.files.filter((f) => f.type === 'rows').reduce((a, f) => a + f.sizeMb, 0)
+  return (
+    <Paper withBorder p="sm" radius="md">
+      <Group gap="lg" wrap="wrap">
+        <Stat label="Findings" value={high || medium ? `${high} high, ${medium} medium` : 'none serious'} tone={high ? INK.denied : medium ? INK.pending : INK.verified} />
+        <Stat label="Page life" value={h.pageLife ? `${count(h.pageLife)} s` : '—'} />
+        <Stat label="Memory in use" value={`${(h.sqlMemoryMb / 1024).toFixed(1)} of ${(h.memoryMb / 1024).toFixed(1)} GB`} />
+        <Stat label="Waiting for CPU" value={`${(report.signalShare * 100).toFixed(0)}%`} tone={report.signalShare >= 0.25 ? INK.pending : undefined} />
+        <Stat label="Blocked now" value={String(h.blocked)} tone={h.blocked ? INK.pending : undefined} />
+        <Stat label="Data" value={`${(data / 1024).toFixed(data >= 10240 ? 0 : 1)} GB`} />
+        <Stat label="Server" value={`${h.version} · ${h.edition.replace(/ \(64-bit\)/, '').replace(/ Edition$/, '')}`} />
+      </Group>
+      <Text size={FS.micro} c="dimmed" mt={8}>
+        Counted over {duration(report.countingS)}, since SQL Server started.
+        {h.missing?.length ? ` Not read: ${h.missing.join('; ')}.` : ''}
+      </Text>
+    </Paper>
   )
 }
 

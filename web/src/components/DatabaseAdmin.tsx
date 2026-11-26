@@ -123,6 +123,8 @@ export interface AdminPanelProps {
   onAskForAccess?: () => void
   /** The server the database runs on, for the network panel. */
   assetId?: string
+  /** Puts a statement in a new editor tab, without running it. */
+  onOpenSql?: (sql: string, name: string) => void
 }
 
 const REFRESH_MS = 10_000

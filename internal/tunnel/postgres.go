@@ -308,7 +308,7 @@ func (o *PGAdminOp) Mutates() bool {
 	case AdminExtensionList, AdminPublicationList, AdminSubscriptionList, AdminNetwork, AdminPoolerStats, AdminMySQLPerf,
 		AdminRoleList, AdminRolePrivileges, AdminGrantObjects,
 		AdminMSPrincipals, AdminMSPermissions, AdminMSObjects,
-		AdminMSActivity, AdminMSPerformance, AdminMSIndexes, AdminMSIntegrity, AdminMSJobs, AdminMSSettings,
+		AdminMSActivity, AdminMSPerformance, AdminMSIndexes, AdminMSIntegrity, AdminMSJobs, AdminMSSettings, AdminMSHealth,
 		AdminMSReplication:
 		return false
 	}

@@ -1219,6 +1219,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   const adminProps = {
     collect, admin, level, levels: ready?.levels ?? {}, self: ready?.role ?? '', narrow,
     onAskForAccess,
+    onOpenSql: (text: string, name: string) => { if (openTab({ sql: text, name })) { setPanel('query'); setView('query') } },
   }
   const busyElsewhere = running !== null && running.tab !== tab.key
   const waitingHere = waitingTabs.includes(tab.key)
@@ -1947,7 +1948,7 @@ const MANAGE: { key: ManagePanel; label: string; icon: typeof IconTable; hint: s
 /** SQL Server's administration panels. Each runs as the admin login, so each is DBA's. */
 const MSSQL_MANAGE: typeof MANAGE = [
   { key: 'activity', label: 'Activity & blocking', icon: IconActivity, hint: 'Who is connected, what each runs and waits on, and who blocks whom', dba: true, group: 'care' },
-  { key: 'performance', label: 'Waits & queries', icon: IconGauge, hint: 'What the server waits on, and this database’s costliest statements', dba: true, group: 'care' },
+  { key: 'performance', label: 'Performance', icon: IconGauge, hint: 'Why this database is slow or heavy, and what to change: waits, costly queries, indexes, memory and settings', dba: true, group: 'care' },
   { key: 'integrity', label: 'Integrity', icon: IconShieldCheck, hint: 'DBCC CHECKDB, and pages found damaged', dba: true, group: 'care' },
   { key: 'backups', label: 'Backups', icon: IconArchive, hint: 'Backups of this database, and putting one back', group: 'care' },
   { key: 'indexes', label: 'Indexes & statistics', icon: IconListTree, hint: 'Fragmentation, use, rebuild and reorganize; statistics; missing indexes', dba: true, group: 'dba' },

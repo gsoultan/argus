@@ -1,0 +1,701 @@
+{
+ "health": {
+  "version": "16.0.4325.4",
+  "edition": "Developer Edition (64-bit)",
+  "since": "2026-11-26T06:04:33Z",
+  "uptimeS": 851,
+  "cpus": 4,
+  "memoryMb": 12870,
+  "targetMb": 11623,
+  "committedMb": 660,
+  "sqlMemoryMb": 4178,
+  "pageLife": 849,
+  "grantsPending": 0,
+  "batches": 757,
+  "compilations": 1488,
+  "recompiles": 41,
+  "deadlocks": 0,
+  "pageSplits": 18548,
+  "fullScans": 1172,
+  "tempdbFiles": 4,
+  "tempdbSizes": [
+   72
+  ],
+  "vlfs": 295,
+  "planCacheMb": 48,
+  "singleUseMb": 15,
+  "blocked": 0,
+  "oldestTranS": 0,
+  "queryStore": "OFF",
+  "queryStoreMaxMb": 1000
+ },
+ "indexes": {
+  "indexes": [
+   {
+    "schema": "dbo",
+    "table": "orders",
+    "name": "PK__orders__3213E83F12FB3C62",
+    "type": "clustered",
+    "primary": true,
+    "unique": true,
+    "pages": 15300,
+    "fragmentation": 80.45751633986929,
+    "seeks": 0,
+    "scans": 466,
+    "lookups": 0,
+    "updates": 2,
+    "lastUsed": "2026-11-26T06:18:42Z",
+    "keys": [
+     "id"
+    ]
+   },
+   {
+    "schema": "dbo",
+    "table": "orders",
+    "name": "nt",
+    "type": "nonclustered",
+    "pages": 10680,
+    "fragmentation": 0.01,
+    "seeks": 0,
+    "scans": 0,
+    "lookups": 0,
+    "updates": 1,
+    "keys": [
+     "note"
+    ]
+   },
+   {
+    "schema": "dbo",
+    "table": "orders",
+    "name": "st",
+    "type": "nonclustered",
+    "pages": 657,
+    "fragmentation": 0.30441400304414,
+    "seeks": 0,
+    "scans": 0,
+    "lookups": 0,
+    "updates": 0,
+    "keys": [
+     "status"
+    ]
+   },
+   {
+    "schema": "dbo",
+    "table": "orders",
+    "name": "st2",
+    "type": "nonclustered",
+    "pages": 657,
+    "fragmentation": 0.30441400304414,
+    "seeks": 0,
+    "scans": 0,
+    "lookups": 0,
+    "updates": 0,
+    "keys": [
+     "status"
+    ]
+   },
+   {
+    "schema": "dbo",
+    "table": "audit",
+    "type": "heap",
+    "pages": 192,
+    "fragmentation": 4,
+    "seeks": 0,
+    "scans": 0,
+    "lookups": 0,
+    "updates": 1
+   },
+   {
+    "schema": "dbo",
+    "table": "customers",
+    "name": "PK__customer__3213E83FBF7549CE",
+    "type": "clustered",
+    "primary": true,
+    "unique": true,
+    "pages": 70,
+    "fragmentation": 1.4285714285714286,
+    "seeks": 400,
+    "scans": 0,
+    "lookups": 0,
+    "updates": 1,
+    "lastUsed": "2026-11-26T06:17:14Z",
+    "keys": [
+     "id"
+    ]
+   }
+  ],
+  "statistics": [
+   {
+    "schema": "dbo",
+    "table": "customers",
+    "name": "PK__customer__3213E83FBF7549CE",
+    "lastUpdated": "2026-11-26T06:17:14Z",
+    "rows": 20000,
+    "sampled": 20000,
+    "modified": 0
+   },
+   {
+    "schema": "dbo",
+    "table": "orders",
+    "name": "_WA_Sys_00000002_37A5467C",
+    "auto": true,
+    "lastUpdated": "2026-11-26T06:17:13Z",
+    "rows": 300000,
+    "sampled": 34986,
+    "modified": 0
+   },
+   {
+    "schema": "dbo",
+    "table": "orders",
+    "name": "nt",
+    "lastUpdated": "2026-11-26T06:17:13Z",
+    "rows": 300000,
+    "sampled": 34986,
+    "modified": 0
+   },
+   {
+    "schema": "dbo",
+    "table": "orders",
+    "name": "PK__orders__3213E83F12FB3C62",
+    "lastUpdated": "2026-11-26T06:17:13Z",
+    "rows": 300000,
+    "sampled": 41750,
+    "modified": 0
+   },
+   {
+    "schema": "dbo",
+    "table": "orders",
+    "name": "st",
+    "lastUpdated": "2026-11-26T06:17:09Z",
+    "rows": 300000,
+    "sampled": 300000,
+    "modified": 0
+   },
+   {
+    "schema": "dbo",
+    "table": "orders",
+    "name": "st2",
+    "lastUpdated": "2026-11-26T06:17:09Z",
+    "rows": 300000,
+    "sampled": 300000,
+    "modified": 0
+   }
+  ],
+  "missing": [
+   {
+    "schema": "dbo",
+    "table": "orders",
+    "equality": "[customer_id]",
+    "seeks": 460,
+    "impact": 99.72,
+    "create": "CREATE INDEX [IX_orders_customer_id] ON [dbo].[orders] ([customer_id])"
+   }
+  ]
+ },
+ "performance": {
+  "since": "2026-11-26T06:04:33Z",
+  "waits": [
+   {
+    "wait": "CXCONSUMER",
+    "tasks": 708,
+    "waitMs": 6129,
+    "signalMs": 66,
+    "percent": 24.202337703364396
+   },
+   {
+    "wait": "CXPACKET",
+    "tasks": 6178,
+    "waitMs": 4414,
+    "signalMs": 173,
+    "percent": 17.430105828463116
+   },
+   {
+    "wait": "STARTUP_DEPENDENCY_MANAGER",
+    "tasks": 36,
+    "waitMs": 3303,
+    "signalMs": 10,
+    "percent": 13.042963196967303
+   },
+   {
+    "wait": "LATCH_EX",
+    "tasks": 24726,
+    "waitMs": 1958,
+    "signalMs": 697,
+    "percent": 7.731795924814405
+   },
+   {
+    "wait": "LCK_M_U",
+    "tasks": 31,
+    "waitMs": 1596,
+    "signalMs": 17,
+    "percent": 6.302321908071394
+   },
+   {
+    "wait": "CXSYNC_PORT",
+    "tasks": 2336,
+    "waitMs": 906,
+    "signalMs": 90,
+    "percent": 3.577633865108197
+   },
+   {
+    "wait": "RESERVED_MEMORY_ALLOCATION_EXT",
+    "tasks": 30846,
+    "waitMs": 848,
+    "signalMs": 0,
+    "percent": 3.348602116569262
+   },
+   {
+    "wait": "WRITELOG",
+    "tasks": 1804,
+    "waitMs": 840,
+    "signalMs": 240,
+    "percent": 3.317011530563891
+   },
+   {
+    "wait": "PREEMPTIVE_OS_FILEOPS",
+    "tasks": 1030,
+    "waitMs": 746,
+    "signalMs": 0,
+    "percent": 2.945822145000789
+   },
+   {
+    "wait": "PREEMPTIVE_OS_CRYPTOPS",
+    "tasks": 189,
+    "waitMs": 665,
+    "signalMs": 0,
+    "percent": 2.625967461696414
+   },
+   {
+    "wait": "LCK_M_S",
+    "tasks": 13,
+    "waitMs": 578,
+    "signalMs": 0,
+    "percent": 2.282419838888011
+   },
+   {
+    "wait": "PREEMPTIVE_OS_WRITEFILEGATHER",
+    "tasks": 303,
+    "waitMs": 431,
+    "signalMs": 0,
+    "percent": 1.70194282103933
+   },
+   {
+    "wait": "ASYNC_IO_COMPLETION",
+    "tasks": 14,
+    "waitMs": 391,
+    "signalMs": 2,
+    "percent": 1.543989891012478
+   },
+   {
+    "wait": "WAIT_ON_SYNC_STATISTICS_REFRESH",
+    "tasks": 48,
+    "waitMs": 272,
+    "signalMs": 0,
+    "percent": 1.074079924182593
+   },
+   {
+    "wait": "PREEMPTIVE_OS_QUERYREGISTRY",
+    "tasks": 805,
+    "waitMs": 230,
+    "signalMs": 0,
+    "percent": 0.908229347654398
+   }
+  ],
+  "queries": [
+   {
+    "statement": "SELECT @n = COUNT(*) FROM dbo.orders WHERE customer_id = @c",
+    "executions": 400,
+    "cpuMs": 19138,
+    "avgCpuMs": 47,
+    "avgMs": 13,
+    "avgReads": 16127,
+    "lastRun": "2026-11-26T06:18:42Z"
+   },
+   {
+    "statement": "UPDATE dbo.orders SET note = REPLICATE(N'y', 1 + ABS(CHECKSUM(NEWID())) % 190) WHERE id % 3 = 0",
+    "executions": 1,
+    "cpuMs": 2587,
+    "avgCpuMs": 2587,
+    "avgMs": 2841,
+    "avgReads": 1043751,
+    "lastRun": "2026-11-26T06:17:10Z"
+   },
+   {
+    "statement": "INSERT INTO dbo.orders (customer_id, status, total, note) SELECT TOP 300000 1 + ABS(CHECKSUM(NEWID())) % 20000, CASE ABS(CHECKSUM(NEWID())) % 3 WHEN 0 THEN 'new' WHEN 1 THEN 'paid' ELSE 'sent' END, ABS(CHECKSUM(NEWID())) % 1000, REPLICATE(N'x', 100) FROM sys.all_objects a CROSS JOIN sys.all_objects b",
+    "executions": 1,
+    "cpuMs": 1940,
+    "avgCpuMs": 1940,
+    "avgMs": 2151,
+    "avgReads": 489859,
+    "lastRun": "2026-11-26T06:17:06Z"
+   },
+   {
+    "statement": "SELECT status, COUNT(DISTINCT note) FROM dbo.orders GROUP BY status",
+    "executions": 5,
+    "cpuMs": 528,
+    "avgCpuMs": 105,
+    "avgMs": 28,
+    "avgReads": 16127,
+    "lastRun": "2026-11-26T06:17:14Z"
+   },
+   {
+    "statement": "SELECT RTRIM(object_name), RTRIM(counter_name), RTRIM(instance_name), cntr_value\n\t  FROM sys.dm_os_performance_counters\n\t  WHERE (object_name LIKE '%Buffer Manager%' AND counter_name = 'Page life expectancy')\n\t     OR (object_name LIKE '%Memory Manager%' AND counter_name = 'Memory Grants Pending')\n\t     OR (object_name LIKE '%SQL Statistics%' AND counter_name IN ('Batch Requests/sec', 'SQL Compilations/sec', 'SQL Re-Compilations/sec'))\n\t     OR (object_name LIKE '%Locks%' AND counter_name = 'Number of Deadlocks/sec' AND instance_name = '_Total')\n\t     OR (object_name LIKE '%Access Methods%' AND counter_name IN ('Page Splits/sec', 'Full Scans/sec'))",
+    "executions": 2,
+    "cpuMs": 190,
+    "avgCpuMs": 95,
+    "avgMs": 95,
+    "avgReads": 0,
+    "lastRun": "2026-11-26T06:18:31Z"
+   },
+   {
+    "statement": "INSERT INTO dbo.audit SELECT TOP 50000 SYSDATETIME(), N'login' FROM sys.all_objects a CROSS JOIN sys.all_objects b",
+    "executions": 1,
+    "cpuMs": 84,
+    "avgCpuMs": 84,
+    "avgMs": 84,
+    "avgReads": 109968,
+    "lastRun": "2026-11-26T06:17:08Z"
+   },
+   {
+    "statement": "INSERT INTO dbo.customers (name) SELECT TOP 20000 CONCAT(N'c', ROW_NUMBER() OVER (ORDER BY (SELECT 1))) FROM sys.all_objects a CROSS JOIN sys.all_objects b",
+    "executions": 1,
+    "cpuMs": 76,
+    "avgCpuMs": 76,
+    "avgMs": 83,
+    "avgReads": 22687,
+    "lastRun": "2026-11-26T06:17:06Z"
+   },
+   {
+    "statement": "WITH ps AS (\n\t  SELECT object_id, index_id, SUM(page_count) pages,\n\t    CASE WHEN SUM(page_count) = 0 THEN 0\n\t      ELSE SUM(avg_fragmentation_in_percent * page_count) / SUM(page_count) END frag\n\t  FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'LIMITED')\n\t  WHERE alloc_unit_type_desc = 'IN_ROW_DATA' AND index_level = 0\n\t  GROUP BY object_id, index_id)\n\tSELECT TOP (@p1) sc.name, o.name, ISNULL(i.name, ''), i.type_desc, i.is_primary_key, i.is_unique, i.is_disabled,\n\t  ISNULL(ps.pages, 0), CAST(ISNULL(ps.frag, 0) AS float),\n\t  ISNULL(us.user_seeks, 0), ISNULL(us.user_scans, 0), ISNULL(us.user_lookups, 0), ISNULL(us.user_updates, 0),\n\t  (SELECT MAX(d) FROM (VALUES (us.last_user_seek), (us.last_user_scan), (us.last_user_lookup)) v(d))\n\tFROM sys.indexes i\n\tJOIN sys.objects o ON o.object_id = i.object_id AND o.is_ms_shipped = 0 AND o.type IN ('U', 'V')\n\tJOIN sys.schemas sc ON sc.schema_id = o.schema_id\n\tLEFT JOIN ps ON ps.object_id = i.object_id AND ps.index_id = i.index_id\n\tLEFT JOIN sys.dm_db_index_usage_stats us ON us.database_id = DB_ID() AND us.object_id = i.object_id AND us.index_id = i.index_id\n\tWHERE o.type = 'U' OR i.index_id \u003e 0\n\tORDER BY ISNULL(ps.pages, 0) DESC, sc.name, o.name, i.index_id",
+    "executions": 1,
+    "cpuMs": 30,
+    "avgCpuMs": 30,
+    "avgMs": 30,
+    "avgReads": 12966,
+    "lastRun": "2026-11-26T06:17:32Z"
+   },
+   {
+    "statement": "WITH ps AS (\n\t  SELECT object_id, index_id, SUM(page_count) pages,\n\t    CASE WHEN SUM(page_count) = 0 THEN 0\n\t      ELSE SUM(avg_fragmentation_in_percent * page_count) / SUM(page_count) END frag\n\t  FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'LIMITED')\n\t  WHERE alloc_unit_type_desc = 'IN_ROW_DATA' AND index_level = 0\n\t  GROUP BY object_id, index_id)\n\tSELECT TOP (@p1) sc.name, o.name, ISNULL(i.name, ''), i.type_desc, i.is_primary_key, i.is_unique, i.is_disabled,\n\t  ISNULL(ps.pages, 0), CAST(ISNULL(ps.frag, 0) AS float),\n\t  ISNULL(us.user_seeks, 0), ISNULL(us.user_scans, 0), ISNULL(us.user_lookups, 0), ISNULL(us.user_updates, 0),\n\t  (SELECT MAX(d) FROM (VALUES (us.last_user_seek), (us.last_user_scan), (us.last_user_lookup)) v(d)),\n\t  ISNULL(STUFF((SELECT N',' + c.name FROM sys.index_columns ic\n\t    JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id\n\t    WHERE ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.key_ordinal \u003e 0\n\t    ORDER BY ic.key_ordinal FOR XML PATH(''), TYPE).value('.', 'nvarchar(max)'), 1, 1, N''), N'')\n\tFROM sys.indexes i\n\tJOIN sys.objects o ON o.object_id = i.object_id AND o.is_ms_shipped = 0 AND o.type IN ('U', 'V')\n\tJOIN sys.schemas sc ON sc.schema_id = o.schema_id\n\tLEFT JOIN ps ON ps.object_id = i.object_id AND ps.index_id = i.index_id\n\tLEFT JOIN sys.dm_db_index_usage_stats us ON us.database_id = DB_ID() AND us.object_id = i.object_id AND us.index_id = i.index_id\n\tWHERE o.type = 'U' OR i.index_id \u003e 0\n\tORDER BY ISNULL(ps.pages, 0) DESC, sc.name, o.name, i.index_id",
+    "executions": 1,
+    "cpuMs": 19,
+    "avgCpuMs": 19,
+    "avgMs": 19,
+    "avgReads": 3512,
+    "lastRun": "2026-11-26T06:18:31Z"
+   },
+   {
+    "statement": "SELECT TOP 25\n\t  LEFT(SUBSTRING(t.text, qs.statement_start_offset / 2 + 1,\n\t    (CASE qs.statement_end_offset WHEN -1 THEN DATALENGTH(t.text) ELSE qs.statement_end_offset END\n\t      - qs.statement_start_offset) / 2 + 1), 4000),\n\t  qs.execution_count, qs.total_worker_time / 1000,\n\t  qs.total_worker_time / 1000 / qs.execution_count, qs.total_elapsed_time / 1000 / qs.execution_count,\n\t  qs.total_logical_reads / qs.execution_count, qs.last_execution_time\n\tFROM sys.dm_exec_query_stats qs\n\tCROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) t\n\tCROSS APPLY (SELECT CONVERT(int, value) dbid FROM sys.dm_exec_plan_attributes(qs.plan_handle)\n\t  WHERE attribute = 'dbid') pa\n\tWHERE pa.dbid = DB_ID() AND qs.execution_count \u003e 0\n\tORDER BY qs.total_worker_time DESC",
+    "executions": 2,
+    "cpuMs": 7,
+    "avgCpuMs": 3,
+    "avgMs": 3,
+    "avgReads": 141,
+    "lastRun": "2026-11-26T06:18:31Z"
+   },
+   {
+    "statement": "SELECT TOP (@p1) sc.name, o.name, st.name, st.auto_created, sp.last_updated,\n\t  ISNULL(sp.rows, 0), ISNULL(sp.rows_sampled, 0), ISNULL(sp.modification_counter, 0)\n\tFROM sys.stats st\n\tJOIN sys.objects o ON o.object_id = st.object_id AND o.is_ms_shipped = 0 AND o.type IN ('U', 'V')\n\tJOIN sys.schemas sc ON sc.schema_id = o.schema_id\n\tOUTER APPLY sys.dm_db_stats_properties(st.object_id, st.stats_id) sp\n\tORDER BY ISNULL(sp.modification_counter, 0) DESC, sc.name, o.name, st.name",
+    "executions": 2,
+    "cpuMs": 5,
+    "avgCpuMs": 2,
+    "avgMs": 2,
+    "avgReads": 895,
+    "lastRun": "2026-11-26T06:18:31Z"
+   },
+   {
+    "statement": "WITH w AS (SELECT wait_type, waiting_tasks_count, wait_time_ms, signal_wait_time_ms FROM sys.dm_os_wait_stats\n\t  WHERE wait_time_ms \u003e 0 AND wait_type NOT IN ('BROKER_EVENTHANDLER','BROKER_RECEIVE_WAITFOR','BROKER_TASK_STOP','BROKER_TO_FLUSH','BROKER_TRANSMITTER','CHECKPOINT_QUEUE','CHKPT','CLR_AUTO_EVENT','CLR_MANUAL_EVENT','CLR_SEMAPHORE','DBMIRROR_DBM_EVENT','DBMIRROR_EVENTS_QUEUE','DBMIRROR_WORKER_QUEUE','DBMIRRORING_CMD','DIRTY_PAGE_POLL','DISPATCHER_QUEUE_SEMAPHORE','EXECSYNC','FSAGENT','FT_IFTS_SCHEDULER_IDLE_WAIT','FT_IFTSHC_MUTEX','HADR_CLUSAPI_CALL','HADR_FILESTREAM_IOMGR_IOCOMPLETION','HADR_LOGCAPTURE_WAIT','HADR_NOTIFICATION_DEQUEUE','HADR_TIMER_TASK','HADR_WORK_QUEUE','KSOURCE_WAKEUP','LAZYWRITER_SLEEP','LOGMGR_QUEUE','MEMORY_ALLOCATION_EXT','ONDEMAND_TASK_QUEUE','PARALLEL_REDO_DRAIN_WORKER','PARALLEL_REDO_LOG_CACHE','PARALLEL_REDO_TRAN_LIST','PARALLEL_REDO_WORKER_SYNC','PARALLEL_REDO_WORKER_WAIT_WORK','PREEMPTIVE_OS_FLUSHFILEBUFFERS','PREEMPTIVE_XE_GETTARGETSTATE','PVS_PREALLOCATE','PWAIT_ALL_COMPONENTS_INITIALIZED','PWAIT_DIRECTLOGCONSUMER_GETNEXT','PWAIT_EXTENSIBILITY_CLEANUP_TASK','QDS_ASYNC_QUEUE','QDS_CLEANUP_STALE_QUERIES_TASK_MAIN_LOOP_SLEEP','QDS_PERSIST_TASK_MAIN_LOOP_SLEEP','QDS_SHUTDOWN_QUEUE','REDO_THREAD_PENDING_WORK','REQUEST_FOR_DEADLOCK_SEARCH','RESOURCE_QUEUE','SERVER_IDLE_CHECK','SLEEP_BPOOL_FLUSH','SLEEP_DBSTARTUP','SLEEP_DCOMSTARTUP','SLEEP_MASTERDBREADY','SLEEP_MASTERMDREADY','SLEEP_MASTERUPGRADED','SLEEP_MSDBSTARTUP','SLEEP_SYSTEMTASK','SLEEP_TASK','SLEEP_TEMPDBSTARTUP','SNI_HTTP_ACCEPT','SOS_WORK_DISPATCHER','SP_SERVER_DIAGNOSTICS_SLEEP','SQLTRACE_BUFFER_FLUSH','SQLTRACE_INCREMENTAL_FLUSH_SLEEP','SQLTRACE_WAIT_ENTRIES','UCS_SESSION_REGISTRATION','VDI_CLIENT_OTHER','WAIT_FOR_RESULTS','WAIT_XTP_CKPT_CLOSE','WAIT_XTP_HOST_WAIT','WAIT_XTP_OFFLINE_CKPT_NEW_LOG','WAIT_XTP_RECOVERY','WAITFOR','WAITFOR_TASKSHUTDOWN','XE_BUFFERMGR_ALLPROCESSED_EVENT','XE_DISPATCHER_JOIN','XE_DISPATCHER_WAIT','XE_LIVE_TARGET_TVF','XE_TIMER_EVENT') AND wait_type NOT LIKE 'SLEEP[_]%')\n\tSELECT TOP 15 wait_type, waiting_tasks_count, wait_time_ms, signal_wait_time_ms,\n\t  CAST(100.0 * wait_time_ms / NULLIF(SUM(wait_time_ms) OVER (), 0) AS float)\n\tFROM w ORDER BY wait_time_ms DESC",
+    "executions": 3,
+    "cpuMs": 3,
+    "avgCpuMs": 1,
+    "avgMs": 1,
+    "avgReads": 137,
+    "lastRun": "2026-11-26T06:18:44Z"
+   },
+   {
+    "statement": "SELECT TOP 50 OBJECT_SCHEMA_NAME(d.object_id), OBJECT_NAME(d.object_id),\n\t  ISNULL(d.equality_columns, ''), ISNULL(d.inequality_columns, ''), ISNULL(d.included_columns, ''),\n\t  gs.user_seeks + gs.user_scans, CAST(gs.avg_user_impact AS float)\n\tFROM sys.dm_db_missing_index_details d\n\tJOIN sys.dm_db_missing_index_groups g ON g.index_handle = d.index_handle\n\tJOIN sys.dm_db_missing_index_group_stats gs ON gs.group_handle = g.index_group_handle\n\tWHERE d.database_id = DB_ID() AND OBJECT_NAME(d.object_id) IS NOT NULL\n\tORDER BY gs.avg_total_user_cost * gs.avg_user_impact * (gs.user_seeks + gs.user_scans) DESC",
+    "executions": 2,
+    "cpuMs": 2,
+    "avgCpuMs": 1,
+    "avgMs": 1,
+    "avgReads": 0,
+    "lastRun": "2026-11-26T06:18:31Z"
+   },
+   {
+    "statement": "SELECT actual_state_desc, readonly_reason, current_storage_size_mb, max_storage_size_mb\n\t  FROM sys.database_query_store_options",
+    "executions": 2,
+    "cpuMs": 1,
+    "avgCpuMs": 0,
+    "avgMs": 0,
+    "avgReads": 332,
+    "lastRun": "2026-11-26T06:18:31Z"
+   },
+   {
+    "statement": "SELECT\n\t  (SELECT COUNT(*) FROM sys.dm_exec_requests WHERE blocking_session_id \u003c\u003e 0 AND database_id = DB_ID()),\n\t  ISNULL((SELECT DATEDIFF(SECOND, MIN(t.transaction_begin_time), SYSDATETIME())\n\t    FROM sys.dm_tran_database_transactions d JOIN sys.dm_tran_active_transactions t ON t.transaction_id = d.transaction_id\n\t    WHERE d.database_id = DB_ID() AND d.database_transaction_begin_time IS NOT NULL), 0)",
+    "executions": 2,
+    "cpuMs": 1,
+    "avgCpuMs": 0,
+    "avgMs": 0,
+    "avgReads": 0,
+    "lastRun": "2026-11-26T06:18:31Z"
+   },
+   {
+    "statement": "SELECT\n\t  ISNULL(SUM(CAST(size_in_bytes AS bigint)), 0) / 1048576,\n\t  ISNULL(SUM(CASE WHEN objtype = 'Adhoc' AND usecounts = 1 THEN CAST(size_in_bytes AS bigint) ELSE 0 END), 0) / 1048576\n\t  FROM sys.dm_exec_cached_plans",
+    "executions": 2,
+    "cpuMs": 1,
+    "avgCpuMs": 0,
+    "avgMs": 0,
+    "avgReads": 0,
+    "lastRun": "2026-11-26T06:18:31Z"
+   },
+   {
+    "statement": "SELECT name, CONVERT(nvarchar(64), value_in_use), CONVERT(nvarchar(400), description)\n\t  FROM sys.configurations WHERE name IN (N'max server memory (MB)', N'min server memory (MB)', N'max degree of parallelism', N'cost threshold for parallelism', N'optimize for ad hoc workloads', N'backup compression default', N'backup checksum default', N'remote admin connections', N'Agent XPs', N'clr enabled', N'xp_cmdshell', N'contained database authentication', N'max worker threads') ORDER BY name",
+    "executions": 2,
+    "cpuMs": 1,
+    "avgCpuMs": 0,
+    "avgMs": 0,
+    "avgReads": 197,
+    "lastRun": "2026-11-26T06:18:31Z"
+   },
+   {
+    "statement": "SELECT [name] FROM [dbo].[customers] WHERE [id]=@1",
+    "executions": 256,
+    "cpuMs": 1,
+    "avgCpuMs": 0,
+    "avgMs": 0,
+    "avgReads": 2,
+    "lastRun": "2026-11-26T06:17:14Z"
+   },
+   {
+    "statement": "SELECT [name] FROM [dbo].[customers] WHERE [id]=@1",
+    "executions": 144,
+    "cpuMs": 0,
+    "avgCpuMs": 0,
+    "avgMs": 0,
+    "avgReads": 2,
+    "lastRun": "2026-11-26T06:17:14Z"
+   },
+   {
+    "statement": "SELECT recovery_model_desc, compatibility_level, is_auto_close_on, is_auto_shrink_on,\n\t  is_auto_create_stats_on, is_auto_update_stats_on, is_auto_update_stats_async_on, page_verify_option_desc,\n\t  is_read_committed_snapshot_on, snapshot_isolation_state_desc, is_query_store_on, target_recovery_time_in_seconds,\n\t  ISNULL(collation_name, ''), state_desc, user_access_desc, log_reuse_wait_desc, containment_desc, is_read_only, create_date\n\t  FROM sys.databases WHERE database_id = DB_ID()",
+    "executions": 2,
+    "cpuMs": 0,
+    "avgCpuMs": 0,
+    "avgMs": 0,
+    "avgReads": 22,
+    "lastRun": "2026-11-26T06:18:31Z"
+   },
+   {
+    "statement": "SELECT name, type_desc, physical_name, CAST(size AS bigint) * 8 / 1024,\n\t  CAST(ISNULL(FILEPROPERTY(name, 'SpaceUsed'), 0) AS bigint) * 8 / 1024,\n\t  CASE max_size WHEN -1 THEN -1 WHEN 268435456 THEN -1 ELSE CAST(max_size AS bigint) * 8 / 1024 END,\n\t  CASE WHEN growth = 0 THEN 'none' WHEN is_percent_growth = 1 THEN CONCAT(growth, '%')\n\t    ELSE CONCAT(CAST(growth AS bigint) * 8 / 1024, ' MB') END, is_read_only\n\t  FROM sys.database_files ORDER BY file_id",
+    "executions": 2,
+    "cpuMs": 0,
+    "avgCpuMs": 0,
+    "avgMs": 0,
+    "avgReads": 15,
+    "lastRun": "2026-11-26T06:18:31Z"
+   },
+   {
+    "statement": "SELECT sqlserver_start_time FROM sys.dm_os_sys_info",
+    "executions": 3,
+    "cpuMs": 0,
+    "avgCpuMs": 0,
+    "avgMs": 0,
+    "avgReads": 0,
+    "lastRun": "2026-11-26T06:18:44Z"
+   },
+   {
+    "statement": "SELECT CAST(size AS bigint) * 8 / 1024 FROM tempdb.sys.database_files WHERE type = 0",
+    "executions": 2,
+    "cpuMs": 0,
+    "avgCpuMs": 0,
+    "avgMs": 0,
+    "avgReads": 2,
+    "lastRun": "2026-11-26T06:18:31Z"
+   },
+   {
+    "statement": "SELECT CONVERT(nvarchar(128), SERVERPROPERTY('ProductVersion')),\n\t  CONVERT(nvarchar(128), SERVERPROPERTY('Edition')), sqlserver_start_time,\n\t  DATEDIFF(SECOND, sqlserver_start_time, SYSDATETIME()), cpu_count, physical_memory_kb / 1024,\n\t  committed_target_kb / 1024, committed_kb / 1024\n\t  FROM sys.dm_os_sys_info",
+    "executions": 2,
+    "cpuMs": 0,
+    "avgCpuMs": 0,
+    "avgMs": 0,
+    "avgReads": 0,
+    "lastRun": "2026-11-26T06:18:31Z"
+   },
+   {
+    "statement": "SELECT physical_memory_in_use_kb / 1024 FROM sys.dm_os_process_memory",
+    "executions": 2,
+    "cpuMs": 0,
+    "avgCpuMs": 0,
+    "avgMs": 0,
+    "avgReads": 0,
+    "lastRun": "2026-11-26T06:18:31Z"
+   }
+  ]
+ },
+ "settings": {
+  "settings": [
+   {
+    "name": "RECOVERY",
+    "value": "FULL"
+   },
+   {
+    "name": "COMPATIBILITY_LEVEL",
+    "value": "160"
+   },
+   {
+    "name": "PAGE_VERIFY",
+    "value": "CHECKSUM"
+   },
+   {
+    "name": "AUTO_CLOSE",
+    "value": "OFF"
+   },
+   {
+    "name": "AUTO_SHRINK",
+    "value": "ON"
+   },
+   {
+    "name": "AUTO_CREATE_STATISTICS",
+    "value": "ON"
+   },
+   {
+    "name": "AUTO_UPDATE_STATISTICS",
+    "value": "ON"
+   },
+   {
+    "name": "AUTO_UPDATE_STATISTICS_ASYNC",
+    "value": "OFF"
+   },
+   {
+    "name": "READ_COMMITTED_SNAPSHOT",
+    "value": "OFF"
+   },
+   {
+    "name": "ALLOW_SNAPSHOT_ISOLATION",
+    "value": "OFF"
+   },
+   {
+    "name": "QUERY_STORE",
+    "value": "OFF"
+   },
+   {
+    "name": "TARGET_RECOVERY_TIME",
+    "value": "60"
+   }
+  ],
+  "facts": [
+   {
+    "name": "State",
+    "value": "ONLINE"
+   },
+   {
+    "name": "User access",
+    "value": "MULTI_USER"
+   },
+   {
+    "name": "Read only",
+    "value": "OFF"
+   },
+   {
+    "name": "Collation",
+    "value": "SQL_Latin1_General_CP1_CI_AS"
+   },
+   {
+    "name": "Containment",
+    "value": "NONE"
+   },
+   {
+    "name": "Log waits on",
+    "value": "ACTIVE_TRANSACTION"
+   },
+   {
+    "name": "Created",
+    "value": "2026-11-26T06:17:06Z"
+   }
+  ],
+  "files": [
+   {
+    "name": "shop",
+    "type": "rows",
+    "path": "/var/opt/mssql/data/shop.mdf",
+    "sizeMb": 229,
+    "usedMb": 222,
+    "maxMb": -1,
+    "growth": "10%"
+   },
+   {
+    "name": "shop_log",
+    "type": "log",
+    "path": "/var/opt/mssql/data/shop.ldf",
+    "sizeMb": 268,
+    "usedMb": 151,
+    "maxMb": -1,
+    "growth": "1 MB"
+   }
+  ],
+  "server": [
+   {
+    "name": "Agent XPs",
+    "value": "0",
+    "description": "Enable or disable Agent XPs"
+   },
+   {
+    "name": "backup checksum default",
+    "value": "0",
+    "description": "Enable checksum of backups by default"
+   },
+   {
+    "name": "backup compression default",
+    "value": "0",
+    "description": "Enable compression of backups by default"
+   },
+   {
+    "name": "clr enabled",
+    "value": "0",
+    "description": "CLR user code execution enabled in the server"
+   },
+   {
+    "name": "contained database authentication",
+    "value": "0",
+    "description": "Enables contained databases and contained authentication"
+   },
+   {
+    "name": "cost threshold for parallelism",
+    "value": "5",
+    "description": "cost threshold for parallelism"
+   },
+   {
+    "name": "max degree of parallelism",
+    "value": "0",
+    "description": "maximum degree of parallelism"
+   },
+   {
+    "name": "max server memory (MB)",
+    "value": "2147483647",
+    "description": "Maximum size of server memory (MB)"
+   },
+   {
+    "name": "max worker threads",
+    "value": "0",
+    "description": "Maximum worker threads"
+   },
+   {
+    "name": "min server memory (MB)",
+    "value": "16",
+    "description": "Minimum size of server memory (MB)"
+   },
+   {
+    "name": "optimize for ad hoc workloads",
+    "value": "0",
+    "description": "When this option is set, plan cache size is further reduced for single-use adhoc OLTP workload."
+   },
+   {
+    "name": "remote admin connections",
+    "value": "0",
+    "description": "Dedicated Admin Connections are allowed from remote clients"
+   },
+   {
+    "name": "xp_cmdshell",
+    "value": "0",
+    "description": "Enable or disable command shell"
+   }
+  ]
+ }
+}
