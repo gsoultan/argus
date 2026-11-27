@@ -40,6 +40,14 @@ func TestStatementApprovalOnProduction(t *testing.T) {
 	if no := run(ana, del, "", &seven); no == nil || no.Code != tunnel.GuardNeedsApproval {
 		t.Fatalf("a delete ran without approval: %+v", no)
 	}
+	// The console's Explain with ANALYZE runs the statement: a read, even
+	// one that locks rows, passes; a change waits like the change itself.
+	if no := run(ana, "EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM orders WHERE id = 1 FOR UPDATE", ""); no != nil {
+		t.Fatalf("EXPLAIN ANALYZE of a read was stopped: %+v", no)
+	}
+	if no := run(ana, "EXPLAIN (ANALYZE) UPDATE orders SET total = 0 WHERE id = 1", ""); no == nil || no.Code != tunnel.GuardNeedsApproval {
+		t.Fatalf("EXPLAIN ANALYZE of a change ran without approval: %+v", no)
+	}
 	// What the guard stops is left to the agent, so no approval is used on it.
 	if no := run(ana, "DELETE FROM orders", ""); no != nil {
 		t.Fatalf("a guarded statement was answered here: %+v", no)

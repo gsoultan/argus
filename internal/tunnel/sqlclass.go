@@ -129,6 +129,7 @@ type sqlToken struct {
 	quoted bool
 	punct  byte // ( ) , ; . * or 0 for a word
 	depth  int  // parentheses around it
+	at     int  // where it starts in the text
 }
 
 // lexSQL splits a statement into words and the punctuation that shapes it,
@@ -181,7 +182,7 @@ func lexSQL(s string) []sqlToken {
 				b.WriteByte(s[j])
 				j++
 			}
-			out = append(out, sqlToken{text: b.String(), quoted: true, depth: depth})
+			out = append(out, sqlToken{text: b.String(), quoted: true, depth: depth, at: i})
 			i = j + 1
 		case c == '[':
 			// [name] in SQL Server, ]] for a ] inside. Postgres's array
@@ -201,7 +202,7 @@ func lexSQL(s string) []sqlToken {
 				b.WriteByte(s[j])
 				j++
 			}
-			out = append(out, sqlToken{text: b.String(), quoted: true, depth: depth})
+			out = append(out, sqlToken{text: b.String(), quoted: true, depth: depth, at: i})
 			i = j + 1
 		case c == '$':
 			// $tag$ ... $tag$, or a parameter like $1.
@@ -223,17 +224,17 @@ func lexSQL(s string) []sqlToken {
 				}
 			}
 		case c == '(':
-			out = append(out, sqlToken{punct: c, depth: depth})
+			out = append(out, sqlToken{punct: c, depth: depth, at: i})
 			depth++
 			i++
 		case c == ')':
 			if depth > 0 {
 				depth--
 			}
-			out = append(out, sqlToken{punct: c, depth: depth})
+			out = append(out, sqlToken{punct: c, depth: depth, at: i})
 			i++
 		case c == ',' || c == ';' || c == '.' || c == '*':
-			out = append(out, sqlToken{punct: c, depth: depth})
+			out = append(out, sqlToken{punct: c, depth: depth, at: i})
 			i++
 		case isIdentStart(s, i):
 			j := i
@@ -245,7 +246,7 @@ func lexSQL(s string) []sqlToken {
 				}
 				break
 			}
-			out = append(out, sqlToken{text: strings.ToLower(s[i:j]), depth: depth})
+			out = append(out, sqlToken{text: strings.ToLower(s[i:j]), depth: depth, at: i})
 			i = j
 		default:
 			i++

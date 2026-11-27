@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"strings"
 )
 
 /*
@@ -71,21 +72,18 @@ func NeedsApproval(c SQLClass, sql string) bool {
 			return true
 		}
 	}
-	// EXPLAIN ANALYZE runs what it explains.
+	// EXPLAIN ANALYZE runs what it explains, so it changes what that
+	// statement changes: judged as the statement itself. A SELECT, even
+	// one FOR UPDATE or with a column named like a verb, is a read.
 	if c.Verb == "explain" {
-		analyze, writes := false, false
-		for _, t := range toks {
-			if t.punct != 0 || t.quoted {
-				continue
-			}
-			switch t.text {
-			case "analyze", "analyse":
-				analyze = true
-			case "insert", "update", "delete", "merge", "truncate", "create", "drop", "alter":
-				writes = true
-			}
+		inner, analyze := explained(sql)
+		if !analyze {
+			return false
 		}
-		return analyze && writes
+		if strings.TrimSpace(inner) == "" {
+			return true
+		}
+		return NeedsApproval(ClassifySQL(inner), inner)
 	}
 	return false
 }
@@ -103,4 +101,43 @@ func StatementDigest(sql string, params []*string) string {
 	h.Write([]byte{'\n'})
 	h.Write(p)
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// explained is the statement an EXPLAIN explains, and whether it runs it
+// (ANALYZE, bare or among the options, not set false or off).
+func explained(sql string) (string, bool) {
+	toks := lexSQL(sql)
+	if len(toks) == 0 || toks[0].text != "explain" || toks[0].quoted {
+		return "", false
+	}
+	analyze := false
+	k := 1
+	if k < len(toks) && toks[k].punct == '(' {
+		for k++; k < len(toks) && !(toks[k].punct == ')' && toks[k].depth == 0); k++ {
+			t := toks[k]
+			if t.punct == 0 && !t.quoted && (t.text == "analyze" || t.text == "analyse") {
+				next := ""
+				if k+1 < len(toks) && toks[k+1].punct == 0 {
+					next = toks[k+1].text
+				}
+				analyze = next != "false" && next != "off"
+			}
+		}
+		k++
+	} else {
+	words:
+		for ; k < len(toks) && toks[k].punct == 0 && !toks[k].quoted; k++ {
+			switch toks[k].text {
+			case "analyze", "analyse":
+				analyze = true
+			case "verbose":
+			default:
+				break words
+			}
+		}
+	}
+	if k >= len(toks) {
+		return "", analyze
+	}
+	return sql[toks[k].at:], analyze
 }
