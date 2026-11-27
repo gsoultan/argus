@@ -288,7 +288,11 @@ func releaseBlockers(r PackageReport) []string {
 	if n := len(r.Updates); n > 0 {
 		out = append(out, fmt.Sprintf("install the %d update%s waiting for the current release first", n, plural(n)))
 	}
-	if r.RebootRequired {
+	if n := len(r.Unfinished); n > 0 {
+		out = append(out, "finish configuring what an earlier upgrade left half done ("+strings.Join(r.Unfinished, ", ")+
+			"): run `sudo dpkg --configure -a` and `sudo apt-get -f install` until both finish without errors")
+	}
+	if r.RebootRequired && len(r.Unfinished) == 0 {
 		out = append(out, "reboot it first: an update already installed waits for a reboot")
 	}
 	for _, dir := range []string{"/", "/var"} {

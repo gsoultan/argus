@@ -88,7 +88,9 @@ export function UpdatesTab({ asset, canEdit }: { asset: Asset; canEdit: boolean 
         <>
           {active && <ActiveRun run={active} canEdit={canEdit} heardAt={v.heardAt} />}
           <Summary view={v} />
-          {v.report?.reboot_required && active?.mode !== 'reboot' && active?.mode !== 'release_upgrade' && (
+          {(v.report?.unfinished?.length ?? 0) > 0 && !active && <Unfinished packages={v.report!.unfinished!} />}
+          {v.report?.reboot_required && !v.report.unfinished?.length && active?.mode !== 'reboot' &&
+            active?.mode !== 'release_upgrade' && (
             <RebootNeeded view={v} assetId={asset.id} name={assetName(asset)} canEdit={canEdit} busy={Boolean(active)} />
           )}
           {v.report?.release && active?.mode !== 'release_upgrade' && (
@@ -167,14 +169,54 @@ function Summary({ view: v }: { view: PackagesView }) {
       <Stat label={auto ? 'Next automatic run' : 'Automatic updates'}
         value={auto ? (v.nextWindow ? serverClock(v.nextWindow, r?.utc_offset_minutes ?? 0) : '—') : MODE_LABEL[v.rule.mode]}
         sub={auto ? `${MODE_LABEL[v.rule.mode].toLowerCase()} · ${windowText(v.rule)}` : 'Settings, Updates turns them on'} />
-      <Stat label="Reboot" tone={r?.reboot_required || kernel ? 'warn' : 'ok'}
-        value={r?.reboot_required ? 'Needed now' : kernel ? 'Will be needed' : 'Not needed'}
-        sub={r?.reboot_required ? 'an installed update waits for one' : kernel ? `${kernel.name} ${kernel.available}` : undefined} />
+      {r?.unfinished?.length ? (
+        <Stat label="Reboot" tone="warn" value="Not yet" sub="packages are half configured" />
+      ) : (
+        <Stat label="Reboot" tone={r?.reboot_required || kernel ? 'warn' : 'ok'}
+          value={r?.reboot_required ? 'Needed now' : kernel ? 'Will be needed' : 'Not needed'}
+          sub={r?.reboot_required ? 'an installed update waits for one' : kernel ? `${kernel.name} ${kernel.available}` : undefined} />
+      )}
     </SimpleGrid>
   )
 }
 
 /* ── Reboot ──────────────────────────────────────────────────────────────── */
+
+/**
+ * dpkg has packages half installed or half configured, as an upgrade that
+ * stopped part way leaves them. Rebooting now can leave a server that does
+ * not start (a kernel without its initramfs, a boot loader nobody
+ * installed), so this takes the place of the reboot button until they are
+ * finished, and the agent refuses a reboot meanwhile.
+ */
+function Unfinished({ packages }: { packages: string[] }) {
+  const grub = packages.includes('grub-pc')
+  return (
+    <Alert color="rose" p="sm" icon={<IconPower size={18} />} title="Do not reboot this server yet">
+      <Stack gap="xs">
+        <Text size={FS.body} lh={1.5}>
+          An upgrade stopped part way and left {packages.length === 1 ? 'a package' : `${packages.length} packages`} half
+          configured: <Code>{packages.join(', ')}</Code>. It may not start again if it reboots like this, so Argus
+          will not reboot it until they are finished. On the server:
+        </Text>
+        <List size="sm" type="ordered" spacing={4}>
+          <List.Item>
+            Run <Code>sudo dpkg --configure -a</Code>, then <Code>sudo apt-get -f install</Code>, until both finish
+            without errors.
+          </List.Item>
+          {grub && (
+            <List.Item>
+              If grub-pc is what fails, run <Code>sudo dpkg-reconfigure grub-pc</Code> and tick the disk the server
+              boots from.
+            </List.Item>
+          )}
+          <List.Item>If a release upgrade stopped part way, run <Code>sudo apt full-upgrade</Code> to finish it.</List.Item>
+          <List.Item>Press Check for updates. Once this goes away, the server can be rebooted.</List.Item>
+        </List>
+      </Stack>
+    </Alert>
+  )
+}
 
 /**
  * The server says installed updates wait for a reboot: say so where it is

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -1321,5 +1322,31 @@ func TestPackagePostgresRuns(t *testing.T) {
 	fix := e.ask(t, asset, "admin-token", `{"mode":"apt_sources_fix","expect":"`+fp+`"}`, http.StatusAccepted)
 	if fix.Mode != PackagesAptSourcesFix || fix.Reboot != "never" {
 		t.Fatalf("fix = %+v", fix)
+	}
+}
+
+// A server dpkg has left half configured is not rebooted from the console:
+// it may not come back.
+func TestUnfinishedRefusal(t *testing.T) {
+	if why := unfinishedRefusal(nil); why != "" {
+		t.Errorf("no report: %q", why)
+	}
+	if why := unfinishedRefusal(&PackageReport{}); why != "" {
+		t.Errorf("nothing unfinished: %q", why)
+	}
+	why := unfinishedRefusal(&PackageReport{Unfinished: []string{"grub-pc", "linux-image-6.8.0-31-generic"}})
+	if !strings.Contains(why, "grub-pc, linux-image-6.8.0-31-generic") || !strings.Contains(why, "dpkg --configure -a") {
+		t.Errorf("refusal = %q", why)
+	}
+	in := runRequest{Mode: PackagesReboot}
+	w := httptest.NewRecorder()
+	tgt := packageTarget{view: PackagesView{CanReboot: true,
+		Report: &PackageReport{Unfinished: []string{"grub-pc"}}}}
+	if rebootReady(w, tgt, in) || w.Code != http.StatusConflict {
+		t.Errorf("reboot allowed: %d %s", w.Code, w.Body)
+	}
+	tgt.view.Report.Unfinished = nil
+	if !rebootReady(httptest.NewRecorder(), tgt, in) {
+		t.Error("reboot refused with nothing unfinished")
 	}
 }
