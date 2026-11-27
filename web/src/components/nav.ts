@@ -1,6 +1,6 @@
 import {
   IconBox, IconCalendarTime, IconCirclePlus, IconClipboardCheck, IconCloud, IconCoin, IconDatabase, IconFileText, IconHistory, IconHome,
-  IconInfoCircle, IconKey, IconRouter, IconTopologyStar3, IconServer2, IconSettings, IconShieldLock, IconStack2, IconUser, IconUsersGroup, IconWorld,
+  IconInfoCircle, IconKey, IconLockPassword, IconRouter, IconTopologyStar3, IconServer2, IconSettings, IconShieldLock, IconStack2, IconUser, IconUsersGroup, IconWorld,
   type IconProps,
 } from '@tabler/icons-react'
 import type { ComponentType } from 'react'
@@ -23,6 +23,8 @@ import type { UserRole } from '~/types/domain'
  *   instances have an Argus server. For whoever sees the whole fleet.
  * - **Websites**: whether each site is up, and its uptime. For whoever sees
  *   the whole fleet; admins add the addresses.
+ * - **Secrets**: passwords, keys and tokens on the organization's
+ *   argus-secret servers, drawn by argus-secret's own screens (src/mf).
  * - **Network devices**: switches, routers and the like, read over SNMP by a
  *   server near them. Monitoring only: they are not Assets.
  * - **Networks**: VPN links and tunnels on the servers, as their agents see
@@ -102,6 +104,12 @@ export const NAV_ITEMS: NavItem[] = [
     label: 'Brokers',
     icon: IconStack2,
     blurb: 'RabbitMQ: queues, routing and who is connected; every action is recorded',
+  },
+  {
+    to: '/secrets',
+    label: 'Secrets',
+    icon: IconLockPassword,
+    blurb: 'Passwords, keys and tokens servers and apps read; every read is recorded',
   },
   {
     to: '/cloud',
@@ -230,7 +238,7 @@ export function groupsFor(role: UserRole | undefined, seesChecks = false): NavGr
   const teams = by('/teams')
   const g: NavGroup[] = [
     { label: '', items: [by('/'), by('/approvals')] },
-    { label: 'Connect', items: [by('/assets'), by('/databases'), by('/brokers')] },
+    { label: 'Connect', items: [by('/assets'), by('/databases'), by('/brokers'), by('/secrets')] },
     // Someone outside the fleet roles who was given a check sees it here.
     { label: 'Monitoring', items: [
       { ...by('/websites'), label: 'Websites', ...(seesChecks ? { audience: undefined } : {}) },

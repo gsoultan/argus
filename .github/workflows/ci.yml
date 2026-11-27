@@ -1015,6 +1015,15 @@ jobs:
       - run: bunx vite build
         env:
           VITE_CONTROL_URL: ""
+      # The secrets screens, built on their own the way a release builds
+      # them, beside the console under dist/mf/secrets/<contract>/.
+      - run: bunx vite build -c vite.mf.config.ts
+      - name: Confirm the secrets screens carry no second React or Mantine
+        run: |
+          f=dist/mf/secrets/1/index.js
+          test -s "$f"
+          if grep -q "^import " "$f"; then echo "$f imports a module the console does not lend it"; exit 1; fi
+          if grep -q "react-dom\|__SECRET_INTERNALS\|mantine-provider" "$f"; then echo "$f bundles its own copy of React or Mantine"; exit 1; fi
       - name: Confirm the service worker still denies the auth path
         # The rule that broke SSO for every returning visitor. It is one regex
         # in vite.config.ts and nothing else would notice it going missing.

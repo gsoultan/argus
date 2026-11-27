@@ -35,7 +35,7 @@ before:
     # control plane about to update to it reads them to say whether going
     # back would be clean. See internal/control/migration_manifest.go.
     - sh -c "mkdir -p dist-extra && go run ./cmd/argus-control migrations -json > dist-extra/argus-control_{{ .Version }}_migrations.json"
-    - sh -c "cd web && bun install --frozen-lockfile && VITE_CONTROL_URL=/ bunx vite build --outDir dist-release --emptyOutDir --logLevel warn"
+    - sh -c "cd web && bun install --frozen-lockfile && VITE_CONTROL_URL=/ bunx vite build --outDir dist-release --emptyOutDir --logLevel warn && MF_OUT=dist-release bunx vite build -c vite.mf.config.ts --logLevel warn"
 
 builds:
   - &control

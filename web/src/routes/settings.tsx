@@ -7,7 +7,7 @@ import { useDisclosure } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import {
-  IconActivityHeartbeat, IconAlertTriangle, IconBrandTelegram, IconBuilding, IconChecklist, IconDeviceDesktop, IconDevices, IconDeviceFloppy, IconInfoCircle, IconLock,
+  IconActivityHeartbeat, IconAlertTriangle, IconBrandTelegram, IconBuilding, IconChecklist, IconDeviceDesktop, IconDevices, IconDeviceFloppy, IconInfoCircle, IconLock, IconLockPassword,
   IconDatabase, IconDatabaseExport, IconFileText, IconLifebuoy, IconNetwork, IconPackage, IconRefresh, IconShieldLock, IconTerminal2, type IconProps,
 } from '@tabler/icons-react'
 import { PageBody, PageHeader, SectionCard } from '~/components/page'
@@ -23,6 +23,7 @@ import { EnrolledAgents } from '~/components/EnrolledAgents'
 import { Organizations } from '~/components/Organizations'
 import { ApprovalPolicySettings } from '~/components/ApprovalPolicySettings'
 import { TelegramBots } from '~/components/TelegramBots'
+import { SecretsServers } from '~/components/SecretsServers'
 import { ApprovalLocksCard } from '~/components/ApprovalLocks'
 import { PackageUpdateSettings } from '~/components/PackageUpdateSettings'
 import { SoftwareLibrary } from '~/components/SoftwareLibrary'
@@ -81,7 +82,7 @@ const CAN_EDIT_POLICY = new Set(['owner', 'admin'])
 type PolicySectionId = 'access' | 'recording' | 'hosts'
 type PlatformSectionId = 'organizations' | 'status' | 'control-updates' | 'control-backups' | 'control-readiness'
 type ServerSectionId = 'asset-types' | 'updates' | 'software' | 'logs' | 'disks'
-type OrgSectionId = 'approval-policy' | 'telegram'
+type OrgSectionId = 'approval-policy' | 'telegram' | 'secrets-servers'
 type SectionId = PolicySectionId | ControlSectionId | PlatformSectionId | ServerSectionId | OrgSectionId
 
 interface NavItem {
@@ -195,6 +196,8 @@ function Settings() {
       { id: 'approval-policy', label: 'Approval policy', icon: IconChecklist, changed: false },
       // The organization's own Telegram bots: admins and owners only.
       ...(canEdit ? [{ id: 'telegram' as const, label: 'Notifications', icon: IconBrandTelegram, changed: false }] : []),
+      // The organization's argus-secret servers: admins and owners only.
+      ...(canEdit ? [{ id: 'secrets-servers' as const, label: 'Secrets servers', icon: IconLockPassword, changed: false }] : []),
     ]
     : []
   const items = [...orgItems, ...statusItems, ...policyItems, ...serverItems, ...controlItems, ...platformItems]
@@ -386,6 +389,7 @@ function Settings() {
 
             {active === 'approval-policy' && orgItems.length > 0 && me && <ApprovalPolicySettings me={me.email} />}
             {active === 'telegram' && canEdit && <TelegramBots />}
+            {active === 'secrets-servers' && canEdit && <SecretsServers />}
 
             {active === 'organizations' && platformItems.length > 0 && (
               <>

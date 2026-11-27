@@ -105,7 +105,10 @@ func (h *consoleHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	file := filepath.Join(h.dir, filepath.FromSlash(p))
 	info, err := os.Stat(file)
 	if err != nil || info.IsDir() {
-		if errors.Is(err, os.ErrNotExist) && isBuiltAsset(p) {
+		// A micro-frontend's file that is not there is a 404, not the
+		// console's index.html: the shell imports it as a module and says
+		// what is missing instead of failing on a page of HTML.
+		if errors.Is(err, os.ErrNotExist) && (isBuiltAsset(p) || isMicroFrontend(p)) {
 			// A missing hashed asset is a stale tab after an upgrade. Serving
 			// index.html as JavaScript would fail in a far stranger way.
 			http.NotFound(w, r)
@@ -129,6 +132,12 @@ func (h *consoleHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // isBuiltAsset is a file vite wrote under assets/. Not every /assets/ path:
 // the console's own Servers pages live at /assets, /assets/add and
 // /assets/<id>, and those are routes, not files.
+// isMicroFrontend is a file of a section the console loads at run time, such
+// as the secrets screens under /mf/secrets/<contract>/.
+func isMicroFrontend(p string) bool {
+	return strings.HasPrefix(p, "/mf/") && path.Ext(p) != ""
+}
+
 func isBuiltAsset(p string) bool {
 	return strings.HasPrefix(p, "/assets/") && path.Ext(p) != ""
 }
