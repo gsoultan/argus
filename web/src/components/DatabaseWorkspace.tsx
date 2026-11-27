@@ -792,7 +792,12 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
       if (wrap) await collectWithId('ROLLBACK', 1, track)
       setHistory((h) => [{ sql: stmt, at: Date.now(), ok: !r.error }, ...h].slice(0, 100))
       if (r.error) {
-        done({ plan: null, error: `Postgres refused this: ${r.error.error ?? 'unknown error'}${r.error.code ? ` (${r.error.code})` : ''}` })
+        // Approval is Argus's rule, not Postgres's: ANALYZE runs a statement
+        // that changes data, so on production it waits like the statement.
+        const why = r.error.code === 'AR007'
+          ? `${r.error.error ?? 'this needs approval'}. Explain with ANALYZE runs the statement; Explain alone shows the plan without running it.`
+          : `Postgres refused this: ${r.error.error ?? 'unknown error'}${r.error.code ? ` (${r.error.code})` : ''}`
+        done({ plan: null, error: why })
         return
       }
       done({ plan: parsePlan(r.rows.map((x) => x[0] ?? '')), rolledBack: wrap })
