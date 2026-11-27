@@ -15,7 +15,8 @@ import {
   type TelegramBot, type TelegramChat, type TelegramRoute, type TelegramView,
 } from '~/lib/telegram'
 import { ago } from '~/lib/websites'
-import { FS } from '~/theme'
+import { FS, INK } from '~/theme'
+import { ChatHelp, FinderStatus, TokenHelp, useChatFinder } from '~/components/TelegramHelp'
 
 /**
  * Settings › Notifications: which bot and chats each kind of alert goes to,
@@ -180,7 +181,6 @@ function BotForm({ v, bot, onClose }: { v: TelegramView; bot: TelegramBot | null
   const [token, setToken] = useState('')
   const [who, setWho] = useState<string | null>(bot ? `@${bot.username}` : null)
   const [checking, setChecking] = useState(false)
-  const [finding, setFinding] = useState(false)
   const [known, setKnown] = useState<TelegramChat[]>(bot?.chats ?? [])
   const [chosen, setChosen] = useState<string[]>(bot?.chats.map((c) => c.id) ?? [])
   const [typed, setTyped] = useState('')
@@ -195,16 +195,25 @@ function BotForm({ v, bot, onClose }: { v: TelegramView; bot: TelegramBot | null
       if (!name.trim()) setName(me.name || me.username)
     }, { failure: 'Token not accepted' }).finally(() => setChecking(false))
   }
-  const find = () => {
-    setFinding(true)
-    void run(async () => {
-      const r = await findChats(token.trim() ? { token: token.trim() } : { bot: bot?.id ?? '' })
-      const merged = [...known]
-      for (const c of r.chats) if (!merged.some((k) => k.id === c.id)) merged.push(c)
-      setKnown(merged)
-      if (r.chats.length === 0) notifyOk('No chats found', 'Add the bot to a group, send it any message, then try again. Or type the chat ID.')
-    }, { failure: 'Chats not found' }).finally(() => setFinding(false))
-  }
+  const finder = useChatFinder(
+    async () => (await findChats(token.trim() ? { token: token.trim() } : { bot: bot?.id ?? '' })).chats,
+    known.map((k) => k.id),
+    (found, fresh) => {
+      setKnown((prev) => {
+        const merged = [...prev]
+        for (const c of found) if (!merged.some((k) => k.id === c.id)) merged.push(c)
+        return merged
+      })
+      // A chat that turned up while watching is the one the person just
+      // messaged: tick it, unless it is someone's private chat.
+      if (fresh) {
+        const groups = found.filter((c) => c.kind !== 'private').map((c) => c.id)
+        if (groups.length) setChosen((prev) => [...prev, ...groups.filter((id) => !prev.includes(id))])
+        notifyOk('Found it', `${found.map((c) => chatOption(c).label).join(', ')} ${groups.length ? 'is ticked' : 'is listed'} below.`)
+      }
+    },
+    token.trim() || bot?.id || '',
+  )
   const addTyped = () => {
     const id = typed.trim()
     if (!id) return
@@ -231,7 +240,7 @@ function BotForm({ v, bot, onClose }: { v: TelegramView; bot: TelegramBot | null
             <TextInput
               style={{ flex: 1 }}
               label="Bot token"
-              description={bot ? `Saved token ends ${bot.tokenTail}. Leave empty to keep it.` : 'From @BotFather. Argus checks it with Telegram before saving.'}
+              description={bot ? `Saved token ends ${bot.tokenTail}. Leave empty to keep it.` : 'From @BotFather in Telegram. Argus checks it with Telegram before saving.'}
               placeholder={bot ? '••••••••' + bot.tokenTail : '123456789:AAH…'}
               value={token}
               onChange={(e) => { setToken(e.currentTarget.value); setWho(bot && !e.currentTarget.value ? `@${bot.username}` : null) }}
@@ -240,14 +249,15 @@ function BotForm({ v, bot, onClose }: { v: TelegramView; bot: TelegramBot | null
             />
             <Button variant="default" onClick={check} loading={checking} disabled={!token.trim()}>Check</Button>
           </Group>
+          {!bot && <TokenHelp initiallyOpen={v.bots.length === 0} check />}
           {who && token.trim() && (
-            <Group gap={4}><IconCheck size={14} color="var(--mantine-color-teal-7)" /><Text size="sm" c="teal.8">Works: this is {who}</Text></Group>
+            <Group gap={4}><IconCheck size={14} color={INK.verified} /><Text size="sm" c={INK.verified}>Works: this is {who}</Text></Group>
           )}
         </Stack>
 
         <Stack gap={6}>
           <Text size={FS.body} fw={600}>Chats it may post to</Text>
-          <Text size="xs" c="dimmed">Add the bot to a group and send it any message, then press Find chats. Or type a chat ID.</Text>
+          <ChatHelp username={who && (token.trim() || bot) ? who : undefined} initiallyOpen={known.length === 0} findLabel="Find chats" />
           {known.length > 0 && (
             <Checkbox.Group value={chosen} onChange={setChosen}>
               <Stack gap={6}>
@@ -259,12 +269,14 @@ function BotForm({ v, bot, onClose }: { v: TelegramView; bot: TelegramBot | null
             </Checkbox.Group>
           )}
           <Group gap="xs" wrap="nowrap">
-            <Button variant="default" size="xs" onClick={find} loading={finding} disabled={!canFind}>Find chats</Button>
+            <Button variant="default" size="xs" onClick={finder.find} loading={finder.busy} disabled={!canFind || finder.watching}>Find chats</Button>
             <TextInput size="xs" style={{ flex: 1 }} aria-label="Chat ID" placeholder="Or type a chat ID, such as -1001234567890"
               value={typed} onChange={(e) => setTyped(e.currentTarget.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTyped() } }} />
             <Button variant="default" size="xs" onClick={addTyped} disabled={!typed.trim()}>Add</Button>
           </Group>
+          {!canFind && <Text size={FS.meta} c="dimmed">Paste the bot token first: Find chats asks Telegram with it.</Text>}
+          <FinderStatus watching={finder.watching} missed={finder.missed} username={who && (token.trim() || bot) ? who : undefined} onStop={finder.stop} />
         </Stack>
 
         <Switch

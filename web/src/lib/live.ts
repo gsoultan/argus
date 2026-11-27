@@ -1395,6 +1395,18 @@ export async function testEmail(e: ControlSettings['email']): Promise<{ sent: bo
 }
 
 /**
+ * The platform bot on the form, unsaved: the chats it heard from lately, and
+ * a test message to some chats. A token left out is the one running.
+ */
+export async function platformTelegramChats(botToken?: string): Promise<{ chats: { id: string; title: string; kind?: string }[] }> {
+  return post('/api/v1/settings/telegram-chats', { botToken: botToken || undefined })
+}
+
+export async function testTelegram(t: ControlSettings['telegram']): Promise<{ chats: string[] }> {
+  return post<{ chats: string[] }>('/api/v1/settings/test-telegram', { botToken: t.botToken || undefined, chatIds: t.chatIds })
+}
+
+/**
  * Writes a small object to the storage on the form and reads it back, without
  * saving it. A secret left out is the one configured.
  */

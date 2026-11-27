@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 )
 
@@ -257,8 +258,13 @@ func (t *Telegram) Me(ctx context.Context) (TelegramBotInfo, error) {
 }
 
 // RecentChats are the chats the bot has heard from lately: groups it was
-// added to and people who wrote to it. Telegram keeps a day of updates, and
-// only while no webhook is set.
+// added to and people who wrote to it, the most recently heard first.
+// Telegram keeps a day of updates, and only while no webhook is set.
+//
+// A chat the bot was removed from is left out, and so is a group that
+// became a supergroup: the upgrade gives it a new ID (starting -100) and the
+// old one stops working, which is the usual reason a group's ID that worked
+// once is refused later.
 func (t *Telegram) RecentChats(ctx context.Context) ([]TelegramChat, error) {
 	type chat struct {
 		ID        int64  `json:"id"`
@@ -269,7 +275,12 @@ func (t *Telegram) RecentChats(ctx context.Context) ([]TelegramChat, error) {
 		LastName  string `json:"last_name"`
 	}
 	type withChat struct {
-		Chat *chat `json:"chat"`
+		Chat          *chat `json:"chat"`
+		MigrateTo     int64 `json:"migrate_to_chat_id"`
+		MigrateFrom   int64 `json:"migrate_from_chat_id"`
+		NewChatMember *struct {
+			Status string `json:"status"`
+		} `json:"new_chat_member"`
 	}
 	var updates []struct {
 		Message           *withChat `json:"message"`
@@ -278,18 +289,39 @@ func (t *Telegram) RecentChats(ctx context.Context) ([]TelegramChat, error) {
 		EditedMessage     *withChat `json:"edited_message"`
 		EditedChannelPost *withChat `json:"edited_channel_post"`
 	}
-	if err := t.call(ctx, "getUpdates", url.Values{"limit": {"100"}, "timeout": {"0"}}, &updates); err != nil {
+	// offset -100 is the newest hundred: without it Telegram answers with the
+	// oldest, and on a busy bot the message just sent to find a group is
+	// never among them. Older updates are dropped, which only matters to a
+	// program polling the same bot -- and two cannot poll one bot anyway.
+	if err := t.call(ctx, "getUpdates", url.Values{"offset": {"-100"}, "limit": {"100"}, "timeout": {"0"}}, &updates); err != nil {
 		return nil, err
 	}
-	seen := map[int64]bool{}
-	var out []TelegramChat
-	for _, u := range updates {
+	// Updates come oldest first; the last word on a chat decides whether
+	// the bot is still in it.
+	chats := map[int64]TelegramChat{}
+	last := map[int64]int{}
+	gone := map[int64]bool{}
+	for i, u := range updates {
 		for _, w := range []*withChat{u.MyChatMember, u.Message, u.ChannelPost, u.EditedMessage, u.EditedChannelPost} {
-			if w == nil || w.Chat == nil || seen[w.Chat.ID] {
+			if w == nil || w.Chat == nil {
 				continue
 			}
 			c := w.Chat
-			seen[c.ID] = true
+			switch {
+			case w.MigrateTo != 0:
+				gone[c.ID] = true
+			case w.NewChatMember != nil && (w.NewChatMember.Status == "left" || w.NewChatMember.Status == "kicked"):
+				gone[c.ID] = true
+			default:
+				delete(gone, c.ID)
+			}
+			if w.MigrateFrom != 0 {
+				gone[w.MigrateFrom] = true
+			}
+			last[c.ID] = i
+			if _, ok := chats[c.ID]; ok {
+				continue
+			}
 			title := c.Title
 			if title == "" {
 				title = strings.TrimSpace(c.FirstName + " " + c.LastName)
@@ -297,10 +329,29 @@ func (t *Telegram) RecentChats(ctx context.Context) ([]TelegramChat, error) {
 			if title == "" && c.Username != "" {
 				title = "@" + c.Username
 			}
-			out = append(out, TelegramChat{ID: fmt.Sprint(c.ID), Title: title, Kind: c.Type})
+			chats[c.ID] = TelegramChat{ID: fmt.Sprint(c.ID), Title: title, Kind: c.Type}
 		}
 	}
+	ids := make([]int64, 0, len(chats))
+	for id := range chats {
+		if !gone[id] {
+			ids = append(ids, id)
+		}
+	}
+	sort.Slice(ids, func(a, b int) bool { return last[ids[a]] > last[ids[b]] })
+	out := make([]TelegramChat, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, chats[id])
+	}
 	return out, nil
+}
+
+// To is the same bot posting to chats instead of its own: a test of
+// settings that are not saved yet.
+func (t *Telegram) To(chats []string) *Telegram {
+	c := *t
+	c.chatIDs = append([]string(nil), chats...)
+	return &c
 }
 
 // call is one Bot API method whose result is decoded into result.

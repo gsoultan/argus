@@ -25,6 +25,13 @@ Every change is in the audit log; a token never comes back out.
 	POST   /api/v1/telegram/chats              chats a bot heard from lately, to pick from
 	PUT    /api/v1/telegram/routes/{kind}      which bot and chats a kind of alert uses
 	POST   /api/v1/telegram/routes/{kind}/test send a test the way that kind would go
+
+The platform bot in Settings › Alert channels (the config file's) has the same
+two helpers, for the default organization's admins and owners only, since
+its saved token is the platform's: a token left out is the running one.
+
+	POST   /api/v1/settings/telegram-chats     chats it heard from lately {botToken?}
+	POST   /api/v1/settings/test-telegram      a test message to chatIds, unsaved {botToken?, chatIds}
 */
 
 func (a *API) telegramAdmin(w http.ResponseWriter, r *http.Request) (string, bool) {
@@ -228,13 +235,19 @@ func (a *API) postTelegramChats(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	a.writeRecentChats(w, r, t)
+}
+
+// writeRecentChats answers with the chats t heard from lately, or why
+// Telegram would not say.
+func (a *API) writeRecentChats(w http.ResponseWriter, r *http.Request, t *notify.Telegram) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 	chats, err := t.RecentChats(ctx)
 	if err != nil {
 		msg := err.Error()
 		if strings.Contains(strings.ToLower(msg), "webhook") {
-			msg = "this bot sends its messages to a webhook, so Argus cannot list its chats: type the chat IDs instead"
+			msg = "another program receives this bot's messages through a webhook, so Argus cannot see which chats it is in: type the chat IDs instead, or use a bot made for Argus"
 		}
 		writeErr(w, http.StatusBadGateway, msg)
 		return
@@ -242,6 +255,96 @@ func (a *API) postTelegramChats(w http.ResponseWriter, r *http.Request) {
 	if chats == nil {
 		chats = []notify.TelegramChat{}
 	}
+	writeJSON(w, http.StatusOK, map[string]any{"chats": chats})
+}
+
+// platformTelegram is the config file's bot for the platform's own settings
+// form: the token typed on it, else the one running. Only the default
+// organization's admins and owners reach it, since the saved token is the
+// platform's and not any one organization's.
+func (a *API) platformTelegram(w http.ResponseWriter, r *http.Request, typed *string) (*notify.Telegram, string, bool) {
+	actor, ok := a.telegramAdmin(w, r)
+	if !ok {
+		return nil, "", false
+	}
+	if !platformScope(r.Context()) {
+		writeErr(w, http.StatusNotFound, "not found")
+		return nil, "", false
+	}
+	if typed != nil && strings.TrimSpace(*typed) != "" {
+		token := strings.TrimSpace(*typed)
+		if !notify.ValidTelegramToken(token) {
+			writeErr(w, http.StatusBadRequest, "that is not a bot token: @BotFather gives one like 123456789:AAH…")
+			return nil, "", false
+		}
+		t := notify.NewTelegramBot(token, nil, a.telegramHTTP())
+		if a.telegramAPI != "" {
+			t = t.WithAPI(a.telegramAPI)
+		}
+		return t, actor, true
+	}
+	t := a.SignInAlerts.PlatformTelegram()
+	if t == nil {
+		writeErr(w, http.StatusBadRequest, "no bot token is saved yet: paste the one from @BotFather first")
+		return nil, "", false
+	}
+	return t, actor, true
+}
+
+func (a *API) postPlatformTelegramChats(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		BotToken *string `json:"botToken"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	t, _, ok := a.platformTelegram(w, r, in.BotToken)
+	if !ok {
+		return
+	}
+	a.writeRecentChats(w, r, t)
+}
+
+func (a *API) postPlatformTelegramTest(w http.ResponseWriter, r *http.Request) {
+	var in TelegramSettings
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	t, actor, ok := a.platformTelegram(w, r, in.BotToken)
+	if !ok {
+		return
+	}
+	var chats []string
+	for _, c := range in.ChatIDs {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		if !validChatID(c) {
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("%q is not a chat ID: a group's is a negative number such as -1001234567890", c))
+			return
+		}
+		chats = append(chats, c)
+	}
+	if len(chats) == 0 {
+		writeErr(w, http.StatusBadRequest, "add a chat ID to send the test to")
+		return
+	}
+	if len(chats) > maxTelegramChats {
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("send to at most %d chats", maxTelegramChats))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	text := telegramText("🧪", "Test from Argus", "Sent by "+actor+" to check that the platform bot can post here. Alerts arrive here once these settings are saved.")
+	if err := t.To(chats).SendHTML(ctx, text, "", ""); err != nil {
+		a.log.Info("platform telegram test failed", "by", actor, "chats", len(chats), "error", err)
+		writeErr(w, http.StatusBadGateway, "Telegram did not take it: "+err.Error())
+		return
+	}
+	a.log.Info("platform telegram test sent", "by", actor, "chats", len(chats))
 	writeJSON(w, http.StatusOK, map[string]any{"chats": chats})
 }
 
