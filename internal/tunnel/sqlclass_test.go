@@ -115,3 +115,29 @@ func FuzzClassifySQL(f *testing.F) {
 		_ = ClassifySQL(s) // never panics, always ends
 	})
 }
+
+func TestPGOutsideTransaction(t *testing.T) {
+	for sql, want := range map[string]bool{
+		"CREATE INDEX CONCURRENTLY ON public.orders (customer_id)":                         true,
+		"-- Check first: an index costs every write.\nCREATE INDEX CONCURRENTLY ON t (a);": true,
+		"create unique index concurrently t_a on t (a)":                                    true,
+		"DROP INDEX CONCURRENTLY t_a":                                                      true,
+		"REINDEX (CONCURRENTLY) TABLE t":                                                   true,
+		"REINDEX TABLE CONCURRENTLY t":                                                     true,
+		"REINDEX DATABASE app":                                                             true,
+		"VACUUM (ANALYZE) t":                                                               true,
+		"CREATE DATABASE x":                                                                true,
+		"ALTER SYSTEM SET work_mem = '64MB'":                                               true,
+		"CREATE INDEX t_a ON t (a)":                                                        false,
+		"CREATE INDEX concurrently_named ON t (a)":                                         false,
+		"DROP INDEX t_a":                                                                   false,
+		"REINDEX TABLE t":                                                                  false,
+		"SELECT 'CREATE INDEX CONCURRENTLY'":                                               false,
+		"ALTER TABLE t ADD COLUMN a int":                                                   false,
+		"SELECT 1; VACUUM":                                                                 false,
+	} {
+		if got := PGOutsideTransaction(sql); got != want {
+			t.Errorf("PGOutsideTransaction(%q) = %v, want %v", sql, got, want)
+		}
+	}
+}

@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -506,4 +507,57 @@ func lastWord(toks []sqlToken) string {
 		}
 	}
 	return ""
+}
+
+// PGOutsideTransaction says Postgres refuses to run the statement inside a
+// transaction block: CREATE INDEX CONCURRENTLY and its DROP and REINDEX
+// kin, REINDEX DATABASE and SYSTEM, VACUUM, CREATE and DROP DATABASE or
+// TABLESPACE, and ALTER SYSTEM. A session that wraps each statement in a
+// transaction of its own (through PgBouncer) must send these bare.
+func PGOutsideTransaction(sql string) bool {
+	toks := lexSQL(sql)
+	// w are the statement's top-level words; all also has those in
+	// parentheses, where REINDEX (CONCURRENTLY) puts its option.
+	var w, all []string
+	for _, t := range toks {
+		if t.punct == ';' && t.depth == 0 {
+			break
+		}
+		if t.punct != 0 || t.quoted {
+			continue
+		}
+		all = append(all, t.text)
+		if t.depth == 0 {
+			w = append(w, t.text)
+		}
+	}
+	at := func(i int) string {
+		if i < len(w) {
+			return w[i]
+		}
+		return ""
+	}
+	switch at(0) {
+	case "vacuum":
+		return true
+	case "create":
+		i := 1
+		if at(i) == "unique" {
+			i++
+		}
+		if at(i) == "index" {
+			return at(i+1) == "concurrently"
+		}
+		return at(1) == "database" || at(1) == "tablespace"
+	case "drop":
+		if at(1) == "index" {
+			return at(2) == "concurrently"
+		}
+		return at(1) == "database" || at(1) == "tablespace"
+	case "reindex":
+		return slices.Contains(all, "concurrently") || at(1) == "database" || at(1) == "system"
+	case "alter":
+		return at(1) == "system"
+	}
+	return false
 }

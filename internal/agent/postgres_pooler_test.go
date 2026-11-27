@@ -225,6 +225,23 @@ func TestPostgresPooledSession(t *testing.T) {
 		t.Fatalf("owner of what a DBA made: %v", got)
 	}
 	superExec(t, dsn, "DROP TABLE argus_t_pool_dba")
+
+	// The Performance panel's suggested index, on a table postgres made:
+	// CONCURRENTLY refuses a transaction block, so it must not be wrapped in
+	// ours. It builds, and the session goes on as before.
+	suggested := "-- Check first: an index costs every write.\nCREATE INDEX CONCURRENTLY ON public.argus_t_pool (v);"
+	if _, _, final = h.run(32, suggested, 0); final.Type != "done" {
+		t.Fatalf("a suggested CONCURRENTLY index through the pooler: %+v", final)
+	}
+	if got := superQuery(t, dsn, "SELECT count(*) FROM pg_indexes WHERE tablename = 'argus_t_pool' AND indexdef LIKE '%(v)%'"); got[0][0] != "1" {
+		t.Fatalf("the index was not built: %v", got)
+	}
+	if _, rows, final = h.run(33, "SELECT current_user", 0); final.Type != "done" || !strings.HasPrefix(*rows[0][0], "argus_dba_") {
+		t.Fatalf("after a bare statement the level role must still apply: %+v %v", final, rows)
+	}
+	if _, _, final = h.run(34, "VACUUM argus_t_pool", 0); final.Type != "done" {
+		t.Fatalf("vacuum through the pooler: %+v", final)
+	}
 }
 
 func TestPostgresDBAManagesApplicationRoles(t *testing.T) {
