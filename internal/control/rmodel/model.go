@@ -1505,6 +1505,7 @@ func All() []any {
 		&SecretsServer{},
 		&SecretRule{},
 		&SecretApp{},
+		&SecretReadRequest{},
 		&RecordingStorage{},
 		&RecordingPolicy{},
 		&CloudflareAccount{},
@@ -3453,4 +3454,35 @@ func (m *SecretApp) Schema(t *storm.Table) {
 	t.UniqueNamed("secret_apps_token_hash_key", &m.TokenHash)
 	t.CheckNamed("secret_apps_name_check", "(length(name) >= 1) AND (length(name) <= 80)")
 	t.CheckNamed("secret_apps_token_hash_check", "length(token_hash) = 64")
+}
+
+// SecretReadRequest is table secret_read_requests: an ask to read a secret
+// whose rule needs an approval (control/secrets_requests.go).
+type SecretReadRequest struct {
+	ID             [16]byte
+	RequesterEmail string
+	SecretName     string
+	Reason         string
+	Minutes        int32
+	State          string
+	DecidedBy      string
+	DecidedAt      *time.Time
+	DecisionNote   string
+	ExpiresAt      *time.Time
+	CreatedAt      time.Time
+}
+
+func (m *SecretReadRequest) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.State).Default("'pending'::text")
+	t.Col(&m.DecidedBy).Default("''::text")
+	t.Col(&m.DecisionNote).Default("''::text")
+	t.Col(&m.CreatedAt).Default("now()")
+	t.CheckNamed("secret_read_requests_decision_note_check", "length(decision_note) <= 500")
+	t.CheckNamed("secret_read_requests_minutes_check", "(minutes >= 5) AND (minutes <= 480)")
+	t.CheckNamed("secret_read_requests_reason_check", "(length(reason) >= 1) AND (length(reason) <= 500)")
+	t.CheckNamed("secret_read_requests_secret_name_check", "(length(secret_name) >= 1) AND (length(secret_name) <= 255)")
+	t.CheckNamed("secret_read_requests_state_check", "state = ANY (ARRAY['pending'::text, 'approved'::text, 'denied'::text, 'cancelled'::text])")
+	t.Index(storm.Lower(&m.RequesterEmail), &m.SecretName).Named("secret_read_requests_requester_idx")
 }

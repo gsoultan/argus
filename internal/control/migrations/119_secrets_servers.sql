@@ -72,3 +72,22 @@ CREATE TABLE IF NOT EXISTS secret_apps (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Approvals for reading a secret whose rule needs one (secrets_requests.go).
+-- Approved, it lets the person who asked read that one secret through the
+-- console until expires_at; argus-secret is told the read was approved and
+-- checks the rule itself.
+CREATE TABLE IF NOT EXISTS secret_read_requests (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    requester_email TEXT NOT NULL,
+    secret_name     TEXT NOT NULL CHECK (length(secret_name) BETWEEN 1 AND 255),
+    reason          TEXT NOT NULL CHECK (length(reason) BETWEEN 1 AND 500),
+    minutes         INT  NOT NULL CHECK (minutes BETWEEN 5 AND 480),
+    state           TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'approved', 'denied', 'cancelled')),
+    decided_by      TEXT NOT NULL DEFAULT '',
+    decided_at      TIMESTAMPTZ,
+    decision_note   TEXT NOT NULL DEFAULT '' CHECK (length(decision_note) <= 500),
+    expires_at      TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS secret_read_requests_requester_idx ON secret_read_requests (lower(requester_email), secret_name);

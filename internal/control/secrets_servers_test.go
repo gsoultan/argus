@@ -264,6 +264,52 @@ func TestSecretsServersEndToEnd(t *testing.T) {
 		t.Errorf("collected to %d, server at %d", srv.LogSeq, st.Seq)
 	}
 
+	// A rule that needs an approval: refused until a decider approves the
+	// operator's request, then readable, by that person only.
+	if code, text := call(ownerC, "POST", "/api/v1/secrets/rules", SecretRule{Path: "prod/db",
+		Subjects: []vault.Subject{{Kind: vault.SubjectPerson, ID: opEmail}}, Can: []string{vault.CanRead}, NeedsApproval: true}); code != http.StatusCreated {
+		t.Fatalf("approval rule = %d %s", code, text)
+	}
+	if code, text := call(opC, "POST", "/api/v1/secrets/read", read); code != http.StatusForbidden || !strings.Contains(text, "approv") {
+		t.Errorf("an unapproved read = %d %s, want 403", code, text)
+	}
+	if code, _ := call(opC, "POST", "/api/v1/secrets/requests", map[string]any{"name": "prod/db", "reason": ""}); code != http.StatusBadRequest {
+		t.Errorf("a request with no reason = %d, want 400", code)
+	}
+	code, text = call(opC, "POST", "/api/v1/secrets/requests", map[string]any{"name": "prod/db", "reason": "incident 42", "minutes": 15})
+	var ask SecretReadRequest
+	if code != http.StatusCreated || json.Unmarshal([]byte(text), &ask) != nil {
+		t.Fatalf("ask = %d %s", code, text)
+	}
+	if code, _ := call(opC, "POST", "/api/v1/secrets/requests", map[string]any{"name": "prod/db", "reason": "again"}); code != http.StatusBadRequest {
+		t.Errorf("a second pending request = %d, want 400", code)
+	}
+	if code, _ := call(opC, "POST", "/api/v1/secrets/requests/"+ask.ID+"/decide", map[string]any{"approve": true}); code != http.StatusForbidden {
+		t.Errorf("an operator approving = %d, want 403", code)
+	}
+	if code, _ := call(ownerC, "POST", "/api/v1/secrets/requests/"+ask.ID+"/decide", map[string]any{"approve": false}); code != http.StatusBadRequest {
+		t.Errorf("a denial with no note = %d, want 400", code)
+	}
+	if code, text := call(ownerC, "POST", "/api/v1/secrets/requests/"+ask.ID+"/decide", map[string]any{"approve": true, "note": "ok"}); code != http.StatusOK {
+		t.Fatalf("approve = %d %s", code, text)
+	}
+	code, text = call(opC, "POST", "/api/v1/secrets/read", read)
+	if code != http.StatusOK || json.Unmarshal([]byte(text), &got) != nil {
+		t.Fatalf("approved read = %d %s", code, text)
+	}
+	if plain, err := secretwire.OpenSealed(mine, got.Sealed, secretwire.ReadAAD(got.Name, got.Version, got.Field)); err != nil || string(plain) != "hunter2" {
+		t.Errorf("approved read opened %q, %v", plain, err)
+	}
+	if code, _ := call(ownerC, "POST", "/api/v1/secrets/requests/"+ask.ID+"/decide", map[string]any{"approve": true}); code != http.StatusNotFound {
+		t.Errorf("deciding twice = %d, want 404", code)
+	}
+	if _, err := h.store.db(ctx).Exec(ctx, `UPDATE secret_read_requests SET expires_at = now() - interval '1 second' WHERE id = $1`, ask.ID); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := call(opC, "POST", "/api/v1/secrets/read", read); code != http.StatusForbidden {
+		t.Errorf("a read after the approval expired = %d, want 403", code)
+	}
+
 	// A server whose log no longer follows on is a gap: collection stops,
 	// it is critical in the audit log, and it takes a reason to resume.
 	if _, err := h.store.db(ctx).Exec(ctx, `UPDATE secrets_servers SET log_head = 'f00d' WHERE id = $1`, srv.ID); err != nil {

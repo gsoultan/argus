@@ -60,6 +60,10 @@ func (a *API) secretsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/secrets/rules/{id}", a.putSecretRule)
 	mux.HandleFunc("DELETE /api/v1/secrets/rules/{id}", a.deleteSecretRule)
 
+	mux.HandleFunc("GET /api/v1/secrets/requests", a.getSecretRequests)
+	mux.HandleFunc("POST /api/v1/secrets/requests", a.postSecretRequest)
+	mux.HandleFunc("POST /api/v1/secrets/requests/{id}/decide", a.postSecretRequestDecide)
+	mux.HandleFunc("POST /api/v1/secrets/requests/{id}/cancel", a.postSecretRequestCancel)
 	mux.HandleFunc("GET /api/v1/secrets/apps", a.getSecretApps)
 	mux.HandleFunc("POST /api/v1/secrets/apps", a.postSecretApp)
 	mux.HandleFunc("DELETE /api/v1/secrets/apps/{id}", a.deleteSecretApp)
@@ -414,8 +418,8 @@ func (a *API) deleteSecretRule(w http.ResponseWriter, r *http.Request) {
 /* ── Secrets, relayed ───────────────────────────────────────────────────── */
 
 // secretsPerson is the signed-in person, as argus-secret is told about them.
-// Approved is never set here: approvals for secret reads are not wired yet,
-// so a rule that needs one refuses.
+// Approved is set by relaySecret for a read with an approved request
+// (secrets_requests.go).
 func (a *API) secretsPerson(r *http.Request, sess auth.Session) (vault.ManageActor, error) {
 	teams, err := a.store.secretsTeamsOf(r.Context(), sess.Email)
 	if err != nil {
@@ -573,6 +577,14 @@ func (a *API) relaySecret(method, managePath string) http.HandlerFunc {
 		if err != nil {
 			a.secretsErr(w, "relay secret", err)
 			return
+		}
+		if managePath == "/manage/v1/read" {
+			// A read a rule holds for an approval goes through only with an
+			// approved request of this person's for this secret, unexpired.
+			if actor.Approved, err = a.store.secretReadApproved(r.Context(), sess.Email, name); err != nil {
+				a.secretsErr(w, "relay secret", err)
+				return
+			}
 		}
 		raw, err := a.secretsCall(r.Context(), srv, method, uri, actor, body)
 		if err != nil {

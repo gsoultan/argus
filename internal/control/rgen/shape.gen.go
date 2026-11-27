@@ -1466,6 +1466,25 @@ func _assertSecretAppShape(m m0.SecretApp) {
 	}
 }
 
+// _assertSecretReadRequestShape fails to compile if m0.SecretReadRequest gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertSecretReadRequestShape(m m0.SecretReadRequest) {
+	type shape m0.SecretReadRequest
+	_ = shape{
+		m.ID,
+		m.RequesterEmail,
+		m.SecretName,
+		m.Reason,
+		m.Minutes,
+		m.State,
+		m.DecidedBy,
+		m.DecidedAt,
+		m.DecisionNote,
+		m.ExpiresAt,
+		m.CreatedAt,
+	}
+}
+
 // _assertSecretRuleShape fails to compile if m0.SecretRule gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertSecretRuleShape(m m0.SecretRule) {
