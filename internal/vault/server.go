@@ -81,7 +81,7 @@ func (c *Config) Validate() error {
 	if (c.TLS.CertFile == "") != (c.TLS.KeyFile == "") {
 		return errors.New("tls.cert_file and tls.key_file are given together")
 	}
-	if c.BehindTLSProxy {
+	if c.BehindTLSProxy && c.Listen != ListenOff {
 		if c.TLS.CertFile != "" {
 			return errors.New("behind_tls_proxy and tls are exclusive: the proxy ends TLS")
 		}
@@ -93,6 +93,30 @@ func (c *Config) Validate() error {
 		return err
 	}
 	return nil
+}
+
+// ListenOff, as listen, serves over the tunnel only: no port at all.
+const ListenOff = "off"
+
+// ApplyEnrollment fills the organization and argus-control's key from the
+// enrollment, when there is one, and refuses a configuration that says
+// otherwise. It returns the enrollment, or nil.
+func (c *Config) ApplyEnrollment() (*Enrollment, error) {
+	e, err := LoadEnrollment(c.DataDir)
+	if err != nil || e == nil {
+		return nil, err
+	}
+	if c.Organization == "" {
+		c.Organization = e.Org
+	} else if c.Organization != e.Org {
+		return nil, fmt.Errorf("organization is %q, but this server enrolled into %q", c.Organization, e.Org)
+	}
+	if c.ControlPublicKey == "" {
+		c.ControlPublicKey = e.ControlKey
+	} else if c.ControlPublicKey != e.ControlKey {
+		return nil, errors.New("control_public_key differs from the key argus-control gave when this server enrolled; remove one")
+	}
+	return e, nil
 }
 
 func loopbackListen(addr string) bool {
@@ -161,8 +185,15 @@ func LoadRootKey(path string) (key []byte, created bool, err error) {
 // Run serves until ctx ends.
 func Run(ctx context.Context, cfg Config, version string, log *slog.Logger) error {
 	cfg.Defaults()
+	enr, err := cfg.ApplyEnrollment()
+	if err != nil {
+		return err
+	}
 	if err := cfg.Validate(); err != nil {
 		return err
+	}
+	if cfg.Listen == ListenOff && enr == nil {
+		return errors.New("listen: off leaves only the tunnel, and this server has not enrolled: run argus-secret enroll first")
 	}
 	root, created, err := LoadRootKey(cfg.RootKeyFile)
 	if err != nil {
@@ -189,7 +220,7 @@ func Run(ctx context.Context, cfg Config, version string, log *slog.Logger) erro
 
 	var tlsCfg *tls.Config
 	pin := ""
-	if !cfg.BehindTLSProxy {
+	if !cfg.BehindTLSProxy && cfg.Listen != ListenOff {
 		tlsCfg, pin, err = serverTLS(cfg)
 		if err != nil {
 			return err
@@ -200,6 +231,30 @@ func Run(ctx context.Context, cfg Config, version string, log *slog.Logger) erro
 	if err != nil {
 		return err
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		housekeeping(ctx, store, log)
+	}()
+	tunnelDone := make(chan struct{})
+	if enr != nil {
+		go func() {
+			defer close(tunnelDone)
+			RunTunnel(ctx, enr, api.Handler(), log)
+		}()
+	} else {
+		close(tunnelDone)
+	}
+	if cfg.Listen == ListenOff {
+		log.Info("argus-secret serving over its tunnel only", "control", enr.ControlURL, "org", cfg.Organization)
+		<-ctx.Done()
+		<-tunnelDone
+		<-done
+		return nil
+	}
+	defer func() { cancel(); <-tunnelDone }()
 	srv := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           api.Handler(),
@@ -212,15 +267,10 @@ func Run(ctx context.Context, cfg Config, version string, log *slog.Logger) erro
 	}
 	ln, err := net.Listen("tcp", cfg.Listen)
 	if err != nil {
+		cancel()
+		<-done
 		return err
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		housekeeping(ctx, store, log)
-	}()
 	errc := make(chan error, 1)
 	go func() {
 		if tlsCfg != nil {

@@ -1507,7 +1507,12 @@ func _assertSecretsServerShape(m m0.SecretsServer) {
 	_ = shape{
 		m.Model,
 		m.Name,
+		m.Mode,
 		m.URL,
+		m.CredentialHash,
+		m.EnrollTokenHash,
+		m.EnrollExpiresAt,
+		m.TunnelSeenAt,
 		m.TlsPin,
 		m.Folders,
 		m.SealKey,

@@ -29,9 +29,12 @@ import (
 
 // Server is an argus-secret server, as argus-control describes it.
 type Server struct {
-	Name    string   `json:"name"`
-	URL     string   `json:"url"`
-	TLSPin  string   `json:"tlsPin,omitempty"`
+	Name   string `json:"name"`
+	URL    string `json:"url"`
+	TLSPin string `json:"tlsPin,omitempty"`
+	// Relay, for a server that dials argus-control rather than listening:
+	// the path on argus-control that passes reads to it.
+	Relay   string   `json:"relay,omitempty"`
 	Folders []string `json:"folders"`
 }
 
@@ -117,6 +120,11 @@ func (c *Client) httpFor(pin string) (*http.Client, error) {
 		Transport:     &http.Transport{TLSClientConfig: cfg, Proxy: http.ProxyFromEnvironment}}, nil
 }
 
+func (c *Client) controlHTTP() *http.Client {
+	return &http.Client{Timeout: timeout, Transport: &http.Transport{TLSClientConfig: c.ControlTLS, Proxy: http.ProxyFromEnvironment},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+}
+
 func (c *Client) now() time.Time {
 	if c.Now != nil {
 		return c.Now()
@@ -167,7 +175,7 @@ func (c *Client) fetchServers(ctx context.Context) ([]Server, error) {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.Credential)
-	cl := &http.Client{Timeout: timeout, Transport: &http.Transport{TLSClientConfig: c.ControlTLS, Proxy: http.ProxyFromEnvironment}}
+	cl := c.controlHTTP()
 	resp, err := cl.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("argus-control did not answer: %w", err)
@@ -233,13 +241,21 @@ func (c *Client) Read(ctx context.Context, ref Ref, purpose string) (Value, erro
 	}
 	body, _ := json.Marshal(secretwire.ReadRequest{Name: ref.Name, Version: ref.Version, Label: ref.Label, Field: ref.Field,
 		Recipient: secretwire.EncodeKey(key.PublicKey().Bytes()), Purpose: purpose})
-	cl, err := c.httpFor(srv.TLSPin)
-	if err != nil {
+	base := strings.TrimRight(srv.URL, "/")
+	var cl *http.Client
+	if srv.Relay != "" {
+		// Through argus-control, trusted as the agent trusts it.
+		if !strings.HasPrefix(srv.Relay, "/api/v1/secrets/relay/") || strings.Contains(srv.Relay, "..") {
+			return Value{}, fmt.Errorf("%s: argus-control sent a relay path this agent does not follow", srv.Name)
+		}
+		base = strings.TrimRight(c.ControlURL, "/") + srv.Relay
+		cl = c.controlHTTP()
+	} else if cl, err = c.httpFor(srv.TLSPin); err != nil {
 		return Value{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(srv.URL, "/")+"/v1/read", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/read", bytes.NewReader(body))
 	if err != nil {
 		return Value{}, err
 	}

@@ -155,6 +155,9 @@ type API struct {
 	// counts syncs started in the background (secrets_routes.go).
 	secretsSyncs sync.Map
 	secretsBusy  sync.WaitGroup
+	// secretsTunnels holds the *yamux.Session of each tunnel secrets server
+	// connected to this replica, by organization/id.
+	secretsTunnels sync.Map
 
 	// Tunnels holds the agents' outbound connections on this replica. Nil
 	// when the process was built without them, as tests do; the upgrade

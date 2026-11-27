@@ -49,6 +49,7 @@ and a value written is sealed by the browser to the server's key.
 */
 
 func (a *API) secretsRoutes(mux *http.ServeMux) {
+	a.secretsTunnelRoutes(mux)
 	mux.HandleFunc("GET /api/v1/secrets/servers", a.getSecretsServers)
 	mux.HandleFunc("POST /api/v1/secrets/servers", a.postSecretsServer)
 	mux.HandleFunc("PUT /api/v1/secrets/servers/{id}", a.putSecretsServer)
@@ -143,20 +144,34 @@ func (a *API) getSecretsServers(w http.ResponseWriter, r *http.Request) {
 		a.secretsErr(w, "list secrets servers", err)
 		return
 	}
+	for i := range srvs {
+		srvs[i].Connected = a.secretsTunnelOf(r.Context(), srvs[i].ID) != nil
+	}
 	writeJSON(w, http.StatusOK, secretsServersView{Organization: tenantIDOf(r.Context()), ControlPublicKey: key, Servers: srvs})
 }
 
 // readSecretsServer reads a server from the request and checks it answers,
 // signed, for this organization, before anything is saved.
-func (a *API) readSecretsServer(r *http.Request) (SecretsServerInput, vault.Status, error) {
+// A tunnel server is not reachable until it enrolls and dials in, so it is
+// checked by the first sync after that instead.
+func (a *API) readSecretsServer(r *http.Request, before *SecretsServer) (SecretsServerInput, vault.Status, error) {
 	var in SecretsServerInput
 	if err := decode(r, &in); err != nil {
 		return in, vault.Status{}, ErrInvalidSecrets{err.Error()}
 	}
+	if before != nil {
+		if in.Mode != "" && in.Mode != before.Mode {
+			return in, vault.Status{}, ErrInvalidSecrets{"a server's mode cannot change; add it again instead"}
+		}
+		in.Mode = before.Mode
+	}
 	if err := in.normalize(); err != nil {
 		return in, vault.Status{}, err
 	}
-	st, err := a.secretsStatus(r.Context(), SecretsServer{Name: in.Name, URL: in.URL, TLSPin: in.TLSPin})
+	if in.Mode == secretsTunnel {
+		return in, vault.Status{}, nil
+	}
+	st, err := a.secretsStatus(r.Context(), SecretsServer{Name: in.Name, Mode: in.Mode, URL: in.URL, TLSPin: in.TLSPin})
 	if err != nil {
 		var invalid ErrInvalidSecrets
 		if errors.As(err, &invalid) {
@@ -172,7 +187,7 @@ func (a *API) postSecretsServer(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	in, st, err := a.readSecretsServer(r)
+	in, st, err := a.readSecretsServer(r, nil)
 	if err != nil {
 		a.secretsErr(w, "add secrets server", err)
 		return
@@ -180,6 +195,19 @@ func (a *API) postSecretsServer(w http.ResponseWriter, r *http.Request) {
 	srv, err := a.store.SaveSecretsServer(r.Context(), "", in, st.SealKey, st.Version, actor)
 	if err != nil {
 		a.secretsErr(w, "add secrets server", err)
+		return
+	}
+	if srv.Mode == secretsTunnel {
+		token, err := a.store.secretsEnrollToken(r.Context(), srv.ID)
+		if err != nil {
+			a.secretsErr(w, "add secrets server", err)
+			return
+		}
+		srv, _ = a.store.SecretsServer(r.Context(), srv.ID)
+		a.audit(r, "secrets.server.add", actor, "secrets server "+srv.Name,
+			fmt.Sprintf("Added secrets server %s, which dials argus-control, keeping %s. Its one-time enrolment token is good for an hour.",
+				srv.Name, strings.Join(srv.Folders, ", ")))
+		writeJSON(w, http.StatusCreated, secretsEnrollView{SecretsServer: srv, EnrollToken: token})
 		return
 	}
 	a.audit(r, "secrets.server.add", actor, "secrets server "+srv.Name,
@@ -198,7 +226,7 @@ func (a *API) putSecretsServer(w http.ResponseWriter, r *http.Request) {
 		a.secretsErr(w, "change secrets server", err)
 		return
 	}
-	in, st, err := a.readSecretsServer(r)
+	in, st, err := a.readSecretsServer(r, &before)
 	if err != nil {
 		a.secretsErr(w, "change secrets server", err)
 		return

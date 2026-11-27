@@ -77,7 +77,7 @@ func (s *Store) SecretApps(ctx context.Context) ([]SecretApp, error) {
 // CreateSecretApp makes a token and returns it with the app. The token is not
 // kept anywhere.
 func (s *Store) CreateSecretApp(ctx context.Context, name string, ttl time.Duration, by string) (SecretApp, string, error) {
-	token, err := newSecret(vault.AppTokenPrefix)
+	token, err := newSecret(vault.AppTokenPrefix + secretPrefixFor(tenantIDOf(ctx)))
 	if err != nil {
 		return SecretApp{}, "", err
 	}
@@ -210,9 +210,12 @@ func (a *API) deleteSecretApp(w http.ResponseWriter, r *http.Request) {
 // agentSecretsServer is a server as an agent needs it: where it is, how to
 // trust it, which folders it keeps. Nothing else of the server's row.
 type agentSecretsServer struct {
-	Name    string   `json:"name"`
-	URL     string   `json:"url"`
-	TLSPin  string   `json:"tlsPin,omitempty"`
+	Name   string `json:"name"`
+	URL    string `json:"url"`
+	TLSPin string `json:"tlsPin,omitempty"`
+	// Relay is set instead of URL for a server that dials argus-control: the
+	// path on argus-control that passes reads to it.
+	Relay   string   `json:"relay,omitempty"`
 	Folders []string `json:"folders"`
 }
 
@@ -231,7 +234,11 @@ func (a *API) getAgentSecretsServers(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]agentSecretsServer, 0, len(srvs))
 	for _, s := range srvs {
-		out = append(out, agentSecretsServer{Name: s.Name, URL: s.URL, TLSPin: s.TLSPin, Folders: s.Folders})
+		v := agentSecretsServer{Name: s.Name, URL: s.URL, TLSPin: s.TLSPin, Folders: s.Folders}
+		if s.Mode == secretsTunnel {
+			v.URL, v.TLSPin, v.Relay = "", "", secretsRelayPrefix+s.ID
+		}
+		out = append(out, v)
 	}
 	writeJSON(w, http.StatusOK, out)
 }

@@ -3372,27 +3372,33 @@ func (m *RecordingPolicy) Schema(t *storm.Table) {
 type SecretsServer struct {
 	storm.Model
 
-	Name          string
-	URL           string
-	TlsPin        string
-	Folders       []string
-	SealKey       string
-	Version       string
-	SecretCount   int32
-	RulesSerial   int64
-	RulesHash     string
-	RulesPushedAt *time.Time
-	LogSeq        int64
-	LogHead       string
-	LogGap        string
-	LogGapAt      *time.Time
-	LastContactAt *time.Time
-	LastError     string
-	LastErrorAt   *time.Time
-	CreatedBy     string
+	Name            string
+	Mode            string
+	URL             string
+	CredentialHash  *string
+	EnrollTokenHash *string
+	EnrollExpiresAt *time.Time
+	TunnelSeenAt    *time.Time
+	TlsPin          string
+	Folders         []string
+	SealKey         string
+	Version         string
+	SecretCount     int32
+	RulesSerial     int64
+	RulesHash       string
+	RulesPushedAt   *time.Time
+	LogSeq          int64
+	LogHead         string
+	LogGap          string
+	LogGapAt        *time.Time
+	LastContactAt   *time.Time
+	LastError       string
+	LastErrorAt     *time.Time
+	CreatedBy       string
 }
 
 func (m *SecretsServer) Schema(t *storm.Table) {
+	t.Col(&m.Mode).Default("'direct'::text")
 	t.Col(&m.TlsPin).Default("''::text")
 	t.Col(&m.Folders).Default("'{}'::text[]")
 	t.Col(&m.SealKey).Default("''::text")
@@ -3404,10 +3410,15 @@ func (m *SecretsServer) Schema(t *storm.Table) {
 	t.Col(&m.LogHead).Default("''::text")
 	t.Col(&m.LogGap).Default("''::text")
 	t.Col(&m.LastError).Default("''::text")
+	t.UniqueNamed("secrets_servers_credential_hash_key", &m.CredentialHash)
+	t.UniqueNamed("secrets_servers_enroll_token_hash_key", &m.EnrollTokenHash)
+	t.CheckNamed("secrets_servers_check", "(length(url) <= 300) AND (((mode = 'direct'::text) AND (url ~~ 'https://%'::text)) OR ((mode = 'tunnel'::text) AND (url = ''::text)))")
+	t.CheckNamed("secrets_servers_credential_hash_check", "length(credential_hash) = 64")
+	t.CheckNamed("secrets_servers_enroll_token_hash_check", "length(enroll_token_hash) = 64")
 	t.CheckNamed("secrets_servers_folders_check", "cardinality(folders) <= 100")
+	t.CheckNamed("secrets_servers_mode_check", "mode = ANY (ARRAY['direct'::text, 'tunnel'::text])")
 	t.CheckNamed("secrets_servers_name_check", "(length(name) >= 1) AND (length(name) <= 80)")
 	t.CheckNamed("secrets_servers_tls_pin_check", "length(tls_pin) <= 80")
-	t.CheckNamed("secrets_servers_url_check", "(url ~~ 'https://%'::text) AND (length(url) <= 300)")
 	t.Index(storm.Lower(&m.Name)).Unique().Named("secrets_servers_name_key")
 }
 

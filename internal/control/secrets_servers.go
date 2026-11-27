@@ -53,6 +53,8 @@ const SecretsSyncInterval = time.Minute
 
 const (
 	maxSecretsServers = 20
+	secretsDirect     = "direct"
+	secretsTunnel     = "tunnel"
 	maxSecretRules    = 2000
 	secretsTimeout    = 15 * time.Second
 	// maxSecretsResponse bounds what argus-control reads from a server.
@@ -63,6 +65,7 @@ const (
 type SecretsServer struct {
 	ID            string     `json:"id"`
 	Name          string     `json:"name"`
+	Mode          string     `json:"mode"`
 	URL           string     `json:"url"`
 	TLSPin        string     `json:"tlsPin"`
 	Folders       []string   `json:"folders"`
@@ -79,6 +82,12 @@ type SecretsServer struct {
 	LastErrorAt   *time.Time `json:"lastErrorAt,omitempty"`
 	CreatedBy     string     `json:"createdBy"`
 	CreatedAt     time.Time  `json:"createdAt"`
+	// A tunnel server: whether it enrolled, until when its token is good,
+	// when it last connected, and whether it is connected to this replica.
+	Enrolled        bool       `json:"enrolled"`
+	EnrollExpiresAt *time.Time `json:"enrollExpiresAt,omitempty"`
+	TunnelSeenAt    *time.Time `json:"tunnelSeenAt,omitempty"`
+	Connected       bool       `json:"connected"`
 
 	rulesHash string
 	logHead   string
@@ -86,7 +95,10 @@ type SecretsServer struct {
 
 // SecretsServerInput is a server as the console sends it.
 type SecretsServerInput struct {
-	Name    string   `json:"name"`
+	Name string `json:"name"`
+	// Mode is direct (argus-control calls URL) or tunnel (argus-secret
+	// dials argus-control). Fixed once the server is added.
+	Mode    string   `json:"mode"`
 	URL     string   `json:"url"`
 	TLSPin  string   `json:"tlsPin"`
 	Folders []string `json:"folders"`
@@ -147,7 +159,20 @@ func (in *SecretsServerInput) normalize() error {
 	if l := len([]rune(in.Name)); l == 0 || l > 80 {
 		return ErrInvalidSecrets{"give the server a name of up to 80 characters"}
 	}
+	switch in.Mode {
+	case "", secretsDirect:
+		in.Mode = secretsDirect
+	case secretsTunnel:
+		if in.URL != "" || in.TLSPin != "" {
+			return ErrInvalidSecrets{"a tunnel server dials argus-control, so it has no address or pin here"}
+		}
+	default:
+		return ErrInvalidSecrets{"mode is direct or tunnel"}
+	}
 	u, err := url.Parse(in.URL)
+	if in.Mode == secretsTunnel {
+		u, err = &url.URL{Scheme: "https", Host: "tunnel"}, nil
+	}
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || len(in.URL) > 300 {
 		return ErrInvalidSecrets{"the address is https://host or https://host:port, as argus-control reaches it"}
 	}
@@ -224,15 +249,16 @@ func (r *SecretRule) normalize() error {
 
 /* ── Store: servers ─────────────────────────────────────────────────────── */
 
-const secretsServerColumns = `id::text, name, url, tls_pin, folders, seal_key, version, secret_count, rules_serial,
+const secretsServerColumns = `id::text, name, mode, url, tls_pin, folders, seal_key, version, secret_count, rules_serial,
 	rules_hash, rules_pushed_at, log_seq, log_head, log_gap, log_gap_at, last_contact_at, last_error, last_error_at,
-	created_by, created_at`
+	created_by, created_at, credential_hash IS NOT NULL, enroll_expires_at, tunnel_seen_at`
 
 func scanSecretsServer(row pgx.Row) (SecretsServer, error) {
 	var s SecretsServer
-	err := row.Scan(&s.ID, &s.Name, &s.URL, &s.TLSPin, &s.Folders, &s.SealKey, &s.Version, &s.SecretCount,
+	err := row.Scan(&s.ID, &s.Name, &s.Mode, &s.URL, &s.TLSPin, &s.Folders, &s.SealKey, &s.Version, &s.SecretCount,
 		&s.RulesSerial, &s.rulesHash, &s.RulesPushedAt, &s.LogSeq, &s.logHead, &s.LogGap, &s.LogGapAt,
-		&s.LastContactAt, &s.LastError, &s.LastErrorAt, &s.CreatedBy, &s.CreatedAt)
+		&s.LastContactAt, &s.LastError, &s.LastErrorAt, &s.CreatedBy, &s.CreatedAt,
+		&s.Enrolled, &s.EnrollExpiresAt, &s.TunnelSeenAt)
 	if s.Folders == nil {
 		s.Folders = []string{}
 	}
@@ -307,9 +333,9 @@ func (s *Store) SaveSecretsServer(ctx context.Context, id string, in SecretsServ
 				return ErrInvalidSecrets{fmt.Sprintf("an organization can have at most %d secrets servers", maxSecretsServers)}
 			}
 			out, err = scanSecretsServer(tx.QueryRow(ctx, `INSERT INTO secrets_servers
-				(name, url, tls_pin, folders, seal_key, version, last_contact_at, created_by)
-				VALUES ($1, $2, $3, $4, $5, $6, now(), $7) RETURNING `+secretsServerColumns,
-				in.Name, in.URL, in.TLSPin, in.Folders, sealKey, version, strings.ToLower(by)))
+				(name, mode, url, tls_pin, folders, seal_key, version, last_contact_at, created_by)
+				VALUES ($1, $8, $2, $3, $4, $5, $6, CASE WHEN $8 = 'direct' THEN now() END, $7) RETURNING `+secretsServerColumns,
+				in.Name, in.URL, in.TLSPin, in.Folders, sealKey, version, strings.ToLower(by), in.Mode))
 		} else {
 			// A changed address or pin is a different server as far as the
 			// log is concerned only if it says so: the chain is checked on the
@@ -562,11 +588,11 @@ func (a *API) secretsCall(ctx context.Context, srv SecretsServer, method, uri st
 	if err != nil {
 		return nil, err
 	}
-	cl, err := secretsHTTPClient(srv.TLSPin)
+	cl, base, err := a.secretsTransport(ctx, srv)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, method, srv.URL+uri, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, method, base+uri, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

@@ -6,9 +6,19 @@
 CREATE TABLE IF NOT EXISTS secrets_servers (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name            TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 80),
+    -- direct: argus-control calls url. tunnel: argus-secret dials
+    -- argus-control and holds the connection, so it needs no inbound port.
+    mode            TEXT NOT NULL DEFAULT 'direct' CHECK (mode IN ('direct', 'tunnel')),
     -- https://host[:port], as argus-control reaches it: directly, or through
-    -- Cloudflare Tunnel or another proxy.
-    url             TEXT NOT NULL CHECK (url LIKE 'https://%' AND length(url) <= 300),
+    -- Cloudflare Tunnel or another proxy. Empty for a tunnel.
+    url             TEXT NOT NULL CHECK (length(url) <= 300 AND
+                        ((mode = 'direct' AND url LIKE 'https://%') OR (mode = 'tunnel' AND url = ''))),
+    -- A tunnel server's own credential (sha256 hex), once it enrolled, and the
+    -- one-time token it enrols with while it has not.
+    credential_hash   TEXT UNIQUE CHECK (length(credential_hash) = 64),
+    enroll_token_hash TEXT UNIQUE CHECK (length(enroll_token_hash) = 64),
+    enroll_expires_at TIMESTAMPTZ,
+    tunnel_seen_at    TIMESTAMPTZ,
     -- sha256:<hex> of its certificate, or '' for a certificate the system
     -- trusts (a proxy's).
     tls_pin         TEXT NOT NULL DEFAULT '' CHECK (length(tls_pin) <= 80),
