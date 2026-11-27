@@ -1,14 +1,14 @@
-import { StrictMode, useEffect, useRef, useState, type ReactNode } from 'react'
-import * as React from 'react'
-import * as JSXRuntime from 'react/jsx-runtime'
+import {
+  Children, Component, Fragment, PureComponent, StrictMode, Suspense, cloneElement, createContext, createElement, forwardRef, isValidElement, lazy, memo, startTransition, use, useCallback, useContext, useDebugValue, useDeferredValue, useEffect, useId, useImperativeHandle, useInsertionEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, useTransition, version, type ReactNode,
+} from 'react'
+import { Fragment as JSXFragment, jsx, jsxs } from 'react/jsx-runtime'
 import { createRoot } from 'react-dom/client'
 import { MantineProvider, localStorageColorSchemeManager } from '@mantine/core'
 import { LENT_MANTINE } from './mantine'
-import * as Query from '@tanstack/react-query'
-import { QueryClientProvider, useQueryClient, type QueryClient } from '@tanstack/react-query'
-import * as Page from '~/components/page'
+import { QueryClientProvider, queryOptions, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
+import { DataTable, EmptyState, PageBody, PageHeader, SectionCard, TableSkeleton, Toolbar } from '~/components/page'
 import { Mono, absTime, relTime } from '~/components/primitives'
-import * as Notify from '~/lib/notify'
+import { notifyError, notifyOk, notifyWarn, run } from '~/lib/notify'
 import { get, send } from '~/lib/live'
 import { COLOR_SCHEME_KEY, FS, INK, SP, cssVariablesResolver, theme } from '~/theme'
 import { SHELL_CONTRACT, type SectionContext, type SectionModule, type ShellModules } from './contract'
@@ -21,8 +21,14 @@ import { SHELL_CONTRACT, type SectionContext, type SectionModule, type ShellModu
 
 function shellModules(): ShellModules {
   return {
-    contract: SHELL_CONTRACT, React, jsx: JSXRuntime, mantine: LENT_MANTINE, query: Query, page: Page,
-    primitives: { Mono, relTime, absTime }, notify: Notify, theme: { FS, SP, INK }, live: { get, send },
+    // Named, never whole modules: a namespace keeps every export of it in
+    // the console's chunks, and the overview pays for them (e2e/weight.spec.ts).
+    contract: SHELL_CONTRACT, mantine: LENT_MANTINE,
+    React: { Children, Component, Fragment, PureComponent, StrictMode, Suspense, cloneElement, createContext, createElement, forwardRef, isValidElement, lazy, memo, startTransition, use, useCallback, useContext, useDebugValue, useDeferredValue, useEffect, useId, useImperativeHandle, useInsertionEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, useTransition, version },
+    jsx: { Fragment: JSXFragment, jsx, jsxs },
+    query: { queryOptions, useMutation, useQuery, useQueryClient },
+    page: { PageHeader, PageBody, Toolbar, SectionCard, EmptyState, DataTable, TableSkeleton },
+    primitives: { Mono, relTime, absTime }, notify: { notifyOk, notifyWarn, notifyError, run }, theme: { FS, SP, INK }, live: { get, send },
   }
 }
 

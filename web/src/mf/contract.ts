@@ -30,13 +30,13 @@ export const SHELL_CONTRACT = 1
 /** What the shell lends a section's bundle: its own modules. */
 export interface ShellModules {
   contract: number
-  React: typeof React
-  jsx: typeof JSXRuntime
+  React: Pick<typeof React, 'Children' | 'Component' | 'Fragment' | 'PureComponent' | 'StrictMode' | 'Suspense' | 'cloneElement' | 'createContext' | 'createElement' | 'forwardRef' | 'isValidElement' | 'lazy' | 'memo' | 'startTransition' | 'use' | 'useCallback' | 'useContext' | 'useDebugValue' | 'useDeferredValue' | 'useEffect' | 'useId' | 'useImperativeHandle' | 'useInsertionEffect' | 'useLayoutEffect' | 'useMemo' | 'useReducer' | 'useRef' | 'useState' | 'useSyncExternalStore' | 'useTransition' | 'version'>
+  jsx: Pick<typeof JSXRuntime, 'Fragment' | 'jsx' | 'jsxs'>
   mantine: LentMantine
-  query: typeof Query
-  page: typeof Page
+  query: Pick<typeof Query, 'queryOptions' | 'useMutation' | 'useQuery' | 'useQueryClient'>
+  page: Pick<typeof Page, 'PageHeader' | 'PageBody' | 'Toolbar' | 'SectionCard' | 'EmptyState' | 'DataTable' | 'TableSkeleton'>
   primitives: Pick<typeof Primitives, 'Mono' | 'relTime' | 'absTime'>
-  notify: typeof Notify
+  notify: Pick<typeof Notify, 'notifyOk' | 'notifyWarn' | 'notifyError' | 'run'>
   theme: Pick<typeof Theme, 'FS' | 'SP' | 'INK'>
   live: Pick<typeof Live, 'get' | 'send'>
 }
