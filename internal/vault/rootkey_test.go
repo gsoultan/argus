@@ -68,7 +68,15 @@ func TestRootKeyFromSystemdCredential(t *testing.T) {
 	if _, err := os.Stat(file); err == nil {
 		t.Fatal("a root key file was made although a credential gives the key")
 	}
-	_ = os.WriteFile(filepath.Join(dir, RootKeyCredential), []byte("short"), 0o400)
+	// The credential is read-only: replace it rather than write over it,
+	// which fails for anyone but root.
+	cred := filepath.Join(dir, RootKeyCredential)
+	if err := os.Remove(cred); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cred, []byte("short"), 0o400); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, _, err := LoadConfiguredRootKey(Config{RootKeyFile: file}); err == nil {
 		t.Fatal("a malformed credential was accepted")
 	}
