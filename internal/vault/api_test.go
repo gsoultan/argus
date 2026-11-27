@@ -198,6 +198,39 @@ func TestManagementPlaneNeedsArgusControlsSignature(t *testing.T) {
 	if code, _ := h.do(replay); code != 401 {
 		t.Fatalf("replay: %d", code)
 	}
+	// The same request again, signed afresh in the same second, is not a
+	// replay: argus-control adds a server and syncs it straight away.
+	now := time.Now()
+	for i := range 2 {
+		hdr, _ := SignManage(h.control, http.MethodGet, "/manage/v1/status", controlActor, nil, now)
+		r, _ := http.NewRequest(http.MethodGet, h.srv.URL+"/manage/v1/status", nil)
+		for k, v := range hdr {
+			r.Header[k] = v
+		}
+		if code, _ := h.do(r); code != 200 {
+			t.Fatalf("identical request %d in one second: %d", i+1, code)
+		}
+	}
+	// A signature without its nonce, or with the nonce changed, is refused.
+	stripped := h.signedReq(http.MethodGet, "/manage/v1/status", controlActor, nil)
+	sigHdr := stripped.Header.Get(SignatureHeader)
+	var tsPart, sigPart string
+	for _, p := range strings.Split(sigHdr, ",") {
+		if strings.HasPrefix(p, "t=") {
+			tsPart = p
+		}
+		if strings.HasPrefix(p, "s=") {
+			sigPart = p
+		}
+	}
+	stripped.Header.Set(SignatureHeader, tsPart+","+sigPart)
+	if code, _ := h.do(stripped); code != 401 {
+		t.Fatalf("no nonce: %d", code)
+	}
+	stripped.Header.Set(SignatureHeader, tsPart+",n=AAAAAAAAAAAAAAAAAAAAAA,"+sigPart)
+	if code, _ := h.do(stripped); code != 401 {
+		t.Fatalf("changed nonce: %d", code)
+	}
 	// Body changed after signing.
 	req = h.signedReq(http.MethodPut, "/manage/v1/rules", controlActor, bundle(7))
 	tampered, _ := json.Marshal(bundle(8))

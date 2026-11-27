@@ -44,9 +44,13 @@ type ManageActor struct {
 	Remote string `json:"remote,omitempty"`
 }
 
-func signedMessage(method, uri, ts, actor string, body []byte) []byte {
+// signedMessage is what a signature covers. The nonce makes every request's
+// signature its own: Ed25519 is deterministic, so without it two identical
+// requests in the same second would sign the same and the second would be
+// refused as a replay.
+func signedMessage(method, uri, ts, nonce, actor string, body []byte) []byte {
 	sum := sha256.Sum256(body)
-	return fmt.Appendf(nil, "argus-secret manage v1\n%s\n%s\n%s\n%s\n%s", method, uri, ts, actor, hex.EncodeToString(sum[:]))
+	return fmt.Appendf(nil, "argus-secret manage v1\n%s\n%s\n%s\n%s\n%s\n%s", method, uri, ts, nonce, actor, hex.EncodeToString(sum[:]))
 }
 
 // SignManage returns the headers argus-control sends with a management
@@ -58,9 +62,14 @@ func SignManage(priv ed25519.PrivateKey, method, uri string, actor ManageActor, 
 	}
 	act := base64.RawURLEncoding.EncodeToString(raw)
 	ts := strconv.FormatInt(now.Unix(), 10)
-	sig := ed25519.Sign(priv, signedMessage(method, uri, ts, act, body))
+	n := make([]byte, 16)
+	if _, err := rand.Read(n); err != nil {
+		return nil, err
+	}
+	nonce := base64.RawURLEncoding.EncodeToString(n)
+	sig := ed25519.Sign(priv, signedMessage(method, uri, ts, nonce, act, body))
 	h := http.Header{}
-	h.Set(SignatureHeader, "t="+ts+",s="+base64.RawURLEncoding.EncodeToString(sig))
+	h.Set(SignatureHeader, "t="+ts+",n="+nonce+",s="+base64.RawURLEncoding.EncodeToString(sig))
 	h.Set(ActorHeader, act)
 	return h, nil
 }
@@ -84,7 +93,7 @@ var errUnsigned = errors.New("this request is not signed by argus-control")
 // verify checks a management request and returns its body and actor.
 func (c *controlVerifier) verify(r *http.Request, limit int64) ([]byte, ManageActor, error) {
 	var actor ManageActor
-	ts, sigB64, ok := parseSignature(r.Header.Get(SignatureHeader))
+	ts, nonce, sigB64, ok := parseSignature(r.Header.Get(SignatureHeader))
 	if !ok {
 		return nil, actor, errUnsigned
 	}
@@ -105,7 +114,7 @@ func (c *controlVerifier) verify(r *http.Request, limit int64) ([]byte, ManageAc
 		return nil, actor, InvalidError{"the request body is too large"}
 	}
 	act := r.Header.Get(ActorHeader)
-	if !ed25519.Verify(c.key, signedMessage(r.Method, r.URL.RequestURI(), ts, act, body), sig) {
+	if !ed25519.Verify(c.key, signedMessage(r.Method, r.URL.RequestURI(), ts, nonce, act, body), sig) {
 		return nil, actor, errUnsigned
 	}
 	if !c.firstUse(sigB64, now) {
@@ -143,17 +152,19 @@ func (c *controlVerifier) firstUse(sig string, now time.Time) bool {
 	return true
 }
 
-func parseSignature(h string) (ts, sig string, ok bool) {
+func parseSignature(h string) (ts, nonce, sig string, ok bool) {
 	for part := range strings.SplitSeq(h, ",") {
 		k, v, _ := strings.Cut(strings.TrimSpace(part), "=")
 		switch k {
 		case "t":
 			ts = v
+		case "n":
+			nonce = v
 		case "s":
 			sig = v
 		}
 	}
-	return ts, sig, ts != "" && sig != ""
+	return ts, nonce, sig, ts != "" && len(nonce) >= 16 && len(nonce) <= 64 && sig != ""
 }
 
 func (a *API) manageRoutes(mux *http.ServeMux) {
