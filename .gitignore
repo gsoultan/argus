@@ -109,3 +109,6 @@ android/.kotlin/
 
 # The unattended helper dex is built in CI (d8) into the app assets.
 android/app/src/main/assets/argus-helper.dex
+
+# Binaries built at the repository root
+/*.exe
