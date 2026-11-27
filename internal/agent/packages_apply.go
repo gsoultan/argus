@@ -69,6 +69,9 @@ func (c PackageChecker) listInto(ctx context.Context, m pkgManager, r PackageRep
 	}
 	r.Updates, r.SecurityPatches = ups, patches
 	r.RebootRequired = m.rebootWanted(ctx, c.Run)
+	if _, apt := m.(aptManager); apt {
+		r.Unfinished = dpkgUnfinished(ctx, c.Run)
+	}
 	r.Release = c.release(ctx, r)
 	if _, apt := m.(aptManager); apt {
 		installed, pgdg := c.pgInstalled(ctx)
@@ -191,7 +194,7 @@ func (a *PackageApplier) Apply(ctx context.Context) PackageRunStatus {
 		return a.applyScript(ctx)
 	}
 	if a.Plan.Mode == PackagesReboot {
-		return a.applyReboot()
+		return a.applyReboot(ctx)
 	}
 	if a.Plan.Mode == PackagesRelease {
 		return a.applyRelease(ctx)
@@ -298,6 +301,14 @@ func (a *PackageApplier) Apply(ctx context.Context) PackageRunStatus {
 	if len(restarted) > 0 {
 		msg += ", restarted " + strings.Join(restarted, ", ")
 	}
+	refusal := ""
+	if reboot && a.Plan.Reboot == "if_needed" {
+		refusal, _ = a.rebootRefusal(ctx)
+	}
+	if reboot && a.Plan.Reboot == "if_needed" && refusal != "" {
+		fmt.Fprintln(a.lw, "argus: "+refusal)
+		return a.finish(RunDone, msg+"; "+refusal, func(s *PackageRunStatus) { s.RebootRequired = true })
+	}
 	if reboot && a.Plan.Reboot == "if_needed" {
 		a.update(func(s *PackageRunStatus) {
 			s.State, s.Step, s.Message = RunRebooting, "reboot", msg+"; rebooting"
@@ -335,7 +346,11 @@ func (a *PackageApplier) answerGrubForApt(ctx context.Context, m pkgManager) {
 // applyReboot reboots and installs nothing. The agent that comes back
 // reads "rebooting" and a new boot, and calls the run done; the same boot
 // means the reboot never happened, and it says so.
-func (a *PackageApplier) applyReboot() PackageRunStatus {
+func (a *PackageApplier) applyReboot(ctx context.Context) PackageRunStatus {
+	if why, _ := a.rebootRefusal(ctx); why != "" {
+		fmt.Fprintln(a.lw, "argus: "+why)
+		return a.failWith(why, RunOutcome{Changed: ChangedNo, Why: why, Next: unfinishedNext})
+	}
 	a.update(func(s *PackageRunStatus) {
 		s.State, s.Step, s.Message = RunRebooting, "reboot", "rebooting, as asked from the console"
 	})

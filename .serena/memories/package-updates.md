@@ -76,6 +76,15 @@ fixture.
   output instead.
 - `dpkg --configure -a` does not fix a half-installed package; the repair
   reinstalls what `dpkg --audit` lists.
+- A failed upgrade left a server half configured and the Updates tab still
+  offered "Reboot now"; rebooting it broke the server. Now every apt check
+  reports `unfinished` (`dpkg --audit`), and while it is non-empty the tab
+  shows "Do not reboot this server yet", the control plane refuses reboot
+  runs (`unfinishedRefusal`), the agent refuses them and skips a run's
+  reboot (`rebootRefusal`, packages_unfinished.go), a release upgrade is
+  blocked, and a release upgrade that exits 0 with packages unfinished is
+  repaired and not rebooted. Failure messages name the package dpkg failed
+  on (`dpkgFailed`, from apt-term.log).
 - Console alert severity is `warning`, not `warn` (the audit log uses `warn`).
 - `dedupe` sorts; a batch's order must not go through it.
 - storm cannot map `SMALLINT[]`; window days are `INTEGER[]`.

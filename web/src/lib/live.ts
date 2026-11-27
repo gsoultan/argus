@@ -2439,6 +2439,11 @@ export interface PackageReport {
   updates: PackageUpdate[]
   security_patches?: number
   reboot_required?: boolean
+  /**
+   * What dpkg left half installed or half configured, as an upgrade that failed part way leaves it. The server
+   * must not be rebooted while there is any; newer agents only.
+   */
+  unfinished?: string[]
   utc_offset_minutes: number
   /** The operating system's release and the next one it can move to; absent from an older agent. */
   release?: ReleaseInfo

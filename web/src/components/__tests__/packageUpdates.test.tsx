@@ -227,6 +227,17 @@ describe('Reboot', () => {
     return { ...v, report: { ...v.report!, reboot_required: true } }
   }
 
+  it('says not to reboot, with no reboot button, while dpkg has packages half configured', async () => {
+    const v = needs()
+    live.assetPackages.mockResolvedValue({ ...v, report: { ...v.report!, unfinished: ['grub-pc'] } })
+    renderWith(<UpdatesTab asset={asset} canEdit />)
+    expect(await screen.findByText('Do not reboot this server yet')).toBeTruthy()
+    expect(screen.getByText('Not yet')).toBeTruthy()
+    expect(screen.getByText('sudo dpkg-reconfigure grub-pc')).toBeTruthy()
+    expect(screen.queryByText('This server needs a reboot')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Reboot now…' })).toBeNull()
+  })
+
   it('says a reboot is needed where it shows, and reboots after asking', async () => {
     live.assetPackages.mockResolvedValue(needs())
     live.startPackageRun.mockResolvedValue(runOf({ mode: 'reboot', reboot: 'if_needed' }))

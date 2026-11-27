@@ -464,14 +464,33 @@ func (a *API) packagesFor(ctx context.Context, asset Asset) (packageTarget, erro
 	return t, nil
 }
 
-// rebootReady refuses a reboot an agent too old to do one would fail.
+// rebootReady refuses a reboot an agent too old to do one would fail, and
+// one on a server dpkg has left half configured, which may not come back.
 func rebootReady(w http.ResponseWriter, t packageTarget, in runRequest) bool {
 	if in.Mode == PackagesReboot && !t.view.CanReboot {
 		writeErr(w, http.StatusConflict, "this server's agent is too old to reboot from the console; "+
 			"update the agent from its Settings tab first")
 		return false
 	}
+	if in.Mode == PackagesReboot {
+		if why := unfinishedRefusal(t.view.Report); why != "" {
+			writeErr(w, http.StatusConflict, why)
+			return false
+		}
+	}
 	return true
+}
+
+// unfinishedRefusal is why a server must not be rebooted now, from its last
+// report, or "".
+func unfinishedRefusal(r *PackageReport) string {
+	if r == nil || len(r.Unfinished) == 0 {
+		return ""
+	}
+	return "do not reboot this server yet: dpkg has left " + strings.Join(r.Unfinished, ", ") + " half " +
+		"installed or half configured, and it may not start again. On the server, run `sudo dpkg --configure -a` " +
+		"and `sudo apt-get -f install` until both finish without errors (and `sudo apt full-upgrade` if a release " +
+		"upgrade stopped part way), then press Check for updates"
 }
 
 // releaseReady refuses a release upgrade the server is not ready for, or
@@ -877,6 +896,12 @@ func (a *API) postPackageRuns(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusConflict, asset.Hostname+": its agent is too old to reboot from the console; "+
 				"update the agent from its Settings tab first")
 			return
+		}
+		if req.Mode == PackagesReboot {
+			if why := unfinishedRefusal(t.view.Report); why != "" {
+				writeErr(w, http.StatusConflict, asset.Hostname+": "+why)
+				return
+			}
 		}
 		runs = append(runs, a.newManualRun(r.Context(), t, req, sess.Email, dr))
 		links[asset.Hostname] = asset.ID

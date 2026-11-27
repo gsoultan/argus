@@ -115,6 +115,23 @@ func (a *PackageApplier) applyRelease(ctx context.Context) PackageRunStatus {
 		}
 	}
 
+	// An upgrader that exited 0 can still leave a package unconfigured (a
+	// maintainer script that failed after it moved on). Finish it, and do
+	// not reboot into a release dpkg has not finished.
+	if _, refused := a.rebootRefusal(ctx); len(refused) > 0 {
+		fmt.Fprintln(a.lw, "argus: dpkg left "+strings.Join(refused, ", ")+" unfinished; finishing them")
+		_ = aptManager{}.repair(ctx, a.Run, a.lw)
+		a.lw.Flush()
+		if why, left := a.rebootRefusal(ctx); why != "" {
+			a.writeReport(ctx, m)
+			msg := fmt.Sprintf("%s moved the server to %s, but dpkg could not finish configuring %s, so the server "+
+				"was not rebooted: it may not start again until they are finished (`sudo dpkg --configure -a`, "+
+				"`sudo apt-get -f install`). Its log is %s", info.Tool, info.NextName, strings.Join(left, ", "),
+				change.logFile())
+			return a.failWith(msg, RunOutcome{Changed: ChangedYes, Why: msg, Next: unfinishedNext})
+		}
+	}
+
 	msg := "upgraded to " + info.NextName + "; rebooting into it"
 	if info.Tool == releaseToolLeapp {
 		msg = "leapp is ready; rebooting into the upgrade, which runs before the server comes back"
@@ -151,8 +168,9 @@ func orUnknown(s string) string {
 // repaired. Otherwise Argus tries to finish what dpkg left half done and
 // says whether that worked and what a person does next. The server is not
 // rebooted: a boot loader left unconfigured may not boot.
-func (a *PackageApplier) aptPartWay(ctx context.Context, tool string, code int, out []byte, log string) error {
+func (a *PackageApplier) aptPartWay(ctx context.Context, tool string, code int, out, term []byte, log string) error {
 	why := tail(out, 400)
+	failed := dpkgFailed(term)
 	changed := dpkgChangedSince(a.snapshot().StartedAt)
 	if changed == ChangedNo {
 		fmt.Fprintln(a.lw, "argus: "+tool+" stopped before dpkg changed any package; nothing was changed")
@@ -165,7 +183,20 @@ func (a *PackageApplier) aptPartWay(ctx context.Context, tool string, code int, 
 	}
 	fmt.Fprintln(a.lw, "argus: the upgrade stopped part way; finishing what dpkg left half done")
 	repaired := aptManager{}.repair(ctx, a.Run, a.lw) == nil
+	left := dpkgUnfinished(ctx, a.Run)
+	repaired = repaired && len(left) == 0
 	a.lw.Flush()
+	failedOn := ""
+	if len(failed) > 0 {
+		failedOn = " dpkg failed on " + strings.Join(failed, ", ") + "."
+	}
+	if len(left) > 0 {
+		failedOn += " Still half configured: " + strings.Join(left, ", ") + "."
+	}
+	if hasString(failed, "grub-pc") || hasString(left, "grub-pc") {
+		failedOn += " grub-pc is among them, so the boot loader may not be installed: the server may not start " +
+			"again if it reboots now."
+	}
 	next := []string{
 		"Do not reboot yet.",
 		"Run `sudo dpkg --configure -a` and `sudo apt-get -f install` until both finish without errors. If grub-pc " +
@@ -188,7 +219,7 @@ func (a *PackageApplier) aptPartWay(ctx context.Context, tool string, code int, 
 		where = "and dpkg's log could not be read, so the server may be part way between releases"
 	}
 	return &outcomeError{
-		msg:     fmt.Sprintf("%s failed (exit %d), %s. %s Its log is %s. %s", tool, code, where, said, log, why),
+		msg:     fmt.Sprintf("%s failed (exit %d), %s.%s %s Its log is %s. %s", tool, code, where, failedOn, said, log, why),
 		outcome: RunOutcome{Changed: changed, Why: why, Next: next},
 	}
 }
@@ -206,6 +237,9 @@ func (a *PackageApplier) upgradeUbuntu(ctx context.Context, info *ReleaseInfo) e
 	// output says little, and why it stopped is only there.
 	mainLog := &tailer{files: ubuntuUpgradeLogs[:1], offsets: map[string]int64{}}
 	mainLog.start()
+	// Which package dpkg failed on is only in the terminal log.
+	termLog := &tailer{files: ubuntuUpgradeLogs[1:], offsets: map[string]int64{}}
+	termLog.start()
 	var b bytes.Buffer
 	stop := a.follow(ctx, "upgrading", ubuntuUpgradeLogs)
 	code, err := a.Run(ctx, io.MultiWriter(&b, a.lw), releaseEnv, "do-release-upgrade",
@@ -231,7 +265,11 @@ func (a *PackageApplier) upgradeUbuntu(ctx context.Context, info *ReleaseInfo) e
 			outcome: RunOutcome{Changed: ChangedNo, Why: why, Next: againSteps},
 		}
 	}
-	return a.aptPartWay(ctx, "do-release-upgrade", code, []byte(why), "/var/log/dist-upgrade/main.log")
+	var term bytes.Buffer
+	termLog.read(&term)
+	term.Write(b.Bytes())
+	return a.aptPartWay(ctx, "do-release-upgrade", code, []byte(why), term.Bytes(),
+		"/var/log/dist-upgrade/main.log (what dpkg printed is in apt-term.log beside it)")
 }
 
 // reDistUpgradeError is a line the upgrader logs when something is wrong:
@@ -354,7 +392,7 @@ func (a *PackageApplier) upgradeDebian(ctx context.Context, m pkgManager, info *
 			return err
 		}
 		if code != 0 {
-			err := a.aptPartWay(ctx, "apt-get "+step[0], code, b.Bytes(), "/var/log/apt/term.log")
+			err := a.aptPartWay(ctx, "apt-get "+step[0], code, b.Bytes(), b.Bytes(), "/var/log/apt/term.log")
 			var oe *outcomeError
 			if errors.As(err, &oe) && oe.outcome.Changed == ChangedNo {
 				// Nothing was installed: apt goes back on the old release,

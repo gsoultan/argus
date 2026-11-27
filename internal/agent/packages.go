@@ -98,6 +98,11 @@ type PackageReport struct {
 	// RebootRequired is the server asking for a reboot now, for what is
 	// already installed.
 	RebootRequired bool `json:"reboot_required,omitempty"`
+	// Unfinished is what dpkg left half installed or half configured
+	// (`dpkg --audit`), as an upgrade that failed part way leaves it. A
+	// server with any must not be rebooted until they are finished: a kernel
+	// or boot loader left half configured may not boot.
+	Unfinished []string `json:"unfinished,omitempty"`
 	// Release is the operating system's own release and the next one it
 	// can be upgraded to, when the agent can tell (packages_release.go).
 	Release *ReleaseInfo `json:"release,omitempty"`

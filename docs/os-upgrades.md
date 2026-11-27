@@ -151,6 +151,25 @@ be finished, and the run's message says what to do next. Do not reboot until
 `sudo dpkg --configure -a` and `sudo apt-get -f install` finish cleanly and
 `sudo apt full-upgrade` has completed the release.
 
+The run's message names the package dpkg failed on (read from
+`/var/log/dist-upgrade/apt-term.log`, or apt's output on Debian) and what is
+still half configured after the repair.
+
+While `dpkg --audit` lists anything, every check reports it (`unfinished`),
+and Argus will not reboot the server, whoever asks: the **Updates** tab shows
+"Do not reboot this server yet" with the steps in place of the reboot button,
+the control plane refuses a reboot run, and the agent refuses one too (and
+skips the reboot after an update run). A release upgrade is blocked until the
+packages are finished. A kernel left without its initramfs, or a boot loader
+nobody installed, can leave a server that does not start again.
+
+If the server was rebooted anyway and does not come back, open the cloud
+provider's serial or web console. If it reaches a shell, run the steps above.
+If it stops at GRUB or shows nothing, boot the provider's rescue system,
+mount the server's disk, bind-mount `/dev`, `/proc` and `/sys`, `chroot` into
+it and run the same steps there (with `grub-install` on the boot disk if
+grub-pc is what failed).
+
 If apt later refuses sources because their mirror "no longer has a Release
 file", the **Updates** tab says which case it is. Either the sources still name
 the old release after an upgrade (point them at the new codename), or the

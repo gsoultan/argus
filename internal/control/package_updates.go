@@ -66,15 +66,19 @@ type PackageUpdate struct {
 
 // PackageReport is what the agent found waiting.
 type PackageReport struct {
-	CheckedAt        time.Time       `json:"checked_at"`
-	Manager          string          `json:"manager,omitempty"`
-	Supported        bool            `json:"supported"`
-	Reason           string          `json:"reason,omitempty"`
-	Error            string          `json:"error,omitempty"`
-	Updates          []PackageUpdate `json:"updates"`
-	SecurityPatches  int             `json:"security_patches,omitempty"`
-	RebootRequired   bool            `json:"reboot_required,omitempty"`
-	UTCOffsetMinutes int             `json:"utc_offset_minutes"`
+	CheckedAt       time.Time       `json:"checked_at"`
+	Manager         string          `json:"manager,omitempty"`
+	Supported       bool            `json:"supported"`
+	Reason          string          `json:"reason,omitempty"`
+	Error           string          `json:"error,omitempty"`
+	Updates         []PackageUpdate `json:"updates"`
+	SecurityPatches int             `json:"security_patches,omitempty"`
+	RebootRequired  bool            `json:"reboot_required,omitempty"`
+	// Unfinished is what dpkg left half installed or half configured, as
+	// an upgrade that failed part way leaves it. The server must not be
+	// rebooted while there is any; absent from an older agent.
+	Unfinished       []string `json:"unfinished,omitempty"`
+	UTCOffsetMinutes int      `json:"utc_offset_minutes"`
 	// Release is the server's operating system release and the next one it
 	// can be upgraded to; absent from an older agent.
 	Release *ReleaseInfo `json:"release,omitempty"`
@@ -225,6 +229,12 @@ func (r *PackageReport) bounded() {
 		clip(&u.Installed, 120)
 		clip(&u.Available, 120)
 		clip(&u.Origin, 200)
+	}
+	if len(r.Unfinished) > 50 {
+		r.Unfinished = r.Unfinished[:50]
+	}
+	for i := range r.Unfinished {
+		clip(&r.Unfinished[i], 200)
 	}
 	clip(&r.Error, 1000)
 	clip(&r.Reason, 500)
