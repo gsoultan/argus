@@ -62,10 +62,14 @@ async function open(page: Page) {
 
 test('secrets: the section loads from its own bundle, and values are sealed both ways', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
+  // The section's own failures only. Around it, the stub's alert stream and
+  // the console's new-build check fail in WebKit ("access control checks"),
+  // as they do on every page served by the stub; they are not this page's.
+  // A section that failed to load shows the shell's Unavailable alert, which
+  // is checked below as well.
   const errors: string[] = []
-  // Uncaught errors only: the stub's alert stream and the signed-out probe
-  // log their own, which are not this page's.
-  page.on('pageerror', (e) => errors.push(e.message))
+  page.on('pageerror', (e) => { if (/mf\/secrets|mf-secrets|seal/i.test(`${e.message} ${e.stack ?? ''}`)) errors.push(e.message) })
+  page.on('requestfailed', (r) => { if (r.url().includes('/mf/')) errors.push(`failed: ${r.url()}`) })
   const { sent, written } = await open(page)
 
   await expect(page.getByRole('heading', { level: 1, name: 'Secrets' })).toHaveCount(1)
@@ -100,5 +104,6 @@ test('secrets: the section loads from its own bundle, and values are sealed both
   expect(JSON.stringify(put.body)).not.toContain('correct horse')
   expect(written).toEqual(['correct horse battery staple'])
 
+  await expect(page.getByText('The secrets screens did not load')).toHaveCount(0)
   expect(errors).toEqual([])
 })
