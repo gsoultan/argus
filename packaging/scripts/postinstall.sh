@@ -13,6 +13,12 @@ if ! getent passwd argus >/dev/null 2>&1; then
             --comment "Argus privileged access" argus
 fi
 
+# Members may read secrets through the agent's socket
+# (/run/argus/secrets.sock, argus-agent secret). Nobody is added to it.
+if ! getent group argus-secrets >/dev/null 2>&1; then
+    groupadd --system argus-secrets
+fi
+
 install -d -o root -g argus -m 0750 /etc/argus
 install -d -o root -g argus -m 0750 /etc/argus/tls
 install -d -o root -g argus -m 0750 /etc/argus/ssh

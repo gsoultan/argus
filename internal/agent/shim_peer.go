@@ -77,3 +77,7 @@ func (c *Collector) checkShimClaim(conn net.Conn, m SessionStart) error {
 	}
 	return nil
 }
+
+// SocketPeer is who is on the other end of a unix socket connection, as the
+// kernel says: for the secrets socket (internal/agent/secretclient).
+func SocketPeer(conn net.Conn) (ShimPeer, error) { return socketPeer(conn) }

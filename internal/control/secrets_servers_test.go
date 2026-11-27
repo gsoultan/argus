@@ -293,6 +293,63 @@ func TestSecretsServersEndToEnd(t *testing.T) {
 		t.Fatalf("resume = %d %s", code, text)
 	}
 
+	// The agent asks where its secrets live, with its own credential only.
+	req, _ := http.NewRequest("GET", h.srv.URL+"/api/v1/report/secrets-servers", nil)
+	req.Header.Set("Authorization", "Bearer "+enr.Credential)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(raw), vs.srv.URL) || strings.Contains(string(raw), "rulesHash") {
+		t.Errorf("agent's servers = %d %s", resp.StatusCode, raw)
+	}
+	req, _ = http.NewRequest("GET", h.srv.URL+"/api/v1/report/secrets-servers", nil)
+	req.Header.Set("Authorization", "Bearer "+testReporterToken)
+	if resp, err := http.DefaultClient.Do(req); err == nil {
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			t.Error("the shared reporter token was told where secrets live")
+		}
+	}
+
+	// An app token: shown once, pushed as its hash, gone once revoked.
+	if code, _ := call(opC, "POST", "/api/v1/secrets/apps", map[string]any{"name": "CI"}); code != http.StatusForbidden {
+		t.Errorf("an operator making an app token = %d, want 403", code)
+	}
+	if code, _ := call(ownerC, "POST", "/api/v1/secrets/apps", map[string]any{"name": "CI", "days": 400}); code != http.StatusBadRequest {
+		t.Errorf("a 400-day token = %d, want 400", code)
+	}
+	code, text = call(ownerC, "POST", "/api/v1/secrets/apps", map[string]any{"name": "CI", "days": 30})
+	var app struct {
+		ID, Token string
+	}
+	if code != http.StatusCreated || json.Unmarshal([]byte(text), &app) != nil || !strings.HasPrefix(app.Token, vault.AppTokenPrefix) {
+		t.Fatalf("make app token = %d %s", code, text)
+	}
+	if code, text := call(ownerC, "GET", "/api/v1/secrets/apps", nil); code != http.StatusOK || strings.Contains(text, app.Token) {
+		t.Errorf("the token came back in the list: %d %s", code, text)
+	}
+	if err := h.api.SyncSecretsServer(ctx, srv.ID); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if p, ok := vs.rules.Authenticate(app.Token); !ok || p.ID != app.ID {
+		t.Fatalf("argus-secret does not know the app token: %+v %v", p, ok)
+	}
+	if code, _ := call(ownerC, "DELETE", "/api/v1/secrets/apps/"+app.ID, nil); code != http.StatusNoContent {
+		t.Errorf("revoke app = %d", code)
+	}
+	if code, _ := call(ownerC, "DELETE", "/api/v1/secrets/apps/"+app.ID, nil); code != http.StatusNotFound {
+		t.Errorf("revoke twice = %d, want 404", code)
+	}
+	if err := h.api.SyncSecretsServer(ctx, srv.ID); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if _, ok := vs.rules.Authenticate(app.Token); ok {
+		t.Error("a revoked app token is still known to argus-secret")
+	}
+
 	// Revoking the agent takes it out of the next bundle.
 	if _, err := h.store.RevokeAgentCredential(ctx, enr.CredentialID, owner); err != nil {
 		t.Fatal(err)

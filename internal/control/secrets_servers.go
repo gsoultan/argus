@@ -648,6 +648,10 @@ func (a *API) secretsBundle(ctx context.Context, srv SecretsServer) (vault.Bundl
 	if err != nil {
 		return vault.Bundle{}, "", err
 	}
+	apps, err := a.store.secretsAppIdentities(ctx)
+	if err != nil {
+		return vault.Bundle{}, "", err
+	}
 	all, err := a.store.SecretRules(ctx)
 	if err != nil {
 		return vault.Bundle{}, "", err
@@ -659,7 +663,7 @@ func (a *API) secretsBundle(ctx context.Context, srv SecretsServer) (vault.Bundl
 		}
 		rules = append(rules, vault.Rule{Path: r.Path, Subjects: r.Subjects, Can: r.Can, NeedsApproval: r.NeedsApproval})
 	}
-	b := vault.Bundle{Org: tenantIDOf(ctx), Folders: srv.Folders, Servers: servers, Apps: []vault.AppIdentity{}, Rules: rules}
+	b := vault.Bundle{Org: tenantIDOf(ctx), Folders: srv.Folders, Servers: servers, Apps: apps, Rules: rules}
 	raw, err := json.Marshal(b)
 	if err != nil {
 		return b, "", err

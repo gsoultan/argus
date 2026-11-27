@@ -1504,6 +1504,7 @@ func All() []any {
 		&TelegramRoute{},
 		&SecretsServer{},
 		&SecretRule{},
+		&SecretApp{},
 		&RecordingStorage{},
 		&RecordingPolicy{},
 		&CloudflareAccount{},
@@ -3430,4 +3431,26 @@ func (m *SecretRule) Schema(t *storm.Table) {
 	t.CheckNamed("secret_rules_note_check", "length(note) <= 500")
 	t.CheckNamed("secret_rules_path_check", "length(path) <= 256")
 	t.CheckNamed("secret_rules_subjects_check", "jsonb_typeof(subjects) = 'array'::text")
+}
+
+// SecretApp is table secret_apps: an app token for a caller outside Argus,
+// kept as its SHA-256 (control/secrets_apps.go).
+type SecretApp struct {
+	storm.Model
+
+	Name      string
+	TokenHash string
+	TokenTail string
+	ExpiresAt time.Time
+	RevokedAt *time.Time
+	RevokedBy string
+	CreatedBy string
+}
+
+func (m *SecretApp) Schema(t *storm.Table) {
+	t.Col(&m.TokenTail).Default("''::text")
+	t.Col(&m.RevokedBy).Default("''::text")
+	t.UniqueNamed("secret_apps_token_hash_key", &m.TokenHash)
+	t.CheckNamed("secret_apps_name_check", "(length(name) >= 1) AND (length(name) <= 80)")
+	t.CheckNamed("secret_apps_token_hash_check", "length(token_hash) = 64")
 }

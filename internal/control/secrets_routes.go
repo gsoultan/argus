@@ -60,6 +60,10 @@ func (a *API) secretsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/secrets/rules/{id}", a.putSecretRule)
 	mux.HandleFunc("DELETE /api/v1/secrets/rules/{id}", a.deleteSecretRule)
 
+	mux.HandleFunc("GET /api/v1/secrets/apps", a.getSecretApps)
+	mux.HandleFunc("POST /api/v1/secrets/apps", a.postSecretApp)
+	mux.HandleFunc("DELETE /api/v1/secrets/apps/{id}", a.deleteSecretApp)
+
 	mux.HandleFunc("GET /api/v1/secrets", a.getSecrets)
 	mux.HandleFunc("GET /api/v1/secrets/item", a.relaySecret(http.MethodGet, "/manage/v1/secret"))
 	mux.HandleFunc("GET /api/v1/secrets/seal-key", a.getSecretsSealKey)

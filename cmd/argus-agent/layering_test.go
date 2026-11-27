@@ -49,6 +49,9 @@ var shared = []string{
 	module + "internal/rdp/pixels",
 	module + "internal/recorder",
 	module + "internal/secrets",
+	// argus-secret's sealing and read request: argus-secret seals each value
+	// to a key the agent made, and the agent opens it. Standard library only.
+	module + "internal/secretwire",
 	module + "internal/tlsconfig",
 	module + "internal/tunnel",
 }

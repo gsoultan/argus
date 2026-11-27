@@ -55,3 +55,20 @@ CREATE TABLE IF NOT EXISTS secret_rules (
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- App tokens: callers outside Argus (a CI job, a service with no agent) that
+-- read secrets straight from argus-secret. Only the SHA-256 of the token is
+-- kept; it is pushed to the servers in the rules bundle as it is here.
+CREATE TABLE IF NOT EXISTS secret_apps (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name        TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 80),
+    token_hash  TEXT NOT NULL UNIQUE CHECK (length(token_hash) = 64),
+    -- Its last four characters, to tell tokens apart.
+    token_tail  TEXT NOT NULL DEFAULT '',
+    expires_at  TIMESTAMPTZ NOT NULL,
+    revoked_at  TIMESTAMPTZ,
+    revoked_by  TEXT NOT NULL DEFAULT '',
+    created_by  TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);

@@ -689,6 +689,8 @@ func (a *API) registerFleet(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/report/direct-login/{id}/wait", a.agentReporter(a.postDirectLoginWait))
 	mux.HandleFunc("GET "+tunnel.UpgradePath, a.handleTunnelUpgrade)
 	mux.HandleFunc("POST /api/v1/report/facts", a.agentReporter(a.postFacts))
+	// Where the organization's argus-secret servers are; see secrets_apps.go.
+	mux.HandleFunc("GET /api/v1/report/secrets-servers", a.agentReporter(a.getAgentSecretsServers))
 	// An agent being uninstalled revokes its own credential; see
 	// enrollment_routes.go.
 	mux.HandleFunc("POST /api/v1/report/deregister", a.agentReporter(a.postDeregister))

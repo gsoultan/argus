@@ -1450,6 +1450,22 @@ func _assertSchemaMigrationShape(m m0.SchemaMigration) {
 	}
 }
 
+// _assertSecretAppShape fails to compile if m0.SecretApp gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertSecretAppShape(m m0.SecretApp) {
+	type shape m0.SecretApp
+	_ = shape{
+		m.Model,
+		m.Name,
+		m.TokenHash,
+		m.TokenTail,
+		m.ExpiresAt,
+		m.RevokedAt,
+		m.RevokedBy,
+		m.CreatedBy,
+	}
+}
+
 // _assertSecretRuleShape fails to compile if m0.SecretRule gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertSecretRuleShape(m m0.SecretRule) {
