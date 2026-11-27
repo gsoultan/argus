@@ -100,6 +100,12 @@ jobs:
         # package results.
         run: go test -count=1 -run 'TestAgentLinksNoControlPlaneCode|TestSharedPackagesStayNeutral|TestControlPlaneShipsNoAgentCode' -v ./cmd/argus-agent/
 
+      - name: Check argus-secret links neither control-plane nor agent code
+        # argus-secret holds the only key that opens the organization's
+        # secrets. cmd/argus-secret/layering_test.go keeps its import graph to
+        # internal/vault, internal/secretwire and a few neutral packages.
+        run: go test -count=1 -run 'TestSecretServerLinksNeitherControlNorAgent' -v ./cmd/argus-secret/
+
       - name: Confirm the X11 screen sharing tests actually ran
         # A skipped test passes: these read a real X screen through MIT-SHM
         # and DAMAGE and play keys through XTEST, and must not quietly stop.

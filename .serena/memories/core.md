@@ -29,6 +29,7 @@ enforces all of it and CI runs it by name.
 | [pwa-and-service-worker](pwa-and-service-worker.md) | Caching, offline, auth redirects, releases |
 | [gateway-policy](gateway-policy.md) | SSH channel policy, forwarding, recording guarantees |
 | [agent-tunnel](agent-tunnel.md) | The agent's outbound QUIC/HTTPS connection, services, admission, browser sessions through it |
+| [argus-secret](argus-secret.md) | The secrets server: keys, sealed reads, rules from control, the read log |
 | [console-only](console-only.md) | Every session from the console; how the agent and gateway refuse the rest |
 | [inventory-and-assignment](inventory-and-assignment.md) | Assets, who may reach them, and how a gateway learns both |
 | [browser-checks](browser-checks.md) | Playwright suite, memory ceilings, how to measure |
