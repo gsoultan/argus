@@ -342,3 +342,69 @@ func TestTelegramRoutesHTTP(t *testing.T) {
 		}
 	}
 }
+
+// The platform bot's form (Settings › Alert channels) can find chats and send
+// a test before saving, with the token typed or the one running. Its saved
+// token is the platform's, so another organization's owner, and an operator,
+// are told the routes do not exist or are not theirs.
+func TestPlatformTelegramHelpers(t *testing.T) {
+	h := newTenantHarness(t)
+	f := newFakeTelegram(t)
+	h.api.telegramAPI = f.srv.URL
+	plat, err := notify.NewTelegram(notify.TelegramConfig{BotToken: tokPlt, ChatIDs: []string{"-100plat"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.api.SignInAlerts = notify.NewSignInNotifier(nil, plat.WithAPI(f.srv.URL), "https://argus.example.com", nil)
+	t.Cleanup(func() { h.api.SignInAlerts.Close(context.Background()) })
+
+	tn, orgOwner, orgPw := newTenant(t, h.store)
+	ownerEmail, ownerPw := newAccount(t, h.store, "owner")
+	opEmail, opPw := newAccount(t, h.store, "operator")
+	post := func(c *http.Client, path, body string) (int, string) {
+		t.Helper()
+		return h.call(t, c, "", http.MethodPost, path, body)
+	}
+
+	inOrg := h.signIn(t, tn.Slug, orgOwner, orgPw)
+	if code, _ := post(inOrg, "/api/v1/settings/test-telegram", `{"chatIds":["-1009"]}`); code != http.StatusNotFound {
+		t.Errorf("another organization's owner testing the platform bot = %d, want 404", code)
+	}
+	if code, _ := post(inOrg, "/api/v1/settings/telegram-chats", `{}`); code != http.StatusNotFound {
+		t.Errorf("another organization's owner listing the platform bot's chats = %d, want 404", code)
+	}
+	inOp := h.signIn(t, "", opEmail, opPw)
+	if code, _ := post(inOp, "/api/v1/settings/test-telegram", `{"chatIds":["-1009"]}`); code != http.StatusForbidden {
+		t.Errorf("an operator = %d, want 403", code)
+	}
+	if n := f.total(); n != 0 {
+		t.Fatalf("a refused request still posted %d messages", n)
+	}
+
+	in := h.signIn(t, "", ownerEmail, ownerPw)
+	code, body := post(in, "/api/v1/settings/telegram-chats", `{}`)
+	if code != http.StatusOK || !strings.Contains(body, `"-1001"`) {
+		t.Fatalf("chats with the saved token = %d %s", code, body)
+	}
+	if code, body := post(in, "/api/v1/settings/telegram-chats", `{"botToken":"not a token"}`); code != http.StatusBadRequest {
+		t.Errorf("a typed non-token = %d %s, want 400", code, body)
+	}
+	if code, body := post(in, "/api/v1/settings/test-telegram", `{"chatIds":["-1001"," "]}`); code != http.StatusOK {
+		t.Fatalf("test with the saved token = %d %s", code, body)
+	}
+	if got := f.to(tokPlt, "-1001"); len(got) != 1 || !strings.Contains(got[0], ownerEmail) {
+		t.Errorf("the saved token's test in -1001 = %v", got)
+	}
+	if code, body := post(in, "/api/v1/settings/test-telegram", `{"botToken":"`+tokPay+`","chatIds":["-1002"]}`); code != http.StatusOK {
+		t.Fatalf("test with a typed token = %d %s", code, body)
+	}
+	if got := f.to(tokPay, "-1002"); len(got) != 1 {
+		t.Errorf("the typed token's test = %v", got)
+	}
+	if code, _ := post(in, "/api/v1/settings/test-telegram", `{"chatIds":["Ops group"]}`); code != http.StatusBadRequest {
+		t.Errorf("a name for a chat ID = %d, want 400", code)
+	}
+	if code, _ := post(in, "/api/v1/settings/test-telegram", `{"chatIds":[]}`); code != http.StatusBadRequest {
+		t.Errorf("no chats = %d, want 400", code)
+	}
+}

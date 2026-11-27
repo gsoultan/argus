@@ -15,7 +15,7 @@ import { readiness, readinessKey, useTestOutsideCheck } from '~/lib/controlReadi
 import { PemField } from '~/components/Install'
 import {
   cloudIdentityStatus, controlSettings, organizations, saveControlSettings,
-  testCloudIdentity, testDatabase, testEmail, testStorage, waitForControlPlane, type AWSIdentity,
+  platformTelegramChats, testCloudIdentity, testDatabase, testEmail, testStorage, testTelegram, waitForControlPlane, type AWSIdentity,
   orgRecordingStorage, saveOrgRecordingStorage, testOrgRecordingStorage, type OrgRecordingStorage,
   type CloudIdentityCheck, type CloudIdentityStatus, type CloudIdentityUse, type ControlSettings as Settings,
 } from '~/lib/live'
@@ -24,6 +24,8 @@ import { downloadText } from '~/lib/download'
 import { STORAGE_SERVICES, archiveClassesFor, serviceOf, switchService, type StorageService } from '~/lib/objectStorage'
 import { notifyError, notifyOk, notifyWarn } from '~/lib/notify'
 import { FS, INK } from '~/theme'
+import { ChatHelp, FinderStatus, TokenHelp, useChatFinder } from '~/components/TelegramHelp'
+import type { TelegramChat } from '~/lib/telegram'
 
 const settingsKey = ['control-settings'] as const
 
@@ -764,9 +766,11 @@ function Alerts({ s, edit }: CardProps) {
                   </Grid.Col>
                 </Grid>
               )}
+              {t.enabled && <TokenHelp initiallyOpen={!t.botTokenSet && !t.botToken} />}
+              {t.enabled && <PlatformChats t={t} onChats={(chatIds) => edit({ telegram: { ...t, chatIds } })} />}
               {t.enabled && (
                 <FormNote missing={telegramMissing}>
-                  Get a bot token from @BotFather, add the bot to your group, then add the group's chat id.
+                  Send a test message, then save. Alerts reach every chat listed above.
                 </FormNote>
               )}
             </Stack>
@@ -1479,6 +1483,63 @@ function ChannelRow({ name, on, detail, onSetUp }: {
  * The one line under a channel's form: what is still needed to save it, or
  * else the hint for filling it in.
  */
+/**
+ * The platform bot's chats: find the groups it is in, or watch for the one
+ * being set up, and send a test before saving.
+ */
+function PlatformChats({ t, onChats }: { t: Settings['telegram']; onChats: (ids: string[]) => void }) {
+  const [found, setFound] = useState<TelegramChat[]>([])
+  const [testing, setTesting] = useState(false)
+  const ids = useRef(t.chatIds)
+  ids.current = t.chatIds
+  const canFind = t.botTokenSet || Boolean(t.botToken?.trim())
+  const finder = useChatFinder(
+    async () => (await platformTelegramChats(t.botToken?.trim())).chats,
+    [...t.chatIds, ...found.map((c) => c.id)],
+    (chats, fresh) => {
+      setFound((prev) => [...prev, ...chats.filter((c) => !prev.some((p) => p.id === c.id))])
+      if (fresh) {
+        const groups = chats.filter((c) => c.kind !== 'private').map((c) => c.id)
+        if (groups.length) onChats([...ids.current, ...groups.filter((id) => !ids.current.includes(id))])
+        notifyOk('Found it', `${chats.map((c) => c.title || c.id).join(', ')} ${groups.length ? 'is added to Chat ids' : 'is listed below'}.`)
+      }
+    },
+  )
+  const toggle = (id: string, on: boolean) =>
+    onChats(on ? [...t.chatIds.filter((x) => x !== id), id] : t.chatIds.filter((x) => x !== id))
+  const sendTest = async () => {
+    setTesting(true)
+    try {
+      const r = await testTelegram(t)
+      notifyOk('Test message sent', `Posted to ${r.chats.length} chat${r.chats.length === 1 ? '' : 's'}. Check Telegram, then save.`)
+    } catch (err) {
+      notifyError('Test message not sent', err)
+    } finally {
+      setTesting(false)
+    }
+  }
+  return (
+    <Stack gap={6}>
+      {found.length > 0 && (
+        <Stack gap={4} data-testid="platform-telegram-found">
+          {found.map((c) => (
+            <Checkbox key={c.id} size="xs" checked={t.chatIds.includes(c.id)} onChange={(e) => toggle(c.id, e.currentTarget.checked)}
+              label={<Group gap={6}><Text size={FS.meta}>{c.title || c.id}</Text><Mono>{c.kind ? `${c.kind} · ` : ''}{c.id}</Mono></Group>} />
+          ))}
+        </Stack>
+      )}
+      <Group gap="xs">
+        <Button size="xs" variant="light" onClick={finder.find} loading={finder.busy} disabled={!canFind || finder.watching}>Find chats</Button>
+        <Button size="xs" variant="light" loading={testing} disabled={!canFind || t.chatIds.length === 0} onClick={() => void sendTest()}>
+          Send test message
+        </Button>
+      </Group>
+      <FinderStatus watching={finder.watching} missed={finder.missed} onStop={finder.stop} />
+      <ChatHelp initiallyOpen={t.chatIds.length === 0} findLabel="Find chats" />
+    </Stack>
+  )
+}
+
 function FormNote({ missing, children }: { missing: string[]; children: ReactNode }) {
   return missing.length > 0
     ? <Text size={FS.meta} c={INK.pending}>Still needed: {missing.join(', ')}.</Text>

@@ -416,6 +416,8 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/telegram/bots/{id}/test", a.postTelegramBotTest)
 	mux.HandleFunc("POST /api/v1/telegram/check", a.postTelegramCheck)
 	mux.HandleFunc("POST /api/v1/telegram/chats", a.postTelegramChats)
+	mux.HandleFunc("POST /api/v1/settings/telegram-chats", a.postPlatformTelegramChats)
+	mux.HandleFunc("POST /api/v1/settings/test-telegram", a.postPlatformTelegramTest)
 	mux.HandleFunc("PUT /api/v1/telegram/routes/{kind}", a.putTelegramRoute)
 	mux.HandleFunc("POST /api/v1/telegram/routes/{kind}/test", a.postTelegramRouteTest)
 	mux.HandleFunc("GET /api/v1/assets/{id}/databases/create-options", a.dbAdmin(a.getCreateOptions))

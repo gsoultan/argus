@@ -106,6 +106,46 @@ test('telegram bots: which bot each alert uses', async ({ page }) => {
 test('telegram bots: on a phone', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await open(page)
+  await page.getByRole('button', { name: 'Add bot' }).click()
+  await expect(page.getByTestId('telegram-chat-help')).toBeVisible()
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/telegram-steps-phone.png` })
+  await page.keyboard.press('Escape')
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
   expect(overflow).toBeLessThanOrEqual(0)
+})
+
+test("telegram bots: a group's chat ID is explained, and found as soon as the group writes", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await open(page)
+  // Telegram has not heard from the group yet; it has on the third look.
+  let looks = 0
+  await page.route('**/api/v1/telegram/chats', (r) => {
+    looks++
+    return r.fulfill({ json: { chats: looks < 3 ? [] : [{ id: '-1002231004418', title: 'Support desk', kind: 'supergroup' }] } })
+  })
+  await page.getByRole('button', { name: 'Add bot' }).click()
+  const form = page.getByRole('dialog', { name: 'Add a Telegram bot' })
+  // With no chats yet the steps are open; the token's are one click away.
+  const steps = form.getByTestId('telegram-chat-help')
+  await expect(steps).toBeVisible()
+  await expect(steps.getByText(/Add members/)).toBeVisible()
+  await form.getByRole('button', { name: 'How do I get a bot token?' }).click()
+  await expect(form.getByTestId('telegram-token-help').getByText('/newbot')).toBeVisible()
+  await expect(form.getByText('Paste the bot token first')).toBeVisible()
+
+  await form.getByLabel('Bot token').fill('7091534211:AAFsupportsupportsupportsupport')
+  await form.getByRole('button', { name: 'Check' }).click()
+  // The message to send names this bot, ready to copy.
+  await expect(steps.getByText('/start@nw_support_bot')).toBeVisible()
+  await form.getByRole('button', { name: "Channels, private chats, and when it is not found" }).click()
+  await expect(form.getByTestId('telegram-chat-help-more').getByText(/upgraded to a supergroup/)).toBeVisible()
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/telegram-chat-steps.png` })
+
+  await form.getByRole('button', { name: 'Find chats' }).click()
+  await expect(form.getByTestId('telegram-watching')).toBeVisible()
+  if (SHOTS) await form.getByTestId('telegram-watching').scrollIntoViewIfNeeded()
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/telegram-watching.png` })
+  await expect(form.getByLabel(/Support desk/)).toBeChecked({ timeout: 15_000 })
+  await expect(form.getByTestId('telegram-watching')).toBeHidden()
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/telegram-found.png` })
 })
