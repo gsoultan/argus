@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -76,18 +77,19 @@ func TestStealSince(t *testing.T) {
 
 func TestTopProcesses(t *testing.T) {
 	var u UsageSampler
+	at := time.Date(2026, 11, 27, 10, 0, 0, 0, time.UTC)
 	pc := func(pid int, name string, cpu, mem uint64) procCounters {
 		return procCounters{key: procKey{pid: pid, start: 1}, name: name, cpu: cpu, memory: mem}
 	}
 	first := []procCounters{pc(1, "a", 0, 10), pc(2, "b", 0, 900), pc(3, "c", 0, 5)}
-	got := u.topProcesses(first, 1000)
+	got := u.topProcesses(first, 1000, at)
 	if len(got) != 3 || got[0].CPU != nil || got[0].Name != "b" {
 		t.Fatalf("first = %+v, want by memory with no processor share yet", got)
 	}
 	// 1000 ticks of machine time later: a used 500 (50%), c 10 (1%), b none.
 	// A process restarted under pid 3 is a new process with no share.
 	now := []procCounters{pc(1, "a", 500, 10), pc(2, "b", 0, 900), {key: procKey{pid: 3, start: 2}, name: "c", cpu: 10, memory: 5}}
-	got = u.topProcesses(now, 2000)
+	got = u.topProcesses(now, 2000, at.Add(time.Minute))
 	if got[0].Name != "a" || got[0].CPU == nil || *got[0].CPU != 50 {
 		t.Errorf("busiest = %+v", got[0])
 	}
@@ -100,21 +102,98 @@ func TestTopProcesses(t *testing.T) {
 		}
 	}
 
-	// Many processes: five by processor and five more by memory, no repeats.
+	// Many programs: five by processor and five more by memory, no repeats.
 	var many []procCounters
 	for i := 1; i <= 40; i++ {
-		many = append(many, pc(i, "p", uint64(i*10), uint64(1000-i)))
+		many = append(many, pc(i, fmt.Sprintf("p%d", i), uint64(i*10), uint64(1000-i)))
 	}
 	var v UsageSampler
-	v.topProcesses(many, 1000)
+	v.topProcesses(many, 1000, at)
 	for i := range many {
 		many[i].cpu *= 2
 	}
-	top := v.topProcesses(many, 2000)
+	top := v.topProcesses(many, 2000, at.Add(time.Minute))
 	if len(top) != 10 {
 		t.Fatalf("top = %d, want 10", len(top))
 	}
 	if top[0].PID != 40 || top[5].PID != 1 {
 		t.Errorf("order = %d ... %d, want the busiest first and then the largest", top[0].PID, top[5].PID)
+	}
+}
+
+// Processes sharing a name are one program: their processor, memory and
+// disk added up, the busiest one's pid kept, and how many there are.
+func TestTopProcessesGroupsByProgram(t *testing.T) {
+	var u UsageSampler
+	at := time.Date(2026, 11, 27, 10, 0, 0, 0, time.UTC)
+	pc := func(pid int, name string, cpu, mem, rd, wr uint64) procCounters {
+		return procCounters{key: procKey{pid: pid, start: 1}, name: name, cpu: cpu, memory: mem, read: rd, wrote: wr, io: true}
+	}
+	u.topProcesses([]procCounters{
+		pc(10, "postgres", 0, 100, 0, 0), pc(11, "postgres", 0, 200, 1000, 0), pc(12, "postgres", 0, 300, 0, 0),
+		pc(20, "kworker/0:1", 0, 0, 0, 0), pc(21, "kworker/u8:2", 0, 0, 0, 0),
+		pc(30, "nginx", 0, 50, 0, 0),
+	}, 1000, at)
+	got := u.topProcesses([]procCounters{
+		pc(10, "postgres", 100, 100, 0, 60_000), pc(11, "postgres", 250, 200, 121_000, 0), pc(12, "postgres", 50, 300, 0, 0),
+		pc(20, "kworker/0:1", 10, 0, 0, 0), pc(21, "kworker/u8:2", 10, 0, 0, 0),
+		pc(30, "nginx", 30, 50, 0, 0),
+	}, 2000, at.Add(time.Minute))
+	by := map[string]Process{}
+	for _, p := range got {
+		if _, dup := by[p.Name]; dup {
+			t.Errorf("%s listed twice", p.Name)
+		}
+		by[p.Name] = p
+	}
+	pg := by["postgres"]
+	if pg.Count != 3 || pg.PID != 11 || pg.Memory != 600 || pg.CPU == nil || *pg.CPU != 40 {
+		t.Errorf("postgres = %+v, want 3 processes, pid 11, 600 bytes, 40%%", pg)
+	}
+	if pg.ReadBps == nil || *pg.ReadBps != 2000 || pg.WriteBps == nil || *pg.WriteBps != 1000 {
+		t.Errorf("postgres disk = %v/%v, want 2000 and 1000 bytes a second", pg.ReadBps, pg.WriteBps)
+	}
+	if k := by["kworker"]; k.Count != 2 || k.CPU == nil || *k.CPU != 2 {
+		t.Errorf("kernel threads = %+v, want one kworker of 2", k)
+	}
+	if n := by["nginx"]; n.Count != 0 || n.PID != 30 {
+		t.Errorf("a single process = %+v, want no count", n)
+	}
+}
+
+// A program whose counters the system refused says so, rather than
+// reporting no disk activity; one never read has no rate at all.
+func TestTopProcessesDiskHidden(t *testing.T) {
+	var u UsageSampler
+	at := time.Date(2026, 11, 27, 10, 0, 0, 0, time.UTC)
+	mysqld := procCounters{key: procKey{pid: 5, start: 1}, name: "mysqld", cpu: 0, memory: 10, denied: true}
+	first := u.topProcesses([]procCounters{mysqld}, 1000, at)
+	if !first[0].IOHidden || first[0].ReadBps != nil {
+		t.Errorf("first = %+v, want hidden", first[0])
+	}
+	mysqld.cpu = 10
+	got := u.topProcesses([]procCounters{mysqld, {key: procKey{pid: 6, start: 1}, name: "sh", memory: 1}}, 2000, at.Add(time.Minute))
+	for _, p := range got {
+		switch p.Name {
+		case "mysqld":
+			if !p.IOHidden || p.ReadBps != nil || p.WriteBps != nil {
+				t.Errorf("mysqld = %+v, want hidden with no rate", p)
+			}
+		case "sh":
+			if p.IOHidden || p.ReadBps != nil {
+				t.Errorf("sh = %+v, want neither hidden nor a rate: it was never read", p)
+			}
+		}
+	}
+}
+
+func TestProgramName(t *testing.T) {
+	for in, want := range map[string]string{
+		"kworker/3:1H": "kworker", "ksoftirqd/0": "ksoftirqd", "postgres": "postgres",
+		"chrome.exe": "chrome.exe", "/weird": "/weird",
+	} {
+		if got := programName(in); got != want {
+			t.Errorf("programName(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

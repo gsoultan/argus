@@ -5,6 +5,7 @@ package agent
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -273,11 +274,30 @@ func TestReadProcsSkipsWhatIsNotAProcess(t *testing.T) {
 	r := fixtureRoots(t, map[string]string{
 		"proc/12/stat":   "12 (postgres) S 1 12 12 0 -1 0 0 0 0 0 10 5 0 0 20 0 1 0 500 0 100 0\n",
 		"proc/self/stat": "12 (postgres) S 1 12 12 0 -1 0 0 0 0 0 10 5 0 0 20 0 1 0 500 0 100 0\n",
+		"proc/12/io":     "rchar: 9000\nwchar: 8000\nsyscr: 1\nsyscw: 2\nread_bytes: 4096\nwrite_bytes: 8192\ncancelled_write_bytes: 0\n",
 		"proc/13/stat":   "garbage",
+		"proc/14/stat":   "14 (sshd) S 1 14 14 0 -1 0 0 0 0 0 1 1 0 0 20 0 1 0 600 0 10 0\n",
 		"proc/stat":      "cpu 1 1 1 1\n",
 	}, nil)
 	got := readProcs(r, 4096)
-	if len(got) != 1 || got[0].key.pid != 12 || got[0].name != "postgres" {
-		t.Errorf("procs = %+v", got)
+	sort.Slice(got, func(i, j int) bool { return got[i].key.pid < got[j].key.pid })
+	if len(got) != 2 || got[0].key.pid != 12 || got[0].name != "postgres" {
+		t.Fatalf("procs = %+v", got)
+	}
+	if !got[0].io || got[0].read != 4096 || got[0].wrote != 8192 {
+		t.Errorf("postgres io = %+v, want storage bytes, not rchar/wchar", got[0])
+	}
+	if got[1].io || got[1].denied {
+		t.Errorf("a process with no io file = %+v, want unread, not refused", got[1])
+	}
+}
+
+func TestParseProcIO(t *testing.T) {
+	r, w, ok := parseProcIO([]byte("rchar: 5\nread_bytes: 12\nwrite_bytes: 34\n"))
+	if !ok || r != 12 || w != 34 {
+		t.Errorf("parsed %d %d %v", r, w, ok)
+	}
+	if _, _, ok := parseProcIO([]byte("rchar: 5\nread_bytes: 12\n")); ok {
+		t.Error("a file without write_bytes parsed")
 	}
 }

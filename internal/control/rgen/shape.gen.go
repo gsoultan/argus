@@ -1706,6 +1706,7 @@ func _assertUsageHistoryShape(m m0.UsageHistory) {
 		m.IoN,
 		m.IopsMax,
 		m.IoBpsMax,
+		m.Programs,
 	}
 }
 

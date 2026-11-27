@@ -194,6 +194,7 @@ func (s *Store) ResourcesLow(ctx context.Context, now time.Time) (ResourcesLow, 
 func (a *API) registerResourcesRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/resources-low", a.getResourcesLow)
 	mux.HandleFunc("GET /api/v1/assets/{id}/metrics", a.getMetrics)
+	mux.HandleFunc("GET /api/v1/assets/{id}/programs", a.getPrograms)
 	mux.HandleFunc("GET /api/v1/assets-usage", a.getAssetsUsage)
 }
 

@@ -34,7 +34,7 @@ func platformSystem() SystemInfo { return readSystem(liveRoots) }
 func (u *UsageSampler) platformSample() (Usage, bool) {
 	out, now := readUsage(liveRoots, u.prev)
 	u.prev = now
-	out.Top = u.topProcesses(readProcs(liveRoots, os.Getpagesize()), now.total)
+	out.Top = u.topProcesses(readProcs(liveRoots, os.Getpagesize()), now.total, out.At)
 	out.Net = u.netRates(readNetDev(liveRoots), out.At)
 	out.DiskIO = u.diskRates(readDiskStats(liveRoots), out.At)
 	return out, true
@@ -503,7 +503,8 @@ func skipBlockDevice(name string) bool {
 }
 
 // readProcs reads each process's name, processor time (in clock ticks, the
-// unit /proc/stat's totals are in) and resident memory from /proc/<pid>/stat.
+// unit /proc/stat's totals are in) and resident memory from /proc/<pid>/stat,
+// and the bytes it has read from and written to storage from /proc/<pid>/io.
 // A process that exits while it is read is skipped.
 func readProcs(r sysRoots, pageSize int) []procCounters {
 	d, err := os.Open(r.proc)
@@ -535,9 +536,18 @@ func readProcs(r sysRoots, pageSize int) []procCounters {
 		if !ok {
 			continue
 		}
-		if c, ok := parseProcStatBytes(pid, buf[:k], pageSize); ok {
-			out = append(out, c)
+		c, ok := parseProcStatBytes(pid, buf[:k], pageSize)
+		if !ok {
+			continue
 		}
+		path = append(path[:len(path)-len("stat")], "io"...)
+		switch k, err := readSmallErr(string(path), buf); {
+		case err == nil:
+			c.read, c.wrote, c.io = parseProcIO(buf[:k])
+		case errors.Is(err, os.ErrPermission):
+			c.denied = true
+		}
+		out = append(out, c)
 	}
 	return out
 }
@@ -545,9 +555,19 @@ func readProcs(r sysRoots, pageSize int) []procCounters {
 // readSmall reads a small file into buf, returning how much it read; false
 // when it could not be opened or read, or did not fit.
 func readSmall(path string, buf []byte) (int, bool) {
+	n, err := readSmallErr(path, buf)
+	return n, err == nil
+}
+
+// errTooBig is a file that did not fit readSmall's buffer.
+var errTooBig = errors.New("file larger than the buffer")
+
+// readSmallErr is readSmall saying why it failed: os.ErrPermission (which
+// /proc/<pid>/io is, read without the right to it) is told apart.
+func readSmallErr(path string, buf []byte) (int, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return 0, false
+		return 0, err
 	}
 	defer f.Close()
 	n := 0
@@ -555,13 +575,53 @@ func readSmall(path string, buf []byte) (int, bool) {
 		k, err := f.Read(buf[n:])
 		n += k
 		if err != nil {
-			return n, n > 0 && errors.Is(err, io.EOF)
+			if n > 0 && errors.Is(err, io.EOF) {
+				return n, nil
+			}
+			if errors.Is(err, io.EOF) {
+				return n, io.ErrUnexpectedEOF
+			}
+			return n, err
 		}
 		if k == 0 {
 			break
 		}
 	}
-	return n, n < len(buf)
+	if n >= len(buf) {
+		return n, errTooBig
+	}
+	return n, nil
+}
+
+// parseProcIO reads read_bytes and write_bytes from a /proc/<pid>/io file:
+// what the process made storage read and write, not what it asked of the
+// page cache (rchar, wchar). False when either is missing.
+func parseProcIO(b []byte) (read, wrote uint64, ok bool) {
+	var got int
+	for len(b) > 0 {
+		line := b
+		if i := bytes.IndexByte(b, '\n'); i >= 0 {
+			line, b = b[:i], b[i+1:]
+		} else {
+			b = nil
+		}
+		k := bytes.IndexByte(line, ':')
+		if k < 0 {
+			continue
+		}
+		key, val := line[:k], bytes.TrimSpace(line[k+1:])
+		switch string(key) {
+		case "read_bytes":
+			if v, ok := parseUint(val); ok {
+				read, got = v, got|1
+			}
+		case "write_bytes":
+			if v, ok := parseUint(val); ok {
+				wrote, got = v, got|2
+			}
+		}
+	}
+	return read, wrote, got == 3
 }
 
 // parseUint reads a decimal counter without allocating.

@@ -328,9 +328,11 @@ session. Recordings are `0700 root:root` for that reason.
 
 The systemd units are hardened, not merely present: `ProtectSystem=strict`, an
 empty `CapabilityBoundingSet` where none is needed, and a syscall filter. The
-agent keeps three capabilities: `CAP_DAC_READ_SEARCH`, because its posture scan
-reads other users' `authorized_keys`, and `CAP_BPF` with `CAP_PERFMON`, which
-load the probe that records commands as the kernel saw them. Its filter returns
+agent keeps four capabilities: `CAP_DAC_READ_SEARCH`, because its posture scan
+reads other users' `authorized_keys`, `CAP_BPF` with `CAP_PERFMON`, which
+load the probe that records commands as the kernel saw them, and
+`CAP_SYS_PTRACE`, used only to read `/proc/<pid>/io` so the Metrics tab can say
+which programs use the disk (the `ptrace` syscall itself stays filtered). Its filter returns
 `EPERM` rather than killing the agent, because a dead agent makes sshd refuse
 every login on the host.
 

@@ -6,7 +6,9 @@ import "testing"
 // heartbeat takes one a minute, and a live view one every two seconds.
 // On a 4-processor VM with ~100 processes (2026-11-16) it went from 1.1 ms
 // and 392 KB to 0.85 ms and 124 KB when the process scan stopped allocating
-// per process.
+// per process. Reading each process's /proc/<pid>/io as well, for disk
+// activity by program, took it to 1.36 ms and 145 KB (2026-11-27, ~90
+// processes): one more open per process.
 func BenchmarkUsageSample(b *testing.B) {
 	var u UsageSampler
 	u.Sample()

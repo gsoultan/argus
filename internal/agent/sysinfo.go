@@ -18,8 +18,12 @@ in use, swap, how full each disk is) changes all the time, so it rides the
 heartbeat, about once a minute.
 
 Read-only and nothing a local user could not already see: /proc, /sys's DMI
-names, the mount table, statfs and the interface table. No process, no file content, no
-configuration. A mount point is a path, not what is stored under it.
+names, the mount table, statfs and the interface table. One exception: each
+process's /proc/<pid>/io, which the kernel shows only to its owner or to a
+reader holding CAP_SYS_PTRACE, for disk activity by program. Its two byte
+counters and nothing else: no command line, environment or memory of any
+process, no file content, no configuration. A mount point is a path, not
+what is stored under it.
 */
 
 // SystemInfo is what kind of machine this is.
@@ -85,24 +89,42 @@ type Usage struct {
 	// DiskIO is each physical disk's operations and bytes per second since
 	// the previous sample. Nil where the platform reports none.
 	DiskIO []DiskIO `json:"disk_io,omitempty"`
-	// Top is what is using the machine now: the five processes using the
-	// most processor since the previous sample and the five using the most
-	// memory, at most ten. Names only, never command lines. Nil where the
-	// platform reports none.
+	// Top is what is using the machine now, by program: the processes
+	// sharing a name added together (twenty postgres workers are one row),
+	// the five programs using the most processor since the previous sample,
+	// the five using the most memory and the five reading and writing the
+	// disk most, at most fifteen. Names only, never command lines. Nil
+	// where the platform reports none.
 	Top []Process `json:"top,omitempty"`
 }
 
-// Process is one running program in Top.
+// Process is one running program in Top: every process with its name.
 type Process struct {
 	// Name is the program's name: the kernel's 15-character comm on
-	// Linux, the executable's file name on Windows.
+	// Linux (a kernel thread's without its "/n" suffix), the executable's
+	// file name on Windows.
 	Name string `json:"name"`
-	PID  int    `json:"pid"`
+	// PID is its busiest process's, so a single process can be found.
+	PID int `json:"pid"`
+	// Count is how many processes run under the name; omitted for one.
+	Count int `json:"count,omitempty"`
 	// CPU is its share of the whole machine's processor time since the
-	// previous sample, 0 to 100; nil on its first sighting.
+	// previous sample, 0 to 100; nil when none of its processes had an
+	// earlier reading.
 	CPU *float64 `json:"cpu,omitempty"`
-	// Memory is its resident memory (working set on Windows), in bytes.
+	// Memory is its processes' resident memory added up (working set on
+	// Windows), in bytes. Memory two processes share is counted in each.
 	Memory uint64 `json:"memory"`
+	// ReadBps and WriteBps are bytes per second it read and wrote since
+	// the previous sample: what reached the disk on Linux, every file,
+	// device and network transfer on Windows. Nil on the first sample and
+	// when any of its processes could not be read (IOHidden).
+	ReadBps  *float64 `json:"read_bps,omitempty"`
+	WriteBps *float64 `json:"write_bps,omitempty"`
+	// IOHidden is true when the system refused the agent its processes'
+	// counters: a Linux agent without CAP_SYS_PTRACE reading another
+	// user's processes.
+	IOHidden bool `json:"io_hidden,omitempty"`
 }
 
 // DiskIO is one physical disk's activity, averaged since the previous
@@ -144,7 +166,7 @@ type Disk struct {
 // container host whose veths are not what anyone is asking about.
 const maxNet = 32
 
-// topN is how many processes Top keeps by each measure.
+// topN is how many programs Top keeps by each measure.
 const topN = 5
 
 // maxProcScan bounds the processes read for one sample, so a machine
@@ -202,10 +224,11 @@ type UsageSampler struct {
 	// disk is each physical disk's counters at the previous sample.
 	disk   map[string]diskCounters
 	diskAt time.Time
-	// procs is each process's processor time at the previous sample, with
-	// the machine's total, so its share can be told.
-	procs     map[procKey]uint64
+	// procs is each process's counters at the previous sample, with the
+	// machine's processor total and the time, so its shares can be told.
+	procs     map[procKey]procPrev
 	procTotal uint64
+	procAt    time.Time
 }
 
 // procKey names a process across samples: a pid can be reused, its start
@@ -215,18 +238,39 @@ type procKey struct {
 	start uint64
 }
 
+// procPrev is what a process's next sample is measured against.
+type procPrev struct {
+	cpu, read, wrote uint64
+	io               bool
+}
+
 // procCounters is one process as the platform reads it.
 type procCounters struct {
 	key    procKey
 	name   string
 	cpu    uint64 // processor time, in the units total is in
 	memory uint64
+	// read and wrote are bytes since it started; io is false when they
+	// could not be read, and denied says the system refused them.
+	read, wrote uint64
+	io, denied  bool
+}
+
+// programName is the name processes are added up under. A kernel thread
+// names its processor or queue after a slash (kworker/3:1H, ksoftirqd/0):
+// those are one program.
+func programName(name string) string {
+	if i := strings.IndexByte(name, '/'); i > 0 {
+		return name[:i]
+	}
+	return name
 }
 
 // topProcesses turns two readings of the process table into Top, keeping
 // the new reading for the next call. total is the machine's processor time
-// in the same units as each process's. Nil when no process was read.
-func (u *UsageSampler) topProcesses(now []procCounters, total uint64) []Process {
+// in the same units as each process's, at is when the table was read. Nil
+// when no process was read.
+func (u *UsageSampler) topProcesses(now []procCounters, total uint64, at time.Time) []Process {
 	if len(now) == 0 {
 		return nil
 	}
@@ -234,23 +278,77 @@ func (u *UsageSampler) topProcesses(now []procCounters, total uint64) []Process 
 	if u.procTotal > 0 && total > u.procTotal {
 		dt = float64(total - u.procTotal)
 	}
-	next := make(map[procKey]uint64, len(now))
-	all := make([]Process, 0, len(now))
+	secs := float64(0)
+	if !u.procAt.IsZero() && at.After(u.procAt) {
+		secs = at.Sub(u.procAt).Seconds()
+	}
+	type acc struct {
+		p                 Process
+		lead              float64 // the busiest member's share, for PID
+		cpu, read, wrote  float64
+		hasCPU, hasIO     bool
+		hidden, ioUnknown bool
+	}
+	next := make(map[procKey]procPrev, len(now))
+	byName := make(map[string]*acc, 64)
+	order := make([]*acc, 0, 64)
 	for _, c := range now {
-		next[c.key] = c.cpu
-		p := Process{Name: c.name, PID: c.key.pid, Memory: c.memory}
-		if prev, ok := u.procs[c.key]; ok && dt > 0 && c.cpu >= prev {
-			v := math.Min(100, float64(int(float64(c.cpu-prev)/dt*1000+0.5))/10)
+		next[c.key] = procPrev{cpu: c.cpu, read: c.read, wrote: c.wrote, io: c.io}
+		name := programName(c.name)
+		a := byName[name]
+		if a == nil {
+			a = &acc{p: Process{Name: name, PID: c.key.pid}, lead: -1}
+			byName[name] = a
+			order = append(order, a)
+		}
+		a.p.Count++
+		a.p.Memory += c.memory
+		share := -1.0
+		prev, seen := u.procs[c.key]
+		if seen && dt > 0 && c.cpu >= prev.cpu {
+			share = float64(c.cpu-prev.cpu) / dt * 100
+			a.cpu += share
+			a.hasCPU = true
+		}
+		if share > a.lead || (share == a.lead && a.p.Count == 1) {
+			a.lead, a.p.PID = share, c.key.pid
+		}
+		switch {
+		case c.denied:
+			a.hidden = true
+		case !c.io:
+			a.ioUnknown = true
+		case seen && prev.io && secs > 0 && c.read >= prev.read && c.wrote >= prev.wrote:
+			a.read += float64(c.read-prev.read) / secs
+			a.wrote += float64(c.wrote-prev.wrote) / secs
+			a.hasIO = true
+		}
+	}
+	u.procs, u.procTotal, u.procAt = next, total, at
+	all := make([]Process, 0, len(order))
+	for _, a := range order {
+		p := a.p
+		if p.Count == 1 {
+			p.Count = 0
+		}
+		if a.hasCPU {
+			v := math.Min(100, math.Round(a.cpu*10)/10)
 			p.CPU = &v
+		}
+		switch {
+		case a.hidden:
+			p.IOHidden = true
+		case a.hasIO && !a.ioUnknown:
+			r, w := math.Round(a.read), math.Round(a.wrote)
+			p.ReadBps, p.WriteBps = &r, &w
 		}
 		all = append(all, p)
 	}
-	u.procs, u.procTotal = next, total
 	return pickTop(all)
 }
 
-// pickTop keeps the topN by processor and the topN by memory, busiest by
-// processor first, then the rest by memory.
+// pickTop keeps the topN by processor, then the topN by memory, then the
+// topN by disk, each skipping a program already kept.
 func pickTop(all []Process) []Process {
 	cpuOf := func(p Process) float64 {
 		if p.CPU == nil {
@@ -258,36 +356,36 @@ func pickTop(all []Process) []Process {
 		}
 		return *p.CPU
 	}
-	sort.SliceStable(all, func(i, j int) bool {
-		if cpuOf(all[i]) != cpuOf(all[j]) {
-			return cpuOf(all[i]) > cpuOf(all[j])
+	ioOf := func(p Process) float64 {
+		if p.ReadBps == nil {
+			return -1
 		}
-		return all[i].Memory > all[j].Memory
-	})
-	out := make([]Process, 0, 2*topN)
-	seen := map[int]bool{}
-	for _, p := range all {
-		if len(out) == topN || p.CPU == nil {
-			break
-		}
-		out = append(out, p)
-		seen[p.PID] = true
+		return *p.ReadBps + *p.WriteBps
 	}
-	byMem := append([]Process(nil), all...)
-	sort.SliceStable(byMem, func(i, j int) bool { return byMem[i].Memory > byMem[j].Memory })
-	added := 0
-	for _, p := range byMem {
-		if added == topN {
-			break
-		}
-		if seen[p.PID] {
+	out := make([]Process, 0, 3*topN)
+	seen := make(map[string]bool, 3*topN)
+	take := func(less func(a, b Process) bool, ok func(Process) bool) {
+		sort.SliceStable(all, func(i, j int) bool { return less(all[i], all[j]) })
+		added := 0
+		for _, p := range all {
+			if added == topN || !ok(p) {
+				break
+			}
 			added++
-			continue
+			if !seen[p.Name] {
+				out = append(out, p)
+				seen[p.Name] = true
+			}
 		}
-		out = append(out, p)
-		seen[p.PID] = true
-		added++
 	}
+	take(func(a, b Process) bool {
+		if cpuOf(a) != cpuOf(b) {
+			return cpuOf(a) > cpuOf(b)
+		}
+		return a.Memory > b.Memory
+	}, func(p Process) bool { return p.CPU != nil })
+	take(func(a, b Process) bool { return a.Memory > b.Memory }, func(Process) bool { return true })
+	take(func(a, b Process) bool { return ioOf(a) > ioOf(b) }, func(p Process) bool { return ioOf(p) > 0 })
 	return out
 }
 

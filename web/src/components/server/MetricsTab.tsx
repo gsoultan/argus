@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Box, Card, Group, SegmentedControl, SimpleGrid, Skeleton, Stack, Table, Text } from '@mantine/core'
+import { Box, Card, Group, SegmentedControl, SimpleGrid, Skeleton, Stack, Text } from '@mantine/core'
 import { useElementSize } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
 import { absTime, now as clockNow } from '~/components/primitives'
@@ -10,7 +10,8 @@ import { SuggestionBanner } from '~/components/cloud/Suggestion'
 import { LIVE_WINDOW_MS, useLiveUsage, type LiveUsage } from '~/lib/liveUsage'
 import { bytes, warningTone } from '~/lib/resourcesLow'
 import { FS } from '~/theme'
-import type { Asset, ResourceWarning, ServerProcess, ServerSystem } from '~/types/domain'
+import type { Asset, ResourceWarning, ServerSystem } from '~/types/domain'
+import { ProgramsHistory, ProgramsNow } from '~/components/server/Programs'
 
 /*
  * An asset's own metrics page: how it is now (the same System query the
@@ -162,6 +163,8 @@ function fixtureMetrics(a: Asset, range: MetricsRange): AssetMetrics {
 
 export function MetricsTab({ asset }: { asset: Asset }) {
   const [range, setRange] = useState<MetricsRange>('24h')
+  // The point picked on a chart, for Busiest programs; null is the whole range.
+  const [picked, setPicked] = useState<number | null>(null)
   const { data: sys } = useQuery(systemQuery(asset))
   const { data: m, isError, isLoading } = useQuery(metricsQuery(asset, range))
   const liveU = useLiveUsage(asset.id, !!sys?.reported && asset.agentState !== 'absent' && asset.kind !== 'android')
@@ -179,7 +182,7 @@ export function MetricsTab({ asset }: { asset: Asset }) {
       <Card padding={0}>
         <Group justify="space-between" wrap="wrap" gap="sm" px="md" py="sm" style={{ borderBottom: '1px solid var(--color-line)' }}>
           <Text component="h2" fw={600} size="sm" style={{ margin: 0 }}>Resource history</Text>
-          <SegmentedControl size="xs" value={range} onChange={(v) => setRange(v as MetricsRange)} aria-label="Range"
+          <SegmentedControl size="xs" value={range} onChange={(v) => { setRange(v as MetricsRange); setPicked(null) }} aria-label="Range"
             data={RANGES.map((r) => ({ value: r.value, label: r.label }))} />
         </Group>
         {isError ? (
@@ -195,7 +198,7 @@ export function MetricsTab({ asset }: { asset: Asset }) {
             Nothing reported in this range yet. History starts with the first report after the control plane is updated, about one a minute.
           </Text>
         ) : (
-          <MetricsHistory m={m} />
+          <MetricsHistory m={m} picked={picked} onPick={setPicked} />
         )}
         <Text size={FS.micro} c="dimmed" px="md" py="sm" lh={1.5} style={{ borderTop: '1px solid var(--color-line)' }}>
           Each point averages what the agent reported in {stepLabel(m?.stepSeconds ?? 300)}; dashed lines are the busiest moment in it.
@@ -204,6 +207,10 @@ export function MetricsTab({ asset }: { asset: Asset }) {
           {(m?.events?.length ?? 0) > 0 && ' Markers are changes Argus made or saw here; a change made in the cloud console or by another tool is not shown.'}
         </Text>
       </Card>
+      {m?.reported && m.points.length > 0 && (
+        <ProgramsHistory asset={asset} from={Date.parse(m.from)} to={Date.parse(m.to)} step={m.stepSeconds * 1000}
+          picked={picked} onClear={() => setPicked(null)} />
+      )}
     </Stack>
   )
 }
@@ -250,46 +257,8 @@ function NowTiles({ sys, fresh, live: liveU }: { sys: ServerSystem; fresh: boole
         </Text>
       )}
     </SimpleGrid>
-    {u.top && u.top.length > 0 && <TopProcesses top={u.top} faded={!fresh} />}
+    {u.top && u.top.length > 0 && <ProgramsNow top={u.top} faded={!fresh} />}
     </Box>
-  )
-}
-
-/**
- * What is using the server now, from the same report as the tiles: the
- * busiest programs by processor, then by memory. Names only; the agent never
- * sends a command line, which can hold a password.
- */
-function TopProcesses({ top, faded }: { top: ServerProcess[]; faded: boolean }) {
-  return (
-    <Card padding={0} mt="md" style={{ opacity: faded ? 0.6 : 1 }} data-testid="top-processes">
-      <Text component="h3" fw={600} size="sm" px="md" pt="sm" pb={4} style={{ margin: 0 }}>
-        What is using it <Text span inherit c="dimmed" fw={400}>(busiest by processor, then by memory)</Text>
-      </Text>
-      <Table.ScrollContainer minWidth={0} type="native">
-        <Table verticalSpacing={4} fz={FS.meta}>
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th>Program</Table.Th>
-              <Table.Th ta="right">Processor</Table.Th>
-              <Table.Th ta="right">Memory</Table.Th>
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {top.map((p) => (
-              <Table.Tr key={p.pid}>
-                <Table.Td>
-                  <Text span inherit ff="monospace">{p.name}</Text>{' '}
-                  <Text span size={FS.micro} c="dimmed">pid {p.pid}</Text>
-                </Table.Td>
-                <Table.Td ta="right">{p.cpu === null ? '—' : pct1(p.cpu)}</Table.Td>
-                <Table.Td ta="right">{bytes(p.memory)}</Table.Td>
-              </Table.Tr>
-            ))}
-          </Table.Tbody>
-        </Table>
-      </Table.ScrollContainer>
-    </Card>
   )
 }
 
@@ -388,7 +357,13 @@ const DISK_COLORS = [C.azure, C.teal, C.sky, C.slate, C.amber, C.rose]
 
 interface Line { label: string; color: string; dashed?: boolean; values: (number | null)[] }
 
-export function MetricsHistory({ m }: { m: AssetMetrics }) {
+export function MetricsHistory({ m, picked = null, onPick }: {
+  m: AssetMetrics
+  /** The point picked for Busiest programs, marked on every chart. */
+  picked?: number | null
+  /** Called with a point's start when a chart is clicked there. */
+  onPick?: (t: number) => void
+}) {
   const times = useMemo(() => m.points.map((p) => Date.parse(p.at)), [m])
   const from = Date.parse(m.from)
   const to = Date.parse(m.to)
@@ -411,7 +386,7 @@ export function MetricsHistory({ m }: { m: AssetMetrics }) {
   const mounts = m.mounts.slice(0, DISK_COLORS.length)
   const lastMem = [...mem].reverse().find((v) => v !== null)
   const events = useMemo(() => (m.events ?? []).map((e) => ({ ...e, t: Date.parse(e.at) })), [m])
-  const common = { times, from, to, step, events }
+  const common = { times, from, to, step, events, picked, onPick }
   const cl = m.cloud ?? null
   const cpuAvg = avg(cpu)
   // Every summary names its range, so it is not read against the Now tiles.
@@ -581,7 +556,7 @@ function timeLabel(t: number, spanMs: number): string {
       : { hour: '2-digit', minute: '2-digit' })
 }
 
-function Chart({ title, summary, lines, times, from, to, step, max, fmt, threshold, thresholdLabel, limit, events = [], testId }: {
+function Chart({ title, summary, lines, times, from, to, step, max, fmt, threshold, thresholdLabel, limit, events = [], testId, picked = null, onPick }: {
   title: string
   summary: string
   lines: Line[]
@@ -599,6 +574,8 @@ function Chart({ title, summary, lines, times, from, to, step, max, fmt, thresho
   /** Changes in the range, drawn as markers. */
   events?: TimedEvent[]
   testId: string
+  picked?: number | null
+  onPick?: (t: number) => void
 }) {
   const { ref, width } = useElementSize()
   const [hover, setHover] = useState<number | null>(null)
@@ -639,7 +616,8 @@ function Chart({ title, summary, lines, times, from, to, step, max, fmt, thresho
     return { l, segs }
   })
 
-  const onMove = (e: { currentTarget: SVGSVGElement; clientX: number }) => {
+  // The point under the pointer, or null between points and over a gap.
+  const nearest = (e: { currentTarget: SVGSVGElement; clientX: number }) => {
     const box = e.currentTarget.getBoundingClientRect()
     const t = from + ((e.clientX - box.left) / box.width * W - pl) / iw * span
     let best = -1
@@ -648,8 +626,9 @@ function Chart({ title, summary, lines, times, from, to, step, max, fmt, thresho
       const d = Math.abs(tt - t)
       if (d < bd) { bd = d; best = i }
     })
-    setHover(best >= 0 && bd <= step * 1.5 ? best : null)
+    return best >= 0 && bd <= step * 1.5 ? best : null
   }
+  const onMove = (e: { currentTarget: SVGSVGElement; clientX: number }) => setHover(nearest(e))
 
   const shownEvents = events.filter((e) => e.t >= from && e.t <= to)
   const hoverEvent = hover === null ? undefined
@@ -677,6 +656,11 @@ function Chart({ title, summary, lines, times, from, to, step, max, fmt, thresho
         ))}
       </Group>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} role="img" onMouseMove={onMove} onMouseLeave={() => setHover(null)}
+        onClick={onPick && ((e) => {
+          const i = nearest(e)
+          if (i !== null) onPick(times[i]!)
+        })}
+        style={onPick ? { cursor: 'pointer' } : undefined}
         onTouchStart={(e) => e.touches[0] && onMove({ currentTarget: e.currentTarget, clientX: e.touches[0].clientX })}
         onTouchMove={(e) => e.touches[0] && onMove({ currentTarget: e.currentTarget, clientX: e.touches[0].clientX })}
         aria-label={`${title}: ${summary}`}>
@@ -727,6 +711,13 @@ function Chart({ title, summary, lines, times, from, to, step, max, fmt, thresho
             : <polyline key={`${l.label}-${i}`} points={s.join(' ')} fill="none" stroke={l.color} strokeWidth={1.6}
                 strokeLinejoin="round" strokeDasharray={l.dashed ? '4 3' : undefined} />
         )))}
+        {picked !== null && picked >= from && picked <= to && (
+          <g data-testid={`${testId}-picked`}>
+            <rect x={x(picked) - 2} y={pt} width={Math.max(4, x(picked + step) - x(picked)) + 2} height={ih}
+              fill="var(--mantine-color-azure-6)" opacity={0.2} />
+            <line x1={x(picked)} x2={x(picked)} y1={pt} y2={pt + ih} stroke="var(--mantine-color-azure-6)" strokeWidth={1.5} />
+          </g>
+        )}
         {hover !== null && (
           <g data-testid={`${testId}-hover`}>
             <line x1={x(times[hover]!)} x2={x(times[hover]!)} y1={pt} y2={pt + ih} stroke="var(--mantine-color-dimmed)" strokeWidth={1} />

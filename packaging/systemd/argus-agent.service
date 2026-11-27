@@ -76,8 +76,18 @@ RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 # as root, so a helper talking to their X server can touch nothing of the
 # agent's (the recordings above all): changing to their user is SETUID and
 # SETGID, which the helper loses, with every other capability, as it does.
-CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_BPF CAP_PERFMON CAP_SETUID CAP_SETGID
-AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_BPF CAP_PERFMON
+#
+# SYS_PTRACE is for the Metrics tab's disk activity per program: the kernel
+# guards /proc/<pid>/io with the ptrace check, so without it the agent reads
+# only its own user's (root's) programs and postgres, mysql and every other
+# service run as its own user would show none. It is the widest right here:
+# it would also let the agent read any process's memory. The agent uses it
+# for /proc/<pid>/io and nothing else, never calls ptrace(2) (the syscall
+# filter below does not allow it), and never reads a process's memory,
+# cmdline or environment. Drop it from both lines to give that up; the tab
+# then says which programs it could not read.
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_BPF CAP_PERFMON CAP_SYS_PTRACE CAP_SETUID CAP_SETGID
+AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_BPF CAP_PERFMON CAP_SYS_PTRACE
 
 # bpf and perf_event_open are outside @system-service, and the probe needs both:
 # without them the kernel killed the agent at its first bpf() call, before it
