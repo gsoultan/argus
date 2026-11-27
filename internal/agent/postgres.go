@@ -775,9 +775,15 @@ func (s *pgSession) run(ctx context.Context, req tunnel.PGRequest) error {
 	start := time.Now()
 	s.notices.reset()
 	// Pooled: open our own transaction with the role and limits, unless the
-	// person is inside one of theirs, which already carries them.
+	// person is inside one of theirs, which already carries them, or the
+	// statement is one Postgres refuses inside a transaction (CREATE INDEX
+	// CONCURRENTLY, VACUUM, ...). That one goes bare: as the person's own
+	// role, which holds the level's privileges through membership, so an
+	// index on a table the level reaches builds as it would directly. The
+	// session's statement_timeout does not apply to it, and nothing it
+	// makes belongs to anyone (an index belongs to its table's owner).
 	wrapped := false
-	if s.pooled && s.conn.TxStatus() == 'I' {
+	if s.pooled && s.conn.TxStatus() == 'I' && !tunnel.PGOutsideTransaction(sql) {
 		if _, err := s.conn.Exec(sctx, s.prelude).ReadAll(); err != nil {
 			return s.statementFailed(ctx, req.ID, err, 0, time.Since(start).Milliseconds())
 		}
