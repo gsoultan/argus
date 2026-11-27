@@ -78,5 +78,27 @@ control is stolen, the thief gets rules and audit entries, not secrets.
   refuses.
 - Test: `TestSecretsServersEndToEnd`, against a real in-process argus-secret.
 
-Phases: PR1 is the binary (done). PR2 is control (done, same PR). PR3 is the console micro-frontend at `/mf/secrets/<v>/`. PR4
-is the agent's `secret get/run/file` and the socket, plus app tokens.
+All phases are done in PR #375: the binary, control, the agent, app tokens, approvals, the tunnel and the console.
+
+- **Agent.** `argus-agent secret get|run|file` (cmd/argus-agent/secret.go, internal/agent/secretclient).
+  - Root reads with the host credential.
+  - Others read through `/run/argus/secrets.sock` (0600, or 0660 for the argus-secrets group). The socket logs the peer's uid, pid and exe.
+  - The server list is cached in the state dir.
+  - For a tunnel server, `Server.Relay` sends reads via ControlURL+Relay. The relay path must start `/api/v1/secrets/relay/` and contain no `..`. Redirects are not followed.
+- **App tokens.** `vault.AppTokenPrefix` (`argus-app-<tenant>.`). Only the SHA-256 is kept and sent in the bundle. See secrets_apps.go.
+- **Approvals.** secrets_requests.go, table secret_read_requests, 5 to 480 minutes. A person approves their own request only via self_approval.go (phrase "approve my own request").
+- **Tunnel** (internal/vault/tunnel.go, internal/control/secrets_tunnel.go).
+  - Server mode `direct|tunnel`. A tunnel server has an empty url and pin.
+  - `POST .../servers/{id}/enroll-token` makes a 1-hour single-use token, `argus-secret-enrol-<tenant>.`.
+  - `argus-secret enroll` POSTs `/api/v1/secrets/enroll` and saves `<data_dir>/enrollment.json` (0600). The credential is `argus-secretd-…`, stored as credential_hash.
+  - The server dials `GET /api/v1/secrets/tunnel` (Upgrade argus-secret-tunnel/1) and serves over yamux.Client. Control keeps sessions per replica in `a.secretsTunnels`.
+  - The relay is `/api/v1/secrets/relay/{id}/v1/{read,list,health}`, with the Agent or App credential and the X-Argus-Remote header.
+  - `listen: off` means tunnel only. Re-enrolling retires the old credential.
+- **Console micro-frontend.**
+  - The contract is web/src/mf/contract.ts (SHELL_CONTRACT=1), the host is mf/host.tsx and the section is src/mf-secrets.
+  - It is built by vite.mf.config.ts to /mf/secrets/1/index.js.
+  - It imports only `@argus/shell`, react, `@mantine/core` and react-query, which are shims over `globalThis.__argusShell`.
+  - Any Mantine component the section uses must be in both mf/mantine.ts (LENT_MANTINE) and mf/shared/mantine.ts.
+  - seal.ts mirrors secretwire, checked against a Go vector.
+  - Settings › Secrets servers is components/SecretsServers.tsx.
+  - Deferred: a signed bundle fetched from argus-secret at run time (no release key yet).
