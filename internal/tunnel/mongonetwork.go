@@ -20,6 +20,10 @@ network_set with Reach, Addresses, Sources, Confirm and Restart), at DBA.
 const (
 	MongoOpNetwork    = "network"
 	MongoOpNetworkSet = "network_set"
+	// MongoOpPerf reads what the Performance panel needs: serverStatus, each
+	// collection's storage and index use, the profiler's slow operations and
+	// the long-running ones. Read-only, DBA only.
+	MongoOpPerf = "perf"
 )
 
 // MongoBindFor is net.bindIp for a change: the loopback, every address

@@ -73,6 +73,25 @@ describe('MongoWorkspace', () => {
     expect(await screen.findByText('delete 2140 · 41 ms')).toBeInTheDocument()
   })
 
+  it('offers Performance only when the agent allows perf, and puts its fix on the line', async () => {
+    renderWithProviders(
+      <MongoWorkspace database={db} access={{ level: 'dba' }} endpoint="/api/v1/postgres"
+        getTicket={async () => ({ ticket: 't', role: 'ana', level: 'dba' })} />,
+    )
+    await waitFor(() => expect(FakeSocket.last).not.toBeNull())
+    const ws = FakeSocket.last!
+    ws.push({ type: 'ready' })
+    ws.answer({ id: 0, type: 'ready', engine: 'mongodb', level: 'dba', user: 'argus-ana-dba', version: '7.0.4', ops: ['run', 'scan', 'value', 'perf'] })
+    fireEvent.click(await screen.findByRole('button', { name: 'Performance' }))
+    await waitFor(() => expect(ws.sent.some((r) => r.op === 'perf')).toBe(true))
+    const perf = ws.sent.find((r) => r.op === 'perf')!
+    const fixture = (await import('~/lib/mongoPerformance.fixture.json')).default
+    ws.answer({ id: perf.id, type: 'result', data: fixture })
+    fireEvent.click((await screen.findAllByText('Put on the command line'))[0]!)
+    await waitFor(() => expect(screen.getByLabelText('MongoDB command')).toHaveValue('db.orders.createIndex({ customer: 1 })'))
+    expect(ws.sent.some((r) => r.op === 'run')).toBe(false)
+  })
+
   it('shows documents as mongosh does', () => {
     expect(shellValue({ _id: { $oid: '65a1b2c3d4e5f60718293a4b' }, at: { $date: '2026-11-06T05:58:11Z' }, 'a b': [1, 2] }))
       .toBe('{ _id: ObjectId("65a1b2c3d4e5f60718293a4b"), at: ISODate("2026-11-06T05:58:11Z"), "a b": [ 1, 2 ] }')
