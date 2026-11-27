@@ -65,8 +65,9 @@ func (a *API) Handler() http.Handler {
 func (a *API) health(w http.ResponseWriter, _ *http.Request) {
 	_, _, fresh := a.rules.Status()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":  "ok",
-		"sealKey": secretwire.EncodeKey(a.store.SealPublicKey()),
+		"status":    "ok",
+		"sealKey":   secretwire.EncodeKey(a.store.SealPublicKey()),
+		"sealKeyPQ": secretwire.EncodeKey(a.store.SealPublicKeyPQ()),
 		// Whether reads would be answered now. Not why: that is for
 		// argus-control, over the management plane.
 		"serving": fresh,
@@ -128,6 +129,9 @@ func (a *API) readSealed(p Principal, req secretwire.ReadRequest, route, remote 
 	if err != nil {
 		return secretwire.ReadResponse{}, InvalidError{err.Error()}
 	}
+	if a.store.requirePQ && !recipient.PostQuantum() {
+		return secretwire.ReadResponse{}, ErrNotPostQuantum
+	}
 	d, err := a.rules.Allow(p, CanRead, req.Name)
 	if err != nil {
 		return secretwire.ReadResponse{}, err
@@ -151,7 +155,7 @@ func (a *API) readSealed(p Principal, req secretwire.ReadRequest, route, remote 
 	if err != nil {
 		return secretwire.ReadResponse{}, err
 	}
-	sealed, err := secretwire.SealTo(recipient, value, secretwire.ReadAAD(req.Name, ver, req.Field))
+	sealed, err := recipient.Seal(value, secretwire.ReadAAD(req.Name, ver, req.Field))
 	clear(value)
 	if err != nil {
 		return secretwire.ReadResponse{}, err

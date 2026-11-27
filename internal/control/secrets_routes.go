@@ -195,7 +195,7 @@ func (a *API) postSecretsServer(w http.ResponseWriter, r *http.Request) {
 		a.secretsErr(w, "add secrets server", err)
 		return
 	}
-	srv, err := a.store.SaveSecretsServer(r.Context(), "", in, st.SealKey, st.Version, actor)
+	srv, err := a.store.SaveSecretsServer(r.Context(), "", in, st.PreferredSealKey(), st.Version, actor)
 	if err != nil {
 		a.secretsErr(w, "add secrets server", err)
 		return
@@ -234,7 +234,7 @@ func (a *API) putSecretsServer(w http.ResponseWriter, r *http.Request) {
 		a.secretsErr(w, "change secrets server", err)
 		return
 	}
-	srv, err := a.store.SaveSecretsServer(r.Context(), before.ID, in, st.SealKey, st.Version, actor)
+	srv, err := a.store.SaveSecretsServer(r.Context(), before.ID, in, st.PreferredSealKey(), st.Version, actor)
 	if err != nil {
 		a.secretsErr(w, "change secrets server", err)
 		return

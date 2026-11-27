@@ -10,8 +10,6 @@ package secretclient
 import (
 	"bytes"
 	"context"
-	"crypto/ecdh"
-	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -242,7 +240,9 @@ func (c *Client) Read(ctx context.Context, ref Ref, purpose string) (Value, erro
 	if !ok {
 		return Value{}, fmt.Errorf("%s: %w", ref.Name, ErrNoServer)
 	}
-	key, err := ecdh.X25519().GenerateKey(rand.Reader)
+	// A one-time post-quantum key (ML-KEM-768 + X25519): the value is sealed
+	// to it, and only a format v2 answer is accepted.
+	key, err := secretwire.NewPQKey()
 	if err != nil {
 		return Value{}, err
 	}
@@ -303,7 +303,7 @@ func (c *Client) Read(ctx context.Context, ref Ref, purpose string) (Value, erro
 	if out.Name != ref.Name || out.Field != ref.Field || (ref.Version != 0 && out.Version != ref.Version) {
 		return Value{}, fmt.Errorf("%s answered for %s, not %s", srv.Name, out.Name, ref.Name)
 	}
-	plain, err := secretwire.OpenSealed(key, out.Sealed, secretwire.ReadAAD(out.Name, out.Version, out.Field))
+	plain, err := secretwire.OpenPQ(key, out.Sealed, secretwire.ReadAAD(out.Name, out.Version, out.Field))
 	if err != nil {
 		return Value{}, fmt.Errorf("%s: the value could not be opened", srv.Name)
 	}

@@ -89,7 +89,8 @@ test('secrets: the section loads from its own bundle, and values are sealed both
   await expect(dialog.getByText('hunter2')).toBeVisible()
   const read = sent.find((s) => s.path === '/api/v1/secrets/read')!
   expect(read.body).toMatchObject({ name: 'prod/db', field: 'password', reason: 'rotating the replica' })
-  expect(String(read.body!.recipient)).toMatch(/^[A-Za-z0-9_-]{43}$/)
+  // A post-quantum one-time key: ML-KEM-768 + X25519, 1216 bytes.
+  expect(String(read.body!.recipient)).toMatch(/^[A-Za-z0-9_-]{1622}$/)
   await dialog.getByRole('button', { name: 'Close' }).click()
 
   // Writing: sealed in the tab to the server's key; the body has no value.

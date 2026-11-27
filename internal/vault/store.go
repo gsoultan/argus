@@ -3,6 +3,7 @@ package vault
 import (
 	"bytes"
 	"crypto/ecdh"
+	"crypto/hpke"
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/json"
@@ -29,14 +30,17 @@ var (
 
 // Keys in bucketMeta.
 var (
-	metaCheck    = []byte("root.check")
-	metaOrg      = []byte("org")
-	metaOrgKey   = []byte("org.key")
-	metaSealKey  = []byte("seal.key")
-	metaLogSeq   = []byte("log.seq")
-	metaLogHead  = []byte("log.head")
-	metaLogBase  = []byte("log.base")
-	metaLogAcked = []byte("log.acked")
+	metaCheck   = []byte("root.check")
+	metaOrg     = []byte("org")
+	metaOrgKey  = []byte("org.key")
+	metaSealKey = []byte("seal.key")
+	// metaSealKeyPQ is the ML-KEM-768 + X25519 key new values are sealed to
+	// (format v2). Stores made before it get one on their next start.
+	metaSealKeyPQ = []byte("seal.pq.key")
+	metaLogSeq    = []byte("log.seq")
+	metaLogHead   = []byte("log.head")
+	metaLogBase   = []byte("log.base")
+	metaLogAcked  = []byte("log.acked")
 )
 
 // rootCheck is wrapped under the root key when the store is made. A root key
@@ -118,7 +122,10 @@ type Store struct {
 	org    string
 	orgKey []byte
 	seal   *ecdh.PrivateKey
-	now    func() time.Time
+	sealPQ hpke.PrivateKey
+	// requirePQ refuses values sealed in format v1 (X25519 only).
+	requirePQ bool
+	now       func() time.Time
 }
 
 // Open opens or creates the store in dir. rootKey wraps everything; org names
@@ -173,7 +180,7 @@ func (s *Store) init(tx *bbolt.Tx, root []byte) error {
 			return err
 		}
 		s.orgKey, s.seal = orgKey, seal
-		return nil
+		return s.loadSealPQ(meta, root)
 	}
 	// A new store.
 	orgKey, err := randomKey()
@@ -205,8 +212,47 @@ func (s *Store) init(tx *bbolt.Tx, root []byte) error {
 		}
 	}
 	s.orgKey, s.seal = orgKey, seal
+	return s.loadSealPQ(meta, root)
+}
+
+// loadSealPQ opens the post-quantum seal key, making it when the store has
+// none yet.
+func (s *Store) loadSealPQ(meta *bbolt.Bucket, root []byte) error {
+	if w := meta.Get(metaSealKeyPQ); w != nil {
+		raw, err := unwrap(root, w, []byte("seal-key-pq"))
+		if err != nil {
+			return fmt.Errorf("post-quantum seal key: %w", err)
+		}
+		defer clear(raw)
+		k, err := secretwire.PQPrivateKey(raw)
+		if err != nil {
+			return fmt.Errorf("post-quantum seal key: %w", err)
+		}
+		s.sealPQ = k
+		return nil
+	}
+	k, err := secretwire.NewPQKey()
+	if err != nil {
+		return err
+	}
+	raw, err := k.Bytes()
+	if err != nil {
+		return err
+	}
+	defer clear(raw)
+	w, err := wrap(root, raw, []byte("seal-key-pq"))
+	if err != nil {
+		return err
+	}
+	if err := meta.Put(metaSealKeyPQ, w); err != nil {
+		return err
+	}
+	s.sealPQ = k
 	return nil
 }
+
+// RequirePostQuantum makes the store refuse values sealed in format v1.
+func (s *Store) RequirePostQuantum(on bool) { s.requirePQ = on }
 
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }
@@ -215,12 +261,24 @@ func (s *Store) Close() error { return s.db.Close() }
 func (s *Store) Organization() string { return s.org }
 
 // SealPublicKey is the X25519 key a new value is sealed to before it is sent
-// here, so argus-control relays it without being able to read it.
+// here, so argus-control relays it without being able to read it. Format v1;
+// SealPublicKeyPQ is the post-quantum key, and the one to prefer.
 func (s *Store) SealPublicKey() []byte { return s.seal.PublicKey().Bytes() }
 
-// OpenWrite opens a value sealed to SealPublicKey for name.
+// SealPublicKeyPQ is the ML-KEM-768 + X25519 key for sealing new values in
+// format v2.
+func (s *Store) SealPublicKeyPQ() []byte { return s.sealPQ.PublicKey().Bytes() }
+
+// ErrNotPostQuantum is a value or recipient in format v1 on a server that
+// requires post-quantum sealing.
+var ErrNotPostQuantum = InvalidError{"this argus-secret requires post-quantum sealing (ML-KEM-768 + X25519); update the caller"}
+
+// OpenWrite opens a value sealed to SealPublicKey or SealPublicKeyPQ for name.
 func (s *Store) OpenWrite(name string, sealed []byte) ([]byte, error) {
-	v, err := secretwire.OpenSealed(s.seal, sealed, secretwire.WriteAAD(name))
+	if s.requirePQ && secretwire.SealVersion(sealed) != 2 {
+		return nil, ErrNotPostQuantum
+	}
+	v, err := secretwire.OpenEither(s.seal, s.sealPQ, sealed, secretwire.WriteAAD(name))
 	if err != nil {
 		return nil, invalid("the new value was not sealed to this server's key for %s", name)
 	}

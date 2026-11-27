@@ -1027,10 +1027,13 @@ jobs:
           # A weight budget: 45 KB and 11 KB compressed when it was set. It
           # loads on every visit to Secrets, and the borrowing above is what
           # keeps it small; a budget broken is a dependency that came along.
+          # 2026-11-27: 72 KB and 19.6 KB compressed with post-quantum sealing
+          # (ML-KEM-768 from @noble/post-quantum, SHA3 from @noble/hashes;
+          # X25519, HMAC and AES-GCM stay WebCrypto's), raised to 96 KB / 24 KB.
           raw=$(wc -c < "$f"); gz=$(gzip -9c "$f" | wc -c)
           echo "secrets screens: $raw bytes, $gz compressed"
-          if [ "$raw" -gt 81920 ] || [ "$gz" -gt 20480 ]; then
-            echo "::error::$f is $raw bytes ($gz compressed), over its budget of 80 KB (20 KB compressed)"; exit 1
+          if [ "$raw" -gt 98304 ] || [ "$gz" -gt 24576 ]; then
+            echo "::error::$f is $raw bytes ($gz compressed), over its budget of 96 KB (24 KB compressed)"; exit 1
           fi
       - name: Confirm the service worker still denies the auth path
         # The rule that broke SSO for every returning visitor. It is one regex

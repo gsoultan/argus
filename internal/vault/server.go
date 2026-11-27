@@ -49,6 +49,11 @@ type Config struct {
 	// RulesMaxAge is how long rules are trusted without hearing from
 	// argus-control. Default 15 minutes.
 	RulesMaxAge time.Duration `yaml:"rules_max_age"`
+	// PostQuantumOnly refuses reads and writes sealed in format v1 (X25519
+	// only), so every value in transit is sealed with ML-KEM-768 + X25519.
+	// Turn it on once every agent and console that calls this server is
+	// updated.
+	PostQuantumOnly bool `yaml:"post_quantum_only"`
 }
 
 // Defaults fills what was left out.
@@ -208,6 +213,7 @@ func Run(ctx context.Context, cfg Config, version string, log *slog.Logger) erro
 		return err
 	}
 	defer store.Close()
+	store.RequirePostQuantum(cfg.PostQuantumOnly)
 	if err := store.VerifyLog(); err != nil {
 		return err
 	}

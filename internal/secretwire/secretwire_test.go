@@ -41,7 +41,7 @@ func TestParseRecipientRefusesWhatIsNotAKey(t *testing.T) {
 	if _, err := ParseRecipient(EncodeKey(priv.PublicKey().Bytes())); err != nil {
 		t.Fatal(err)
 	}
-	for _, s := range []string{"", "abc", EncodeKey(make([]byte, 31)), "!!!!"} {
+	for _, s := range []string{"", "abc", EncodeKey(make([]byte, 31)), EncodeKey(make([]byte, PQPublicKeySize-1)), "!!!!"} {
 		if _, err := ParseRecipient(s); err == nil {
 			t.Errorf("%q accepted", s)
 		}

@@ -247,13 +247,26 @@ func (a *API) allowPerson(w http.ResponseWriter, actor ManageActor, action, name
 
 // Status is what argus-control shows on Settings › Secrets servers.
 type Status struct {
-	Org     string   `json:"org"`
-	Version string   `json:"version"`
-	SealKey string   `json:"sealKey"`
-	TLSPin  string   `json:"tlsPin,omitempty"`
-	Rules   RulesAt  `json:"rules"`
-	Log     LogState `json:"log"`
-	Secrets int      `json:"secrets"`
+	Org     string `json:"org"`
+	Version string `json:"version"`
+	SealKey string `json:"sealKey"`
+	// SealKeyPQ is the post-quantum seal key (format v2), to prefer.
+	SealKeyPQ string `json:"sealKeyPQ"`
+	// PostQuantumOnly says format v1 is refused.
+	PostQuantumOnly bool     `json:"postQuantumOnly,omitempty"`
+	TLSPin          string   `json:"tlsPin,omitempty"`
+	Rules           RulesAt  `json:"rules"`
+	Log             LogState `json:"log"`
+	Secrets         int      `json:"secrets"`
+}
+
+// PreferredSealKey is the key a new value should be sealed to: the
+// post-quantum one, or the X25519 one from a server that has none.
+func (s Status) PreferredSealKey() string {
+	if s.SealKeyPQ != "" {
+		return s.SealKeyPQ
+	}
+	return s.SealKey
 }
 
 // RulesAt is the rules' serial and age.
@@ -279,7 +292,8 @@ func (a *API) mStatus(w http.ResponseWriter, _ *http.Request, _ []byte, actor Ma
 		return
 	}
 	writeJSON(w, http.StatusOK, Status{Org: a.store.Organization(), Version: a.version,
-		SealKey: secretwire.EncodeKey(a.store.SealPublicKey()), TLSPin: a.tlsPin,
+		SealKey: secretwire.EncodeKey(a.store.SealPublicKey()), SealKeyPQ: secretwire.EncodeKey(a.store.SealPublicKeyPQ()),
+		PostQuantumOnly: a.store.requirePQ, TLSPin: a.tlsPin,
 		Rules: RulesAt{Serial: serial, Contacted: contacted, Fresh: fresh}, Log: ls, Secrets: len(secs)})
 }
 

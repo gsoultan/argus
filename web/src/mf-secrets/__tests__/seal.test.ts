@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { b64urlDecode, oneTimeKey, openSealed, readAAD, sealTo, stdB64Decode, stdB64Encode, writeAAD } from '../seal'
+import { b64urlDecode, x25519OneTimeKey as oneTimeKey, openSealed, readAAD, sealTo, stdB64Decode, stdB64Encode, writeAAD } from '../seal'
 
 // Sealed by internal/secretwire.SealTo in Go, to the key below, as
 // argus-secret answers a read of prod/db version 3, field password.
@@ -12,7 +12,7 @@ const GO = {
 async function goKey() {
   const privateKey = await crypto.subtle.importKey('jwk', { kty: 'OKP', crv: 'X25519', d: GO.d, x: GO.x },
     { name: 'X25519' }, false, ['deriveBits'])
-  return { privateKey, publicKey: b64urlDecode(GO.x) }
+  return { kind: 'x25519' as const, privateKey, publicKey: b64urlDecode(GO.x) }
 }
 
 describe('sealing, byte for byte with secretwire', () => {

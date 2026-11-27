@@ -182,7 +182,10 @@ func TestSecretsServersEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sealed, err := secretwire.SealTo(pub, []byte("hunter2"), secretwire.WriteAAD("prod/db"))
+	if !pub.PostQuantum() {
+		t.Fatal("argus-control handed out the X25519 seal key, not the post-quantum one")
+	}
+	sealed, err := pub.Seal([]byte("hunter2"), secretwire.WriteAAD("prod/db"))
 	if err != nil {
 		t.Fatal(err)
 	}

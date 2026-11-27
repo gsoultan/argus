@@ -11,6 +11,7 @@ import (
 	"crypto/cipher"
 	"crypto/ecdh"
 	"crypto/hkdf"
+	"crypto/hpke"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -91,19 +92,47 @@ func sealKey(shared, ephPub, recipientPub []byte) ([]byte, error) {
 	return hkdf.Key(sha256.New, shared, salt, sealInfo, keySize)
 }
 
-// ParseRecipient reads a base64url (no padding) X25519 public key, as a caller
-// sends the one-time key it wants a value sealed to.
-func ParseRecipient(s string) (*ecdh.PublicKey, error) {
+// ParseRecipient reads the key a caller wants a value sealed to, base64url
+// without padding: a 32-byte X25519 key (format v1), or an ML-KEM-768 +
+// X25519 hybrid key (format v2, post-quantum). Which one it is decides how the
+// value is sealed, so a caller that sent a hybrid key only ever gets v2 back.
+func ParseRecipient(s string) (Recipient, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(s)
-	if err != nil || len(raw) != 32 {
-		return nil, errors.New("recipient must be a 32-byte X25519 public key, base64url without padding")
+	if err != nil || (len(raw) != 32 && len(raw) != PQPublicKeySize) {
+		return nil, errors.New("recipient must be a 32-byte X25519 key or an ML-KEM-768+X25519 key, base64url without padding")
+	}
+	if len(raw) == PQPublicKeySize {
+		pub, err := pqKEM.NewPublicKey(raw)
+		if err != nil {
+			return nil, errors.New("recipient is not a usable ML-KEM-768+X25519 key")
+		}
+		return pqRecipient{pub}, nil
 	}
 	pub, err := ecdh.X25519().NewPublicKey(raw)
 	if err != nil {
 		return nil, errors.New("recipient is not a usable X25519 public key")
 	}
-	return pub, nil
+	return x25519Recipient{pub}, nil
 }
+
+// Recipient is a public key a value can be sealed to.
+type Recipient interface {
+	// Seal encrypts plain so that only the holder of the private key can
+	// read it, bound to aad.
+	Seal(plain, aad []byte) ([]byte, error)
+	// PostQuantum says the seal stays secret against a quantum computer.
+	PostQuantum() bool
+}
+
+type x25519Recipient struct{ pub *ecdh.PublicKey }
+
+func (r x25519Recipient) Seal(plain, aad []byte) ([]byte, error) { return SealTo(r.pub, plain, aad) }
+func (x25519Recipient) PostQuantum() bool                         { return false }
+
+type pqRecipient struct{ pub hpke.PublicKey }
+
+func (r pqRecipient) Seal(plain, aad []byte) ([]byte, error) { return SealPQ(r.pub, plain, aad) }
+func (pqRecipient) PostQuantum() bool                         { return true }
 
 // EncodeKey is how public keys travel in JSON: base64url without padding.
 func EncodeKey(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }

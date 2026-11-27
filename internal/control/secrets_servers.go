@@ -375,7 +375,7 @@ func (s *Store) RemoveSecretsServer(ctx context.Context, id string) (SecretsServ
 
 func (s *Store) secretsContact(ctx context.Context, id string, st vault.Status) error {
 	_, err := s.db(ctx).Exec(ctx, `UPDATE secrets_servers SET last_contact_at = now(), last_error = '',
-		seal_key = $2, version = $3, secret_count = $4 WHERE id = $1`, id, st.SealKey, st.Version, st.Secrets)
+		seal_key = $2, version = $3, secret_count = $4 WHERE id = $1`, id, st.PreferredSealKey(), st.Version, st.Secrets)
 	return err
 }
 
