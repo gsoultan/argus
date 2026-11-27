@@ -113,9 +113,9 @@ func recordUsageHistory(ctx context.Context, db execer, hostname string, at time
 		INSERT INTO usage_history AS h (hostname, bucket, samples, cpu_sum, cpu_n, cpu_max, mem_pct, swap_pct,
 		                                disks, rx_sum, tx_sum, net_n, rx_max, tx_max,
 		                                load_max, steal_sum, steal_n, steal_max, tcp_max,
-		                                rops_sum, wops_sum, rbps_sum, wbps_sum, io_n, iops_max, io_bps_max)
+		                                rops_sum, wops_sum, rbps_sum, wbps_sum, io_n, iops_max, io_bps_max, programs)
 		VALUES ($1, $2, 1, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13,
-		        $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+		        $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26::jsonb)
 		ON CONFLICT (hostname, bucket) DO UPDATE SET
 			samples  = h.samples + 1,
 			cpu_sum  = h.cpu_sum + EXCLUDED.cpu_sum,
@@ -140,10 +140,11 @@ func recordUsageHistory(ctx context.Context, db execer, hostname string, at time
 			wbps_sum   = h.wbps_sum + EXCLUDED.wbps_sum,
 			io_n       = h.io_n + EXCLUDED.io_n,
 			iops_max   = GREATEST(h.iops_max, EXCLUDED.iops_max),
-			io_bps_max = GREATEST(h.io_bps_max, EXCLUDED.io_bps_max)`,
+			io_bps_max = GREATEST(h.io_bps_max, EXCLUDED.io_bps_max),
+			programs   = `+mergePrograms+``,
 		hostname, bucket, cpuSum, cpuN, cpuMax, memPct, swapPct, nullJSON(disks), rxSum, txSum, netN, rxMax, txMax,
 		loadMax, stealSum, stealN, stealMax, tcp,
-		io.rops, io.wops, io.rbps, io.wbps, io.n, io.opsMax, io.bpsMax)
+		io.rops, io.wops, io.rbps, io.wbps, io.n, io.opsMax, io.bpsMax, nullJSON(programsJSON(u.Top)))
 	return err
 }
 

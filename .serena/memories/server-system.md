@@ -101,3 +101,29 @@ swap, each real disk). Code: `internal/agent/sysinfo*.go`,
   keyed by organization + "fleet" for whole-fleet roles, organization +
   lowercased email for everyone else (never by role). A removed assignment
   reaches that person's figures up to 10 s late.
+
+## Programs: what uses the server (2026-11)
+
+- **By program, not process.** The agent adds up the processes sharing a
+  name (`programName`: a kernel thread's `/n` suffix dropped) in
+  `UsageSampler.topProcesses`: processor shares and resident memory summed,
+  `count`, the busiest process's pid. Top is the 5 busiest by processor, by
+  memory and by disk, at most 15. Shared memory is counted in each process,
+  and the console says so.
+- **Disk by program** is `/proc/<pid>/io` read_bytes/write_bytes on Linux
+  (storage, not page cache) and GetProcessIoCounters on Windows (every
+  file, device and network transfer; the console says so). Linux guards
+  /proc/<pid>/io with the ptrace check, so the agent unit carries
+  CAP_SYS_PTRACE (owner's decision, 2026-11-27); the ptrace syscall stays
+  filtered. Without it a refused read is `io_hidden` and the console says
+  "not readable", never 0. Cost: BenchmarkUsageSample 0.96 → 1.36 ms.
+- **History**: `usage_history.programs` (migration 118), per bucket a JSON
+  object by name of each figure's peak across the bucket's reports
+  (`mergePrograms` in the upsert). Not rolled up hourly: 30 days only.
+  `GET /api/v1/assets/{id}/programs?from&to` (fleet roles) answers peaks over
+  a stretch plus how many 5-minute periods named each program
+  (`usage_programs.go`). Peaks, not averages: a program missing from a report
+  was not among the busiest, not idle.
+- Console: `components/server/Programs.tsx`. ProgramsNow under the Now
+  tiles; ProgramsHistory under Resource history, whole range by default,
+  one point when a chart is clicked (MetricsHistory `onPick`/`picked`).

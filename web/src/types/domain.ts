@@ -541,14 +541,29 @@ export interface ServerUsage {
   top?: ServerProcess[]
 }
 
-/** One program running on a server. Its name only, never its command line. */
+/**
+ * One program running on a server: every process with its name, added up.
+ * Its name only, never its command line.
+ */
 export interface ServerProcess {
   name: string
+  /** Its busiest process's pid. */
   pid: number
+  /** How many processes run under the name. Missing from an older control plane: one. */
+  count?: number
   /** Percent of the whole machine's processor time; null on the agent's first sample. */
   cpu: number | null
-  /** Resident memory, in bytes. */
+  /** Resident memory, in bytes, its processes' added up. */
   memory: number
+  /**
+   * Bytes per second read and written: what reached the disk on Linux, every
+   * file, device and network transfer on Windows. Null when the agent did not
+   * measure them; missing from an older control plane.
+   */
+  readBps?: number | null
+  writeBps?: number | null
+  /** The system would not let the agent read this program's disk counters. */
+  ioHidden?: boolean
 }
 
 /** One interface's traffic, averaged over the agent's last sample (about a minute). */

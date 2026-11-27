@@ -46,6 +46,7 @@ type Row struct {
 	IoN      int32
 	IopsMax  runtime.Null[float64]
 	IoBpsMax runtime.Null[float64]
+	Programs runtime.Null[runtime.JSON]
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -84,7 +85,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 26
+const nCols = 27
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -558,6 +559,7 @@ var (
 	IoN      = Int32Col{23}
 	IopsMax  = NullFloat64Col{24}
 	IoBpsMax = NullFloat64Col{25}
+	Programs = NullJSONCol{26}
 )
 
 // TextCol addresses a text column.
@@ -938,6 +940,13 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyI32[q.nai32] = p.anyI32
 			q.nai32++
+		case 26:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
 		}
 		q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 		return
@@ -1129,206 +1138,219 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.f64s[q.nf] = p.f64
 		q.nf++
+	case 26:
+		if int(q.njs) >= 2 {
+			q.over = true
+			return
+		}
+		q.jsns[q.njs] = p.jsn
+		q.njs++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
 
 // Chained predicate sugar. Identical to Where(Col.Op(v)).
-func (q Query) HostnameEq(v string) Query             { return q.Where(Hostname.Eq(v)) }
-func (q Query) HostnameNotEq(v string) Query          { return q.Where(Hostname.NotEq(v)) }
-func (q Query) HostnameGt(v string) Query             { return q.Where(Hostname.Gt(v)) }
-func (q Query) HostnameGte(v string) Query            { return q.Where(Hostname.Gte(v)) }
-func (q Query) HostnameLt(v string) Query             { return q.Where(Hostname.Lt(v)) }
-func (q Query) HostnameLte(v string) Query            { return q.Where(Hostname.Lte(v)) }
-func (q Query) HostnameEqLower(v string) Query        { return q.Where(Hostname.EqLower(v)) }
-func (q Query) HostnameLike(v string) Query           { return q.Where(Hostname.Like(v)) }
-func (q Query) HostnameILike(v string) Query          { return q.Where(Hostname.ILike(v)) }
-func (q Query) HostnameIn(v ...string) Query          { return q.Where(Hostname.In(v...)) }
-func (q Query) HostnameNotIn(v ...string) Query       { return q.Where(Hostname.NotIn(v...)) }
-func (q Query) BucketEq(v time.Time) Query            { return q.Where(Bucket.Eq(v)) }
-func (q Query) BucketNotEq(v time.Time) Query         { return q.Where(Bucket.NotEq(v)) }
-func (q Query) BucketGt(v time.Time) Query            { return q.Where(Bucket.Gt(v)) }
-func (q Query) BucketGte(v time.Time) Query           { return q.Where(Bucket.Gte(v)) }
-func (q Query) BucketLt(v time.Time) Query            { return q.Where(Bucket.Lt(v)) }
-func (q Query) BucketLte(v time.Time) Query           { return q.Where(Bucket.Lte(v)) }
-func (q Query) SamplesEq(v int32) Query               { return q.Where(Samples.Eq(v)) }
-func (q Query) SamplesNotEq(v int32) Query            { return q.Where(Samples.NotEq(v)) }
-func (q Query) SamplesGt(v int32) Query               { return q.Where(Samples.Gt(v)) }
-func (q Query) SamplesGte(v int32) Query              { return q.Where(Samples.Gte(v)) }
-func (q Query) SamplesLt(v int32) Query               { return q.Where(Samples.Lt(v)) }
-func (q Query) SamplesLte(v int32) Query              { return q.Where(Samples.Lte(v)) }
-func (q Query) SamplesIn(v ...int32) Query            { return q.Where(Samples.In(v...)) }
-func (q Query) SamplesNotIn(v ...int32) Query         { return q.Where(Samples.NotIn(v...)) }
-func (q Query) CpuSumEq(v float64) Query              { return q.Where(CpuSum.Eq(v)) }
-func (q Query) CpuSumNotEq(v float64) Query           { return q.Where(CpuSum.NotEq(v)) }
-func (q Query) CpuSumGt(v float64) Query              { return q.Where(CpuSum.Gt(v)) }
-func (q Query) CpuSumGte(v float64) Query             { return q.Where(CpuSum.Gte(v)) }
-func (q Query) CpuSumLt(v float64) Query              { return q.Where(CpuSum.Lt(v)) }
-func (q Query) CpuSumLte(v float64) Query             { return q.Where(CpuSum.Lte(v)) }
-func (q Query) CpuNEq(v int32) Query                  { return q.Where(CpuN.Eq(v)) }
-func (q Query) CpuNNotEq(v int32) Query               { return q.Where(CpuN.NotEq(v)) }
-func (q Query) CpuNGt(v int32) Query                  { return q.Where(CpuN.Gt(v)) }
-func (q Query) CpuNGte(v int32) Query                 { return q.Where(CpuN.Gte(v)) }
-func (q Query) CpuNLt(v int32) Query                  { return q.Where(CpuN.Lt(v)) }
-func (q Query) CpuNLte(v int32) Query                 { return q.Where(CpuN.Lte(v)) }
-func (q Query) CpuNIn(v ...int32) Query               { return q.Where(CpuN.In(v...)) }
-func (q Query) CpuNNotIn(v ...int32) Query            { return q.Where(CpuN.NotIn(v...)) }
-func (q Query) CpuMaxEq(v float32) Query              { return q.Where(CpuMax.Eq(v)) }
-func (q Query) CpuMaxNotEq(v float32) Query           { return q.Where(CpuMax.NotEq(v)) }
-func (q Query) CpuMaxGt(v float32) Query              { return q.Where(CpuMax.Gt(v)) }
-func (q Query) CpuMaxGte(v float32) Query             { return q.Where(CpuMax.Gte(v)) }
-func (q Query) CpuMaxLt(v float32) Query              { return q.Where(CpuMax.Lt(v)) }
-func (q Query) CpuMaxLte(v float32) Query             { return q.Where(CpuMax.Lte(v)) }
-func (q Query) CpuMaxIsNull() Query                   { return q.Where(CpuMax.IsNull()) }
-func (q Query) CpuMaxIsNotNull() Query                { return q.Where(CpuMax.IsNotNull()) }
-func (q Query) MemPctEq(v float32) Query              { return q.Where(MemPct.Eq(v)) }
-func (q Query) MemPctNotEq(v float32) Query           { return q.Where(MemPct.NotEq(v)) }
-func (q Query) MemPctGt(v float32) Query              { return q.Where(MemPct.Gt(v)) }
-func (q Query) MemPctGte(v float32) Query             { return q.Where(MemPct.Gte(v)) }
-func (q Query) MemPctLt(v float32) Query              { return q.Where(MemPct.Lt(v)) }
-func (q Query) MemPctLte(v float32) Query             { return q.Where(MemPct.Lte(v)) }
-func (q Query) MemPctIsNull() Query                   { return q.Where(MemPct.IsNull()) }
-func (q Query) MemPctIsNotNull() Query                { return q.Where(MemPct.IsNotNull()) }
-func (q Query) SwapPctEq(v float32) Query             { return q.Where(SwapPct.Eq(v)) }
-func (q Query) SwapPctNotEq(v float32) Query          { return q.Where(SwapPct.NotEq(v)) }
-func (q Query) SwapPctGt(v float32) Query             { return q.Where(SwapPct.Gt(v)) }
-func (q Query) SwapPctGte(v float32) Query            { return q.Where(SwapPct.Gte(v)) }
-func (q Query) SwapPctLt(v float32) Query             { return q.Where(SwapPct.Lt(v)) }
-func (q Query) SwapPctLte(v float32) Query            { return q.Where(SwapPct.Lte(v)) }
-func (q Query) SwapPctIsNull() Query                  { return q.Where(SwapPct.IsNull()) }
-func (q Query) SwapPctIsNotNull() Query               { return q.Where(SwapPct.IsNotNull()) }
-func (q Query) DisksContains(v runtime.JSON) Query    { return q.Where(Disks.Contains(v)) }
-func (q Query) DisksContainedBy(v runtime.JSON) Query { return q.Where(Disks.ContainedBy(v)) }
-func (q Query) DisksHasAnyKey(v ...string) Query      { return q.Where(Disks.HasAnyKey(v...)) }
-func (q Query) DisksHasAllKeys(v ...string) Query     { return q.Where(Disks.HasAllKeys(v...)) }
-func (q Query) DisksIsNull() Query                    { return q.Where(Disks.IsNull()) }
-func (q Query) DisksIsNotNull() Query                 { return q.Where(Disks.IsNotNull()) }
-func (q Query) RxSumEq(v float64) Query               { return q.Where(RxSum.Eq(v)) }
-func (q Query) RxSumNotEq(v float64) Query            { return q.Where(RxSum.NotEq(v)) }
-func (q Query) RxSumGt(v float64) Query               { return q.Where(RxSum.Gt(v)) }
-func (q Query) RxSumGte(v float64) Query              { return q.Where(RxSum.Gte(v)) }
-func (q Query) RxSumLt(v float64) Query               { return q.Where(RxSum.Lt(v)) }
-func (q Query) RxSumLte(v float64) Query              { return q.Where(RxSum.Lte(v)) }
-func (q Query) TxSumEq(v float64) Query               { return q.Where(TxSum.Eq(v)) }
-func (q Query) TxSumNotEq(v float64) Query            { return q.Where(TxSum.NotEq(v)) }
-func (q Query) TxSumGt(v float64) Query               { return q.Where(TxSum.Gt(v)) }
-func (q Query) TxSumGte(v float64) Query              { return q.Where(TxSum.Gte(v)) }
-func (q Query) TxSumLt(v float64) Query               { return q.Where(TxSum.Lt(v)) }
-func (q Query) TxSumLte(v float64) Query              { return q.Where(TxSum.Lte(v)) }
-func (q Query) NetNEq(v int32) Query                  { return q.Where(NetN.Eq(v)) }
-func (q Query) NetNNotEq(v int32) Query               { return q.Where(NetN.NotEq(v)) }
-func (q Query) NetNGt(v int32) Query                  { return q.Where(NetN.Gt(v)) }
-func (q Query) NetNGte(v int32) Query                 { return q.Where(NetN.Gte(v)) }
-func (q Query) NetNLt(v int32) Query                  { return q.Where(NetN.Lt(v)) }
-func (q Query) NetNLte(v int32) Query                 { return q.Where(NetN.Lte(v)) }
-func (q Query) NetNIn(v ...int32) Query               { return q.Where(NetN.In(v...)) }
-func (q Query) NetNNotIn(v ...int32) Query            { return q.Where(NetN.NotIn(v...)) }
-func (q Query) RxMaxEq(v float64) Query               { return q.Where(RxMax.Eq(v)) }
-func (q Query) RxMaxNotEq(v float64) Query            { return q.Where(RxMax.NotEq(v)) }
-func (q Query) RxMaxGt(v float64) Query               { return q.Where(RxMax.Gt(v)) }
-func (q Query) RxMaxGte(v float64) Query              { return q.Where(RxMax.Gte(v)) }
-func (q Query) RxMaxLt(v float64) Query               { return q.Where(RxMax.Lt(v)) }
-func (q Query) RxMaxLte(v float64) Query              { return q.Where(RxMax.Lte(v)) }
-func (q Query) RxMaxIsNull() Query                    { return q.Where(RxMax.IsNull()) }
-func (q Query) RxMaxIsNotNull() Query                 { return q.Where(RxMax.IsNotNull()) }
-func (q Query) TxMaxEq(v float64) Query               { return q.Where(TxMax.Eq(v)) }
-func (q Query) TxMaxNotEq(v float64) Query            { return q.Where(TxMax.NotEq(v)) }
-func (q Query) TxMaxGt(v float64) Query               { return q.Where(TxMax.Gt(v)) }
-func (q Query) TxMaxGte(v float64) Query              { return q.Where(TxMax.Gte(v)) }
-func (q Query) TxMaxLt(v float64) Query               { return q.Where(TxMax.Lt(v)) }
-func (q Query) TxMaxLte(v float64) Query              { return q.Where(TxMax.Lte(v)) }
-func (q Query) TxMaxIsNull() Query                    { return q.Where(TxMax.IsNull()) }
-func (q Query) TxMaxIsNotNull() Query                 { return q.Where(TxMax.IsNotNull()) }
-func (q Query) LoadMaxEq(v float32) Query             { return q.Where(LoadMax.Eq(v)) }
-func (q Query) LoadMaxNotEq(v float32) Query          { return q.Where(LoadMax.NotEq(v)) }
-func (q Query) LoadMaxGt(v float32) Query             { return q.Where(LoadMax.Gt(v)) }
-func (q Query) LoadMaxGte(v float32) Query            { return q.Where(LoadMax.Gte(v)) }
-func (q Query) LoadMaxLt(v float32) Query             { return q.Where(LoadMax.Lt(v)) }
-func (q Query) LoadMaxLte(v float32) Query            { return q.Where(LoadMax.Lte(v)) }
-func (q Query) LoadMaxIsNull() Query                  { return q.Where(LoadMax.IsNull()) }
-func (q Query) LoadMaxIsNotNull() Query               { return q.Where(LoadMax.IsNotNull()) }
-func (q Query) StealSumEq(v float64) Query            { return q.Where(StealSum.Eq(v)) }
-func (q Query) StealSumNotEq(v float64) Query         { return q.Where(StealSum.NotEq(v)) }
-func (q Query) StealSumGt(v float64) Query            { return q.Where(StealSum.Gt(v)) }
-func (q Query) StealSumGte(v float64) Query           { return q.Where(StealSum.Gte(v)) }
-func (q Query) StealSumLt(v float64) Query            { return q.Where(StealSum.Lt(v)) }
-func (q Query) StealSumLte(v float64) Query           { return q.Where(StealSum.Lte(v)) }
-func (q Query) StealNEq(v int32) Query                { return q.Where(StealN.Eq(v)) }
-func (q Query) StealNNotEq(v int32) Query             { return q.Where(StealN.NotEq(v)) }
-func (q Query) StealNGt(v int32) Query                { return q.Where(StealN.Gt(v)) }
-func (q Query) StealNGte(v int32) Query               { return q.Where(StealN.Gte(v)) }
-func (q Query) StealNLt(v int32) Query                { return q.Where(StealN.Lt(v)) }
-func (q Query) StealNLte(v int32) Query               { return q.Where(StealN.Lte(v)) }
-func (q Query) StealNIn(v ...int32) Query             { return q.Where(StealN.In(v...)) }
-func (q Query) StealNNotIn(v ...int32) Query          { return q.Where(StealN.NotIn(v...)) }
-func (q Query) StealMaxEq(v float32) Query            { return q.Where(StealMax.Eq(v)) }
-func (q Query) StealMaxNotEq(v float32) Query         { return q.Where(StealMax.NotEq(v)) }
-func (q Query) StealMaxGt(v float32) Query            { return q.Where(StealMax.Gt(v)) }
-func (q Query) StealMaxGte(v float32) Query           { return q.Where(StealMax.Gte(v)) }
-func (q Query) StealMaxLt(v float32) Query            { return q.Where(StealMax.Lt(v)) }
-func (q Query) StealMaxLte(v float32) Query           { return q.Where(StealMax.Lte(v)) }
-func (q Query) StealMaxIsNull() Query                 { return q.Where(StealMax.IsNull()) }
-func (q Query) StealMaxIsNotNull() Query              { return q.Where(StealMax.IsNotNull()) }
-func (q Query) TcpMaxEq(v int32) Query                { return q.Where(TcpMax.Eq(v)) }
-func (q Query) TcpMaxNotEq(v int32) Query             { return q.Where(TcpMax.NotEq(v)) }
-func (q Query) TcpMaxGt(v int32) Query                { return q.Where(TcpMax.Gt(v)) }
-func (q Query) TcpMaxGte(v int32) Query               { return q.Where(TcpMax.Gte(v)) }
-func (q Query) TcpMaxLt(v int32) Query                { return q.Where(TcpMax.Lt(v)) }
-func (q Query) TcpMaxLte(v int32) Query               { return q.Where(TcpMax.Lte(v)) }
-func (q Query) TcpMaxIn(v ...int32) Query             { return q.Where(TcpMax.In(v...)) }
-func (q Query) TcpMaxNotIn(v ...int32) Query          { return q.Where(TcpMax.NotIn(v...)) }
-func (q Query) TcpMaxIsNull() Query                   { return q.Where(TcpMax.IsNull()) }
-func (q Query) TcpMaxIsNotNull() Query                { return q.Where(TcpMax.IsNotNull()) }
-func (q Query) RopsSumEq(v float64) Query             { return q.Where(RopsSum.Eq(v)) }
-func (q Query) RopsSumNotEq(v float64) Query          { return q.Where(RopsSum.NotEq(v)) }
-func (q Query) RopsSumGt(v float64) Query             { return q.Where(RopsSum.Gt(v)) }
-func (q Query) RopsSumGte(v float64) Query            { return q.Where(RopsSum.Gte(v)) }
-func (q Query) RopsSumLt(v float64) Query             { return q.Where(RopsSum.Lt(v)) }
-func (q Query) RopsSumLte(v float64) Query            { return q.Where(RopsSum.Lte(v)) }
-func (q Query) WopsSumEq(v float64) Query             { return q.Where(WopsSum.Eq(v)) }
-func (q Query) WopsSumNotEq(v float64) Query          { return q.Where(WopsSum.NotEq(v)) }
-func (q Query) WopsSumGt(v float64) Query             { return q.Where(WopsSum.Gt(v)) }
-func (q Query) WopsSumGte(v float64) Query            { return q.Where(WopsSum.Gte(v)) }
-func (q Query) WopsSumLt(v float64) Query             { return q.Where(WopsSum.Lt(v)) }
-func (q Query) WopsSumLte(v float64) Query            { return q.Where(WopsSum.Lte(v)) }
-func (q Query) RbpsSumEq(v float64) Query             { return q.Where(RbpsSum.Eq(v)) }
-func (q Query) RbpsSumNotEq(v float64) Query          { return q.Where(RbpsSum.NotEq(v)) }
-func (q Query) RbpsSumGt(v float64) Query             { return q.Where(RbpsSum.Gt(v)) }
-func (q Query) RbpsSumGte(v float64) Query            { return q.Where(RbpsSum.Gte(v)) }
-func (q Query) RbpsSumLt(v float64) Query             { return q.Where(RbpsSum.Lt(v)) }
-func (q Query) RbpsSumLte(v float64) Query            { return q.Where(RbpsSum.Lte(v)) }
-func (q Query) WbpsSumEq(v float64) Query             { return q.Where(WbpsSum.Eq(v)) }
-func (q Query) WbpsSumNotEq(v float64) Query          { return q.Where(WbpsSum.NotEq(v)) }
-func (q Query) WbpsSumGt(v float64) Query             { return q.Where(WbpsSum.Gt(v)) }
-func (q Query) WbpsSumGte(v float64) Query            { return q.Where(WbpsSum.Gte(v)) }
-func (q Query) WbpsSumLt(v float64) Query             { return q.Where(WbpsSum.Lt(v)) }
-func (q Query) WbpsSumLte(v float64) Query            { return q.Where(WbpsSum.Lte(v)) }
-func (q Query) IoNEq(v int32) Query                   { return q.Where(IoN.Eq(v)) }
-func (q Query) IoNNotEq(v int32) Query                { return q.Where(IoN.NotEq(v)) }
-func (q Query) IoNGt(v int32) Query                   { return q.Where(IoN.Gt(v)) }
-func (q Query) IoNGte(v int32) Query                  { return q.Where(IoN.Gte(v)) }
-func (q Query) IoNLt(v int32) Query                   { return q.Where(IoN.Lt(v)) }
-func (q Query) IoNLte(v int32) Query                  { return q.Where(IoN.Lte(v)) }
-func (q Query) IoNIn(v ...int32) Query                { return q.Where(IoN.In(v...)) }
-func (q Query) IoNNotIn(v ...int32) Query             { return q.Where(IoN.NotIn(v...)) }
-func (q Query) IopsMaxEq(v float64) Query             { return q.Where(IopsMax.Eq(v)) }
-func (q Query) IopsMaxNotEq(v float64) Query          { return q.Where(IopsMax.NotEq(v)) }
-func (q Query) IopsMaxGt(v float64) Query             { return q.Where(IopsMax.Gt(v)) }
-func (q Query) IopsMaxGte(v float64) Query            { return q.Where(IopsMax.Gte(v)) }
-func (q Query) IopsMaxLt(v float64) Query             { return q.Where(IopsMax.Lt(v)) }
-func (q Query) IopsMaxLte(v float64) Query            { return q.Where(IopsMax.Lte(v)) }
-func (q Query) IopsMaxIsNull() Query                  { return q.Where(IopsMax.IsNull()) }
-func (q Query) IopsMaxIsNotNull() Query               { return q.Where(IopsMax.IsNotNull()) }
-func (q Query) IoBpsMaxEq(v float64) Query            { return q.Where(IoBpsMax.Eq(v)) }
-func (q Query) IoBpsMaxNotEq(v float64) Query         { return q.Where(IoBpsMax.NotEq(v)) }
-func (q Query) IoBpsMaxGt(v float64) Query            { return q.Where(IoBpsMax.Gt(v)) }
-func (q Query) IoBpsMaxGte(v float64) Query           { return q.Where(IoBpsMax.Gte(v)) }
-func (q Query) IoBpsMaxLt(v float64) Query            { return q.Where(IoBpsMax.Lt(v)) }
-func (q Query) IoBpsMaxLte(v float64) Query           { return q.Where(IoBpsMax.Lte(v)) }
-func (q Query) IoBpsMaxIsNull() Query                 { return q.Where(IoBpsMax.IsNull()) }
-func (q Query) IoBpsMaxIsNotNull() Query              { return q.Where(IoBpsMax.IsNotNull()) }
+func (q Query) HostnameEq(v string) Query                { return q.Where(Hostname.Eq(v)) }
+func (q Query) HostnameNotEq(v string) Query             { return q.Where(Hostname.NotEq(v)) }
+func (q Query) HostnameGt(v string) Query                { return q.Where(Hostname.Gt(v)) }
+func (q Query) HostnameGte(v string) Query               { return q.Where(Hostname.Gte(v)) }
+func (q Query) HostnameLt(v string) Query                { return q.Where(Hostname.Lt(v)) }
+func (q Query) HostnameLte(v string) Query               { return q.Where(Hostname.Lte(v)) }
+func (q Query) HostnameEqLower(v string) Query           { return q.Where(Hostname.EqLower(v)) }
+func (q Query) HostnameLike(v string) Query              { return q.Where(Hostname.Like(v)) }
+func (q Query) HostnameILike(v string) Query             { return q.Where(Hostname.ILike(v)) }
+func (q Query) HostnameIn(v ...string) Query             { return q.Where(Hostname.In(v...)) }
+func (q Query) HostnameNotIn(v ...string) Query          { return q.Where(Hostname.NotIn(v...)) }
+func (q Query) BucketEq(v time.Time) Query               { return q.Where(Bucket.Eq(v)) }
+func (q Query) BucketNotEq(v time.Time) Query            { return q.Where(Bucket.NotEq(v)) }
+func (q Query) BucketGt(v time.Time) Query               { return q.Where(Bucket.Gt(v)) }
+func (q Query) BucketGte(v time.Time) Query              { return q.Where(Bucket.Gte(v)) }
+func (q Query) BucketLt(v time.Time) Query               { return q.Where(Bucket.Lt(v)) }
+func (q Query) BucketLte(v time.Time) Query              { return q.Where(Bucket.Lte(v)) }
+func (q Query) SamplesEq(v int32) Query                  { return q.Where(Samples.Eq(v)) }
+func (q Query) SamplesNotEq(v int32) Query               { return q.Where(Samples.NotEq(v)) }
+func (q Query) SamplesGt(v int32) Query                  { return q.Where(Samples.Gt(v)) }
+func (q Query) SamplesGte(v int32) Query                 { return q.Where(Samples.Gte(v)) }
+func (q Query) SamplesLt(v int32) Query                  { return q.Where(Samples.Lt(v)) }
+func (q Query) SamplesLte(v int32) Query                 { return q.Where(Samples.Lte(v)) }
+func (q Query) SamplesIn(v ...int32) Query               { return q.Where(Samples.In(v...)) }
+func (q Query) SamplesNotIn(v ...int32) Query            { return q.Where(Samples.NotIn(v...)) }
+func (q Query) CpuSumEq(v float64) Query                 { return q.Where(CpuSum.Eq(v)) }
+func (q Query) CpuSumNotEq(v float64) Query              { return q.Where(CpuSum.NotEq(v)) }
+func (q Query) CpuSumGt(v float64) Query                 { return q.Where(CpuSum.Gt(v)) }
+func (q Query) CpuSumGte(v float64) Query                { return q.Where(CpuSum.Gte(v)) }
+func (q Query) CpuSumLt(v float64) Query                 { return q.Where(CpuSum.Lt(v)) }
+func (q Query) CpuSumLte(v float64) Query                { return q.Where(CpuSum.Lte(v)) }
+func (q Query) CpuNEq(v int32) Query                     { return q.Where(CpuN.Eq(v)) }
+func (q Query) CpuNNotEq(v int32) Query                  { return q.Where(CpuN.NotEq(v)) }
+func (q Query) CpuNGt(v int32) Query                     { return q.Where(CpuN.Gt(v)) }
+func (q Query) CpuNGte(v int32) Query                    { return q.Where(CpuN.Gte(v)) }
+func (q Query) CpuNLt(v int32) Query                     { return q.Where(CpuN.Lt(v)) }
+func (q Query) CpuNLte(v int32) Query                    { return q.Where(CpuN.Lte(v)) }
+func (q Query) CpuNIn(v ...int32) Query                  { return q.Where(CpuN.In(v...)) }
+func (q Query) CpuNNotIn(v ...int32) Query               { return q.Where(CpuN.NotIn(v...)) }
+func (q Query) CpuMaxEq(v float32) Query                 { return q.Where(CpuMax.Eq(v)) }
+func (q Query) CpuMaxNotEq(v float32) Query              { return q.Where(CpuMax.NotEq(v)) }
+func (q Query) CpuMaxGt(v float32) Query                 { return q.Where(CpuMax.Gt(v)) }
+func (q Query) CpuMaxGte(v float32) Query                { return q.Where(CpuMax.Gte(v)) }
+func (q Query) CpuMaxLt(v float32) Query                 { return q.Where(CpuMax.Lt(v)) }
+func (q Query) CpuMaxLte(v float32) Query                { return q.Where(CpuMax.Lte(v)) }
+func (q Query) CpuMaxIsNull() Query                      { return q.Where(CpuMax.IsNull()) }
+func (q Query) CpuMaxIsNotNull() Query                   { return q.Where(CpuMax.IsNotNull()) }
+func (q Query) MemPctEq(v float32) Query                 { return q.Where(MemPct.Eq(v)) }
+func (q Query) MemPctNotEq(v float32) Query              { return q.Where(MemPct.NotEq(v)) }
+func (q Query) MemPctGt(v float32) Query                 { return q.Where(MemPct.Gt(v)) }
+func (q Query) MemPctGte(v float32) Query                { return q.Where(MemPct.Gte(v)) }
+func (q Query) MemPctLt(v float32) Query                 { return q.Where(MemPct.Lt(v)) }
+func (q Query) MemPctLte(v float32) Query                { return q.Where(MemPct.Lte(v)) }
+func (q Query) MemPctIsNull() Query                      { return q.Where(MemPct.IsNull()) }
+func (q Query) MemPctIsNotNull() Query                   { return q.Where(MemPct.IsNotNull()) }
+func (q Query) SwapPctEq(v float32) Query                { return q.Where(SwapPct.Eq(v)) }
+func (q Query) SwapPctNotEq(v float32) Query             { return q.Where(SwapPct.NotEq(v)) }
+func (q Query) SwapPctGt(v float32) Query                { return q.Where(SwapPct.Gt(v)) }
+func (q Query) SwapPctGte(v float32) Query               { return q.Where(SwapPct.Gte(v)) }
+func (q Query) SwapPctLt(v float32) Query                { return q.Where(SwapPct.Lt(v)) }
+func (q Query) SwapPctLte(v float32) Query               { return q.Where(SwapPct.Lte(v)) }
+func (q Query) SwapPctIsNull() Query                     { return q.Where(SwapPct.IsNull()) }
+func (q Query) SwapPctIsNotNull() Query                  { return q.Where(SwapPct.IsNotNull()) }
+func (q Query) DisksContains(v runtime.JSON) Query       { return q.Where(Disks.Contains(v)) }
+func (q Query) DisksContainedBy(v runtime.JSON) Query    { return q.Where(Disks.ContainedBy(v)) }
+func (q Query) DisksHasAnyKey(v ...string) Query         { return q.Where(Disks.HasAnyKey(v...)) }
+func (q Query) DisksHasAllKeys(v ...string) Query        { return q.Where(Disks.HasAllKeys(v...)) }
+func (q Query) DisksIsNull() Query                       { return q.Where(Disks.IsNull()) }
+func (q Query) DisksIsNotNull() Query                    { return q.Where(Disks.IsNotNull()) }
+func (q Query) RxSumEq(v float64) Query                  { return q.Where(RxSum.Eq(v)) }
+func (q Query) RxSumNotEq(v float64) Query               { return q.Where(RxSum.NotEq(v)) }
+func (q Query) RxSumGt(v float64) Query                  { return q.Where(RxSum.Gt(v)) }
+func (q Query) RxSumGte(v float64) Query                 { return q.Where(RxSum.Gte(v)) }
+func (q Query) RxSumLt(v float64) Query                  { return q.Where(RxSum.Lt(v)) }
+func (q Query) RxSumLte(v float64) Query                 { return q.Where(RxSum.Lte(v)) }
+func (q Query) TxSumEq(v float64) Query                  { return q.Where(TxSum.Eq(v)) }
+func (q Query) TxSumNotEq(v float64) Query               { return q.Where(TxSum.NotEq(v)) }
+func (q Query) TxSumGt(v float64) Query                  { return q.Where(TxSum.Gt(v)) }
+func (q Query) TxSumGte(v float64) Query                 { return q.Where(TxSum.Gte(v)) }
+func (q Query) TxSumLt(v float64) Query                  { return q.Where(TxSum.Lt(v)) }
+func (q Query) TxSumLte(v float64) Query                 { return q.Where(TxSum.Lte(v)) }
+func (q Query) NetNEq(v int32) Query                     { return q.Where(NetN.Eq(v)) }
+func (q Query) NetNNotEq(v int32) Query                  { return q.Where(NetN.NotEq(v)) }
+func (q Query) NetNGt(v int32) Query                     { return q.Where(NetN.Gt(v)) }
+func (q Query) NetNGte(v int32) Query                    { return q.Where(NetN.Gte(v)) }
+func (q Query) NetNLt(v int32) Query                     { return q.Where(NetN.Lt(v)) }
+func (q Query) NetNLte(v int32) Query                    { return q.Where(NetN.Lte(v)) }
+func (q Query) NetNIn(v ...int32) Query                  { return q.Where(NetN.In(v...)) }
+func (q Query) NetNNotIn(v ...int32) Query               { return q.Where(NetN.NotIn(v...)) }
+func (q Query) RxMaxEq(v float64) Query                  { return q.Where(RxMax.Eq(v)) }
+func (q Query) RxMaxNotEq(v float64) Query               { return q.Where(RxMax.NotEq(v)) }
+func (q Query) RxMaxGt(v float64) Query                  { return q.Where(RxMax.Gt(v)) }
+func (q Query) RxMaxGte(v float64) Query                 { return q.Where(RxMax.Gte(v)) }
+func (q Query) RxMaxLt(v float64) Query                  { return q.Where(RxMax.Lt(v)) }
+func (q Query) RxMaxLte(v float64) Query                 { return q.Where(RxMax.Lte(v)) }
+func (q Query) RxMaxIsNull() Query                       { return q.Where(RxMax.IsNull()) }
+func (q Query) RxMaxIsNotNull() Query                    { return q.Where(RxMax.IsNotNull()) }
+func (q Query) TxMaxEq(v float64) Query                  { return q.Where(TxMax.Eq(v)) }
+func (q Query) TxMaxNotEq(v float64) Query               { return q.Where(TxMax.NotEq(v)) }
+func (q Query) TxMaxGt(v float64) Query                  { return q.Where(TxMax.Gt(v)) }
+func (q Query) TxMaxGte(v float64) Query                 { return q.Where(TxMax.Gte(v)) }
+func (q Query) TxMaxLt(v float64) Query                  { return q.Where(TxMax.Lt(v)) }
+func (q Query) TxMaxLte(v float64) Query                 { return q.Where(TxMax.Lte(v)) }
+func (q Query) TxMaxIsNull() Query                       { return q.Where(TxMax.IsNull()) }
+func (q Query) TxMaxIsNotNull() Query                    { return q.Where(TxMax.IsNotNull()) }
+func (q Query) LoadMaxEq(v float32) Query                { return q.Where(LoadMax.Eq(v)) }
+func (q Query) LoadMaxNotEq(v float32) Query             { return q.Where(LoadMax.NotEq(v)) }
+func (q Query) LoadMaxGt(v float32) Query                { return q.Where(LoadMax.Gt(v)) }
+func (q Query) LoadMaxGte(v float32) Query               { return q.Where(LoadMax.Gte(v)) }
+func (q Query) LoadMaxLt(v float32) Query                { return q.Where(LoadMax.Lt(v)) }
+func (q Query) LoadMaxLte(v float32) Query               { return q.Where(LoadMax.Lte(v)) }
+func (q Query) LoadMaxIsNull() Query                     { return q.Where(LoadMax.IsNull()) }
+func (q Query) LoadMaxIsNotNull() Query                  { return q.Where(LoadMax.IsNotNull()) }
+func (q Query) StealSumEq(v float64) Query               { return q.Where(StealSum.Eq(v)) }
+func (q Query) StealSumNotEq(v float64) Query            { return q.Where(StealSum.NotEq(v)) }
+func (q Query) StealSumGt(v float64) Query               { return q.Where(StealSum.Gt(v)) }
+func (q Query) StealSumGte(v float64) Query              { return q.Where(StealSum.Gte(v)) }
+func (q Query) StealSumLt(v float64) Query               { return q.Where(StealSum.Lt(v)) }
+func (q Query) StealSumLte(v float64) Query              { return q.Where(StealSum.Lte(v)) }
+func (q Query) StealNEq(v int32) Query                   { return q.Where(StealN.Eq(v)) }
+func (q Query) StealNNotEq(v int32) Query                { return q.Where(StealN.NotEq(v)) }
+func (q Query) StealNGt(v int32) Query                   { return q.Where(StealN.Gt(v)) }
+func (q Query) StealNGte(v int32) Query                  { return q.Where(StealN.Gte(v)) }
+func (q Query) StealNLt(v int32) Query                   { return q.Where(StealN.Lt(v)) }
+func (q Query) StealNLte(v int32) Query                  { return q.Where(StealN.Lte(v)) }
+func (q Query) StealNIn(v ...int32) Query                { return q.Where(StealN.In(v...)) }
+func (q Query) StealNNotIn(v ...int32) Query             { return q.Where(StealN.NotIn(v...)) }
+func (q Query) StealMaxEq(v float32) Query               { return q.Where(StealMax.Eq(v)) }
+func (q Query) StealMaxNotEq(v float32) Query            { return q.Where(StealMax.NotEq(v)) }
+func (q Query) StealMaxGt(v float32) Query               { return q.Where(StealMax.Gt(v)) }
+func (q Query) StealMaxGte(v float32) Query              { return q.Where(StealMax.Gte(v)) }
+func (q Query) StealMaxLt(v float32) Query               { return q.Where(StealMax.Lt(v)) }
+func (q Query) StealMaxLte(v float32) Query              { return q.Where(StealMax.Lte(v)) }
+func (q Query) StealMaxIsNull() Query                    { return q.Where(StealMax.IsNull()) }
+func (q Query) StealMaxIsNotNull() Query                 { return q.Where(StealMax.IsNotNull()) }
+func (q Query) TcpMaxEq(v int32) Query                   { return q.Where(TcpMax.Eq(v)) }
+func (q Query) TcpMaxNotEq(v int32) Query                { return q.Where(TcpMax.NotEq(v)) }
+func (q Query) TcpMaxGt(v int32) Query                   { return q.Where(TcpMax.Gt(v)) }
+func (q Query) TcpMaxGte(v int32) Query                  { return q.Where(TcpMax.Gte(v)) }
+func (q Query) TcpMaxLt(v int32) Query                   { return q.Where(TcpMax.Lt(v)) }
+func (q Query) TcpMaxLte(v int32) Query                  { return q.Where(TcpMax.Lte(v)) }
+func (q Query) TcpMaxIn(v ...int32) Query                { return q.Where(TcpMax.In(v...)) }
+func (q Query) TcpMaxNotIn(v ...int32) Query             { return q.Where(TcpMax.NotIn(v...)) }
+func (q Query) TcpMaxIsNull() Query                      { return q.Where(TcpMax.IsNull()) }
+func (q Query) TcpMaxIsNotNull() Query                   { return q.Where(TcpMax.IsNotNull()) }
+func (q Query) RopsSumEq(v float64) Query                { return q.Where(RopsSum.Eq(v)) }
+func (q Query) RopsSumNotEq(v float64) Query             { return q.Where(RopsSum.NotEq(v)) }
+func (q Query) RopsSumGt(v float64) Query                { return q.Where(RopsSum.Gt(v)) }
+func (q Query) RopsSumGte(v float64) Query               { return q.Where(RopsSum.Gte(v)) }
+func (q Query) RopsSumLt(v float64) Query                { return q.Where(RopsSum.Lt(v)) }
+func (q Query) RopsSumLte(v float64) Query               { return q.Where(RopsSum.Lte(v)) }
+func (q Query) WopsSumEq(v float64) Query                { return q.Where(WopsSum.Eq(v)) }
+func (q Query) WopsSumNotEq(v float64) Query             { return q.Where(WopsSum.NotEq(v)) }
+func (q Query) WopsSumGt(v float64) Query                { return q.Where(WopsSum.Gt(v)) }
+func (q Query) WopsSumGte(v float64) Query               { return q.Where(WopsSum.Gte(v)) }
+func (q Query) WopsSumLt(v float64) Query                { return q.Where(WopsSum.Lt(v)) }
+func (q Query) WopsSumLte(v float64) Query               { return q.Where(WopsSum.Lte(v)) }
+func (q Query) RbpsSumEq(v float64) Query                { return q.Where(RbpsSum.Eq(v)) }
+func (q Query) RbpsSumNotEq(v float64) Query             { return q.Where(RbpsSum.NotEq(v)) }
+func (q Query) RbpsSumGt(v float64) Query                { return q.Where(RbpsSum.Gt(v)) }
+func (q Query) RbpsSumGte(v float64) Query               { return q.Where(RbpsSum.Gte(v)) }
+func (q Query) RbpsSumLt(v float64) Query                { return q.Where(RbpsSum.Lt(v)) }
+func (q Query) RbpsSumLte(v float64) Query               { return q.Where(RbpsSum.Lte(v)) }
+func (q Query) WbpsSumEq(v float64) Query                { return q.Where(WbpsSum.Eq(v)) }
+func (q Query) WbpsSumNotEq(v float64) Query             { return q.Where(WbpsSum.NotEq(v)) }
+func (q Query) WbpsSumGt(v float64) Query                { return q.Where(WbpsSum.Gt(v)) }
+func (q Query) WbpsSumGte(v float64) Query               { return q.Where(WbpsSum.Gte(v)) }
+func (q Query) WbpsSumLt(v float64) Query                { return q.Where(WbpsSum.Lt(v)) }
+func (q Query) WbpsSumLte(v float64) Query               { return q.Where(WbpsSum.Lte(v)) }
+func (q Query) IoNEq(v int32) Query                      { return q.Where(IoN.Eq(v)) }
+func (q Query) IoNNotEq(v int32) Query                   { return q.Where(IoN.NotEq(v)) }
+func (q Query) IoNGt(v int32) Query                      { return q.Where(IoN.Gt(v)) }
+func (q Query) IoNGte(v int32) Query                     { return q.Where(IoN.Gte(v)) }
+func (q Query) IoNLt(v int32) Query                      { return q.Where(IoN.Lt(v)) }
+func (q Query) IoNLte(v int32) Query                     { return q.Where(IoN.Lte(v)) }
+func (q Query) IoNIn(v ...int32) Query                   { return q.Where(IoN.In(v...)) }
+func (q Query) IoNNotIn(v ...int32) Query                { return q.Where(IoN.NotIn(v...)) }
+func (q Query) IopsMaxEq(v float64) Query                { return q.Where(IopsMax.Eq(v)) }
+func (q Query) IopsMaxNotEq(v float64) Query             { return q.Where(IopsMax.NotEq(v)) }
+func (q Query) IopsMaxGt(v float64) Query                { return q.Where(IopsMax.Gt(v)) }
+func (q Query) IopsMaxGte(v float64) Query               { return q.Where(IopsMax.Gte(v)) }
+func (q Query) IopsMaxLt(v float64) Query                { return q.Where(IopsMax.Lt(v)) }
+func (q Query) IopsMaxLte(v float64) Query               { return q.Where(IopsMax.Lte(v)) }
+func (q Query) IopsMaxIsNull() Query                     { return q.Where(IopsMax.IsNull()) }
+func (q Query) IopsMaxIsNotNull() Query                  { return q.Where(IopsMax.IsNotNull()) }
+func (q Query) IoBpsMaxEq(v float64) Query               { return q.Where(IoBpsMax.Eq(v)) }
+func (q Query) IoBpsMaxNotEq(v float64) Query            { return q.Where(IoBpsMax.NotEq(v)) }
+func (q Query) IoBpsMaxGt(v float64) Query               { return q.Where(IoBpsMax.Gt(v)) }
+func (q Query) IoBpsMaxGte(v float64) Query              { return q.Where(IoBpsMax.Gte(v)) }
+func (q Query) IoBpsMaxLt(v float64) Query               { return q.Where(IoBpsMax.Lt(v)) }
+func (q Query) IoBpsMaxLte(v float64) Query              { return q.Where(IoBpsMax.Lte(v)) }
+func (q Query) IoBpsMaxIsNull() Query                    { return q.Where(IoBpsMax.IsNull()) }
+func (q Query) IoBpsMaxIsNotNull() Query                 { return q.Where(IoBpsMax.IsNotNull()) }
+func (q Query) ProgramsContains(v runtime.JSON) Query    { return q.Where(Programs.Contains(v)) }
+func (q Query) ProgramsContainedBy(v runtime.JSON) Query { return q.Where(Programs.ContainedBy(v)) }
+func (q Query) ProgramsHasAnyKey(v ...string) Query      { return q.Where(Programs.HasAnyKey(v...)) }
+func (q Query) ProgramsHasAllKeys(v ...string) Query     { return q.Where(Programs.HasAllKeys(v...)) }
+func (q Query) ProgramsIsNull() Query                    { return q.Where(Programs.IsNull()) }
+func (q Query) ProgramsIsNotNull() Query                 { return q.Where(Programs.IsNotNull()) }
 
-const selectPrefix = `SELECT "hostname", "bucket", "samples", "cpu_sum", "cpu_n", "cpu_max", "mem_pct", "swap_pct", "disks", "rx_sum", "tx_sum", "net_n", "rx_max", "tx_max", "load_max", "steal_sum", "steal_n", "steal_max", "tcp_max", "rops_sum", "wops_sum", "rbps_sum", "wbps_sum", "io_n", "iops_max", "io_bps_max" FROM "usage_history"`
+const selectPrefix = `SELECT "hostname", "bucket", "samples", "cpu_sum", "cpu_n", "cpu_max", "mem_pct", "swap_pct", "disks", "rx_sum", "tx_sum", "net_n", "rx_max", "tx_max", "load_max", "steal_sum", "steal_n", "steal_max", "tcp_max", "rops_sum", "wops_sum", "rbps_sum", "wbps_sum", "io_n", "iops_max", "io_bps_max", "programs" FROM "usage_history"`
 const countPrefix = `SELECT count(*) FROM "usage_history"`
 const existsPrefix = `SELECT 1 FROM "usage_history"`
 const existsSuffix = ` LIMIT 1`
@@ -1521,6 +1543,12 @@ var orderTable = [nCols][4]string{
 		"\"io_bps_max\" ASC NULLS FIRST",
 		"\"io_bps_max\" DESC NULLS LAST",
 	},
+	{ // programs
+		"\"programs\"",
+		"\"programs\" DESC",
+		"\"programs\" ASC NULLS FIRST",
+		"\"programs\" DESC NULLS LAST",
+	},
 }
 
 // identTable is each column's bare quoted name, for the left side of a
@@ -1552,6 +1580,7 @@ var identTable = [nCols]string{
 	"\"io_n\"",
 	"\"iops_max\"",
 	"\"io_bps_max\"",
+	"\"programs\"",
 }
 
 var lowering = runtime.Lowering{
@@ -1584,7 +1613,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [26][28]runtime.Frag{
+var fragTable = [27][28]runtime.Frag{
 	{ // hostname
 		{}, // opNone
 		{A: "\"hostname\" = $", B: ""},
@@ -2365,6 +2394,36 @@ var fragTable = [26][28]runtime.Frag{
 		{},
 		{},
 	},
+	{ // programs
+		{}, // opNone
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"programs\" @> $", B: ""},
+		{A: "\"programs\" <@ $", B: ""},
+		{A: "\"programs\" ?| $", B: ""},
+		{A: "\"programs\" ?& $", B: ""},
+		{A: "\"programs\" IS NULL", B: ""},
+		{A: "\"programs\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
 }
 
 func fragOf(op, col uint32) runtime.Frag {
@@ -2548,6 +2607,7 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.IoN = runtime.Int4(rv[23])
 	r.IopsMax = runtime.Nullable(rv[24], runtime.Float8)
 	r.IoBpsMax = runtime.Nullable(rv[25], runtime.Float8)
+	r.Programs = runtime.NullJSON(rv[26], sl)
 	return nil
 }
 
@@ -2646,6 +2706,10 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyI32[nai32] = q.anyI32[nai32]
 				v = append(v, &b.anyI32[nai32])
 				nai32++
+			case 26:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
 			}
 			continue
 		}
@@ -2754,6 +2818,10 @@ func (q Query) bindPreds(b *binder) []any {
 			b.f64s[nf] = q.f64s[nf]
 			v = append(v, &b.f64s[nf])
 			nf++
+		case 26:
+			b.jsns[njs] = q.jsns[njs]
+			v = append(v, &b.jsns[njs])
+			njs++
 		}
 	}
 	b.vals = v
@@ -2891,7 +2959,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "usage_history" ("hostname", "bucket", "samples", "cpu_sum", "cpu_n", "cpu_max", "mem_pct", "swap_pct", "disks", "rx_sum", "tx_sum", "net_n", "rx_max", "tx_max", "load_max", "steal_sum", "steal_n", "steal_max", "tcp_max", "rops_sum", "wops_sum", "rbps_sum", "wbps_sum", "io_n", "iops_max", "io_bps_max") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26) RETURNING "hostname", "bucket", "samples", "cpu_sum", "cpu_n", "cpu_max", "mem_pct", "swap_pct", "disks", "rx_sum", "tx_sum", "net_n", "rx_max", "tx_max", "load_max", "steal_sum", "steal_n", "steal_max", "tcp_max", "rops_sum", "wops_sum", "rbps_sum", "wbps_sum", "io_n", "iops_max", "io_bps_max"`
+const insertSQL = `INSERT INTO "usage_history" ("hostname", "bucket", "samples", "cpu_sum", "cpu_n", "cpu_max", "mem_pct", "swap_pct", "disks", "rx_sum", "tx_sum", "net_n", "rx_max", "tx_max", "load_max", "steal_sum", "steal_n", "steal_max", "tcp_max", "rops_sum", "wops_sum", "rbps_sum", "wbps_sum", "io_n", "iops_max", "io_bps_max", "programs") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27) RETURNING "hostname", "bucket", "samples", "cpu_sum", "cpu_n", "cpu_max", "mem_pct", "swap_pct", "disks", "rx_sum", "tx_sum", "net_n", "rx_max", "tx_max", "load_max", "steal_sum", "steal_n", "steal_max", "tcp_max", "rops_sum", "wops_sum", "rbps_sum", "wbps_sum", "io_n", "iops_max", "io_bps_max", "programs"`
 
 const updatePrefix = `UPDATE "usage_history" SET `
 const deletePrefix = `DELETE FROM "usage_history"`
@@ -2923,9 +2991,10 @@ const (
 	dIoN      uint64 = 1 << 21
 	dIopsMax  uint64 = 1 << 22
 	dIoBpsMax uint64 = 1 << 23
+	dPrograms uint64 = 1 << 24
 )
 
-const nUpdatable = 24
+const nUpdatable = 25
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
@@ -2953,6 +3022,7 @@ var setFrags = [nUpdatable]runtime.Frag{
 	{A: "\"io_n\" = $", B: ""},       // io_n
 	{A: "\"iops_max\" = $", B: ""},   // iops_max
 	{A: "\"io_bps_max\" = $", B: ""}, // io_bps_max
+	{A: "\"programs\" = $", B: ""},   // programs
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -2983,6 +3053,7 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{A: "\"io_n\" = \"io_n\" + 1", B: ""}, // io_n = its own value plus one
 	{},                                    // iops_max has no server-side form
 	{},                                    // io_bps_max has no server-side form
+	{},                                    // programs has no server-side form
 }
 
 // pkFrags addresses one row.
@@ -3021,9 +3092,10 @@ const (
 	iIoN      uint64 = 1 << 23
 	iIopsMax  uint64 = 1 << 24
 	iIoBpsMax uint64 = 1 << 25
+	iPrograms uint64 = 1 << 26
 )
 
-const nInsertable = 26
+const nInsertable = 27
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -3053,6 +3125,7 @@ var insCols = [nInsertable]string{
 	"\"io_n\"",
 	"\"iops_max\"",
 	"\"io_bps_max\"",
+	"\"programs\"",
 }
 
 // insParts and insPlaceholder come from the back end at build time; the
@@ -3061,7 +3134,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"usage_history\""
-const insReturning = " RETURNING \"hostname\", \"bucket\", \"samples\", \"cpu_sum\", \"cpu_n\", \"cpu_max\", \"mem_pct\", \"swap_pct\", \"disks\", \"rx_sum\", \"tx_sum\", \"net_n\", \"rx_max\", \"tx_max\", \"load_max\", \"steal_sum\", \"steal_n\", \"steal_max\", \"tcp_max\", \"rops_sum\", \"wops_sum\", \"rbps_sum\", \"wbps_sum\", \"io_n\", \"iops_max\", \"io_bps_max\""
+const insReturning = " RETURNING \"hostname\", \"bucket\", \"samples\", \"cpu_sum\", \"cpu_n\", \"cpu_max\", \"mem_pct\", \"swap_pct\", \"disks\", \"rx_sum\", \"tx_sum\", \"net_n\", \"rx_max\", \"tx_max\", \"load_max\", \"steal_sum\", \"steal_n\", \"steal_max\", \"tcp_max\", \"rops_sum\", \"wops_sum\", \"rbps_sum\", \"wbps_sum\", \"io_n\", \"iops_max\", \"io_bps_max\", \"programs\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -3080,7 +3153,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"hostname\", \"bucket\", \"samples\", \"cpu_sum\", \"cpu_n\", \"cpu_max\", \"mem_pct\", \"swap_pct\", \"disks\", \"rx_sum\", \"tx_sum\", \"net_n\", \"rx_max\", \"tx_max\", \"load_max\", \"steal_sum\", \"steal_n\", \"steal_max\", \"tcp_max\", \"rops_sum\", \"wops_sum\", \"rbps_sum\", \"wbps_sum\", \"io_n\", \"iops_max\", \"io_bps_max\""
+const updReturning = " RETURNING \"hostname\", \"bucket\", \"samples\", \"cpu_sum\", \"cpu_n\", \"cpu_max\", \"mem_pct\", \"swap_pct\", \"disks\", \"rx_sum\", \"tx_sum\", \"net_n\", \"rx_max\", \"tx_max\", \"load_max\", \"steal_sum\", \"steal_n\", \"steal_max\", \"tcp_max\", \"rops_sum\", \"wops_sum\", \"rbps_sum\", \"wbps_sum\", \"io_n\", \"iops_max\", \"io_bps_max\", \"programs\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -3419,6 +3492,20 @@ func (m *Mut) SetIoBpsMaxNull() {
 	m.row.IoBpsMax = runtime.Null[float64]{}
 	m.dirty |= dIoBpsMax
 	m.expr &^= dIoBpsMax
+}
+
+func (m *Mut) SetPrograms(v runtime.JSON) {
+	m.row.Programs = runtime.Null[runtime.JSON]{V: v, Valid: true}
+	m.dirty |= dPrograms
+	m.expr &^= dPrograms
+}
+
+// SetProgramsNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetProgramsNull() {
+	m.row.Programs = runtime.Null[runtime.JSON]{}
+	m.dirty |= dPrograms
+	m.expr &^= dPrograms
 }
 
 // Ins stages a new row. Unlike Mut it has a setter for every insertable
@@ -3865,6 +3952,18 @@ func (n *Ins) SetIoBpsMaxNull() {
 	n.set |= iIoBpsMax
 }
 
+func (n *Ins) SetPrograms(v runtime.JSON) {
+	n.row.Programs = runtime.Null[runtime.JSON]{V: v, Valid: true}
+	n.set |= iPrograms
+}
+
+// SetProgramsNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetProgramsNull() {
+	n.row.Programs = runtime.Null[runtime.JSON]{}
+	n.set |= iPrograms
+}
+
 // The conflict encoding. One byte holds both which unique index an
 // upsert names and what it does on collision, so the insert statement
 // cache stays keyed by one mask and one byte:
@@ -3914,7 +4013,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 24)
+	set := make([]string, 0, 25)
 	switch i {
 	case 0:
 		if mask&(1<<2) != 0 {
@@ -3988,6 +4087,9 @@ func assignable(i uint8, mask uint64) []string {
 		}
 		if mask&(1<<25) != 0 {
 			set = append(set, "io_bps_max")
+		}
+		if mask&(1<<26) != 0 {
+			set = append(set, "programs")
 		}
 	}
 	return set
@@ -4101,6 +4203,7 @@ var assignFor = map[string]string{
 	"io_n":       "\"io_n\" = EXCLUDED.\"io_n\"",
 	"iops_max":   "\"iops_max\" = EXCLUDED.\"iops_max\"",
 	"io_bps_max": "\"io_bps_max\" = EXCLUDED.\"io_bps_max\"",
+	"programs":   "\"programs\" = EXCLUDED.\"programs\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -4203,6 +4306,8 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 			args = append(args, n.row.IopsMax.Arg())
 		case 25:
 			args = append(args, n.row.IoBpsMax.Arg())
+		case 26:
+			args = append(args, n.row.Programs.Arg())
 		}
 	}
 	var out Row
@@ -4240,7 +4345,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 26)
+	args := make([]any, 0, 27)
 	args = append(args, r.Hostname)
 	args = append(args, r.Bucket)
 	args = append(args, r.Samples)
@@ -4267,6 +4372,7 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.IoN)
 	args = append(args, r.IopsMax.Arg())
 	args = append(args, r.IoBpsMax.Arg())
+	args = append(args, r.Programs.Arg())
 	rows, err := ex.Query(ctx, insertSQL, args)
 	if err != nil {
 		return err
@@ -4319,13 +4425,14 @@ var copyCols = []string{
 	"io_n",
 	"iops_max",
 	"io_bps_max",
+	"programs",
 }
 
 // rowSource walks a []Row for CopyFrom without copying any of it.
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [26]any
+	buf  [27]any
 }
 
 func (s *rowSource) Next() bool {
@@ -4369,6 +4476,7 @@ func (s *rowSource) Values() []any {
 	s.buf[23] = &r.IoN
 	s.buf[24] = r.IopsMax.Ptr()
 	s.buf[25] = r.IoBpsMax.Ptr()
+	s.buf[26] = r.Programs.Ptr()
 	return s.buf[:]
 }
 
@@ -4425,8 +4533,9 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 23
 	mask |= 1 << 24
 	mask |= 1 << 25
+	mask |= 1 << 26
 	st := stmtForInsertNoReturn(mask, 0, 0)
-	args := make([]any, 0, 26)
+	args := make([]any, 0, 27)
 	args = append(args, r.Hostname)
 	args = append(args, r.Bucket)
 	args = append(args, r.Samples)
@@ -4453,6 +4562,7 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.IoN)
 	args = append(args, r.IopsMax.Arg())
 	args = append(args, r.IoBpsMax.Arg())
+	args = append(args, r.Programs.Arg())
 	return runtime.BatchOp{SQL: st.SQL, Args: args}
 }
 
@@ -4538,6 +4648,8 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 			args = append(args, n.row.IopsMax.Arg())
 		case 25:
 			args = append(args, n.row.IoBpsMax.Arg())
+		case 26:
+			args = append(args, n.row.Programs.Arg())
 		}
 	}
 	return runtime.BatchOp{SQL: st.SQL, Args: args}, nil
@@ -4641,6 +4753,8 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 			args = append(args, m.row.IopsMax.Arg())
 		case 23:
 			args = append(args, m.row.IoBpsMax.Arg())
+		case 24:
+			args = append(args, m.row.Programs.Arg())
 		}
 	}
 	args = append(args, m.row.Hostname)
@@ -4772,6 +4886,8 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 			args = append(args, m.row.IopsMax.Arg())
 		case 23:
 			args = append(args, m.row.IoBpsMax.Arg())
+		case 24:
+			args = append(args, m.row.Programs.Arg())
 		}
 	}
 	args = append(args, m.row.Hostname)
@@ -4969,6 +5085,8 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 			args = append(args, m.row.IopsMax.Arg())
 		case 23:
 			args = append(args, m.row.IoBpsMax.Arg())
+		case 24:
+			args = append(args, m.row.Programs.Arg())
 		}
 	}
 	args = append(args, q.bindPreds(b)...)

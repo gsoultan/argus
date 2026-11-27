@@ -144,12 +144,19 @@ type HostUsage struct {
 }
 
 // HostProcess mirrors agent.Process: a program's name (never its command
-// line), pid, share of the machine's processor and resident memory.
+// line), its busiest process's pid, how many processes share the name, its
+// share of the machine's processor, resident memory and bytes per second
+// read and written. Count, ReadBps, WriteBps and IOHidden are absent from
+// an agent older than them: one process each, disk not reported.
 type HostProcess struct {
-	Name   string   `json:"name"`
-	PID    int      `json:"pid"`
-	CPU    *float64 `json:"cpu,omitempty"`
-	Memory float64  `json:"memory"`
+	Name     string   `json:"name"`
+	PID      int      `json:"pid"`
+	Count    int      `json:"count,omitempty"`
+	CPU      *float64 `json:"cpu,omitempty"`
+	Memory   float64  `json:"memory"`
+	ReadBps  *float64 `json:"read_bps,omitempty"`
+	WriteBps *float64 `json:"write_bps,omitempty"`
+	IOHidden bool     `json:"io_hidden,omitempty"`
 }
 
 // HostDiskIO mirrors agent.DiskIO: one physical disk's operations and bytes
@@ -187,7 +194,10 @@ const (
 	maxIfaceAddrs  = 16
 	maxNetRates    = 32
 	maxDiskIO      = 16
-	maxTopProcs    = 10
+	maxTopProcs    = 15
+	// maxProcCount is the most processes one program can be: the agent
+	// reads at most 8192 a sample.
+	maxProcCount = 8192
 	// maxProcMemory is 64 TiB, past any machine's memory.
 	maxProcMemory = 1 << 46
 	// maxDiskOps is ten million operations a second, past any one disk
@@ -324,7 +334,7 @@ func (u *HostUsage) bounded() *HostUsage {
 	return &c
 }
 
-// boundedTop keeps at most maxTopProcs processes with a printable name and
+// boundedTop keeps at most maxTopProcs programs with a printable name and
 // figures that can be true. A name is the program's own, so it is shown as
 // text, never markup, and cut to what a row holds.
 func boundedTop(in []HostProcess) []HostProcess {
@@ -345,10 +355,19 @@ func boundedTop(in []HostProcess) []HostProcess {
 		if name == "" || p.PID <= 0 || math.IsNaN(p.Memory) || p.Memory < 0 || p.Memory > maxProcMemory {
 			continue
 		}
-		q := HostProcess{Name: name, PID: p.PID, Memory: math.Round(p.Memory)}
+		q := HostProcess{Name: name, PID: p.PID, Memory: math.Round(p.Memory), IOHidden: p.IOHidden}
+		if p.Count > 1 && p.Count <= maxProcCount {
+			q.Count = p.Count
+		}
 		if p.CPU != nil && !math.IsNaN(*p.CPU) && *p.CPU >= 0 && *p.CPU <= 100 {
 			v := *p.CPU
 			q.CPU = &v
+		}
+		// Both or neither: a read rate with no write rate is no reading.
+		rate := func(v *float64) bool { return v != nil && !math.IsNaN(*v) && *v >= 0 && *v <= maxRateBps }
+		if !q.IOHidden && rate(p.ReadBps) && rate(p.WriteBps) {
+			r, w := math.Round(*p.ReadBps), math.Round(*p.WriteBps)
+			q.ReadBps, q.WriteBps = &r, &w
 		}
 		out = append(out, q)
 	}
@@ -585,12 +604,19 @@ type SystemUsage struct {
 	Top []SystemProcess `json:"top"`
 }
 
-// SystemProcess is one row of what is using a server now.
+// SystemProcess is one row of what is using a server now: one program,
+// its processes added up. Count is 1 for a single process; ReadBps and
+// WriteBps are null when the agent did not measure them, and IOHidden says
+// the system would not let it.
 type SystemProcess struct {
-	Name   string   `json:"name"`
-	PID    int      `json:"pid"`
-	CPU    *float64 `json:"cpu"`
-	Memory float64  `json:"memory"`
+	Name     string   `json:"name"`
+	PID      int      `json:"pid"`
+	Count    int      `json:"count"`
+	CPU      *float64 `json:"cpu"`
+	Memory   float64  `json:"memory"`
+	ReadBps  *float64 `json:"readBps"`
+	WriteBps *float64 `json:"writeBps"`
+	IOHidden bool     `json:"ioHidden"`
 }
 
 // SystemNetRate is one interface's traffic on the System card.
@@ -678,7 +704,8 @@ func systemUsageOf(hu HostUsage) *SystemUsage {
 		Steal: hu.Steal, TCPConns: hu.TCPConns, Top: make([]SystemProcess, 0, len(hu.Top)),
 	}
 	for _, p := range boundedTop(hu.Top) {
-		u.Top = append(u.Top, SystemProcess(p))
+		u.Top = append(u.Top, SystemProcess{Name: p.Name, PID: p.PID, Count: max(1, p.Count), CPU: p.CPU,
+			Memory: p.Memory, ReadBps: p.ReadBps, WriteBps: p.WriteBps, IOHidden: p.IOHidden})
 	}
 	return u
 }

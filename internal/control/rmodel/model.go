@@ -2435,8 +2435,8 @@ func (m *TelegramRoute) Schema(t *storm.Table) {
 }
 
 // UsageHistory is table usage_history: one agent's resource usage folded
-// into 5-minute buckets, kept 30 days, for the Metrics tab (migrations 075
-// and 082).
+// into 5-minute buckets, kept 30 days, for the Metrics tab (migrations 075,
+// 082 and 118).
 type UsageHistory struct {
 	Hostname string
 	Bucket   time.Time
@@ -2464,6 +2464,9 @@ type UsageHistory struct {
 	IoN      int32
 	IopsMax  *float64
 	IoBpsMax *float64
+	// Programs is each program the agent named in the bucket's reports,
+	// at its busiest (migration 118).
+	Programs *storm.JSON
 }
 
 func (m *UsageHistory) Schema(t *storm.Table) {
