@@ -761,14 +761,25 @@ func onOff(b string) string {
 	return b
 }
 
+// subscriptionErrorCols gives the two error-count columns of the
+// subscription query and the join they need. pg_stat_subscription_stats
+// arrived in 15, and its sync count has not kept one name: later servers
+// split sync_error_count into sync_table_error_count and
+// sync_seq_error_count. The columns are read through to_jsonb so that a
+// name the server lacks reads as NULL instead of failing the whole query.
+func subscriptionErrorCols(major int) (cols, join string) {
+	if major < 15 {
+		return "NULL::bigint, NULL::bigint", ""
+	}
+	cols = `(to_jsonb(ss)->>'apply_error_count')::bigint,
+  coalesce((to_jsonb(ss)->>'sync_error_count')::bigint,
+    (to_jsonb(ss)->>'sync_table_error_count')::bigint + coalesce((to_jsonb(ss)->>'sync_seq_error_count')::bigint, 0))`
+	return cols, "LEFT JOIN pg_stat_subscription_stats ss ON ss.subid = s.oid"
+}
+
 func listSubscriptions(ctx context.Context, conn *pgconn.PgConn) ([]PGSubscription, error) {
 	major := pgMajor(conn.ParameterStatus("server_version"))
-	errs := "NULL::bigint, NULL::bigint"
-	join := ""
-	if major >= 15 {
-		errs = "ss.apply_error_count, ss.sync_error_count"
-		join = "LEFT JOIN pg_stat_subscription_stats ss ON ss.subid = s.oid"
-	}
+	errs, join := subscriptionErrorCols(major)
 	// How it applies: the columns arrived in 14 (binary, streaming) and 15
 	// (disable_on_error); streaming is a bool in 14 and a char in 16.
 	opts := "'', '', ''"
