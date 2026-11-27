@@ -5,6 +5,7 @@ import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gsoultan/argus/internal/auth"
 	"github.com/gsoultan/argus/internal/secretwire"
 	"github.com/gsoultan/argus/internal/tlsconfig"
 	"github.com/gsoultan/argus/internal/tunnel"
@@ -29,7 +31,10 @@ func TestSecretsTunnelEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.api.Tunnels = &TunnelHub{GrantKey: key}
+	h.api.InstanceName = "replica-a"
 	t.Cleanup(h.api.secretsBusy.Wait)
+	secretsTunnelPing = 50 * time.Millisecond
+	t.Cleanup(func() { secretsTunnelPing = tunnelPingEvery })
 	tn, owner, pw := newTenant(t, h.store)
 	ownerC := h.signIn(t, tn.Slug, owner, pw)
 	ctx := WithTenant(context.Background(), tn)
@@ -199,11 +204,11 @@ func TestSecretsTunnelEndToEnd(t *testing.T) {
 		t.Fatalf("agent's server list = %+v", list)
 	}
 
-	read := func(auth, path, name string) (int, []byte) {
+	readAt := func(base, auth, path, name string) (int, []byte) {
 		t.Helper()
 		k, _ := ecdh.X25519().GenerateKey(rand.Reader)
 		body, _ := json.Marshal(secretwire.ReadRequest{Name: name, Recipient: secretwire.EncodeKey(k.PublicKey().Bytes()), Purpose: "test"})
-		req, _ := http.NewRequest("POST", h.srv.URL+path+"/v1/read", strings.NewReader(string(body)))
+		req, _ := http.NewRequest("POST", base+path+"/v1/read", strings.NewReader(string(body)))
 		req.Header.Set("Content-Type", "application/json")
 		if auth != "" {
 			req.Header.Set("Authorization", auth)
@@ -227,6 +232,7 @@ func TestSecretsTunnelEndToEnd(t *testing.T) {
 		}
 		return res.StatusCode, plain
 	}
+	read := func(auth, path, name string) (int, []byte) { t.Helper(); return readAt(h.srv.URL, auth, path, name) }
 	relay := list[0].Relay
 	if code, v := read("Agent "+agent.Credential, relay, "edge/api-key"); code != http.StatusOK || string(v) != "s3cr3t" {
 		t.Fatalf("relayed read = %d %q", code, v)
@@ -267,6 +273,40 @@ func TestSecretsTunnelEndToEnd(t *testing.T) {
 		t.Error("the relayed read is not logged with the agent's address")
 	}
 
+	// Another replica of argus-control, on the same database. It does not
+	// hold the tunnel: it knows the server is connected and to whom, it
+	// leaves syncing to that replica without calling it a failure, and a
+	// relay through it is told to try again.
+	signer2, err := auth.NewSigner("a-development-secret-of-sufficient-length")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(signer2.Close)
+	b := NewAPI(h.store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	b.SetAuth(signer2, "", false)
+	b.Tunnels = &TunnelHub{GrantKey: key}
+	b.InstanceName = "replica-b"
+	bs := httptest.NewServer(b.Handler())
+	t.Cleanup(bs.Close)
+	before, _ := h.store.SecretsServer(ctx, id)
+	time.Sleep(3 * secretsTunnelPing)
+	srv, err = h.store.SecretsServer(ctx, id)
+	if err != nil || !srv.Connected || srv.TunnelReplica == nil || *srv.TunnelReplica != "replica-a" ||
+		srv.TunnelSeenAt == nil || !srv.TunnelSeenAt.After(*before.TunnelSeenAt) {
+		t.Fatalf("as another replica sees it = %+v, %v (seen before %v)", srv, err, before.TunnelSeenAt)
+	}
+	var elsewhere ErrSecretsElsewhere
+	if err := b.SyncSecretsServer(ctx, id); !errors.As(err, &elsewhere) || elsewhere.Replica != "replica-a" {
+		t.Errorf("sync on the other replica = %v", err)
+	}
+	if srv, _ := h.store.SecretsServer(ctx, id); srv.LastError != "" {
+		t.Errorf("the other replica recorded a failure: %q", srv.LastError)
+	}
+	if code, msg := readAt(bs.URL, "Agent "+agent.Credential, relay, "edge/api-key"); code != http.StatusServiceUnavailable ||
+		!strings.Contains(string(msg), "replica-a") {
+		t.Errorf("relay through the other replica = %d %s, want 503 naming replica-a", code, msg)
+	}
+
 	// Enrolling again (a rebuilt server) cuts the old connection, and the
 	// old credential stops working.
 	code, text = call("POST", "/api/v1/secrets/servers/"+id+"/enroll-token", nil)
@@ -275,6 +315,19 @@ func TestSecretsTunnelEndToEnd(t *testing.T) {
 		t.Fatalf("new token = %d %s", code, text)
 	}
 	stop()
+	// Gone from every replica's view once its connection closes.
+	for i := 0; i < 100; i++ {
+		if srv, _ := h.store.SecretsServer(ctx, id); !srv.Connected && srv.TunnelReplica == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if srv, _ := h.store.SecretsServer(ctx, id); srv.Connected || srv.TunnelReplica != nil {
+		t.Errorf("after the tunnel closed = connected %v on %v", srv.Connected, srv.TunnelReplica)
+	}
+	if err := b.SyncSecretsServer(ctx, id); err == nil || errors.As(err, &elsewhere) {
+		t.Errorf("sync with no tunnel anywhere = %v, want a failure", err)
+	}
 	enr2, err := vault.Enroll(context.Background(), vault.EnrollOptions{DataDir: t.TempDir(), ControlURL: ts.URL,
 		Token: again.EnrollToken, Pin: pin, Version: "test"})
 	if err != nil {

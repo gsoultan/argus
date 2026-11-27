@@ -3372,29 +3372,31 @@ func (m *RecordingPolicy) Schema(t *storm.Table) {
 type SecretsServer struct {
 	storm.Model
 
-	Name            string
-	Mode            string
-	URL             string
-	CredentialHash  *string
-	EnrollTokenHash *string
-	EnrollExpiresAt *time.Time
-	TunnelSeenAt    *time.Time
-	TlsPin          string
-	Folders         []string
-	SealKey         string
-	Version         string
-	SecretCount     int32
-	RulesSerial     int64
-	RulesHash       string
-	RulesPushedAt   *time.Time
-	LogSeq          int64
-	LogHead         string
-	LogGap          string
-	LogGapAt        *time.Time
-	LastContactAt   *time.Time
-	LastError       string
-	LastErrorAt     *time.Time
-	CreatedBy       string
+	Name              string
+	Mode              string
+	URL               string
+	CredentialHash    *string
+	EnrollTokenHash   *string
+	EnrollExpiresAt   *time.Time
+	TunnelReplica     *string
+	TunnelConnectedAt *time.Time
+	TunnelSeenAt      *time.Time
+	TlsPin            string
+	Folders           []string
+	SealKey           string
+	Version           string
+	SecretCount       int32
+	RulesSerial       int64
+	RulesHash         string
+	RulesPushedAt     *time.Time
+	LogSeq            int64
+	LogHead           string
+	LogGap            string
+	LogGapAt          *time.Time
+	LastContactAt     *time.Time
+	LastError         string
+	LastErrorAt       *time.Time
+	CreatedBy         string
 }
 
 func (m *SecretsServer) Schema(t *storm.Table) {
@@ -3419,6 +3421,7 @@ func (m *SecretsServer) Schema(t *storm.Table) {
 	t.CheckNamed("secrets_servers_mode_check", "mode = ANY (ARRAY['direct'::text, 'tunnel'::text])")
 	t.CheckNamed("secrets_servers_name_check", "(length(name) >= 1) AND (length(name) <= 80)")
 	t.CheckNamed("secrets_servers_tls_pin_check", "length(tls_pin) <= 80")
+	t.CheckNamed("secrets_servers_tunnel_replica_check", "length(tunnel_replica) <= 255")
 	t.Index(storm.Lower(&m.Name)).Unique().Named("secrets_servers_name_key")
 }
 

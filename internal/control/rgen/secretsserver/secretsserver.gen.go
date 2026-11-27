@@ -20,32 +20,34 @@ var (
 // Row is what a full read returns: the model struct with relations
 // replaced by their scalar foreign keys and *T rewritten to Null[T].
 type Row struct {
-	ID              [16]byte
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	Name            string
-	Mode            string
-	URL             string
-	CredentialHash  runtime.Null[string]
-	EnrollTokenHash runtime.Null[string]
-	EnrollExpiresAt runtime.Null[time.Time]
-	TunnelSeenAt    runtime.Null[time.Time]
-	TlsPin          string
-	Folders         []string
-	SealKey         string
-	Version         string
-	SecretCount     int32
-	RulesSerial     int64
-	RulesHash       string
-	RulesPushedAt   runtime.Null[time.Time]
-	LogSeq          int64
-	LogHead         string
-	LogGap          string
-	LogGapAt        runtime.Null[time.Time]
-	LastContactAt   runtime.Null[time.Time]
-	LastError       string
-	LastErrorAt     runtime.Null[time.Time]
-	CreatedBy       string
+	ID                [16]byte
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	Name              string
+	Mode              string
+	URL               string
+	CredentialHash    runtime.Null[string]
+	EnrollTokenHash   runtime.Null[string]
+	EnrollExpiresAt   runtime.Null[time.Time]
+	TunnelReplica     runtime.Null[string]
+	TunnelConnectedAt runtime.Null[time.Time]
+	TunnelSeenAt      runtime.Null[time.Time]
+	TlsPin            string
+	Folders           []string
+	SealKey           string
+	Version           string
+	SecretCount       int32
+	RulesSerial       int64
+	RulesHash         string
+	RulesPushedAt     runtime.Null[time.Time]
+	LogSeq            int64
+	LogHead           string
+	LogGap            string
+	LogGapAt          runtime.Null[time.Time]
+	LastContactAt     runtime.Null[time.Time]
+	LastError         string
+	LastErrorAt       runtime.Null[time.Time]
+	CreatedBy         string
 }
 
 // Operator ids. Argument-taking operators are numbered first, so the
@@ -84,7 +86,7 @@ const (
 	opNotExists runtime.Op = 27
 )
 
-const nCols = 26
+const nCols = 28
 
 // Query is a value type: composing one allocates nothing. Predicates
 // are a postfix token stream, so disjunction and negation are
@@ -263,111 +265,125 @@ func (q *Query) cursor(col uint32, r Row) {
 		q.tims[q.ntm] = r.EnrollExpiresAt.V
 		q.ntm++
 	case 9:
+		if int(q.ns) >= len(q.strs) {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = r.TunnelReplica.V
+		q.ns++
+	case 10:
+		if int(q.ntm) >= len(q.tims) {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = r.TunnelConnectedAt.V
+		q.ntm++
+	case 11:
 		if int(q.ntm) >= len(q.tims) {
 			q.over = true
 			return
 		}
 		q.tims[q.ntm] = r.TunnelSeenAt.V
 		q.ntm++
-	case 10:
+	case 12:
 		if int(q.ns) >= len(q.strs) {
 			q.over = true
 			return
 		}
 		q.strs[q.ns] = r.TlsPin
 		q.ns++
-	case 12:
+	case 14:
 		if int(q.ns) >= len(q.strs) {
 			q.over = true
 			return
 		}
 		q.strs[q.ns] = r.SealKey
 		q.ns++
-	case 13:
+	case 15:
 		if int(q.ns) >= len(q.strs) {
 			q.over = true
 			return
 		}
 		q.strs[q.ns] = r.Version
 		q.ns++
-	case 14:
+	case 16:
 		if int(q.nn) >= len(q.nums) {
 			q.over = true
 			return
 		}
 		q.nums[q.nn] = int64(r.SecretCount)
 		q.nn++
-	case 15:
+	case 17:
 		if int(q.nn) >= len(q.nums) {
 			q.over = true
 			return
 		}
 		q.nums[q.nn] = int64(r.RulesSerial)
 		q.nn++
-	case 16:
+	case 18:
 		if int(q.ns) >= len(q.strs) {
 			q.over = true
 			return
 		}
 		q.strs[q.ns] = r.RulesHash
 		q.ns++
-	case 17:
+	case 19:
 		if int(q.ntm) >= len(q.tims) {
 			q.over = true
 			return
 		}
 		q.tims[q.ntm] = r.RulesPushedAt.V
 		q.ntm++
-	case 18:
+	case 20:
 		if int(q.nn) >= len(q.nums) {
 			q.over = true
 			return
 		}
 		q.nums[q.nn] = int64(r.LogSeq)
 		q.nn++
-	case 19:
+	case 21:
 		if int(q.ns) >= len(q.strs) {
 			q.over = true
 			return
 		}
 		q.strs[q.ns] = r.LogHead
 		q.ns++
-	case 20:
+	case 22:
 		if int(q.ns) >= len(q.strs) {
 			q.over = true
 			return
 		}
 		q.strs[q.ns] = r.LogGap
 		q.ns++
-	case 21:
+	case 23:
 		if int(q.ntm) >= len(q.tims) {
 			q.over = true
 			return
 		}
 		q.tims[q.ntm] = r.LogGapAt.V
 		q.ntm++
-	case 22:
+	case 24:
 		if int(q.ntm) >= len(q.tims) {
 			q.over = true
 			return
 		}
 		q.tims[q.ntm] = r.LastContactAt.V
 		q.ntm++
-	case 23:
+	case 25:
 		if int(q.ns) >= len(q.strs) {
 			q.over = true
 			return
 		}
 		q.strs[q.ns] = r.LastError
 		q.ns++
-	case 24:
+	case 26:
 		if int(q.ntm) >= len(q.tims) {
 			q.over = true
 			return
 		}
 		q.tims[q.ntm] = r.LastErrorAt.V
 		q.ntm++
-	case 25:
+	case 27:
 		if int(q.ns) >= len(q.strs) {
 			q.over = true
 			return
@@ -534,32 +550,34 @@ type Pred struct {
 // Typed column handles. The type of the handle is what makes
 // Age.Like(...) fail to compile.
 var (
-	ID              = UUIDCol{0}
-	CreatedAt       = TimeCol{1}
-	UpdatedAt       = TimeCol{2}
-	Name            = TextCol{3}
-	Mode            = TextCol{4}
-	URL             = TextCol{5}
-	CredentialHash  = NullTextCol{6}
-	EnrollTokenHash = NullTextCol{7}
-	EnrollExpiresAt = NullTimeCol{8}
-	TunnelSeenAt    = NullTimeCol{9}
-	TlsPin          = TextCol{10}
-	Folders         = TextArrayCol{11}
-	SealKey         = TextCol{12}
-	Version         = TextCol{13}
-	SecretCount     = Int32Col{14}
-	RulesSerial     = Int64Col{15}
-	RulesHash       = TextCol{16}
-	RulesPushedAt   = NullTimeCol{17}
-	LogSeq          = Int64Col{18}
-	LogHead         = TextCol{19}
-	LogGap          = TextCol{20}
-	LogGapAt        = NullTimeCol{21}
-	LastContactAt   = NullTimeCol{22}
-	LastError       = TextCol{23}
-	LastErrorAt     = NullTimeCol{24}
-	CreatedBy       = TextCol{25}
+	ID                = UUIDCol{0}
+	CreatedAt         = TimeCol{1}
+	UpdatedAt         = TimeCol{2}
+	Name              = TextCol{3}
+	Mode              = TextCol{4}
+	URL               = TextCol{5}
+	CredentialHash    = NullTextCol{6}
+	EnrollTokenHash   = NullTextCol{7}
+	EnrollExpiresAt   = NullTimeCol{8}
+	TunnelReplica     = NullTextCol{9}
+	TunnelConnectedAt = NullTimeCol{10}
+	TunnelSeenAt      = NullTimeCol{11}
+	TlsPin            = TextCol{12}
+	Folders           = TextArrayCol{13}
+	SealKey           = TextCol{14}
+	Version           = TextCol{15}
+	SecretCount       = Int32Col{16}
+	RulesSerial       = Int64Col{17}
+	RulesHash         = TextCol{18}
+	RulesPushedAt     = NullTimeCol{19}
+	LogSeq            = Int64Col{20}
+	LogHead           = TextCol{21}
+	LogGap            = TextCol{22}
+	LogGapAt          = NullTimeCol{23}
+	LastContactAt     = NullTimeCol{24}
+	LastError         = TextCol{25}
+	LastErrorAt       = NullTimeCol{26}
+	CreatedBy         = TextCol{27}
 )
 
 // UUIDCol addresses a uuid column.
@@ -943,14 +961,7 @@ func (q *Query) leaf(p Pred) {
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
-		case 10:
-			if int(q.nas) >= 3 {
-				q.over = true
-				return
-			}
-			q.anyStr[q.nas] = p.anyStr
-			q.nas++
-		case 11:
+		case 9:
 			if int(q.nas) >= 3 {
 				q.over = true
 				return
@@ -972,34 +983,34 @@ func (q *Query) leaf(p Pred) {
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
 		case 14:
-			if int(q.nai32) >= 3 {
-				q.over = true
-				return
-			}
-			q.anyI32[q.nai32] = p.anyI32
-			q.nai32++
-		case 15:
-			if int(q.nai64) >= 3 {
-				q.over = true
-				return
-			}
-			q.anyI64[q.nai64] = p.anyI64
-			q.nai64++
-		case 16:
 			if int(q.nas) >= 3 {
 				q.over = true
 				return
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
-		case 18:
+		case 15:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 16:
+			if int(q.nai32) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyI32[q.nai32] = p.anyI32
+			q.nai32++
+		case 17:
 			if int(q.nai64) >= 3 {
 				q.over = true
 				return
 			}
 			q.anyI64[q.nai64] = p.anyI64
 			q.nai64++
-		case 19:
+		case 18:
 			if int(q.nas) >= 3 {
 				q.over = true
 				return
@@ -1007,13 +1018,20 @@ func (q *Query) leaf(p Pred) {
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
 		case 20:
+			if int(q.nai64) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyI64[q.nai64] = p.anyI64
+			q.nai64++
+		case 21:
 			if int(q.nas) >= 3 {
 				q.over = true
 				return
 			}
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
-		case 23:
+		case 22:
 			if int(q.nas) >= 3 {
 				q.over = true
 				return
@@ -1021,6 +1039,13 @@ func (q *Query) leaf(p Pred) {
 			q.anyStr[q.nas] = p.anyStr
 			q.nas++
 		case 25:
+			if int(q.nas) >= 3 {
+				q.over = true
+				return
+			}
+			q.anyStr[q.nas] = p.anyStr
+			q.nas++
+		case 27:
 			if int(q.nas) >= 3 {
 				q.over = true
 				return
@@ -1100,19 +1125,26 @@ func (q *Query) leaf(p Pred) {
 		q.tims[q.ntm] = p.tim
 		q.ntm++
 	case 9:
-		if int(q.ntm) >= 4 {
-			q.over = true
-			return
-		}
-		q.tims[q.ntm] = p.tim
-		q.ntm++
-	case 10:
 		if int(q.ns) >= 6 {
 			q.over = true
 			return
 		}
 		q.strs[q.ns] = p.str
 		q.ns++
+	case 10:
+		if int(q.ntm) >= 4 {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = p.tim
+		q.ntm++
+	case 11:
+		if int(q.ntm) >= 4 {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = p.tim
+		q.ntm++
 	case 12:
 		if int(q.ns) >= 6 {
 			q.over = true
@@ -1120,83 +1152,76 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.strs[q.ns] = p.str
 		q.ns++
-	case 13:
-		if int(q.ns) >= 6 {
-			q.over = true
-			return
-		}
-		q.strs[q.ns] = p.str
-		q.ns++
 	case 14:
-		if int(q.nn) >= 6 {
+		if int(q.ns) >= 6 {
 			q.over = true
 			return
 		}
-		q.nums[q.nn] = p.num
-		q.nn++
+		q.strs[q.ns] = p.str
+		q.ns++
 	case 15:
-		if int(q.nn) >= 6 {
+		if int(q.ns) >= 6 {
 			q.over = true
 			return
 		}
-		q.nums[q.nn] = p.num
-		q.nn++
+		q.strs[q.ns] = p.str
+		q.ns++
 	case 16:
-		if int(q.ns) >= 6 {
-			q.over = true
-			return
-		}
-		q.strs[q.ns] = p.str
-		q.ns++
-	case 17:
-		if int(q.ntm) >= 4 {
-			q.over = true
-			return
-		}
-		q.tims[q.ntm] = p.tim
-		q.ntm++
-	case 18:
 		if int(q.nn) >= 6 {
 			q.over = true
 			return
 		}
 		q.nums[q.nn] = p.num
 		q.nn++
+	case 17:
+		if int(q.nn) >= 6 {
+			q.over = true
+			return
+		}
+		q.nums[q.nn] = p.num
+		q.nn++
+	case 18:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
 	case 19:
-		if int(q.ns) >= 6 {
+		if int(q.ntm) >= 4 {
 			q.over = true
 			return
 		}
-		q.strs[q.ns] = p.str
-		q.ns++
+		q.tims[q.ntm] = p.tim
+		q.ntm++
 	case 20:
-		if int(q.ns) >= 6 {
+		if int(q.nn) >= 6 {
 			q.over = true
 			return
 		}
-		q.strs[q.ns] = p.str
-		q.ns++
+		q.nums[q.nn] = p.num
+		q.nn++
 	case 21:
-		if int(q.ntm) >= 4 {
-			q.over = true
-			return
-		}
-		q.tims[q.ntm] = p.tim
-		q.ntm++
-	case 22:
-		if int(q.ntm) >= 4 {
-			q.over = true
-			return
-		}
-		q.tims[q.ntm] = p.tim
-		q.ntm++
-	case 23:
 		if int(q.ns) >= 6 {
 			q.over = true
 			return
 		}
 		q.strs[q.ns] = p.str
 		q.ns++
+	case 22:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
+	case 23:
+		if int(q.ntm) >= 4 {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = p.tim
+		q.ntm++
 	case 24:
 		if int(q.ntm) >= 4 {
 			q.over = true
@@ -1211,251 +1236,286 @@ func (q *Query) leaf(p Pred) {
 		}
 		q.strs[q.ns] = p.str
 		q.ns++
+	case 26:
+		if int(q.ntm) >= 4 {
+			q.over = true
+			return
+		}
+		q.tims[q.ntm] = p.tim
+		q.ntm++
+	case 27:
+		if int(q.ns) >= 6 {
+			q.over = true
+			return
+		}
+		q.strs[q.ns] = p.str
+		q.ns++
 	}
 	q.push(runtime.MakeLeaf(uint32(p.op), uint32(p.col)))
 }
 
 // Chained predicate sugar. Identical to Where(Col.Op(v)).
-func (q Query) IDEq(v [16]byte) Query                  { return q.Where(ID.Eq(v)) }
-func (q Query) IDNotEq(v [16]byte) Query               { return q.Where(ID.NotEq(v)) }
-func (q Query) IDIn(v ...[16]byte) Query               { return q.Where(ID.In(v...)) }
-func (q Query) IDNotIn(v ...[16]byte) Query            { return q.Where(ID.NotIn(v...)) }
-func (q Query) CreatedAtEq(v time.Time) Query          { return q.Where(CreatedAt.Eq(v)) }
-func (q Query) CreatedAtNotEq(v time.Time) Query       { return q.Where(CreatedAt.NotEq(v)) }
-func (q Query) CreatedAtGt(v time.Time) Query          { return q.Where(CreatedAt.Gt(v)) }
-func (q Query) CreatedAtGte(v time.Time) Query         { return q.Where(CreatedAt.Gte(v)) }
-func (q Query) CreatedAtLt(v time.Time) Query          { return q.Where(CreatedAt.Lt(v)) }
-func (q Query) CreatedAtLte(v time.Time) Query         { return q.Where(CreatedAt.Lte(v)) }
-func (q Query) UpdatedAtEq(v time.Time) Query          { return q.Where(UpdatedAt.Eq(v)) }
-func (q Query) UpdatedAtNotEq(v time.Time) Query       { return q.Where(UpdatedAt.NotEq(v)) }
-func (q Query) UpdatedAtGt(v time.Time) Query          { return q.Where(UpdatedAt.Gt(v)) }
-func (q Query) UpdatedAtGte(v time.Time) Query         { return q.Where(UpdatedAt.Gte(v)) }
-func (q Query) UpdatedAtLt(v time.Time) Query          { return q.Where(UpdatedAt.Lt(v)) }
-func (q Query) UpdatedAtLte(v time.Time) Query         { return q.Where(UpdatedAt.Lte(v)) }
-func (q Query) NameEq(v string) Query                  { return q.Where(Name.Eq(v)) }
-func (q Query) NameNotEq(v string) Query               { return q.Where(Name.NotEq(v)) }
-func (q Query) NameGt(v string) Query                  { return q.Where(Name.Gt(v)) }
-func (q Query) NameGte(v string) Query                 { return q.Where(Name.Gte(v)) }
-func (q Query) NameLt(v string) Query                  { return q.Where(Name.Lt(v)) }
-func (q Query) NameLte(v string) Query                 { return q.Where(Name.Lte(v)) }
-func (q Query) NameEqLower(v string) Query             { return q.Where(Name.EqLower(v)) }
-func (q Query) NameLike(v string) Query                { return q.Where(Name.Like(v)) }
-func (q Query) NameILike(v string) Query               { return q.Where(Name.ILike(v)) }
-func (q Query) NameIn(v ...string) Query               { return q.Where(Name.In(v...)) }
-func (q Query) NameNotIn(v ...string) Query            { return q.Where(Name.NotIn(v...)) }
-func (q Query) ModeEq(v string) Query                  { return q.Where(Mode.Eq(v)) }
-func (q Query) ModeNotEq(v string) Query               { return q.Where(Mode.NotEq(v)) }
-func (q Query) ModeGt(v string) Query                  { return q.Where(Mode.Gt(v)) }
-func (q Query) ModeGte(v string) Query                 { return q.Where(Mode.Gte(v)) }
-func (q Query) ModeLt(v string) Query                  { return q.Where(Mode.Lt(v)) }
-func (q Query) ModeLte(v string) Query                 { return q.Where(Mode.Lte(v)) }
-func (q Query) ModeEqLower(v string) Query             { return q.Where(Mode.EqLower(v)) }
-func (q Query) ModeLike(v string) Query                { return q.Where(Mode.Like(v)) }
-func (q Query) ModeILike(v string) Query               { return q.Where(Mode.ILike(v)) }
-func (q Query) ModeIn(v ...string) Query               { return q.Where(Mode.In(v...)) }
-func (q Query) ModeNotIn(v ...string) Query            { return q.Where(Mode.NotIn(v...)) }
-func (q Query) URLEq(v string) Query                   { return q.Where(URL.Eq(v)) }
-func (q Query) URLNotEq(v string) Query                { return q.Where(URL.NotEq(v)) }
-func (q Query) URLGt(v string) Query                   { return q.Where(URL.Gt(v)) }
-func (q Query) URLGte(v string) Query                  { return q.Where(URL.Gte(v)) }
-func (q Query) URLLt(v string) Query                   { return q.Where(URL.Lt(v)) }
-func (q Query) URLLte(v string) Query                  { return q.Where(URL.Lte(v)) }
-func (q Query) URLEqLower(v string) Query              { return q.Where(URL.EqLower(v)) }
-func (q Query) URLLike(v string) Query                 { return q.Where(URL.Like(v)) }
-func (q Query) URLILike(v string) Query                { return q.Where(URL.ILike(v)) }
-func (q Query) URLIn(v ...string) Query                { return q.Where(URL.In(v...)) }
-func (q Query) URLNotIn(v ...string) Query             { return q.Where(URL.NotIn(v...)) }
-func (q Query) CredentialHashEq(v string) Query        { return q.Where(CredentialHash.Eq(v)) }
-func (q Query) CredentialHashNotEq(v string) Query     { return q.Where(CredentialHash.NotEq(v)) }
-func (q Query) CredentialHashGt(v string) Query        { return q.Where(CredentialHash.Gt(v)) }
-func (q Query) CredentialHashGte(v string) Query       { return q.Where(CredentialHash.Gte(v)) }
-func (q Query) CredentialHashLt(v string) Query        { return q.Where(CredentialHash.Lt(v)) }
-func (q Query) CredentialHashLte(v string) Query       { return q.Where(CredentialHash.Lte(v)) }
-func (q Query) CredentialHashEqLower(v string) Query   { return q.Where(CredentialHash.EqLower(v)) }
-func (q Query) CredentialHashLike(v string) Query      { return q.Where(CredentialHash.Like(v)) }
-func (q Query) CredentialHashILike(v string) Query     { return q.Where(CredentialHash.ILike(v)) }
-func (q Query) CredentialHashIn(v ...string) Query     { return q.Where(CredentialHash.In(v...)) }
-func (q Query) CredentialHashNotIn(v ...string) Query  { return q.Where(CredentialHash.NotIn(v...)) }
-func (q Query) CredentialHashIsNull() Query            { return q.Where(CredentialHash.IsNull()) }
-func (q Query) CredentialHashIsNotNull() Query         { return q.Where(CredentialHash.IsNotNull()) }
-func (q Query) EnrollTokenHashEq(v string) Query       { return q.Where(EnrollTokenHash.Eq(v)) }
-func (q Query) EnrollTokenHashNotEq(v string) Query    { return q.Where(EnrollTokenHash.NotEq(v)) }
-func (q Query) EnrollTokenHashGt(v string) Query       { return q.Where(EnrollTokenHash.Gt(v)) }
-func (q Query) EnrollTokenHashGte(v string) Query      { return q.Where(EnrollTokenHash.Gte(v)) }
-func (q Query) EnrollTokenHashLt(v string) Query       { return q.Where(EnrollTokenHash.Lt(v)) }
-func (q Query) EnrollTokenHashLte(v string) Query      { return q.Where(EnrollTokenHash.Lte(v)) }
-func (q Query) EnrollTokenHashEqLower(v string) Query  { return q.Where(EnrollTokenHash.EqLower(v)) }
-func (q Query) EnrollTokenHashLike(v string) Query     { return q.Where(EnrollTokenHash.Like(v)) }
-func (q Query) EnrollTokenHashILike(v string) Query    { return q.Where(EnrollTokenHash.ILike(v)) }
-func (q Query) EnrollTokenHashIn(v ...string) Query    { return q.Where(EnrollTokenHash.In(v...)) }
-func (q Query) EnrollTokenHashNotIn(v ...string) Query { return q.Where(EnrollTokenHash.NotIn(v...)) }
-func (q Query) EnrollTokenHashIsNull() Query           { return q.Where(EnrollTokenHash.IsNull()) }
-func (q Query) EnrollTokenHashIsNotNull() Query        { return q.Where(EnrollTokenHash.IsNotNull()) }
-func (q Query) EnrollExpiresAtEq(v time.Time) Query    { return q.Where(EnrollExpiresAt.Eq(v)) }
-func (q Query) EnrollExpiresAtNotEq(v time.Time) Query { return q.Where(EnrollExpiresAt.NotEq(v)) }
-func (q Query) EnrollExpiresAtGt(v time.Time) Query    { return q.Where(EnrollExpiresAt.Gt(v)) }
-func (q Query) EnrollExpiresAtGte(v time.Time) Query   { return q.Where(EnrollExpiresAt.Gte(v)) }
-func (q Query) EnrollExpiresAtLt(v time.Time) Query    { return q.Where(EnrollExpiresAt.Lt(v)) }
-func (q Query) EnrollExpiresAtLte(v time.Time) Query   { return q.Where(EnrollExpiresAt.Lte(v)) }
-func (q Query) EnrollExpiresAtIsNull() Query           { return q.Where(EnrollExpiresAt.IsNull()) }
-func (q Query) EnrollExpiresAtIsNotNull() Query        { return q.Where(EnrollExpiresAt.IsNotNull()) }
-func (q Query) TunnelSeenAtEq(v time.Time) Query       { return q.Where(TunnelSeenAt.Eq(v)) }
-func (q Query) TunnelSeenAtNotEq(v time.Time) Query    { return q.Where(TunnelSeenAt.NotEq(v)) }
-func (q Query) TunnelSeenAtGt(v time.Time) Query       { return q.Where(TunnelSeenAt.Gt(v)) }
-func (q Query) TunnelSeenAtGte(v time.Time) Query      { return q.Where(TunnelSeenAt.Gte(v)) }
-func (q Query) TunnelSeenAtLt(v time.Time) Query       { return q.Where(TunnelSeenAt.Lt(v)) }
-func (q Query) TunnelSeenAtLte(v time.Time) Query      { return q.Where(TunnelSeenAt.Lte(v)) }
-func (q Query) TunnelSeenAtIsNull() Query              { return q.Where(TunnelSeenAt.IsNull()) }
-func (q Query) TunnelSeenAtIsNotNull() Query           { return q.Where(TunnelSeenAt.IsNotNull()) }
-func (q Query) TlsPinEq(v string) Query                { return q.Where(TlsPin.Eq(v)) }
-func (q Query) TlsPinNotEq(v string) Query             { return q.Where(TlsPin.NotEq(v)) }
-func (q Query) TlsPinGt(v string) Query                { return q.Where(TlsPin.Gt(v)) }
-func (q Query) TlsPinGte(v string) Query               { return q.Where(TlsPin.Gte(v)) }
-func (q Query) TlsPinLt(v string) Query                { return q.Where(TlsPin.Lt(v)) }
-func (q Query) TlsPinLte(v string) Query               { return q.Where(TlsPin.Lte(v)) }
-func (q Query) TlsPinEqLower(v string) Query           { return q.Where(TlsPin.EqLower(v)) }
-func (q Query) TlsPinLike(v string) Query              { return q.Where(TlsPin.Like(v)) }
-func (q Query) TlsPinILike(v string) Query             { return q.Where(TlsPin.ILike(v)) }
-func (q Query) TlsPinIn(v ...string) Query             { return q.Where(TlsPin.In(v...)) }
-func (q Query) TlsPinNotIn(v ...string) Query          { return q.Where(TlsPin.NotIn(v...)) }
-func (q Query) FoldersContains(v ...string) Query      { return q.Where(Folders.Contains(v...)) }
-func (q Query) FoldersContainedBy(v ...string) Query   { return q.Where(Folders.ContainedBy(v...)) }
-func (q Query) FoldersOverlaps(v ...string) Query      { return q.Where(Folders.Overlaps(v...)) }
-func (q Query) SealKeyEq(v string) Query               { return q.Where(SealKey.Eq(v)) }
-func (q Query) SealKeyNotEq(v string) Query            { return q.Where(SealKey.NotEq(v)) }
-func (q Query) SealKeyGt(v string) Query               { return q.Where(SealKey.Gt(v)) }
-func (q Query) SealKeyGte(v string) Query              { return q.Where(SealKey.Gte(v)) }
-func (q Query) SealKeyLt(v string) Query               { return q.Where(SealKey.Lt(v)) }
-func (q Query) SealKeyLte(v string) Query              { return q.Where(SealKey.Lte(v)) }
-func (q Query) SealKeyEqLower(v string) Query          { return q.Where(SealKey.EqLower(v)) }
-func (q Query) SealKeyLike(v string) Query             { return q.Where(SealKey.Like(v)) }
-func (q Query) SealKeyILike(v string) Query            { return q.Where(SealKey.ILike(v)) }
-func (q Query) SealKeyIn(v ...string) Query            { return q.Where(SealKey.In(v...)) }
-func (q Query) SealKeyNotIn(v ...string) Query         { return q.Where(SealKey.NotIn(v...)) }
-func (q Query) VersionEq(v string) Query               { return q.Where(Version.Eq(v)) }
-func (q Query) VersionNotEq(v string) Query            { return q.Where(Version.NotEq(v)) }
-func (q Query) VersionGt(v string) Query               { return q.Where(Version.Gt(v)) }
-func (q Query) VersionGte(v string) Query              { return q.Where(Version.Gte(v)) }
-func (q Query) VersionLt(v string) Query               { return q.Where(Version.Lt(v)) }
-func (q Query) VersionLte(v string) Query              { return q.Where(Version.Lte(v)) }
-func (q Query) VersionEqLower(v string) Query          { return q.Where(Version.EqLower(v)) }
-func (q Query) VersionLike(v string) Query             { return q.Where(Version.Like(v)) }
-func (q Query) VersionILike(v string) Query            { return q.Where(Version.ILike(v)) }
-func (q Query) VersionIn(v ...string) Query            { return q.Where(Version.In(v...)) }
-func (q Query) VersionNotIn(v ...string) Query         { return q.Where(Version.NotIn(v...)) }
-func (q Query) SecretCountEq(v int32) Query            { return q.Where(SecretCount.Eq(v)) }
-func (q Query) SecretCountNotEq(v int32) Query         { return q.Where(SecretCount.NotEq(v)) }
-func (q Query) SecretCountGt(v int32) Query            { return q.Where(SecretCount.Gt(v)) }
-func (q Query) SecretCountGte(v int32) Query           { return q.Where(SecretCount.Gte(v)) }
-func (q Query) SecretCountLt(v int32) Query            { return q.Where(SecretCount.Lt(v)) }
-func (q Query) SecretCountLte(v int32) Query           { return q.Where(SecretCount.Lte(v)) }
-func (q Query) SecretCountIn(v ...int32) Query         { return q.Where(SecretCount.In(v...)) }
-func (q Query) SecretCountNotIn(v ...int32) Query      { return q.Where(SecretCount.NotIn(v...)) }
-func (q Query) RulesSerialEq(v int64) Query            { return q.Where(RulesSerial.Eq(v)) }
-func (q Query) RulesSerialNotEq(v int64) Query         { return q.Where(RulesSerial.NotEq(v)) }
-func (q Query) RulesSerialGt(v int64) Query            { return q.Where(RulesSerial.Gt(v)) }
-func (q Query) RulesSerialGte(v int64) Query           { return q.Where(RulesSerial.Gte(v)) }
-func (q Query) RulesSerialLt(v int64) Query            { return q.Where(RulesSerial.Lt(v)) }
-func (q Query) RulesSerialLte(v int64) Query           { return q.Where(RulesSerial.Lte(v)) }
-func (q Query) RulesSerialIn(v ...int64) Query         { return q.Where(RulesSerial.In(v...)) }
-func (q Query) RulesSerialNotIn(v ...int64) Query      { return q.Where(RulesSerial.NotIn(v...)) }
-func (q Query) RulesHashEq(v string) Query             { return q.Where(RulesHash.Eq(v)) }
-func (q Query) RulesHashNotEq(v string) Query          { return q.Where(RulesHash.NotEq(v)) }
-func (q Query) RulesHashGt(v string) Query             { return q.Where(RulesHash.Gt(v)) }
-func (q Query) RulesHashGte(v string) Query            { return q.Where(RulesHash.Gte(v)) }
-func (q Query) RulesHashLt(v string) Query             { return q.Where(RulesHash.Lt(v)) }
-func (q Query) RulesHashLte(v string) Query            { return q.Where(RulesHash.Lte(v)) }
-func (q Query) RulesHashEqLower(v string) Query        { return q.Where(RulesHash.EqLower(v)) }
-func (q Query) RulesHashLike(v string) Query           { return q.Where(RulesHash.Like(v)) }
-func (q Query) RulesHashILike(v string) Query          { return q.Where(RulesHash.ILike(v)) }
-func (q Query) RulesHashIn(v ...string) Query          { return q.Where(RulesHash.In(v...)) }
-func (q Query) RulesHashNotIn(v ...string) Query       { return q.Where(RulesHash.NotIn(v...)) }
-func (q Query) RulesPushedAtEq(v time.Time) Query      { return q.Where(RulesPushedAt.Eq(v)) }
-func (q Query) RulesPushedAtNotEq(v time.Time) Query   { return q.Where(RulesPushedAt.NotEq(v)) }
-func (q Query) RulesPushedAtGt(v time.Time) Query      { return q.Where(RulesPushedAt.Gt(v)) }
-func (q Query) RulesPushedAtGte(v time.Time) Query     { return q.Where(RulesPushedAt.Gte(v)) }
-func (q Query) RulesPushedAtLt(v time.Time) Query      { return q.Where(RulesPushedAt.Lt(v)) }
-func (q Query) RulesPushedAtLte(v time.Time) Query     { return q.Where(RulesPushedAt.Lte(v)) }
-func (q Query) RulesPushedAtIsNull() Query             { return q.Where(RulesPushedAt.IsNull()) }
-func (q Query) RulesPushedAtIsNotNull() Query          { return q.Where(RulesPushedAt.IsNotNull()) }
-func (q Query) LogSeqEq(v int64) Query                 { return q.Where(LogSeq.Eq(v)) }
-func (q Query) LogSeqNotEq(v int64) Query              { return q.Where(LogSeq.NotEq(v)) }
-func (q Query) LogSeqGt(v int64) Query                 { return q.Where(LogSeq.Gt(v)) }
-func (q Query) LogSeqGte(v int64) Query                { return q.Where(LogSeq.Gte(v)) }
-func (q Query) LogSeqLt(v int64) Query                 { return q.Where(LogSeq.Lt(v)) }
-func (q Query) LogSeqLte(v int64) Query                { return q.Where(LogSeq.Lte(v)) }
-func (q Query) LogSeqIn(v ...int64) Query              { return q.Where(LogSeq.In(v...)) }
-func (q Query) LogSeqNotIn(v ...int64) Query           { return q.Where(LogSeq.NotIn(v...)) }
-func (q Query) LogHeadEq(v string) Query               { return q.Where(LogHead.Eq(v)) }
-func (q Query) LogHeadNotEq(v string) Query            { return q.Where(LogHead.NotEq(v)) }
-func (q Query) LogHeadGt(v string) Query               { return q.Where(LogHead.Gt(v)) }
-func (q Query) LogHeadGte(v string) Query              { return q.Where(LogHead.Gte(v)) }
-func (q Query) LogHeadLt(v string) Query               { return q.Where(LogHead.Lt(v)) }
-func (q Query) LogHeadLte(v string) Query              { return q.Where(LogHead.Lte(v)) }
-func (q Query) LogHeadEqLower(v string) Query          { return q.Where(LogHead.EqLower(v)) }
-func (q Query) LogHeadLike(v string) Query             { return q.Where(LogHead.Like(v)) }
-func (q Query) LogHeadILike(v string) Query            { return q.Where(LogHead.ILike(v)) }
-func (q Query) LogHeadIn(v ...string) Query            { return q.Where(LogHead.In(v...)) }
-func (q Query) LogHeadNotIn(v ...string) Query         { return q.Where(LogHead.NotIn(v...)) }
-func (q Query) LogGapEq(v string) Query                { return q.Where(LogGap.Eq(v)) }
-func (q Query) LogGapNotEq(v string) Query             { return q.Where(LogGap.NotEq(v)) }
-func (q Query) LogGapGt(v string) Query                { return q.Where(LogGap.Gt(v)) }
-func (q Query) LogGapGte(v string) Query               { return q.Where(LogGap.Gte(v)) }
-func (q Query) LogGapLt(v string) Query                { return q.Where(LogGap.Lt(v)) }
-func (q Query) LogGapLte(v string) Query               { return q.Where(LogGap.Lte(v)) }
-func (q Query) LogGapEqLower(v string) Query           { return q.Where(LogGap.EqLower(v)) }
-func (q Query) LogGapLike(v string) Query              { return q.Where(LogGap.Like(v)) }
-func (q Query) LogGapILike(v string) Query             { return q.Where(LogGap.ILike(v)) }
-func (q Query) LogGapIn(v ...string) Query             { return q.Where(LogGap.In(v...)) }
-func (q Query) LogGapNotIn(v ...string) Query          { return q.Where(LogGap.NotIn(v...)) }
-func (q Query) LogGapAtEq(v time.Time) Query           { return q.Where(LogGapAt.Eq(v)) }
-func (q Query) LogGapAtNotEq(v time.Time) Query        { return q.Where(LogGapAt.NotEq(v)) }
-func (q Query) LogGapAtGt(v time.Time) Query           { return q.Where(LogGapAt.Gt(v)) }
-func (q Query) LogGapAtGte(v time.Time) Query          { return q.Where(LogGapAt.Gte(v)) }
-func (q Query) LogGapAtLt(v time.Time) Query           { return q.Where(LogGapAt.Lt(v)) }
-func (q Query) LogGapAtLte(v time.Time) Query          { return q.Where(LogGapAt.Lte(v)) }
-func (q Query) LogGapAtIsNull() Query                  { return q.Where(LogGapAt.IsNull()) }
-func (q Query) LogGapAtIsNotNull() Query               { return q.Where(LogGapAt.IsNotNull()) }
-func (q Query) LastContactAtEq(v time.Time) Query      { return q.Where(LastContactAt.Eq(v)) }
-func (q Query) LastContactAtNotEq(v time.Time) Query   { return q.Where(LastContactAt.NotEq(v)) }
-func (q Query) LastContactAtGt(v time.Time) Query      { return q.Where(LastContactAt.Gt(v)) }
-func (q Query) LastContactAtGte(v time.Time) Query     { return q.Where(LastContactAt.Gte(v)) }
-func (q Query) LastContactAtLt(v time.Time) Query      { return q.Where(LastContactAt.Lt(v)) }
-func (q Query) LastContactAtLte(v time.Time) Query     { return q.Where(LastContactAt.Lte(v)) }
-func (q Query) LastContactAtIsNull() Query             { return q.Where(LastContactAt.IsNull()) }
-func (q Query) LastContactAtIsNotNull() Query          { return q.Where(LastContactAt.IsNotNull()) }
-func (q Query) LastErrorEq(v string) Query             { return q.Where(LastError.Eq(v)) }
-func (q Query) LastErrorNotEq(v string) Query          { return q.Where(LastError.NotEq(v)) }
-func (q Query) LastErrorGt(v string) Query             { return q.Where(LastError.Gt(v)) }
-func (q Query) LastErrorGte(v string) Query            { return q.Where(LastError.Gte(v)) }
-func (q Query) LastErrorLt(v string) Query             { return q.Where(LastError.Lt(v)) }
-func (q Query) LastErrorLte(v string) Query            { return q.Where(LastError.Lte(v)) }
-func (q Query) LastErrorEqLower(v string) Query        { return q.Where(LastError.EqLower(v)) }
-func (q Query) LastErrorLike(v string) Query           { return q.Where(LastError.Like(v)) }
-func (q Query) LastErrorILike(v string) Query          { return q.Where(LastError.ILike(v)) }
-func (q Query) LastErrorIn(v ...string) Query          { return q.Where(LastError.In(v...)) }
-func (q Query) LastErrorNotIn(v ...string) Query       { return q.Where(LastError.NotIn(v...)) }
-func (q Query) LastErrorAtEq(v time.Time) Query        { return q.Where(LastErrorAt.Eq(v)) }
-func (q Query) LastErrorAtNotEq(v time.Time) Query     { return q.Where(LastErrorAt.NotEq(v)) }
-func (q Query) LastErrorAtGt(v time.Time) Query        { return q.Where(LastErrorAt.Gt(v)) }
-func (q Query) LastErrorAtGte(v time.Time) Query       { return q.Where(LastErrorAt.Gte(v)) }
-func (q Query) LastErrorAtLt(v time.Time) Query        { return q.Where(LastErrorAt.Lt(v)) }
-func (q Query) LastErrorAtLte(v time.Time) Query       { return q.Where(LastErrorAt.Lte(v)) }
-func (q Query) LastErrorAtIsNull() Query               { return q.Where(LastErrorAt.IsNull()) }
-func (q Query) LastErrorAtIsNotNull() Query            { return q.Where(LastErrorAt.IsNotNull()) }
-func (q Query) CreatedByEq(v string) Query             { return q.Where(CreatedBy.Eq(v)) }
-func (q Query) CreatedByNotEq(v string) Query          { return q.Where(CreatedBy.NotEq(v)) }
-func (q Query) CreatedByGt(v string) Query             { return q.Where(CreatedBy.Gt(v)) }
-func (q Query) CreatedByGte(v string) Query            { return q.Where(CreatedBy.Gte(v)) }
-func (q Query) CreatedByLt(v string) Query             { return q.Where(CreatedBy.Lt(v)) }
-func (q Query) CreatedByLte(v string) Query            { return q.Where(CreatedBy.Lte(v)) }
-func (q Query) CreatedByEqLower(v string) Query        { return q.Where(CreatedBy.EqLower(v)) }
-func (q Query) CreatedByLike(v string) Query           { return q.Where(CreatedBy.Like(v)) }
-func (q Query) CreatedByILike(v string) Query          { return q.Where(CreatedBy.ILike(v)) }
-func (q Query) CreatedByIn(v ...string) Query          { return q.Where(CreatedBy.In(v...)) }
-func (q Query) CreatedByNotIn(v ...string) Query       { return q.Where(CreatedBy.NotIn(v...)) }
+func (q Query) IDEq(v [16]byte) Query                    { return q.Where(ID.Eq(v)) }
+func (q Query) IDNotEq(v [16]byte) Query                 { return q.Where(ID.NotEq(v)) }
+func (q Query) IDIn(v ...[16]byte) Query                 { return q.Where(ID.In(v...)) }
+func (q Query) IDNotIn(v ...[16]byte) Query              { return q.Where(ID.NotIn(v...)) }
+func (q Query) CreatedAtEq(v time.Time) Query            { return q.Where(CreatedAt.Eq(v)) }
+func (q Query) CreatedAtNotEq(v time.Time) Query         { return q.Where(CreatedAt.NotEq(v)) }
+func (q Query) CreatedAtGt(v time.Time) Query            { return q.Where(CreatedAt.Gt(v)) }
+func (q Query) CreatedAtGte(v time.Time) Query           { return q.Where(CreatedAt.Gte(v)) }
+func (q Query) CreatedAtLt(v time.Time) Query            { return q.Where(CreatedAt.Lt(v)) }
+func (q Query) CreatedAtLte(v time.Time) Query           { return q.Where(CreatedAt.Lte(v)) }
+func (q Query) UpdatedAtEq(v time.Time) Query            { return q.Where(UpdatedAt.Eq(v)) }
+func (q Query) UpdatedAtNotEq(v time.Time) Query         { return q.Where(UpdatedAt.NotEq(v)) }
+func (q Query) UpdatedAtGt(v time.Time) Query            { return q.Where(UpdatedAt.Gt(v)) }
+func (q Query) UpdatedAtGte(v time.Time) Query           { return q.Where(UpdatedAt.Gte(v)) }
+func (q Query) UpdatedAtLt(v time.Time) Query            { return q.Where(UpdatedAt.Lt(v)) }
+func (q Query) UpdatedAtLte(v time.Time) Query           { return q.Where(UpdatedAt.Lte(v)) }
+func (q Query) NameEq(v string) Query                    { return q.Where(Name.Eq(v)) }
+func (q Query) NameNotEq(v string) Query                 { return q.Where(Name.NotEq(v)) }
+func (q Query) NameGt(v string) Query                    { return q.Where(Name.Gt(v)) }
+func (q Query) NameGte(v string) Query                   { return q.Where(Name.Gte(v)) }
+func (q Query) NameLt(v string) Query                    { return q.Where(Name.Lt(v)) }
+func (q Query) NameLte(v string) Query                   { return q.Where(Name.Lte(v)) }
+func (q Query) NameEqLower(v string) Query               { return q.Where(Name.EqLower(v)) }
+func (q Query) NameLike(v string) Query                  { return q.Where(Name.Like(v)) }
+func (q Query) NameILike(v string) Query                 { return q.Where(Name.ILike(v)) }
+func (q Query) NameIn(v ...string) Query                 { return q.Where(Name.In(v...)) }
+func (q Query) NameNotIn(v ...string) Query              { return q.Where(Name.NotIn(v...)) }
+func (q Query) ModeEq(v string) Query                    { return q.Where(Mode.Eq(v)) }
+func (q Query) ModeNotEq(v string) Query                 { return q.Where(Mode.NotEq(v)) }
+func (q Query) ModeGt(v string) Query                    { return q.Where(Mode.Gt(v)) }
+func (q Query) ModeGte(v string) Query                   { return q.Where(Mode.Gte(v)) }
+func (q Query) ModeLt(v string) Query                    { return q.Where(Mode.Lt(v)) }
+func (q Query) ModeLte(v string) Query                   { return q.Where(Mode.Lte(v)) }
+func (q Query) ModeEqLower(v string) Query               { return q.Where(Mode.EqLower(v)) }
+func (q Query) ModeLike(v string) Query                  { return q.Where(Mode.Like(v)) }
+func (q Query) ModeILike(v string) Query                 { return q.Where(Mode.ILike(v)) }
+func (q Query) ModeIn(v ...string) Query                 { return q.Where(Mode.In(v...)) }
+func (q Query) ModeNotIn(v ...string) Query              { return q.Where(Mode.NotIn(v...)) }
+func (q Query) URLEq(v string) Query                     { return q.Where(URL.Eq(v)) }
+func (q Query) URLNotEq(v string) Query                  { return q.Where(URL.NotEq(v)) }
+func (q Query) URLGt(v string) Query                     { return q.Where(URL.Gt(v)) }
+func (q Query) URLGte(v string) Query                    { return q.Where(URL.Gte(v)) }
+func (q Query) URLLt(v string) Query                     { return q.Where(URL.Lt(v)) }
+func (q Query) URLLte(v string) Query                    { return q.Where(URL.Lte(v)) }
+func (q Query) URLEqLower(v string) Query                { return q.Where(URL.EqLower(v)) }
+func (q Query) URLLike(v string) Query                   { return q.Where(URL.Like(v)) }
+func (q Query) URLILike(v string) Query                  { return q.Where(URL.ILike(v)) }
+func (q Query) URLIn(v ...string) Query                  { return q.Where(URL.In(v...)) }
+func (q Query) URLNotIn(v ...string) Query               { return q.Where(URL.NotIn(v...)) }
+func (q Query) CredentialHashEq(v string) Query          { return q.Where(CredentialHash.Eq(v)) }
+func (q Query) CredentialHashNotEq(v string) Query       { return q.Where(CredentialHash.NotEq(v)) }
+func (q Query) CredentialHashGt(v string) Query          { return q.Where(CredentialHash.Gt(v)) }
+func (q Query) CredentialHashGte(v string) Query         { return q.Where(CredentialHash.Gte(v)) }
+func (q Query) CredentialHashLt(v string) Query          { return q.Where(CredentialHash.Lt(v)) }
+func (q Query) CredentialHashLte(v string) Query         { return q.Where(CredentialHash.Lte(v)) }
+func (q Query) CredentialHashEqLower(v string) Query     { return q.Where(CredentialHash.EqLower(v)) }
+func (q Query) CredentialHashLike(v string) Query        { return q.Where(CredentialHash.Like(v)) }
+func (q Query) CredentialHashILike(v string) Query       { return q.Where(CredentialHash.ILike(v)) }
+func (q Query) CredentialHashIn(v ...string) Query       { return q.Where(CredentialHash.In(v...)) }
+func (q Query) CredentialHashNotIn(v ...string) Query    { return q.Where(CredentialHash.NotIn(v...)) }
+func (q Query) CredentialHashIsNull() Query              { return q.Where(CredentialHash.IsNull()) }
+func (q Query) CredentialHashIsNotNull() Query           { return q.Where(CredentialHash.IsNotNull()) }
+func (q Query) EnrollTokenHashEq(v string) Query         { return q.Where(EnrollTokenHash.Eq(v)) }
+func (q Query) EnrollTokenHashNotEq(v string) Query      { return q.Where(EnrollTokenHash.NotEq(v)) }
+func (q Query) EnrollTokenHashGt(v string) Query         { return q.Where(EnrollTokenHash.Gt(v)) }
+func (q Query) EnrollTokenHashGte(v string) Query        { return q.Where(EnrollTokenHash.Gte(v)) }
+func (q Query) EnrollTokenHashLt(v string) Query         { return q.Where(EnrollTokenHash.Lt(v)) }
+func (q Query) EnrollTokenHashLte(v string) Query        { return q.Where(EnrollTokenHash.Lte(v)) }
+func (q Query) EnrollTokenHashEqLower(v string) Query    { return q.Where(EnrollTokenHash.EqLower(v)) }
+func (q Query) EnrollTokenHashLike(v string) Query       { return q.Where(EnrollTokenHash.Like(v)) }
+func (q Query) EnrollTokenHashILike(v string) Query      { return q.Where(EnrollTokenHash.ILike(v)) }
+func (q Query) EnrollTokenHashIn(v ...string) Query      { return q.Where(EnrollTokenHash.In(v...)) }
+func (q Query) EnrollTokenHashNotIn(v ...string) Query   { return q.Where(EnrollTokenHash.NotIn(v...)) }
+func (q Query) EnrollTokenHashIsNull() Query             { return q.Where(EnrollTokenHash.IsNull()) }
+func (q Query) EnrollTokenHashIsNotNull() Query          { return q.Where(EnrollTokenHash.IsNotNull()) }
+func (q Query) EnrollExpiresAtEq(v time.Time) Query      { return q.Where(EnrollExpiresAt.Eq(v)) }
+func (q Query) EnrollExpiresAtNotEq(v time.Time) Query   { return q.Where(EnrollExpiresAt.NotEq(v)) }
+func (q Query) EnrollExpiresAtGt(v time.Time) Query      { return q.Where(EnrollExpiresAt.Gt(v)) }
+func (q Query) EnrollExpiresAtGte(v time.Time) Query     { return q.Where(EnrollExpiresAt.Gte(v)) }
+func (q Query) EnrollExpiresAtLt(v time.Time) Query      { return q.Where(EnrollExpiresAt.Lt(v)) }
+func (q Query) EnrollExpiresAtLte(v time.Time) Query     { return q.Where(EnrollExpiresAt.Lte(v)) }
+func (q Query) EnrollExpiresAtIsNull() Query             { return q.Where(EnrollExpiresAt.IsNull()) }
+func (q Query) EnrollExpiresAtIsNotNull() Query          { return q.Where(EnrollExpiresAt.IsNotNull()) }
+func (q Query) TunnelReplicaEq(v string) Query           { return q.Where(TunnelReplica.Eq(v)) }
+func (q Query) TunnelReplicaNotEq(v string) Query        { return q.Where(TunnelReplica.NotEq(v)) }
+func (q Query) TunnelReplicaGt(v string) Query           { return q.Where(TunnelReplica.Gt(v)) }
+func (q Query) TunnelReplicaGte(v string) Query          { return q.Where(TunnelReplica.Gte(v)) }
+func (q Query) TunnelReplicaLt(v string) Query           { return q.Where(TunnelReplica.Lt(v)) }
+func (q Query) TunnelReplicaLte(v string) Query          { return q.Where(TunnelReplica.Lte(v)) }
+func (q Query) TunnelReplicaEqLower(v string) Query      { return q.Where(TunnelReplica.EqLower(v)) }
+func (q Query) TunnelReplicaLike(v string) Query         { return q.Where(TunnelReplica.Like(v)) }
+func (q Query) TunnelReplicaILike(v string) Query        { return q.Where(TunnelReplica.ILike(v)) }
+func (q Query) TunnelReplicaIn(v ...string) Query        { return q.Where(TunnelReplica.In(v...)) }
+func (q Query) TunnelReplicaNotIn(v ...string) Query     { return q.Where(TunnelReplica.NotIn(v...)) }
+func (q Query) TunnelReplicaIsNull() Query               { return q.Where(TunnelReplica.IsNull()) }
+func (q Query) TunnelReplicaIsNotNull() Query            { return q.Where(TunnelReplica.IsNotNull()) }
+func (q Query) TunnelConnectedAtEq(v time.Time) Query    { return q.Where(TunnelConnectedAt.Eq(v)) }
+func (q Query) TunnelConnectedAtNotEq(v time.Time) Query { return q.Where(TunnelConnectedAt.NotEq(v)) }
+func (q Query) TunnelConnectedAtGt(v time.Time) Query    { return q.Where(TunnelConnectedAt.Gt(v)) }
+func (q Query) TunnelConnectedAtGte(v time.Time) Query   { return q.Where(TunnelConnectedAt.Gte(v)) }
+func (q Query) TunnelConnectedAtLt(v time.Time) Query    { return q.Where(TunnelConnectedAt.Lt(v)) }
+func (q Query) TunnelConnectedAtLte(v time.Time) Query   { return q.Where(TunnelConnectedAt.Lte(v)) }
+func (q Query) TunnelConnectedAtIsNull() Query           { return q.Where(TunnelConnectedAt.IsNull()) }
+func (q Query) TunnelConnectedAtIsNotNull() Query        { return q.Where(TunnelConnectedAt.IsNotNull()) }
+func (q Query) TunnelSeenAtEq(v time.Time) Query         { return q.Where(TunnelSeenAt.Eq(v)) }
+func (q Query) TunnelSeenAtNotEq(v time.Time) Query      { return q.Where(TunnelSeenAt.NotEq(v)) }
+func (q Query) TunnelSeenAtGt(v time.Time) Query         { return q.Where(TunnelSeenAt.Gt(v)) }
+func (q Query) TunnelSeenAtGte(v time.Time) Query        { return q.Where(TunnelSeenAt.Gte(v)) }
+func (q Query) TunnelSeenAtLt(v time.Time) Query         { return q.Where(TunnelSeenAt.Lt(v)) }
+func (q Query) TunnelSeenAtLte(v time.Time) Query        { return q.Where(TunnelSeenAt.Lte(v)) }
+func (q Query) TunnelSeenAtIsNull() Query                { return q.Where(TunnelSeenAt.IsNull()) }
+func (q Query) TunnelSeenAtIsNotNull() Query             { return q.Where(TunnelSeenAt.IsNotNull()) }
+func (q Query) TlsPinEq(v string) Query                  { return q.Where(TlsPin.Eq(v)) }
+func (q Query) TlsPinNotEq(v string) Query               { return q.Where(TlsPin.NotEq(v)) }
+func (q Query) TlsPinGt(v string) Query                  { return q.Where(TlsPin.Gt(v)) }
+func (q Query) TlsPinGte(v string) Query                 { return q.Where(TlsPin.Gte(v)) }
+func (q Query) TlsPinLt(v string) Query                  { return q.Where(TlsPin.Lt(v)) }
+func (q Query) TlsPinLte(v string) Query                 { return q.Where(TlsPin.Lte(v)) }
+func (q Query) TlsPinEqLower(v string) Query             { return q.Where(TlsPin.EqLower(v)) }
+func (q Query) TlsPinLike(v string) Query                { return q.Where(TlsPin.Like(v)) }
+func (q Query) TlsPinILike(v string) Query               { return q.Where(TlsPin.ILike(v)) }
+func (q Query) TlsPinIn(v ...string) Query               { return q.Where(TlsPin.In(v...)) }
+func (q Query) TlsPinNotIn(v ...string) Query            { return q.Where(TlsPin.NotIn(v...)) }
+func (q Query) FoldersContains(v ...string) Query        { return q.Where(Folders.Contains(v...)) }
+func (q Query) FoldersContainedBy(v ...string) Query     { return q.Where(Folders.ContainedBy(v...)) }
+func (q Query) FoldersOverlaps(v ...string) Query        { return q.Where(Folders.Overlaps(v...)) }
+func (q Query) SealKeyEq(v string) Query                 { return q.Where(SealKey.Eq(v)) }
+func (q Query) SealKeyNotEq(v string) Query              { return q.Where(SealKey.NotEq(v)) }
+func (q Query) SealKeyGt(v string) Query                 { return q.Where(SealKey.Gt(v)) }
+func (q Query) SealKeyGte(v string) Query                { return q.Where(SealKey.Gte(v)) }
+func (q Query) SealKeyLt(v string) Query                 { return q.Where(SealKey.Lt(v)) }
+func (q Query) SealKeyLte(v string) Query                { return q.Where(SealKey.Lte(v)) }
+func (q Query) SealKeyEqLower(v string) Query            { return q.Where(SealKey.EqLower(v)) }
+func (q Query) SealKeyLike(v string) Query               { return q.Where(SealKey.Like(v)) }
+func (q Query) SealKeyILike(v string) Query              { return q.Where(SealKey.ILike(v)) }
+func (q Query) SealKeyIn(v ...string) Query              { return q.Where(SealKey.In(v...)) }
+func (q Query) SealKeyNotIn(v ...string) Query           { return q.Where(SealKey.NotIn(v...)) }
+func (q Query) VersionEq(v string) Query                 { return q.Where(Version.Eq(v)) }
+func (q Query) VersionNotEq(v string) Query              { return q.Where(Version.NotEq(v)) }
+func (q Query) VersionGt(v string) Query                 { return q.Where(Version.Gt(v)) }
+func (q Query) VersionGte(v string) Query                { return q.Where(Version.Gte(v)) }
+func (q Query) VersionLt(v string) Query                 { return q.Where(Version.Lt(v)) }
+func (q Query) VersionLte(v string) Query                { return q.Where(Version.Lte(v)) }
+func (q Query) VersionEqLower(v string) Query            { return q.Where(Version.EqLower(v)) }
+func (q Query) VersionLike(v string) Query               { return q.Where(Version.Like(v)) }
+func (q Query) VersionILike(v string) Query              { return q.Where(Version.ILike(v)) }
+func (q Query) VersionIn(v ...string) Query              { return q.Where(Version.In(v...)) }
+func (q Query) VersionNotIn(v ...string) Query           { return q.Where(Version.NotIn(v...)) }
+func (q Query) SecretCountEq(v int32) Query              { return q.Where(SecretCount.Eq(v)) }
+func (q Query) SecretCountNotEq(v int32) Query           { return q.Where(SecretCount.NotEq(v)) }
+func (q Query) SecretCountGt(v int32) Query              { return q.Where(SecretCount.Gt(v)) }
+func (q Query) SecretCountGte(v int32) Query             { return q.Where(SecretCount.Gte(v)) }
+func (q Query) SecretCountLt(v int32) Query              { return q.Where(SecretCount.Lt(v)) }
+func (q Query) SecretCountLte(v int32) Query             { return q.Where(SecretCount.Lte(v)) }
+func (q Query) SecretCountIn(v ...int32) Query           { return q.Where(SecretCount.In(v...)) }
+func (q Query) SecretCountNotIn(v ...int32) Query        { return q.Where(SecretCount.NotIn(v...)) }
+func (q Query) RulesSerialEq(v int64) Query              { return q.Where(RulesSerial.Eq(v)) }
+func (q Query) RulesSerialNotEq(v int64) Query           { return q.Where(RulesSerial.NotEq(v)) }
+func (q Query) RulesSerialGt(v int64) Query              { return q.Where(RulesSerial.Gt(v)) }
+func (q Query) RulesSerialGte(v int64) Query             { return q.Where(RulesSerial.Gte(v)) }
+func (q Query) RulesSerialLt(v int64) Query              { return q.Where(RulesSerial.Lt(v)) }
+func (q Query) RulesSerialLte(v int64) Query             { return q.Where(RulesSerial.Lte(v)) }
+func (q Query) RulesSerialIn(v ...int64) Query           { return q.Where(RulesSerial.In(v...)) }
+func (q Query) RulesSerialNotIn(v ...int64) Query        { return q.Where(RulesSerial.NotIn(v...)) }
+func (q Query) RulesHashEq(v string) Query               { return q.Where(RulesHash.Eq(v)) }
+func (q Query) RulesHashNotEq(v string) Query            { return q.Where(RulesHash.NotEq(v)) }
+func (q Query) RulesHashGt(v string) Query               { return q.Where(RulesHash.Gt(v)) }
+func (q Query) RulesHashGte(v string) Query              { return q.Where(RulesHash.Gte(v)) }
+func (q Query) RulesHashLt(v string) Query               { return q.Where(RulesHash.Lt(v)) }
+func (q Query) RulesHashLte(v string) Query              { return q.Where(RulesHash.Lte(v)) }
+func (q Query) RulesHashEqLower(v string) Query          { return q.Where(RulesHash.EqLower(v)) }
+func (q Query) RulesHashLike(v string) Query             { return q.Where(RulesHash.Like(v)) }
+func (q Query) RulesHashILike(v string) Query            { return q.Where(RulesHash.ILike(v)) }
+func (q Query) RulesHashIn(v ...string) Query            { return q.Where(RulesHash.In(v...)) }
+func (q Query) RulesHashNotIn(v ...string) Query         { return q.Where(RulesHash.NotIn(v...)) }
+func (q Query) RulesPushedAtEq(v time.Time) Query        { return q.Where(RulesPushedAt.Eq(v)) }
+func (q Query) RulesPushedAtNotEq(v time.Time) Query     { return q.Where(RulesPushedAt.NotEq(v)) }
+func (q Query) RulesPushedAtGt(v time.Time) Query        { return q.Where(RulesPushedAt.Gt(v)) }
+func (q Query) RulesPushedAtGte(v time.Time) Query       { return q.Where(RulesPushedAt.Gte(v)) }
+func (q Query) RulesPushedAtLt(v time.Time) Query        { return q.Where(RulesPushedAt.Lt(v)) }
+func (q Query) RulesPushedAtLte(v time.Time) Query       { return q.Where(RulesPushedAt.Lte(v)) }
+func (q Query) RulesPushedAtIsNull() Query               { return q.Where(RulesPushedAt.IsNull()) }
+func (q Query) RulesPushedAtIsNotNull() Query            { return q.Where(RulesPushedAt.IsNotNull()) }
+func (q Query) LogSeqEq(v int64) Query                   { return q.Where(LogSeq.Eq(v)) }
+func (q Query) LogSeqNotEq(v int64) Query                { return q.Where(LogSeq.NotEq(v)) }
+func (q Query) LogSeqGt(v int64) Query                   { return q.Where(LogSeq.Gt(v)) }
+func (q Query) LogSeqGte(v int64) Query                  { return q.Where(LogSeq.Gte(v)) }
+func (q Query) LogSeqLt(v int64) Query                   { return q.Where(LogSeq.Lt(v)) }
+func (q Query) LogSeqLte(v int64) Query                  { return q.Where(LogSeq.Lte(v)) }
+func (q Query) LogSeqIn(v ...int64) Query                { return q.Where(LogSeq.In(v...)) }
+func (q Query) LogSeqNotIn(v ...int64) Query             { return q.Where(LogSeq.NotIn(v...)) }
+func (q Query) LogHeadEq(v string) Query                 { return q.Where(LogHead.Eq(v)) }
+func (q Query) LogHeadNotEq(v string) Query              { return q.Where(LogHead.NotEq(v)) }
+func (q Query) LogHeadGt(v string) Query                 { return q.Where(LogHead.Gt(v)) }
+func (q Query) LogHeadGte(v string) Query                { return q.Where(LogHead.Gte(v)) }
+func (q Query) LogHeadLt(v string) Query                 { return q.Where(LogHead.Lt(v)) }
+func (q Query) LogHeadLte(v string) Query                { return q.Where(LogHead.Lte(v)) }
+func (q Query) LogHeadEqLower(v string) Query            { return q.Where(LogHead.EqLower(v)) }
+func (q Query) LogHeadLike(v string) Query               { return q.Where(LogHead.Like(v)) }
+func (q Query) LogHeadILike(v string) Query              { return q.Where(LogHead.ILike(v)) }
+func (q Query) LogHeadIn(v ...string) Query              { return q.Where(LogHead.In(v...)) }
+func (q Query) LogHeadNotIn(v ...string) Query           { return q.Where(LogHead.NotIn(v...)) }
+func (q Query) LogGapEq(v string) Query                  { return q.Where(LogGap.Eq(v)) }
+func (q Query) LogGapNotEq(v string) Query               { return q.Where(LogGap.NotEq(v)) }
+func (q Query) LogGapGt(v string) Query                  { return q.Where(LogGap.Gt(v)) }
+func (q Query) LogGapGte(v string) Query                 { return q.Where(LogGap.Gte(v)) }
+func (q Query) LogGapLt(v string) Query                  { return q.Where(LogGap.Lt(v)) }
+func (q Query) LogGapLte(v string) Query                 { return q.Where(LogGap.Lte(v)) }
+func (q Query) LogGapEqLower(v string) Query             { return q.Where(LogGap.EqLower(v)) }
+func (q Query) LogGapLike(v string) Query                { return q.Where(LogGap.Like(v)) }
+func (q Query) LogGapILike(v string) Query               { return q.Where(LogGap.ILike(v)) }
+func (q Query) LogGapIn(v ...string) Query               { return q.Where(LogGap.In(v...)) }
+func (q Query) LogGapNotIn(v ...string) Query            { return q.Where(LogGap.NotIn(v...)) }
+func (q Query) LogGapAtEq(v time.Time) Query             { return q.Where(LogGapAt.Eq(v)) }
+func (q Query) LogGapAtNotEq(v time.Time) Query          { return q.Where(LogGapAt.NotEq(v)) }
+func (q Query) LogGapAtGt(v time.Time) Query             { return q.Where(LogGapAt.Gt(v)) }
+func (q Query) LogGapAtGte(v time.Time) Query            { return q.Where(LogGapAt.Gte(v)) }
+func (q Query) LogGapAtLt(v time.Time) Query             { return q.Where(LogGapAt.Lt(v)) }
+func (q Query) LogGapAtLte(v time.Time) Query            { return q.Where(LogGapAt.Lte(v)) }
+func (q Query) LogGapAtIsNull() Query                    { return q.Where(LogGapAt.IsNull()) }
+func (q Query) LogGapAtIsNotNull() Query                 { return q.Where(LogGapAt.IsNotNull()) }
+func (q Query) LastContactAtEq(v time.Time) Query        { return q.Where(LastContactAt.Eq(v)) }
+func (q Query) LastContactAtNotEq(v time.Time) Query     { return q.Where(LastContactAt.NotEq(v)) }
+func (q Query) LastContactAtGt(v time.Time) Query        { return q.Where(LastContactAt.Gt(v)) }
+func (q Query) LastContactAtGte(v time.Time) Query       { return q.Where(LastContactAt.Gte(v)) }
+func (q Query) LastContactAtLt(v time.Time) Query        { return q.Where(LastContactAt.Lt(v)) }
+func (q Query) LastContactAtLte(v time.Time) Query       { return q.Where(LastContactAt.Lte(v)) }
+func (q Query) LastContactAtIsNull() Query               { return q.Where(LastContactAt.IsNull()) }
+func (q Query) LastContactAtIsNotNull() Query            { return q.Where(LastContactAt.IsNotNull()) }
+func (q Query) LastErrorEq(v string) Query               { return q.Where(LastError.Eq(v)) }
+func (q Query) LastErrorNotEq(v string) Query            { return q.Where(LastError.NotEq(v)) }
+func (q Query) LastErrorGt(v string) Query               { return q.Where(LastError.Gt(v)) }
+func (q Query) LastErrorGte(v string) Query              { return q.Where(LastError.Gte(v)) }
+func (q Query) LastErrorLt(v string) Query               { return q.Where(LastError.Lt(v)) }
+func (q Query) LastErrorLte(v string) Query              { return q.Where(LastError.Lte(v)) }
+func (q Query) LastErrorEqLower(v string) Query          { return q.Where(LastError.EqLower(v)) }
+func (q Query) LastErrorLike(v string) Query             { return q.Where(LastError.Like(v)) }
+func (q Query) LastErrorILike(v string) Query            { return q.Where(LastError.ILike(v)) }
+func (q Query) LastErrorIn(v ...string) Query            { return q.Where(LastError.In(v...)) }
+func (q Query) LastErrorNotIn(v ...string) Query         { return q.Where(LastError.NotIn(v...)) }
+func (q Query) LastErrorAtEq(v time.Time) Query          { return q.Where(LastErrorAt.Eq(v)) }
+func (q Query) LastErrorAtNotEq(v time.Time) Query       { return q.Where(LastErrorAt.NotEq(v)) }
+func (q Query) LastErrorAtGt(v time.Time) Query          { return q.Where(LastErrorAt.Gt(v)) }
+func (q Query) LastErrorAtGte(v time.Time) Query         { return q.Where(LastErrorAt.Gte(v)) }
+func (q Query) LastErrorAtLt(v time.Time) Query          { return q.Where(LastErrorAt.Lt(v)) }
+func (q Query) LastErrorAtLte(v time.Time) Query         { return q.Where(LastErrorAt.Lte(v)) }
+func (q Query) LastErrorAtIsNull() Query                 { return q.Where(LastErrorAt.IsNull()) }
+func (q Query) LastErrorAtIsNotNull() Query              { return q.Where(LastErrorAt.IsNotNull()) }
+func (q Query) CreatedByEq(v string) Query               { return q.Where(CreatedBy.Eq(v)) }
+func (q Query) CreatedByNotEq(v string) Query            { return q.Where(CreatedBy.NotEq(v)) }
+func (q Query) CreatedByGt(v string) Query               { return q.Where(CreatedBy.Gt(v)) }
+func (q Query) CreatedByGte(v string) Query              { return q.Where(CreatedBy.Gte(v)) }
+func (q Query) CreatedByLt(v string) Query               { return q.Where(CreatedBy.Lt(v)) }
+func (q Query) CreatedByLte(v string) Query              { return q.Where(CreatedBy.Lte(v)) }
+func (q Query) CreatedByEqLower(v string) Query          { return q.Where(CreatedBy.EqLower(v)) }
+func (q Query) CreatedByLike(v string) Query             { return q.Where(CreatedBy.Like(v)) }
+func (q Query) CreatedByILike(v string) Query            { return q.Where(CreatedBy.ILike(v)) }
+func (q Query) CreatedByIn(v ...string) Query            { return q.Where(CreatedBy.In(v...)) }
+func (q Query) CreatedByNotIn(v ...string) Query         { return q.Where(CreatedBy.NotIn(v...)) }
 
-const selectPrefix = `SELECT "id", "created_at", "updated_at", "name", "mode", "url", "credential_hash", "enroll_token_hash", "enroll_expires_at", "tunnel_seen_at", "tls_pin", "folders", "seal_key", "version", "secret_count", "rules_serial", "rules_hash", "rules_pushed_at", "log_seq", "log_head", "log_gap", "log_gap_at", "last_contact_at", "last_error", "last_error_at", "created_by" FROM "secrets_servers"`
+const selectPrefix = `SELECT "id", "created_at", "updated_at", "name", "mode", "url", "credential_hash", "enroll_token_hash", "enroll_expires_at", "tunnel_replica", "tunnel_connected_at", "tunnel_seen_at", "tls_pin", "folders", "seal_key", "version", "secret_count", "rules_serial", "rules_hash", "rules_pushed_at", "log_seq", "log_head", "log_gap", "log_gap_at", "last_contact_at", "last_error", "last_error_at", "created_by" FROM "secrets_servers"`
 const countPrefix = `SELECT count(*) FROM "secrets_servers"`
 const existsPrefix = `SELECT 1 FROM "secrets_servers"`
 const existsSuffix = ` LIMIT 1`
@@ -1545,6 +1605,18 @@ var orderTable = [nCols][4]string{
 		"\"enroll_expires_at\" DESC",
 		"\"enroll_expires_at\" ASC NULLS FIRST",
 		"\"enroll_expires_at\" DESC NULLS LAST",
+	},
+	{ // tunnel_replica
+		"\"tunnel_replica\"",
+		"\"tunnel_replica\" DESC",
+		"\"tunnel_replica\" ASC NULLS FIRST",
+		"\"tunnel_replica\" DESC NULLS LAST",
+	},
+	{ // tunnel_connected_at
+		"\"tunnel_connected_at\"",
+		"\"tunnel_connected_at\" DESC",
+		"\"tunnel_connected_at\" ASC NULLS FIRST",
+		"\"tunnel_connected_at\" DESC NULLS LAST",
 	},
 	{ // tunnel_seen_at
 		"\"tunnel_seen_at\"",
@@ -1662,6 +1734,8 @@ var identTable = [nCols]string{
 	"\"credential_hash\"",
 	"\"enroll_token_hash\"",
 	"\"enroll_expires_at\"",
+	"\"tunnel_replica\"",
+	"\"tunnel_connected_at\"",
 	"\"tunnel_seen_at\"",
 	"\"tls_pin\"",
 	"\"folders\"",
@@ -1711,7 +1785,7 @@ func orderOf(dir, col uint32) string {
 
 // fragTable is every predicate this table can produce, lowered at build
 // time. Runtime splices; it never formats.
-var fragTable = [26][28]runtime.Frag{
+var fragTable = [28][28]runtime.Frag{
 	{ // id
 		{}, // opNone
 		{A: "\"id\" = $", B: ""},
@@ -1979,6 +2053,66 @@ var fragTable = [26][28]runtime.Frag{
 		{},
 		{A: "\"enroll_expires_at\" IS NULL", B: ""},
 		{A: "\"enroll_expires_at\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // tunnel_replica
+		{}, // opNone
+		{A: "\"tunnel_replica\" = $", B: ""},
+		{A: "\"tunnel_replica\" <> $", B: ""},
+		{A: "\"tunnel_replica\" > $", B: ""},
+		{A: "\"tunnel_replica\" >= $", B: ""},
+		{A: "\"tunnel_replica\" < $", B: ""},
+		{A: "\"tunnel_replica\" <= $", B: ""},
+		{A: "lower(\"tunnel_replica\") = lower($", B: ")"},
+		{A: "\"tunnel_replica\" LIKE $", B: ""},
+		{A: "\"tunnel_replica\" ILIKE $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"tunnel_replica\" = ANY($", B: ")"},
+		{A: "\"tunnel_replica\" <> ALL($", B: ")"},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"tunnel_replica\" IS NULL", B: ""},
+		{A: "\"tunnel_replica\" IS NOT NULL", B: ""},
+		{},
+		{},
+	},
+	{ // tunnel_connected_at
+		{}, // opNone
+		{A: "\"tunnel_connected_at\" = $", B: ""},
+		{A: "\"tunnel_connected_at\" <> $", B: ""},
+		{A: "\"tunnel_connected_at\" > $", B: ""},
+		{A: "\"tunnel_connected_at\" >= $", B: ""},
+		{A: "\"tunnel_connected_at\" < $", B: ""},
+		{A: "\"tunnel_connected_at\" <= $", B: ""},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{A: "\"tunnel_connected_at\" IS NULL", B: ""},
+		{A: "\"tunnel_connected_at\" IS NOT NULL", B: ""},
 		{},
 		{},
 	},
@@ -2658,26 +2792,28 @@ func scan(rv [][]byte, r *Row, sl *runtime.Slab) error {
 	r.CredentialHash = runtime.NullText(rv[6], sl)
 	r.EnrollTokenHash = runtime.NullText(rv[7], sl)
 	r.EnrollExpiresAt = runtime.Nullable(rv[8], runtime.Timestamptz)
-	r.TunnelSeenAt = runtime.Nullable(rv[9], runtime.Timestamptz)
-	r.TlsPin = sl.Str(rv[10])
-	r.Folders, decErr = runtime.TextArray(rv[11], sl)
+	r.TunnelReplica = runtime.NullText(rv[9], sl)
+	r.TunnelConnectedAt = runtime.Nullable(rv[10], runtime.Timestamptz)
+	r.TunnelSeenAt = runtime.Nullable(rv[11], runtime.Timestamptz)
+	r.TlsPin = sl.Str(rv[12])
+	r.Folders, decErr = runtime.TextArray(rv[13], sl)
 	if decErr != nil {
 		return decErr
 	}
-	r.SealKey = sl.Str(rv[12])
-	r.Version = sl.Str(rv[13])
-	r.SecretCount = runtime.Int4(rv[14])
-	r.RulesSerial = runtime.Int8(rv[15])
-	r.RulesHash = sl.Str(rv[16])
-	r.RulesPushedAt = runtime.Nullable(rv[17], runtime.Timestamptz)
-	r.LogSeq = runtime.Int8(rv[18])
-	r.LogHead = sl.Str(rv[19])
-	r.LogGap = sl.Str(rv[20])
-	r.LogGapAt = runtime.Nullable(rv[21], runtime.Timestamptz)
-	r.LastContactAt = runtime.Nullable(rv[22], runtime.Timestamptz)
-	r.LastError = sl.Str(rv[23])
-	r.LastErrorAt = runtime.Nullable(rv[24], runtime.Timestamptz)
-	r.CreatedBy = sl.Str(rv[25])
+	r.SealKey = sl.Str(rv[14])
+	r.Version = sl.Str(rv[15])
+	r.SecretCount = runtime.Int4(rv[16])
+	r.RulesSerial = runtime.Int8(rv[17])
+	r.RulesHash = sl.Str(rv[18])
+	r.RulesPushedAt = runtime.Nullable(rv[19], runtime.Timestamptz)
+	r.LogSeq = runtime.Int8(rv[20])
+	r.LogHead = sl.Str(rv[21])
+	r.LogGap = sl.Str(rv[22])
+	r.LogGapAt = runtime.Nullable(rv[23], runtime.Timestamptz)
+	r.LastContactAt = runtime.Nullable(rv[24], runtime.Timestamptz)
+	r.LastError = sl.Str(rv[25])
+	r.LastErrorAt = runtime.Nullable(rv[26], runtime.Timestamptz)
+	r.CreatedBy = sl.Str(rv[27])
 	return decErr
 }
 
@@ -2775,11 +2911,7 @@ func (q Query) bindPreds(b *binder) []any {
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
-			case 10:
-				b.anyStr[nas] = q.anyStr[nas]
-				v = append(v, &b.anyStr[nas])
-				nas++
-			case 11:
+			case 9:
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
@@ -2792,34 +2924,42 @@ func (q Query) bindPreds(b *binder) []any {
 				v = append(v, &b.anyStr[nas])
 				nas++
 			case 14:
-				b.anyI32[nai32] = q.anyI32[nai32]
-				v = append(v, &b.anyI32[nai32])
-				nai32++
-			case 15:
-				b.anyI64[nai64] = q.anyI64[nai64]
-				v = append(v, &b.anyI64[nai64])
-				nai64++
-			case 16:
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
-			case 18:
+			case 15:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 16:
+				b.anyI32[nai32] = q.anyI32[nai32]
+				v = append(v, &b.anyI32[nai32])
+				nai32++
+			case 17:
 				b.anyI64[nai64] = q.anyI64[nai64]
 				v = append(v, &b.anyI64[nai64])
 				nai64++
-			case 19:
+			case 18:
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
 			case 20:
+				b.anyI64[nai64] = q.anyI64[nai64]
+				v = append(v, &b.anyI64[nai64])
+				nai64++
+			case 21:
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
-			case 23:
+			case 22:
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
 			case 25:
+				b.anyStr[nas] = q.anyStr[nas]
+				v = append(v, &b.anyStr[nas])
+				nas++
+			case 27:
 				b.anyStr[nas] = q.anyStr[nas]
 				v = append(v, &b.anyStr[nas])
 				nas++
@@ -2864,66 +3004,74 @@ func (q Query) bindPreds(b *binder) []any {
 			v = append(v, &b.tims[ntm])
 			ntm++
 		case 9:
-			b.tims[ntm] = q.tims[ntm]
-			v = append(v, &b.tims[ntm])
-			ntm++
-		case 10:
 			b.strs[ns] = q.strs[ns]
 			v = append(v, &b.strs[ns])
 			ns++
+		case 10:
+			b.tims[ntm] = q.tims[ntm]
+			v = append(v, &b.tims[ntm])
+			ntm++
+		case 11:
+			b.tims[ntm] = q.tims[ntm]
+			v = append(v, &b.tims[ntm])
+			ntm++
 		case 12:
 			b.strs[ns] = q.strs[ns]
 			v = append(v, &b.strs[ns])
 			ns++
-		case 13:
-			b.strs[ns] = q.strs[ns]
-			v = append(v, &b.strs[ns])
-			ns++
 		case 14:
-			b.nums[nn] = q.nums[nn]
-			v = append(v, &b.nums[nn])
-			nn++
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
 		case 15:
-			b.nums[nn] = q.nums[nn]
-			v = append(v, &b.nums[nn])
-			nn++
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
 		case 16:
-			b.strs[ns] = q.strs[ns]
-			v = append(v, &b.strs[ns])
-			ns++
-		case 17:
-			b.tims[ntm] = q.tims[ntm]
-			v = append(v, &b.tims[ntm])
-			ntm++
-		case 18:
 			b.nums[nn] = q.nums[nn]
 			v = append(v, &b.nums[nn])
 			nn++
+		case 17:
+			b.nums[nn] = q.nums[nn]
+			v = append(v, &b.nums[nn])
+			nn++
+		case 18:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
 		case 19:
-			b.strs[ns] = q.strs[ns]
-			v = append(v, &b.strs[ns])
-			ns++
+			b.tims[ntm] = q.tims[ntm]
+			v = append(v, &b.tims[ntm])
+			ntm++
 		case 20:
-			b.strs[ns] = q.strs[ns]
-			v = append(v, &b.strs[ns])
-			ns++
+			b.nums[nn] = q.nums[nn]
+			v = append(v, &b.nums[nn])
+			nn++
 		case 21:
-			b.tims[ntm] = q.tims[ntm]
-			v = append(v, &b.tims[ntm])
-			ntm++
-		case 22:
-			b.tims[ntm] = q.tims[ntm]
-			v = append(v, &b.tims[ntm])
-			ntm++
-		case 23:
 			b.strs[ns] = q.strs[ns]
 			v = append(v, &b.strs[ns])
 			ns++
+		case 22:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 23:
+			b.tims[ntm] = q.tims[ntm]
+			v = append(v, &b.tims[ntm])
+			ntm++
 		case 24:
 			b.tims[ntm] = q.tims[ntm]
 			v = append(v, &b.tims[ntm])
 			ntm++
 		case 25:
+			b.strs[ns] = q.strs[ns]
+			v = append(v, &b.strs[ns])
+			ns++
+		case 26:
+			b.tims[ntm] = q.tims[ntm]
+			v = append(v, &b.tims[ntm])
+			ntm++
+		case 27:
 			b.strs[ns] = q.strs[ns]
 			v = append(v, &b.strs[ns])
 			ns++
@@ -3064,7 +3212,7 @@ func (q Query) Prepare(b *Binder) (string, []any) {
 
 // insertSQL does not vary: the column list is fixed by the table, so
 // the placeholders are known at build time and nothing is spliced.
-const insertSQL = `INSERT INTO "secrets_servers" ("id", "created_at", "updated_at", "name", "mode", "url", "credential_hash", "enroll_token_hash", "enroll_expires_at", "tunnel_seen_at", "tls_pin", "folders", "seal_key", "version", "secret_count", "rules_serial", "rules_hash", "rules_pushed_at", "log_seq", "log_head", "log_gap", "log_gap_at", "last_contact_at", "last_error", "last_error_at", "created_by") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26) RETURNING "id", "created_at", "updated_at", "name", "mode", "url", "credential_hash", "enroll_token_hash", "enroll_expires_at", "tunnel_seen_at", "tls_pin", "folders", "seal_key", "version", "secret_count", "rules_serial", "rules_hash", "rules_pushed_at", "log_seq", "log_head", "log_gap", "log_gap_at", "last_contact_at", "last_error", "last_error_at", "created_by"`
+const insertSQL = `INSERT INTO "secrets_servers" ("id", "created_at", "updated_at", "name", "mode", "url", "credential_hash", "enroll_token_hash", "enroll_expires_at", "tunnel_replica", "tunnel_connected_at", "tunnel_seen_at", "tls_pin", "folders", "seal_key", "version", "secret_count", "rules_serial", "rules_hash", "rules_pushed_at", "log_seq", "log_head", "log_gap", "log_gap_at", "last_contact_at", "last_error", "last_error_at", "created_by") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28) RETURNING "id", "created_at", "updated_at", "name", "mode", "url", "credential_hash", "enroll_token_hash", "enroll_expires_at", "tunnel_replica", "tunnel_connected_at", "tunnel_seen_at", "tls_pin", "folders", "seal_key", "version", "secret_count", "rules_serial", "rules_hash", "rules_pushed_at", "log_seq", "log_head", "log_gap", "log_gap_at", "last_contact_at", "last_error", "last_error_at", "created_by"`
 
 const updatePrefix = `UPDATE "secrets_servers" SET `
 const deletePrefix = `DELETE FROM "secrets_servers"`
@@ -3072,60 +3220,64 @@ const deletePrefix = `DELETE FROM "secrets_servers"`
 // Dirty bits. One per updatable column; the set of them is an UPDATE's
 // identity, exactly as a token stream is a SELECT's.
 const (
-	dUpdatedAt       uint64 = 1 << 0
-	dName            uint64 = 1 << 1
-	dMode            uint64 = 1 << 2
-	dURL             uint64 = 1 << 3
-	dCredentialHash  uint64 = 1 << 4
-	dEnrollTokenHash uint64 = 1 << 5
-	dEnrollExpiresAt uint64 = 1 << 6
-	dTunnelSeenAt    uint64 = 1 << 7
-	dTlsPin          uint64 = 1 << 8
-	dFolders         uint64 = 1 << 9
-	dSealKey         uint64 = 1 << 10
-	dVersion         uint64 = 1 << 11
-	dSecretCount     uint64 = 1 << 12
-	dRulesSerial     uint64 = 1 << 13
-	dRulesHash       uint64 = 1 << 14
-	dRulesPushedAt   uint64 = 1 << 15
-	dLogSeq          uint64 = 1 << 16
-	dLogHead         uint64 = 1 << 17
-	dLogGap          uint64 = 1 << 18
-	dLogGapAt        uint64 = 1 << 19
-	dLastContactAt   uint64 = 1 << 20
-	dLastError       uint64 = 1 << 21
-	dLastErrorAt     uint64 = 1 << 22
-	dCreatedBy       uint64 = 1 << 23
+	dUpdatedAt         uint64 = 1 << 0
+	dName              uint64 = 1 << 1
+	dMode              uint64 = 1 << 2
+	dURL               uint64 = 1 << 3
+	dCredentialHash    uint64 = 1 << 4
+	dEnrollTokenHash   uint64 = 1 << 5
+	dEnrollExpiresAt   uint64 = 1 << 6
+	dTunnelReplica     uint64 = 1 << 7
+	dTunnelConnectedAt uint64 = 1 << 8
+	dTunnelSeenAt      uint64 = 1 << 9
+	dTlsPin            uint64 = 1 << 10
+	dFolders           uint64 = 1 << 11
+	dSealKey           uint64 = 1 << 12
+	dVersion           uint64 = 1 << 13
+	dSecretCount       uint64 = 1 << 14
+	dRulesSerial       uint64 = 1 << 15
+	dRulesHash         uint64 = 1 << 16
+	dRulesPushedAt     uint64 = 1 << 17
+	dLogSeq            uint64 = 1 << 18
+	dLogHead           uint64 = 1 << 19
+	dLogGap            uint64 = 1 << 20
+	dLogGapAt          uint64 = 1 << 21
+	dLastContactAt     uint64 = 1 << 22
+	dLastError         uint64 = 1 << 23
+	dLastErrorAt       uint64 = 1 << 24
+	dCreatedBy         uint64 = 1 << 25
 )
 
-const nUpdatable = 24
+const nUpdatable = 26
 
 // setFrags is every assignment this table can make, lowered at build time.
 var setFrags = [nUpdatable]runtime.Frag{
-	{A: "\"updated_at\" = $", B: ""},        // updated_at
-	{A: "\"name\" = $", B: ""},              // name
-	{A: "\"mode\" = $", B: ""},              // mode
-	{A: "\"url\" = $", B: ""},               // url
-	{A: "\"credential_hash\" = $", B: ""},   // credential_hash
-	{A: "\"enroll_token_hash\" = $", B: ""}, // enroll_token_hash
-	{A: "\"enroll_expires_at\" = $", B: ""}, // enroll_expires_at
-	{A: "\"tunnel_seen_at\" = $", B: ""},    // tunnel_seen_at
-	{A: "\"tls_pin\" = $", B: ""},           // tls_pin
-	{A: "\"folders\" = $", B: ""},           // folders
-	{A: "\"seal_key\" = $", B: ""},          // seal_key
-	{A: "\"version\" = $", B: ""},           // version
-	{A: "\"secret_count\" = $", B: ""},      // secret_count
-	{A: "\"rules_serial\" = $", B: ""},      // rules_serial
-	{A: "\"rules_hash\" = $", B: ""},        // rules_hash
-	{A: "\"rules_pushed_at\" = $", B: ""},   // rules_pushed_at
-	{A: "\"log_seq\" = $", B: ""},           // log_seq
-	{A: "\"log_head\" = $", B: ""},          // log_head
-	{A: "\"log_gap\" = $", B: ""},           // log_gap
-	{A: "\"log_gap_at\" = $", B: ""},        // log_gap_at
-	{A: "\"last_contact_at\" = $", B: ""},   // last_contact_at
-	{A: "\"last_error\" = $", B: ""},        // last_error
-	{A: "\"last_error_at\" = $", B: ""},     // last_error_at
-	{A: "\"created_by\" = $", B: ""},        // created_by
+	{A: "\"updated_at\" = $", B: ""},          // updated_at
+	{A: "\"name\" = $", B: ""},                // name
+	{A: "\"mode\" = $", B: ""},                // mode
+	{A: "\"url\" = $", B: ""},                 // url
+	{A: "\"credential_hash\" = $", B: ""},     // credential_hash
+	{A: "\"enroll_token_hash\" = $", B: ""},   // enroll_token_hash
+	{A: "\"enroll_expires_at\" = $", B: ""},   // enroll_expires_at
+	{A: "\"tunnel_replica\" = $", B: ""},      // tunnel_replica
+	{A: "\"tunnel_connected_at\" = $", B: ""}, // tunnel_connected_at
+	{A: "\"tunnel_seen_at\" = $", B: ""},      // tunnel_seen_at
+	{A: "\"tls_pin\" = $", B: ""},             // tls_pin
+	{A: "\"folders\" = $", B: ""},             // folders
+	{A: "\"seal_key\" = $", B: ""},            // seal_key
+	{A: "\"version\" = $", B: ""},             // version
+	{A: "\"secret_count\" = $", B: ""},        // secret_count
+	{A: "\"rules_serial\" = $", B: ""},        // rules_serial
+	{A: "\"rules_hash\" = $", B: ""},          // rules_hash
+	{A: "\"rules_pushed_at\" = $", B: ""},     // rules_pushed_at
+	{A: "\"log_seq\" = $", B: ""},             // log_seq
+	{A: "\"log_head\" = $", B: ""},            // log_head
+	{A: "\"log_gap\" = $", B: ""},             // log_gap
+	{A: "\"log_gap_at\" = $", B: ""},          // log_gap_at
+	{A: "\"last_contact_at\" = $", B: ""},     // last_contact_at
+	{A: "\"last_error\" = $", B: ""},          // last_error
+	{A: "\"last_error_at\" = $", B: ""},       // last_error_at
+	{A: "\"created_by\" = $", B: ""},          // created_by
 }
 
 // exprFrags is the SERVER-side assignment each column may take instead
@@ -3139,11 +3291,13 @@ var exprFrags = [nUpdatable]runtime.Frag{
 	{},                                   // credential_hash has no server-side form
 	{},                                   // enroll_token_hash has no server-side form
 	{A: "\"enroll_expires_at\" = now()", B: ""}, // enroll_expires_at = the database's clock
-	{A: "\"tunnel_seen_at\" = now()", B: ""},    // tunnel_seen_at = the database's clock
-	{},                                          // tls_pin has no server-side form
-	{},                                          // folders has no server-side form
-	{},                                          // seal_key has no server-side form
-	{},                                          // version has no server-side form
+	{}, // tunnel_replica has no server-side form
+	{A: "\"tunnel_connected_at\" = now()", B: ""}, // tunnel_connected_at = the database's clock
+	{A: "\"tunnel_seen_at\" = now()", B: ""},      // tunnel_seen_at = the database's clock
+	{},                                            // tls_pin has no server-side form
+	{},                                            // folders has no server-side form
+	{},                                            // seal_key has no server-side form
+	{},                                            // version has no server-side form
 	{A: "\"secret_count\" = \"secret_count\" + 1", B: ""}, // secret_count = its own value plus one
 	{A: "\"rules_serial\" = \"rules_serial\" + 1", B: ""}, // rules_serial = its own value plus one
 	{}, // rules_hash has no server-side form
@@ -3167,35 +3321,37 @@ var pkFrags = [1]runtime.Frag{
 // assigned, so every other column takes its database default — which is
 // the only way a DEFAULT gen_random_uuid() can ever fire.
 const (
-	iID              uint64 = 1 << 0
-	iCreatedAt       uint64 = 1 << 1
-	iUpdatedAt       uint64 = 1 << 2
-	iName            uint64 = 1 << 3
-	iMode            uint64 = 1 << 4
-	iURL             uint64 = 1 << 5
-	iCredentialHash  uint64 = 1 << 6
-	iEnrollTokenHash uint64 = 1 << 7
-	iEnrollExpiresAt uint64 = 1 << 8
-	iTunnelSeenAt    uint64 = 1 << 9
-	iTlsPin          uint64 = 1 << 10
-	iFolders         uint64 = 1 << 11
-	iSealKey         uint64 = 1 << 12
-	iVersion         uint64 = 1 << 13
-	iSecretCount     uint64 = 1 << 14
-	iRulesSerial     uint64 = 1 << 15
-	iRulesHash       uint64 = 1 << 16
-	iRulesPushedAt   uint64 = 1 << 17
-	iLogSeq          uint64 = 1 << 18
-	iLogHead         uint64 = 1 << 19
-	iLogGap          uint64 = 1 << 20
-	iLogGapAt        uint64 = 1 << 21
-	iLastContactAt   uint64 = 1 << 22
-	iLastError       uint64 = 1 << 23
-	iLastErrorAt     uint64 = 1 << 24
-	iCreatedBy       uint64 = 1 << 25
+	iID                uint64 = 1 << 0
+	iCreatedAt         uint64 = 1 << 1
+	iUpdatedAt         uint64 = 1 << 2
+	iName              uint64 = 1 << 3
+	iMode              uint64 = 1 << 4
+	iURL               uint64 = 1 << 5
+	iCredentialHash    uint64 = 1 << 6
+	iEnrollTokenHash   uint64 = 1 << 7
+	iEnrollExpiresAt   uint64 = 1 << 8
+	iTunnelReplica     uint64 = 1 << 9
+	iTunnelConnectedAt uint64 = 1 << 10
+	iTunnelSeenAt      uint64 = 1 << 11
+	iTlsPin            uint64 = 1 << 12
+	iFolders           uint64 = 1 << 13
+	iSealKey           uint64 = 1 << 14
+	iVersion           uint64 = 1 << 15
+	iSecretCount       uint64 = 1 << 16
+	iRulesSerial       uint64 = 1 << 17
+	iRulesHash         uint64 = 1 << 18
+	iRulesPushedAt     uint64 = 1 << 19
+	iLogSeq            uint64 = 1 << 20
+	iLogHead           uint64 = 1 << 21
+	iLogGap            uint64 = 1 << 22
+	iLogGapAt          uint64 = 1 << 23
+	iLastContactAt     uint64 = 1 << 24
+	iLastError         uint64 = 1 << 25
+	iLastErrorAt       uint64 = 1 << 26
+	iCreatedBy         uint64 = 1 << 27
 )
 
-const nInsertable = 26
+const nInsertable = 28
 
 // insCols is the quoted column name for each insert bit.
 var insCols = [nInsertable]string{
@@ -3208,6 +3364,8 @@ var insCols = [nInsertable]string{
 	"\"credential_hash\"",
 	"\"enroll_token_hash\"",
 	"\"enroll_expires_at\"",
+	"\"tunnel_replica\"",
+	"\"tunnel_connected_at\"",
 	"\"tunnel_seen_at\"",
 	"\"tls_pin\"",
 	"\"folders\"",
@@ -3233,7 +3391,7 @@ var insParts = runtime.InsertParts{Open: " (", Sep: ", ", Mid: ") VALUES (", Clo
 var insPlaceholder = runtime.Placeholder{}
 
 const insPrefix = "INSERT INTO \"secrets_servers\""
-const insReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"name\", \"mode\", \"url\", \"credential_hash\", \"enroll_token_hash\", \"enroll_expires_at\", \"tunnel_seen_at\", \"tls_pin\", \"folders\", \"seal_key\", \"version\", \"secret_count\", \"rules_serial\", \"rules_hash\", \"rules_pushed_at\", \"log_seq\", \"log_head\", \"log_gap\", \"log_gap_at\", \"last_contact_at\", \"last_error\", \"last_error_at\", \"created_by\""
+const insReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"name\", \"mode\", \"url\", \"credential_hash\", \"enroll_token_hash\", \"enroll_expires_at\", \"tunnel_replica\", \"tunnel_connected_at\", \"tunnel_seen_at\", \"tls_pin\", \"folders\", \"seal_key\", \"version\", \"secret_count\", \"rules_serial\", \"rules_hash\", \"rules_pushed_at\", \"log_seq\", \"log_head\", \"log_gap\", \"log_gap_at\", \"last_contact_at\", \"last_error\", \"last_error_at\", \"created_by\""
 
 var insCache = runtime.NewMaskCache()
 
@@ -3252,7 +3410,7 @@ var updOpCache = runtime.NewMaskCache()
 // part of it. Without it m.Row() would hold what the row held BEFORE
 // the statement, so a caller reading back the counter it just
 // incremented would get the old number and never know.
-const updReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"name\", \"mode\", \"url\", \"credential_hash\", \"enroll_token_hash\", \"enroll_expires_at\", \"tunnel_seen_at\", \"tls_pin\", \"folders\", \"seal_key\", \"version\", \"secret_count\", \"rules_serial\", \"rules_hash\", \"rules_pushed_at\", \"log_seq\", \"log_head\", \"log_gap\", \"log_gap_at\", \"last_contact_at\", \"last_error\", \"last_error_at\", \"created_by\""
+const updReturning = " RETURNING \"id\", \"created_at\", \"updated_at\", \"name\", \"mode\", \"url\", \"credential_hash\", \"enroll_token_hash\", \"enroll_expires_at\", \"tunnel_replica\", \"tunnel_connected_at\", \"tunnel_seen_at\", \"tls_pin\", \"folders\", \"seal_key\", \"version\", \"secret_count\", \"rules_serial\", \"rules_hash\", \"rules_pushed_at\", \"log_seq\", \"log_head\", \"log_gap\", \"log_gap_at\", \"last_contact_at\", \"last_error\", \"last_error_at\", \"created_by\""
 
 // Masks reports how many distinct UPDATE shapes have compiled.
 func Masks() int { return updCache.Masks() }
@@ -3386,6 +3544,45 @@ func (m *Mut) SetEnrollExpiresAtNull() {
 	m.row.EnrollExpiresAt = runtime.Null[time.Time]{}
 	m.dirty |= dEnrollExpiresAt
 	m.expr &^= dEnrollExpiresAt
+}
+
+func (m *Mut) SetTunnelReplica(v string) {
+	m.row.TunnelReplica = runtime.Null[string]{V: v, Valid: true}
+	m.dirty |= dTunnelReplica
+	m.expr &^= dTunnelReplica
+}
+
+// SetTunnelReplicaNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetTunnelReplicaNull() {
+	m.row.TunnelReplica = runtime.Null[string]{}
+	m.dirty |= dTunnelReplica
+	m.expr &^= dTunnelReplica
+}
+
+func (m *Mut) SetTunnelConnectedAt(v time.Time) {
+	m.row.TunnelConnectedAt = runtime.Null[time.Time]{V: v, Valid: true}
+	m.dirty |= dTunnelConnectedAt
+	m.expr &^= dTunnelConnectedAt
+}
+
+// SetTunnelConnectedAtNow assigns the database's clock, not this process's.
+//
+// Binding time.Now() instead would record when THIS server
+// thought it was. Servers skew, so rows written seconds apart
+// can land out of order, and an event stamped by a fast clock
+// reads as preceding the thing that caused it.
+func (m *Mut) SetTunnelConnectedAtNow() {
+	m.expr |= dTunnelConnectedAt
+	m.dirty &^= dTunnelConnectedAt
+}
+
+// SetTunnelConnectedAtNull writes SQL NULL. It is a separate method because a
+// zero value and an absent value are different facts.
+func (m *Mut) SetTunnelConnectedAtNull() {
+	m.row.TunnelConnectedAt = runtime.Null[time.Time]{}
+	m.dirty |= dTunnelConnectedAt
+	m.expr &^= dTunnelConnectedAt
 }
 
 func (m *Mut) SetTunnelSeenAt(v time.Time) {
@@ -3710,6 +3907,30 @@ func (n *Ins) SetEnrollExpiresAtNull() {
 	n.set |= iEnrollExpiresAt
 }
 
+func (n *Ins) SetTunnelReplica(v string) {
+	n.row.TunnelReplica = runtime.Null[string]{V: v, Valid: true}
+	n.set |= iTunnelReplica
+}
+
+// SetTunnelReplicaNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetTunnelReplicaNull() {
+	n.row.TunnelReplica = runtime.Null[string]{}
+	n.set |= iTunnelReplica
+}
+
+func (n *Ins) SetTunnelConnectedAt(v time.Time) {
+	n.row.TunnelConnectedAt = runtime.Null[time.Time]{V: v, Valid: true}
+	n.set |= iTunnelConnectedAt
+}
+
+// SetTunnelConnectedAtNull writes SQL NULL explicitly, which is not the same as
+// leaving the column unset and taking its default.
+func (n *Ins) SetTunnelConnectedAtNull() {
+	n.row.TunnelConnectedAt = runtime.Null[time.Time]{}
+	n.set |= iTunnelConnectedAt
+}
+
 func (n *Ins) SetTunnelSeenAt(v time.Time) {
 	n.row.TunnelSeenAt = runtime.Null[time.Time]{V: v, Valid: true}
 	n.set |= iTunnelSeenAt
@@ -3930,7 +4151,7 @@ var conflictSpecs = []string{
 
 // assignable is the columns target i may overwrite, given the mask.
 func assignable(i uint8, mask uint64) []string {
-	set := make([]string, 0, 24)
+	set := make([]string, 0, 26)
 	switch i {
 	case 0:
 		if mask&(1<<2) != 0 {
@@ -3955,54 +4176,60 @@ func assignable(i uint8, mask uint64) []string {
 			set = append(set, "enroll_expires_at")
 		}
 		if mask&(1<<9) != 0 {
-			set = append(set, "tunnel_seen_at")
+			set = append(set, "tunnel_replica")
 		}
 		if mask&(1<<10) != 0 {
-			set = append(set, "tls_pin")
+			set = append(set, "tunnel_connected_at")
 		}
 		if mask&(1<<11) != 0 {
-			set = append(set, "folders")
+			set = append(set, "tunnel_seen_at")
 		}
 		if mask&(1<<12) != 0 {
-			set = append(set, "seal_key")
+			set = append(set, "tls_pin")
 		}
 		if mask&(1<<13) != 0 {
-			set = append(set, "version")
+			set = append(set, "folders")
 		}
 		if mask&(1<<14) != 0 {
-			set = append(set, "secret_count")
+			set = append(set, "seal_key")
 		}
 		if mask&(1<<15) != 0 {
-			set = append(set, "rules_serial")
+			set = append(set, "version")
 		}
 		if mask&(1<<16) != 0 {
-			set = append(set, "rules_hash")
+			set = append(set, "secret_count")
 		}
 		if mask&(1<<17) != 0 {
-			set = append(set, "rules_pushed_at")
+			set = append(set, "rules_serial")
 		}
 		if mask&(1<<18) != 0 {
-			set = append(set, "log_seq")
+			set = append(set, "rules_hash")
 		}
 		if mask&(1<<19) != 0 {
-			set = append(set, "log_head")
+			set = append(set, "rules_pushed_at")
 		}
 		if mask&(1<<20) != 0 {
-			set = append(set, "log_gap")
+			set = append(set, "log_seq")
 		}
 		if mask&(1<<21) != 0 {
-			set = append(set, "log_gap_at")
+			set = append(set, "log_head")
 		}
 		if mask&(1<<22) != 0 {
-			set = append(set, "last_contact_at")
+			set = append(set, "log_gap")
 		}
 		if mask&(1<<23) != 0 {
-			set = append(set, "last_error")
+			set = append(set, "log_gap_at")
 		}
 		if mask&(1<<24) != 0 {
-			set = append(set, "last_error_at")
+			set = append(set, "last_contact_at")
 		}
 		if mask&(1<<25) != 0 {
+			set = append(set, "last_error")
+		}
+		if mask&(1<<26) != 0 {
+			set = append(set, "last_error_at")
+		}
+		if mask&(1<<27) != 0 {
 			set = append(set, "created_by")
 		}
 	case 1:
@@ -4025,54 +4252,60 @@ func assignable(i uint8, mask uint64) []string {
 			set = append(set, "enroll_expires_at")
 		}
 		if mask&(1<<9) != 0 {
-			set = append(set, "tunnel_seen_at")
+			set = append(set, "tunnel_replica")
 		}
 		if mask&(1<<10) != 0 {
-			set = append(set, "tls_pin")
+			set = append(set, "tunnel_connected_at")
 		}
 		if mask&(1<<11) != 0 {
-			set = append(set, "folders")
+			set = append(set, "tunnel_seen_at")
 		}
 		if mask&(1<<12) != 0 {
-			set = append(set, "seal_key")
+			set = append(set, "tls_pin")
 		}
 		if mask&(1<<13) != 0 {
-			set = append(set, "version")
+			set = append(set, "folders")
 		}
 		if mask&(1<<14) != 0 {
-			set = append(set, "secret_count")
+			set = append(set, "seal_key")
 		}
 		if mask&(1<<15) != 0 {
-			set = append(set, "rules_serial")
+			set = append(set, "version")
 		}
 		if mask&(1<<16) != 0 {
-			set = append(set, "rules_hash")
+			set = append(set, "secret_count")
 		}
 		if mask&(1<<17) != 0 {
-			set = append(set, "rules_pushed_at")
+			set = append(set, "rules_serial")
 		}
 		if mask&(1<<18) != 0 {
-			set = append(set, "log_seq")
+			set = append(set, "rules_hash")
 		}
 		if mask&(1<<19) != 0 {
-			set = append(set, "log_head")
+			set = append(set, "rules_pushed_at")
 		}
 		if mask&(1<<20) != 0 {
-			set = append(set, "log_gap")
+			set = append(set, "log_seq")
 		}
 		if mask&(1<<21) != 0 {
-			set = append(set, "log_gap_at")
+			set = append(set, "log_head")
 		}
 		if mask&(1<<22) != 0 {
-			set = append(set, "last_contact_at")
+			set = append(set, "log_gap")
 		}
 		if mask&(1<<23) != 0 {
-			set = append(set, "last_error")
+			set = append(set, "log_gap_at")
 		}
 		if mask&(1<<24) != 0 {
-			set = append(set, "last_error_at")
+			set = append(set, "last_contact_at")
 		}
 		if mask&(1<<25) != 0 {
+			set = append(set, "last_error")
+		}
+		if mask&(1<<26) != 0 {
+			set = append(set, "last_error_at")
+		}
+		if mask&(1<<27) != 0 {
 			set = append(set, "created_by")
 		}
 	case 2:
@@ -4095,54 +4328,60 @@ func assignable(i uint8, mask uint64) []string {
 			set = append(set, "enroll_expires_at")
 		}
 		if mask&(1<<9) != 0 {
-			set = append(set, "tunnel_seen_at")
+			set = append(set, "tunnel_replica")
 		}
 		if mask&(1<<10) != 0 {
-			set = append(set, "tls_pin")
+			set = append(set, "tunnel_connected_at")
 		}
 		if mask&(1<<11) != 0 {
-			set = append(set, "folders")
+			set = append(set, "tunnel_seen_at")
 		}
 		if mask&(1<<12) != 0 {
-			set = append(set, "seal_key")
+			set = append(set, "tls_pin")
 		}
 		if mask&(1<<13) != 0 {
-			set = append(set, "version")
+			set = append(set, "folders")
 		}
 		if mask&(1<<14) != 0 {
-			set = append(set, "secret_count")
+			set = append(set, "seal_key")
 		}
 		if mask&(1<<15) != 0 {
-			set = append(set, "rules_serial")
+			set = append(set, "version")
 		}
 		if mask&(1<<16) != 0 {
-			set = append(set, "rules_hash")
+			set = append(set, "secret_count")
 		}
 		if mask&(1<<17) != 0 {
-			set = append(set, "rules_pushed_at")
+			set = append(set, "rules_serial")
 		}
 		if mask&(1<<18) != 0 {
-			set = append(set, "log_seq")
+			set = append(set, "rules_hash")
 		}
 		if mask&(1<<19) != 0 {
-			set = append(set, "log_head")
+			set = append(set, "rules_pushed_at")
 		}
 		if mask&(1<<20) != 0 {
-			set = append(set, "log_gap")
+			set = append(set, "log_seq")
 		}
 		if mask&(1<<21) != 0 {
-			set = append(set, "log_gap_at")
+			set = append(set, "log_head")
 		}
 		if mask&(1<<22) != 0 {
-			set = append(set, "last_contact_at")
+			set = append(set, "log_gap")
 		}
 		if mask&(1<<23) != 0 {
-			set = append(set, "last_error")
+			set = append(set, "log_gap_at")
 		}
 		if mask&(1<<24) != 0 {
-			set = append(set, "last_error_at")
+			set = append(set, "last_contact_at")
 		}
 		if mask&(1<<25) != 0 {
+			set = append(set, "last_error")
+		}
+		if mask&(1<<26) != 0 {
+			set = append(set, "last_error_at")
+		}
+		if mask&(1<<27) != 0 {
 			set = append(set, "created_by")
 		}
 	case 3:
@@ -4168,54 +4407,60 @@ func assignable(i uint8, mask uint64) []string {
 			set = append(set, "enroll_expires_at")
 		}
 		if mask&(1<<9) != 0 {
-			set = append(set, "tunnel_seen_at")
+			set = append(set, "tunnel_replica")
 		}
 		if mask&(1<<10) != 0 {
-			set = append(set, "tls_pin")
+			set = append(set, "tunnel_connected_at")
 		}
 		if mask&(1<<11) != 0 {
-			set = append(set, "folders")
+			set = append(set, "tunnel_seen_at")
 		}
 		if mask&(1<<12) != 0 {
-			set = append(set, "seal_key")
+			set = append(set, "tls_pin")
 		}
 		if mask&(1<<13) != 0 {
-			set = append(set, "version")
+			set = append(set, "folders")
 		}
 		if mask&(1<<14) != 0 {
-			set = append(set, "secret_count")
+			set = append(set, "seal_key")
 		}
 		if mask&(1<<15) != 0 {
-			set = append(set, "rules_serial")
+			set = append(set, "version")
 		}
 		if mask&(1<<16) != 0 {
-			set = append(set, "rules_hash")
+			set = append(set, "secret_count")
 		}
 		if mask&(1<<17) != 0 {
-			set = append(set, "rules_pushed_at")
+			set = append(set, "rules_serial")
 		}
 		if mask&(1<<18) != 0 {
-			set = append(set, "log_seq")
+			set = append(set, "rules_hash")
 		}
 		if mask&(1<<19) != 0 {
-			set = append(set, "log_head")
+			set = append(set, "rules_pushed_at")
 		}
 		if mask&(1<<20) != 0 {
-			set = append(set, "log_gap")
+			set = append(set, "log_seq")
 		}
 		if mask&(1<<21) != 0 {
-			set = append(set, "log_gap_at")
+			set = append(set, "log_head")
 		}
 		if mask&(1<<22) != 0 {
-			set = append(set, "last_contact_at")
+			set = append(set, "log_gap")
 		}
 		if mask&(1<<23) != 0 {
-			set = append(set, "last_error")
+			set = append(set, "log_gap_at")
 		}
 		if mask&(1<<24) != 0 {
-			set = append(set, "last_error_at")
+			set = append(set, "last_contact_at")
 		}
 		if mask&(1<<25) != 0 {
+			set = append(set, "last_error")
+		}
+		if mask&(1<<26) != 0 {
+			set = append(set, "last_error_at")
+		}
+		if mask&(1<<27) != 0 {
 			set = append(set, "created_by")
 		}
 	}
@@ -4316,30 +4561,32 @@ func assignAdded(c string, add uint64) (string, bool) {
 }
 
 var assignFor = map[string]string{
-	"updated_at":        "\"updated_at\" = EXCLUDED.\"updated_at\"",
-	"name":              "\"name\" = EXCLUDED.\"name\"",
-	"mode":              "\"mode\" = EXCLUDED.\"mode\"",
-	"url":               "\"url\" = EXCLUDED.\"url\"",
-	"credential_hash":   "\"credential_hash\" = EXCLUDED.\"credential_hash\"",
-	"enroll_token_hash": "\"enroll_token_hash\" = EXCLUDED.\"enroll_token_hash\"",
-	"enroll_expires_at": "\"enroll_expires_at\" = EXCLUDED.\"enroll_expires_at\"",
-	"tunnel_seen_at":    "\"tunnel_seen_at\" = EXCLUDED.\"tunnel_seen_at\"",
-	"tls_pin":           "\"tls_pin\" = EXCLUDED.\"tls_pin\"",
-	"folders":           "\"folders\" = EXCLUDED.\"folders\"",
-	"seal_key":          "\"seal_key\" = EXCLUDED.\"seal_key\"",
-	"version":           "\"version\" = EXCLUDED.\"version\"",
-	"secret_count":      "\"secret_count\" = EXCLUDED.\"secret_count\"",
-	"rules_serial":      "\"rules_serial\" = EXCLUDED.\"rules_serial\"",
-	"rules_hash":        "\"rules_hash\" = EXCLUDED.\"rules_hash\"",
-	"rules_pushed_at":   "\"rules_pushed_at\" = EXCLUDED.\"rules_pushed_at\"",
-	"log_seq":           "\"log_seq\" = EXCLUDED.\"log_seq\"",
-	"log_head":          "\"log_head\" = EXCLUDED.\"log_head\"",
-	"log_gap":           "\"log_gap\" = EXCLUDED.\"log_gap\"",
-	"log_gap_at":        "\"log_gap_at\" = EXCLUDED.\"log_gap_at\"",
-	"last_contact_at":   "\"last_contact_at\" = EXCLUDED.\"last_contact_at\"",
-	"last_error":        "\"last_error\" = EXCLUDED.\"last_error\"",
-	"last_error_at":     "\"last_error_at\" = EXCLUDED.\"last_error_at\"",
-	"created_by":        "\"created_by\" = EXCLUDED.\"created_by\"",
+	"updated_at":          "\"updated_at\" = EXCLUDED.\"updated_at\"",
+	"name":                "\"name\" = EXCLUDED.\"name\"",
+	"mode":                "\"mode\" = EXCLUDED.\"mode\"",
+	"url":                 "\"url\" = EXCLUDED.\"url\"",
+	"credential_hash":     "\"credential_hash\" = EXCLUDED.\"credential_hash\"",
+	"enroll_token_hash":   "\"enroll_token_hash\" = EXCLUDED.\"enroll_token_hash\"",
+	"enroll_expires_at":   "\"enroll_expires_at\" = EXCLUDED.\"enroll_expires_at\"",
+	"tunnel_replica":      "\"tunnel_replica\" = EXCLUDED.\"tunnel_replica\"",
+	"tunnel_connected_at": "\"tunnel_connected_at\" = EXCLUDED.\"tunnel_connected_at\"",
+	"tunnel_seen_at":      "\"tunnel_seen_at\" = EXCLUDED.\"tunnel_seen_at\"",
+	"tls_pin":             "\"tls_pin\" = EXCLUDED.\"tls_pin\"",
+	"folders":             "\"folders\" = EXCLUDED.\"folders\"",
+	"seal_key":            "\"seal_key\" = EXCLUDED.\"seal_key\"",
+	"version":             "\"version\" = EXCLUDED.\"version\"",
+	"secret_count":        "\"secret_count\" = EXCLUDED.\"secret_count\"",
+	"rules_serial":        "\"rules_serial\" = EXCLUDED.\"rules_serial\"",
+	"rules_hash":          "\"rules_hash\" = EXCLUDED.\"rules_hash\"",
+	"rules_pushed_at":     "\"rules_pushed_at\" = EXCLUDED.\"rules_pushed_at\"",
+	"log_seq":             "\"log_seq\" = EXCLUDED.\"log_seq\"",
+	"log_head":            "\"log_head\" = EXCLUDED.\"log_head\"",
+	"log_gap":             "\"log_gap\" = EXCLUDED.\"log_gap\"",
+	"log_gap_at":          "\"log_gap_at\" = EXCLUDED.\"log_gap_at\"",
+	"last_contact_at":     "\"last_contact_at\" = EXCLUDED.\"last_contact_at\"",
+	"last_error":          "\"last_error\" = EXCLUDED.\"last_error\"",
+	"last_error_at":       "\"last_error_at\" = EXCLUDED.\"last_error_at\"",
+	"created_by":          "\"created_by\" = EXCLUDED.\"created_by\"",
 }
 
 func assignExcluded(c string) string { return assignFor[c] }
@@ -4409,38 +4656,42 @@ func (n *Ins) Insert(ctx context.Context, ex runtime.Executor) (Row, error) {
 		case 8:
 			args = append(args, n.row.EnrollExpiresAt.Arg())
 		case 9:
-			args = append(args, n.row.TunnelSeenAt.Arg())
+			args = append(args, n.row.TunnelReplica.Arg())
 		case 10:
-			args = append(args, n.row.TlsPin)
+			args = append(args, n.row.TunnelConnectedAt.Arg())
 		case 11:
-			args = append(args, n.row.Folders)
+			args = append(args, n.row.TunnelSeenAt.Arg())
 		case 12:
-			args = append(args, n.row.SealKey)
+			args = append(args, n.row.TlsPin)
 		case 13:
-			args = append(args, n.row.Version)
+			args = append(args, n.row.Folders)
 		case 14:
-			args = append(args, n.row.SecretCount)
+			args = append(args, n.row.SealKey)
 		case 15:
-			args = append(args, n.row.RulesSerial)
+			args = append(args, n.row.Version)
 		case 16:
-			args = append(args, n.row.RulesHash)
+			args = append(args, n.row.SecretCount)
 		case 17:
-			args = append(args, n.row.RulesPushedAt.Arg())
+			args = append(args, n.row.RulesSerial)
 		case 18:
-			args = append(args, n.row.LogSeq)
+			args = append(args, n.row.RulesHash)
 		case 19:
-			args = append(args, n.row.LogHead)
+			args = append(args, n.row.RulesPushedAt.Arg())
 		case 20:
-			args = append(args, n.row.LogGap)
+			args = append(args, n.row.LogSeq)
 		case 21:
-			args = append(args, n.row.LogGapAt.Arg())
+			args = append(args, n.row.LogHead)
 		case 22:
-			args = append(args, n.row.LastContactAt.Arg())
+			args = append(args, n.row.LogGap)
 		case 23:
-			args = append(args, n.row.LastError)
+			args = append(args, n.row.LogGapAt.Arg())
 		case 24:
-			args = append(args, n.row.LastErrorAt.Arg())
+			args = append(args, n.row.LastContactAt.Arg())
 		case 25:
+			args = append(args, n.row.LastError)
+		case 26:
+			args = append(args, n.row.LastErrorAt.Arg())
+		case 27:
 			args = append(args, n.row.CreatedBy)
 		}
 	}
@@ -4479,7 +4730,7 @@ func Inserts() int { return insCache.Masks() }
 // not treat a zero as 'unset': that guess is why other ORMs cannot insert
 // a false, a 0 or an empty string into a column with a default.
 func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
-	args := make([]any, 0, 26)
+	args := make([]any, 0, 28)
 	args = append(args, r.ID)
 	args = append(args, r.CreatedAt)
 	args = append(args, r.UpdatedAt)
@@ -4489,6 +4740,8 @@ func Insert(ctx context.Context, ex runtime.Executor, r *Row) error {
 	args = append(args, r.CredentialHash.Arg())
 	args = append(args, r.EnrollTokenHash.Arg())
 	args = append(args, r.EnrollExpiresAt.Arg())
+	args = append(args, r.TunnelReplica.Arg())
+	args = append(args, r.TunnelConnectedAt.Arg())
 	args = append(args, r.TunnelSeenAt.Arg())
 	args = append(args, r.TlsPin)
 	args = append(args, r.Folders)
@@ -4541,6 +4794,8 @@ var copyCols = []string{
 	"credential_hash",
 	"enroll_token_hash",
 	"enroll_expires_at",
+	"tunnel_replica",
+	"tunnel_connected_at",
 	"tunnel_seen_at",
 	"tls_pin",
 	"folders",
@@ -4564,7 +4819,7 @@ var copyCols = []string{
 type rowSource struct {
 	rows []Row
 	i    int
-	buf  [26]any
+	buf  [28]any
 }
 
 func (s *rowSource) Next() bool {
@@ -4591,23 +4846,25 @@ func (s *rowSource) Values() []any {
 	s.buf[6] = r.CredentialHash.Ptr()
 	s.buf[7] = r.EnrollTokenHash.Ptr()
 	s.buf[8] = r.EnrollExpiresAt.Ptr()
-	s.buf[9] = r.TunnelSeenAt.Ptr()
-	s.buf[10] = &r.TlsPin
-	s.buf[11] = &r.Folders
-	s.buf[12] = &r.SealKey
-	s.buf[13] = &r.Version
-	s.buf[14] = &r.SecretCount
-	s.buf[15] = &r.RulesSerial
-	s.buf[16] = &r.RulesHash
-	s.buf[17] = r.RulesPushedAt.Ptr()
-	s.buf[18] = &r.LogSeq
-	s.buf[19] = &r.LogHead
-	s.buf[20] = &r.LogGap
-	s.buf[21] = r.LogGapAt.Ptr()
-	s.buf[22] = r.LastContactAt.Ptr()
-	s.buf[23] = &r.LastError
-	s.buf[24] = r.LastErrorAt.Ptr()
-	s.buf[25] = &r.CreatedBy
+	s.buf[9] = r.TunnelReplica.Ptr()
+	s.buf[10] = r.TunnelConnectedAt.Ptr()
+	s.buf[11] = r.TunnelSeenAt.Ptr()
+	s.buf[12] = &r.TlsPin
+	s.buf[13] = &r.Folders
+	s.buf[14] = &r.SealKey
+	s.buf[15] = &r.Version
+	s.buf[16] = &r.SecretCount
+	s.buf[17] = &r.RulesSerial
+	s.buf[18] = &r.RulesHash
+	s.buf[19] = r.RulesPushedAt.Ptr()
+	s.buf[20] = &r.LogSeq
+	s.buf[21] = &r.LogHead
+	s.buf[22] = &r.LogGap
+	s.buf[23] = r.LogGapAt.Ptr()
+	s.buf[24] = r.LastContactAt.Ptr()
+	s.buf[25] = &r.LastError
+	s.buf[26] = r.LastErrorAt.Ptr()
+	s.buf[27] = &r.CreatedBy
 	return s.buf[:]
 }
 
@@ -4664,8 +4921,10 @@ func InsertOp(r Row) runtime.BatchOp {
 	mask |= 1 << 23
 	mask |= 1 << 24
 	mask |= 1 << 25
+	mask |= 1 << 26
+	mask |= 1 << 27
 	st := stmtForInsertNoReturn(mask, 0, 0)
-	args := make([]any, 0, 26)
+	args := make([]any, 0, 28)
 	args = append(args, r.ID)
 	args = append(args, r.CreatedAt)
 	args = append(args, r.UpdatedAt)
@@ -4675,6 +4934,8 @@ func InsertOp(r Row) runtime.BatchOp {
 	args = append(args, r.CredentialHash.Arg())
 	args = append(args, r.EnrollTokenHash.Arg())
 	args = append(args, r.EnrollExpiresAt.Arg())
+	args = append(args, r.TunnelReplica.Arg())
+	args = append(args, r.TunnelConnectedAt.Arg())
 	args = append(args, r.TunnelSeenAt.Arg())
 	args = append(args, r.TlsPin)
 	args = append(args, r.Folders)
@@ -4744,38 +5005,42 @@ func (n *Ins) Op() (runtime.BatchOp, error) {
 		case 8:
 			args = append(args, n.row.EnrollExpiresAt.Arg())
 		case 9:
-			args = append(args, n.row.TunnelSeenAt.Arg())
+			args = append(args, n.row.TunnelReplica.Arg())
 		case 10:
-			args = append(args, n.row.TlsPin)
+			args = append(args, n.row.TunnelConnectedAt.Arg())
 		case 11:
-			args = append(args, n.row.Folders)
+			args = append(args, n.row.TunnelSeenAt.Arg())
 		case 12:
-			args = append(args, n.row.SealKey)
+			args = append(args, n.row.TlsPin)
 		case 13:
-			args = append(args, n.row.Version)
+			args = append(args, n.row.Folders)
 		case 14:
-			args = append(args, n.row.SecretCount)
+			args = append(args, n.row.SealKey)
 		case 15:
-			args = append(args, n.row.RulesSerial)
+			args = append(args, n.row.Version)
 		case 16:
-			args = append(args, n.row.RulesHash)
+			args = append(args, n.row.SecretCount)
 		case 17:
-			args = append(args, n.row.RulesPushedAt.Arg())
+			args = append(args, n.row.RulesSerial)
 		case 18:
-			args = append(args, n.row.LogSeq)
+			args = append(args, n.row.RulesHash)
 		case 19:
-			args = append(args, n.row.LogHead)
+			args = append(args, n.row.RulesPushedAt.Arg())
 		case 20:
-			args = append(args, n.row.LogGap)
+			args = append(args, n.row.LogSeq)
 		case 21:
-			args = append(args, n.row.LogGapAt.Arg())
+			args = append(args, n.row.LogHead)
 		case 22:
-			args = append(args, n.row.LastContactAt.Arg())
+			args = append(args, n.row.LogGap)
 		case 23:
-			args = append(args, n.row.LastError)
+			args = append(args, n.row.LogGapAt.Arg())
 		case 24:
-			args = append(args, n.row.LastErrorAt.Arg())
+			args = append(args, n.row.LastContactAt.Arg())
 		case 25:
+			args = append(args, n.row.LastError)
+		case 26:
+			args = append(args, n.row.LastErrorAt.Arg())
+		case 27:
 			args = append(args, n.row.CreatedBy)
 		}
 	}
@@ -4847,38 +5112,42 @@ func (m *Mut) UpdateOp() (runtime.BatchOp, bool) {
 		case 6:
 			args = append(args, m.row.EnrollExpiresAt.Arg())
 		case 7:
-			args = append(args, m.row.TunnelSeenAt.Arg())
+			args = append(args, m.row.TunnelReplica.Arg())
 		case 8:
-			args = append(args, m.row.TlsPin)
+			args = append(args, m.row.TunnelConnectedAt.Arg())
 		case 9:
-			args = append(args, m.row.Folders)
+			args = append(args, m.row.TunnelSeenAt.Arg())
 		case 10:
-			args = append(args, m.row.SealKey)
+			args = append(args, m.row.TlsPin)
 		case 11:
-			args = append(args, m.row.Version)
+			args = append(args, m.row.Folders)
 		case 12:
-			args = append(args, m.row.SecretCount)
+			args = append(args, m.row.SealKey)
 		case 13:
-			args = append(args, m.row.RulesSerial)
+			args = append(args, m.row.Version)
 		case 14:
-			args = append(args, m.row.RulesHash)
+			args = append(args, m.row.SecretCount)
 		case 15:
-			args = append(args, m.row.RulesPushedAt.Arg())
+			args = append(args, m.row.RulesSerial)
 		case 16:
-			args = append(args, m.row.LogSeq)
+			args = append(args, m.row.RulesHash)
 		case 17:
-			args = append(args, m.row.LogHead)
+			args = append(args, m.row.RulesPushedAt.Arg())
 		case 18:
-			args = append(args, m.row.LogGap)
+			args = append(args, m.row.LogSeq)
 		case 19:
-			args = append(args, m.row.LogGapAt.Arg())
+			args = append(args, m.row.LogHead)
 		case 20:
-			args = append(args, m.row.LastContactAt.Arg())
+			args = append(args, m.row.LogGap)
 		case 21:
-			args = append(args, m.row.LastError)
+			args = append(args, m.row.LogGapAt.Arg())
 		case 22:
-			args = append(args, m.row.LastErrorAt.Arg())
+			args = append(args, m.row.LastContactAt.Arg())
 		case 23:
+			args = append(args, m.row.LastError)
+		case 24:
+			args = append(args, m.row.LastErrorAt.Arg())
+		case 25:
 			args = append(args, m.row.CreatedBy)
 		}
 	}
@@ -4977,38 +5246,42 @@ func (m *Mut) Update(ctx context.Context, ex runtime.Executor) error {
 		case 6:
 			args = append(args, m.row.EnrollExpiresAt.Arg())
 		case 7:
-			args = append(args, m.row.TunnelSeenAt.Arg())
+			args = append(args, m.row.TunnelReplica.Arg())
 		case 8:
-			args = append(args, m.row.TlsPin)
+			args = append(args, m.row.TunnelConnectedAt.Arg())
 		case 9:
-			args = append(args, m.row.Folders)
+			args = append(args, m.row.TunnelSeenAt.Arg())
 		case 10:
-			args = append(args, m.row.SealKey)
+			args = append(args, m.row.TlsPin)
 		case 11:
-			args = append(args, m.row.Version)
+			args = append(args, m.row.Folders)
 		case 12:
-			args = append(args, m.row.SecretCount)
+			args = append(args, m.row.SealKey)
 		case 13:
-			args = append(args, m.row.RulesSerial)
+			args = append(args, m.row.Version)
 		case 14:
-			args = append(args, m.row.RulesHash)
+			args = append(args, m.row.SecretCount)
 		case 15:
-			args = append(args, m.row.RulesPushedAt.Arg())
+			args = append(args, m.row.RulesSerial)
 		case 16:
-			args = append(args, m.row.LogSeq)
+			args = append(args, m.row.RulesHash)
 		case 17:
-			args = append(args, m.row.LogHead)
+			args = append(args, m.row.RulesPushedAt.Arg())
 		case 18:
-			args = append(args, m.row.LogGap)
+			args = append(args, m.row.LogSeq)
 		case 19:
-			args = append(args, m.row.LogGapAt.Arg())
+			args = append(args, m.row.LogHead)
 		case 20:
-			args = append(args, m.row.LastContactAt.Arg())
+			args = append(args, m.row.LogGap)
 		case 21:
-			args = append(args, m.row.LastError)
+			args = append(args, m.row.LogGapAt.Arg())
 		case 22:
-			args = append(args, m.row.LastErrorAt.Arg())
+			args = append(args, m.row.LastContactAt.Arg())
 		case 23:
+			args = append(args, m.row.LastError)
+		case 24:
+			args = append(args, m.row.LastErrorAt.Arg())
+		case 25:
 			args = append(args, m.row.CreatedBy)
 		}
 	}
@@ -5173,38 +5446,42 @@ func (q Query) UpdateAll(ctx context.Context, ex runtime.Executor, m Mut) (int64
 		case 6:
 			args = append(args, m.row.EnrollExpiresAt.Arg())
 		case 7:
-			args = append(args, m.row.TunnelSeenAt.Arg())
+			args = append(args, m.row.TunnelReplica.Arg())
 		case 8:
-			args = append(args, m.row.TlsPin)
+			args = append(args, m.row.TunnelConnectedAt.Arg())
 		case 9:
-			args = append(args, m.row.Folders)
+			args = append(args, m.row.TunnelSeenAt.Arg())
 		case 10:
-			args = append(args, m.row.SealKey)
+			args = append(args, m.row.TlsPin)
 		case 11:
-			args = append(args, m.row.Version)
+			args = append(args, m.row.Folders)
 		case 12:
-			args = append(args, m.row.SecretCount)
+			args = append(args, m.row.SealKey)
 		case 13:
-			args = append(args, m.row.RulesSerial)
+			args = append(args, m.row.Version)
 		case 14:
-			args = append(args, m.row.RulesHash)
+			args = append(args, m.row.SecretCount)
 		case 15:
-			args = append(args, m.row.RulesPushedAt.Arg())
+			args = append(args, m.row.RulesSerial)
 		case 16:
-			args = append(args, m.row.LogSeq)
+			args = append(args, m.row.RulesHash)
 		case 17:
-			args = append(args, m.row.LogHead)
+			args = append(args, m.row.RulesPushedAt.Arg())
 		case 18:
-			args = append(args, m.row.LogGap)
+			args = append(args, m.row.LogSeq)
 		case 19:
-			args = append(args, m.row.LogGapAt.Arg())
+			args = append(args, m.row.LogHead)
 		case 20:
-			args = append(args, m.row.LastContactAt.Arg())
+			args = append(args, m.row.LogGap)
 		case 21:
-			args = append(args, m.row.LastError)
+			args = append(args, m.row.LogGapAt.Arg())
 		case 22:
-			args = append(args, m.row.LastErrorAt.Arg())
+			args = append(args, m.row.LastContactAt.Arg())
 		case 23:
+			args = append(args, m.row.LastError)
+		case 24:
+			args = append(args, m.row.LastErrorAt.Arg())
+		case 25:
 			args = append(args, m.row.CreatedBy)
 		}
 	}

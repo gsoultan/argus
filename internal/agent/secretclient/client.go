@@ -105,7 +105,14 @@ const (
 	maxAnswer   = 1 << 20
 	// refreshAfter is how long a kept list is used without asking again.
 	refreshAfter = 5 * time.Minute
+	// relayAttempts is how often a relayed read is tried while argus-control
+	// answers that another replica holds the server's tunnel.
+	relayAttempts = 3
 )
+
+// relayBackoff is the wait before the second relay attempt, and twice it
+// before the third. A variable so tests need not wait.
+var relayBackoff = 250 * time.Millisecond
 
 func (c *Client) httpFor(pin string) (*http.Client, error) {
 	if c.HTTP != nil {
@@ -255,18 +262,32 @@ func (c *Client) Read(ctx context.Context, ref Ref, purpose string) (Value, erro
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/read", bytes.NewReader(body))
-	if err != nil {
-		return Value{}, err
+	var resp *http.Response
+	var raw []byte
+	for attempt := 1; ; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/read", bytes.NewReader(body))
+		if err != nil {
+			return Value{}, err
+		}
+		req.Header.Set("Authorization", "Agent "+c.Credential)
+		req.Header.Set("Content-Type", "application/json")
+		if resp, err = cl.Do(req); err != nil {
+			return Value{}, fmt.Errorf("%s did not answer: %w", srv.Name, err)
+		}
+		raw, _ = io.ReadAll(io.LimitReader(resp.Body, maxAnswer))
+		resp.Body.Close()
+		// A relay that reached the wrong replica of argus-control: another
+		// connection may reach the one holding the server's tunnel.
+		if srv.Relay == "" || resp.StatusCode != http.StatusServiceUnavailable || attempt == relayAttempts {
+			break
+		}
+		cl.CloseIdleConnections()
+		select {
+		case <-ctx.Done():
+			return Value{}, fmt.Errorf("%s did not answer: %w", srv.Name, ctx.Err())
+		case <-time.After(time.Duration(attempt) * relayBackoff):
+		}
 	}
-	req.Header.Set("Authorization", "Agent "+c.Credential)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := cl.Do(req)
-	if err != nil {
-		return Value{}, fmt.Errorf("%s did not answer: %w", srv.Name, err)
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxAnswer))
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusNotFound {
 			return Value{}, fmt.Errorf("%s: no such secret, or this host may not read it", ref.Name)

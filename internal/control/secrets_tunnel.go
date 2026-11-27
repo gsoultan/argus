@@ -89,9 +89,40 @@ func (s *Store) secretsServerByCredential(ctx context.Context, cred string) (Sec
 	return srv, err
 }
 
-func (s *Store) secretsTunnelSeen(ctx context.Context, id string) error {
-	_, err := s.db(ctx).Exec(ctx, `UPDATE secrets_servers SET tunnel_seen_at = now() WHERE id = $1`, id)
+// secretsTunnelConnected records that replica holds id's tunnel, since.
+func (s *Store) secretsTunnelConnected(ctx context.Context, id, replica string, since time.Time) error {
+	_, err := s.db(ctx).Exec(ctx, `UPDATE secrets_servers
+		SET tunnel_replica = $2, tunnel_connected_at = $3, tunnel_seen_at = now() WHERE id = $1`, id, replica, since)
 	return err
+}
+
+// secretsTunnelSeen records a ping, and reports whether the tunnel should
+// stay: the server is still enrolled and this is still the connection the
+// database knows. A newer one, on any replica, replaces it.
+func (s *Store) secretsTunnelSeen(ctx context.Context, id string, since time.Time) (bool, error) {
+	var one int
+	err := s.db(ctx).QueryRow(ctx, `UPDATE secrets_servers SET tunnel_seen_at = now()
+		WHERE id = $1 AND tunnel_connected_at = $2 AND credential_hash IS NOT NULL RETURNING 1`, id, since).Scan(&one)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// secretsTunnelGone clears the holder, unless a newer connection replaced it.
+func (s *Store) secretsTunnelGone(ctx context.Context, id string, since time.Time) error {
+	_, err := s.db(ctx).Exec(ctx, `UPDATE secrets_servers SET tunnel_replica = NULL, tunnel_connected_at = NULL
+		WHERE id = $1 AND tunnel_connected_at = $2`, id, since)
+	return err
+}
+
+// ErrSecretsElsewhere is a tunnel server connected to another replica of
+// argus-control. Only that replica can reach it, as with agent tunnels; the
+// caller tries again, and a load balancer may send it there.
+type ErrSecretsElsewhere struct{ Server, Replica string }
+
+func (e ErrSecretsElsewhere) Error() string {
+	return e.Server + " is connected to argus-control replica " + e.Replica + ", not this one: try again"
 }
 
 // secretsRelayCaller is whether cred is a live agent credential or app token
@@ -109,6 +140,10 @@ func (s *Store) secretsRelayCaller(ctx context.Context, cred string) bool {
 	}
 	return ok
 }
+
+// secretsTunnelPing is how often a held tunnel is pinged and recorded, the
+// same as an agent's (tunnelPingEvery), so tunnelFreshFor holds for both.
+var secretsTunnelPing = tunnelPingEvery
 
 /* ── Tunnels held by this replica ───────────────────────────────────────── */
 
@@ -139,7 +174,10 @@ func (a *API) secretsTransport(ctx context.Context, srv SecretsServer) (*http.Cl
 		if !srv.Enrolled {
 			return nil, "", ErrInvalidSecrets{srv.Name + " has not enrolled yet: run argus-secret enroll with its token"}
 		}
-		return nil, "", fmt.Errorf("%s is not connected to this argus-control", srv.Name)
+		if srv.Connected && srv.TunnelReplica != nil && *srv.TunnelReplica != a.controlHostname() {
+			return nil, "", ErrSecretsElsewhere{Server: srv.Name, Replica: *srv.TunnelReplica}
+		}
+		return nil, "", fmt.Errorf("%s is not connected to argus-control", srv.Name)
 	}
 	tr := &http.Transport{
 		DialContext:           func(context.Context, string, string) (net.Conn, error) { return sess.Open() },
@@ -277,8 +315,9 @@ func (a *API) getSecretsTunnel(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := context.WithoutCancel(r.Context())
 	key := secretsTunnelKey(ctx, srv.ID)
-	if err := a.store.secretsTunnelSeen(ctx, srv.ID); err != nil {
-		a.log.Warn("secrets tunnel: cannot record contact", "error", err)
+	since := time.Now().UTC().Truncate(time.Microsecond)
+	if err := a.store.secretsTunnelConnected(ctx, srv.ID, a.controlHostname(), since); err != nil {
+		a.log.Warn("secrets tunnel: cannot record it", "error", err)
 	}
 	// Counted before the tunnel is visible, so whoever sees it connected
 	// can wait for the sync it starts.
@@ -301,8 +340,32 @@ func (a *API) getSecretsTunnel(w http.ResponseWriter, r *http.Request) {
 			_ = c.Close()
 		}
 	}()
+	// Pinged like an agent's tunnel, so every replica can tell it is up, and
+	// closed once the database knows a newer one or the server is gone.
+	go func() {
+		t := time.NewTicker(secretsTunnelPing)
+		defer t.Stop()
+		for {
+			select {
+			case <-sess.CloseChan():
+				return
+			case <-t.C:
+			}
+			if _, err := sess.Ping(); err != nil {
+				_ = sess.Close()
+				return
+			}
+			if keep, err := a.store.secretsTunnelSeen(ctx, srv.ID, since); err == nil && !keep {
+				_ = sess.Close()
+				return
+			}
+		}
+	}()
 	<-sess.CloseChan()
 	a.secretsTunnels.CompareAndDelete(key, sess)
+	if err := a.store.secretsTunnelGone(ctx, srv.ID, since); err != nil {
+		a.log.Warn("secrets tunnel: cannot record it closed", "error", err)
+	}
 	a.log.Info("secrets tunnel closed", "server", srv.Name)
 }
 
@@ -322,7 +385,10 @@ func (a *API) relaySecretsRead(w http.ResponseWriter, r *http.Request) {
 	}
 	cl, base, err := a.secretsTransport(r.Context(), srv)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		// Unavailable, not failed: the agent tries again, and may reach the
+		// replica holding the tunnel.
+		w.Header().Set("Retry-After", "1")
+		writeErr(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxSecretsRelayIn+1))

@@ -87,7 +87,9 @@ type SecretsServer struct {
 	Enrolled        bool       `json:"enrolled"`
 	EnrollExpiresAt *time.Time `json:"enrollExpiresAt,omitempty"`
 	TunnelSeenAt    *time.Time `json:"tunnelSeenAt,omitempty"`
-	Connected       bool       `json:"connected"`
+	// TunnelReplica is the argus-control replica holding its tunnel.
+	TunnelReplica *string `json:"tunnelReplica,omitempty"`
+	Connected     bool    `json:"connected"`
 
 	rulesHash string
 	logHead   string
@@ -251,14 +253,15 @@ func (r *SecretRule) normalize() error {
 
 const secretsServerColumns = `id::text, name, mode, url, tls_pin, folders, seal_key, version, secret_count, rules_serial,
 	rules_hash, rules_pushed_at, log_seq, log_head, log_gap, log_gap_at, last_contact_at, last_error, last_error_at,
-	created_by, created_at, credential_hash IS NOT NULL, enroll_expires_at, tunnel_seen_at`
+	created_by, created_at, credential_hash IS NOT NULL, enroll_expires_at, tunnel_seen_at, tunnel_replica,
+	tunnel_replica IS NOT NULL AND tunnel_seen_at > now() - interval '90 seconds'` // tunnelFreshFor
 
 func scanSecretsServer(row pgx.Row) (SecretsServer, error) {
 	var s SecretsServer
 	err := row.Scan(&s.ID, &s.Name, &s.Mode, &s.URL, &s.TLSPin, &s.Folders, &s.SealKey, &s.Version, &s.SecretCount,
 		&s.RulesSerial, &s.rulesHash, &s.RulesPushedAt, &s.LogSeq, &s.logHead, &s.LogGap, &s.LogGapAt,
 		&s.LastContactAt, &s.LastError, &s.LastErrorAt, &s.CreatedBy, &s.CreatedAt,
-		&s.Enrolled, &s.EnrollExpiresAt, &s.TunnelSeenAt)
+		&s.Enrolled, &s.EnrollExpiresAt, &s.TunnelSeenAt, &s.TunnelReplica, &s.Connected)
 	if s.Folders == nil {
 		s.Folders = []string{}
 	}
@@ -739,6 +742,10 @@ func (a *API) SyncSecretsServer(ctx context.Context, id string) error {
 		return err
 	}
 	err = a.syncSecretsServer(ctx, srv)
+	if elsewhere := (ErrSecretsElsewhere{}); errors.As(err, &elsewhere) {
+		// The replica holding its tunnel syncs it; that is not a failure.
+		return err
+	}
 	if err != nil {
 		if ferr := a.store.secretsFailed(ctx, srv.ID, err.Error()); ferr != nil {
 			a.log.Error("secrets sync: cannot record failure", "error", ferr)

@@ -1512,6 +1512,8 @@ func _assertSecretsServerShape(m m0.SecretsServer) {
 		m.CredentialHash,
 		m.EnrollTokenHash,
 		m.EnrollExpiresAt,
+		m.TunnelReplica,
+		m.TunnelConnectedAt,
 		m.TunnelSeenAt,
 		m.TlsPin,
 		m.Folders,

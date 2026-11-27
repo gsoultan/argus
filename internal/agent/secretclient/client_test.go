@@ -32,6 +32,7 @@ type rig struct {
 	control *httptest.Server
 	asked   *atomic.Int32
 	down    *atomic.Bool
+	vault   http.Handler // the argus-secret API, for a stand-in relay
 }
 
 func hash(s string) string {
@@ -92,7 +93,7 @@ func newRig(t *testing.T) *rig {
 	t.Cleanup(control.Close)
 	now := time.Now()
 	return &rig{client: &Client{ControlURL: control.URL, Credential: cred, StateDir: t.TempDir(),
-		Now: func() time.Time { return now }}, store: store, control: control, asked: asked, down: down}
+		Now: func() time.Time { return now }}, store: store, control: control, asked: asked, down: down, vault: api.Handler()}
 }
 
 func TestParseRef(t *testing.T) {
@@ -226,5 +227,57 @@ func TestSocketNamesItsCaller(t *testing.T) {
 	known.Store(false)
 	if _, err := c.Read(context.Background(), Ref{Name: "prod/db"}, ""); err == nil {
 		t.Error("a caller the kernel cannot name was answered")
+	}
+}
+
+// A relayed read that lands on a replica not holding the server's tunnel
+// (503) is tried again on a new connection, a bounded number of times; any
+// other refusal is not retried.
+func TestRelayRetriesOnlyTheWrongReplica(t *testing.T) {
+	r := newRig(t)
+	relayBackoff = time.Millisecond
+	t.Cleanup(func() { relayBackoff = 250 * time.Millisecond })
+	const relay = "/api/v1/secrets/relay/s1"
+	var wrong atomic.Int32 // how many more answers come from the wrong replica
+	var tries atomic.Int32
+	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch {
+		case req.URL.Path == "/api/v1/report/secrets-servers":
+			_ = json.NewEncoder(w).Encode([]Server{{Name: "Edge", Relay: relay, Folders: []string{"prod", "dev"}}})
+		case strings.HasPrefix(req.URL.Path, relay+"/"):
+			tries.Add(1)
+			if wrong.Add(-1) >= 0 {
+				w.Header().Set("Retry-After", "1")
+				http.Error(w, `{"error":"Edge is connected to argus-control replica b, not this one: try again"}`, http.StatusServiceUnavailable)
+				return
+			}
+			req.URL.Path = strings.TrimPrefix(req.URL.Path, relay)
+			r.vault.ServeHTTP(w, req)
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	t.Cleanup(control.Close)
+	c := &Client{ControlURL: control.URL, Credential: cred, StateDir: t.TempDir()}
+	ctx := context.Background()
+
+	wrong.Store(2)
+	v, err := c.Read(ctx, Ref{Name: "prod/db", Field: "password"}, "test")
+	if err != nil || string(v.Bytes) != "hunter2" || tries.Load() != 3 {
+		t.Fatalf("read after two wrong replicas = %q, %v, %d tries", v.Bytes, err, tries.Load())
+	}
+
+	tries.Store(0)
+	wrong.Store(100)
+	if _, err := c.Read(ctx, Ref{Name: "prod/db", Field: "password"}, "test"); err == nil ||
+		!strings.Contains(err.Error(), "replica b") || tries.Load() != relayAttempts {
+		t.Fatalf("read that never reaches the holder = %v, %d tries", err, tries.Load())
+	}
+
+	// A refusal from argus-secret itself is final.
+	tries.Store(0)
+	wrong.Store(0)
+	if _, err := c.Read(ctx, Ref{Name: "dev/db"}, "test"); err == nil || tries.Load() != 1 {
+		t.Fatalf("refused read = %v, %d tries", err, tries.Load())
 	}
 }

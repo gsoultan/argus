@@ -99,6 +99,9 @@ func (a *API) secretsErr(w http.ResponseWriter, what string, err error) {
 	switch {
 	case errors.As(err, &invalid):
 		writeErr(w, http.StatusBadRequest, invalid.msg)
+	case errors.As(err, &ErrSecretsElsewhere{}):
+		w.Header().Set("Retry-After", "1")
+		writeErr(w, http.StatusServiceUnavailable, err.Error())
 	case errors.Is(err, ErrNoSecretsServer):
 		writeErr(w, http.StatusNotFound, "no such secrets server")
 	case errors.Is(err, ErrNoSecretRule):
@@ -145,7 +148,7 @@ func (a *API) getSecretsServers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for i := range srvs {
-		srvs[i].Connected = a.secretsTunnelOf(r.Context(), srvs[i].ID) != nil
+		srvs[i].Connected = srvs[i].Connected || a.secretsTunnelOf(r.Context(), srvs[i].ID) != nil
 	}
 	writeJSON(w, http.StatusOK, secretsServersView{Organization: tenantIDOf(r.Context()), ControlPublicKey: key, Servers: srvs})
 }

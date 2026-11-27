@@ -18,7 +18,13 @@ CREATE TABLE IF NOT EXISTS secrets_servers (
     credential_hash   TEXT UNIQUE CHECK (length(credential_hash) = 64),
     enroll_token_hash TEXT UNIQUE CHECK (length(enroll_token_hash) = 64),
     enroll_expires_at TIMESTAMPTZ,
-    tunnel_seen_at    TIMESTAMPTZ,
+    -- Its tunnel, as agent tunnels are kept (018_agent_tunnel.sql): the
+    -- replica holding it, since when, and that replica's last ping. Any
+    -- replica can be asked, so this is here and not in the holder's memory;
+    -- a seen time older than tunnelFreshFor is a replica that went away.
+    tunnel_replica      TEXT CHECK (length(tunnel_replica) <= 255),
+    tunnel_connected_at TIMESTAMPTZ,
+    tunnel_seen_at      TIMESTAMPTZ,
     -- sha256:<hex> of its certificate, or '' for a certificate the system
     -- trusts (a proxy's).
     tls_pin         TEXT NOT NULL DEFAULT '' CHECK (length(tls_pin) <= 80),
