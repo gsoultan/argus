@@ -150,6 +150,12 @@ type API struct {
 	// agentCreds caches per-host agent credential lookups.
 	agentCreds agentCredCache
 
+	// secretsSyncs holds one *sync.Mutex per secrets server, so the minute's
+	// sync and one a change asked for never push rules at once; secretsBusy
+	// counts syncs started in the background (secrets_routes.go).
+	secretsSyncs sync.Map
+	secretsBusy  sync.WaitGroup
+
 	// Tunnels holds the agents' outbound connections on this replica. Nil
 	// when the process was built without them, as tests do; the upgrade
 	// route then says so rather than failing.
@@ -420,6 +426,7 @@ func (a *API) registerConsole(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/settings/test-telegram", a.postPlatformTelegramTest)
 	mux.HandleFunc("PUT /api/v1/telegram/routes/{kind}", a.putTelegramRoute)
 	mux.HandleFunc("POST /api/v1/telegram/routes/{kind}/test", a.postTelegramRouteTest)
+	a.secretsRoutes(mux)
 	mux.HandleFunc("GET /api/v1/assets/{id}/databases/create-options", a.dbAdmin(a.getCreateOptions))
 	mux.HandleFunc("POST /api/v1/assets/{id}/databases/create", a.dbAdmin(a.postCreateDatabase))
 	mux.HandleFunc("POST /api/v1/databases/{id}/owner", a.dbAdmin(a.postDatabaseOwner))

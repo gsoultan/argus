@@ -691,6 +691,8 @@ func serve(sig context.Context, loc configLocation) (retErr error) {
 	go api.RunResourceWatch(ctx, control.ResourceWatchInterval)
 	// Streaming replicas Argus made: lag, and the bell when one falls behind.
 	go api.RunReplicaWatch(ctx, control.ReplicaWatchInterval)
+	// argus-secret servers: rules out, read logs in; see secrets_servers.go.
+	go api.RunSecretsSync(ctx, control.SecretsSyncInterval)
 	// This control server saying it is alive, the outage record, and the
 	// outside check-in; see control_liveness.go.
 	go api.RunLiveness(ctx)

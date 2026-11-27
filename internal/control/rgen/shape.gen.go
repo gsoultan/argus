@@ -1450,6 +1450,48 @@ func _assertSchemaMigrationShape(m m0.SchemaMigration) {
 	}
 }
 
+// _assertSecretRuleShape fails to compile if m0.SecretRule gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertSecretRuleShape(m m0.SecretRule) {
+	type shape m0.SecretRule
+	_ = shape{
+		m.Model,
+		m.Path,
+		m.Subjects,
+		m.Can,
+		m.NeedsApproval,
+		m.Note,
+		m.CreatedBy,
+	}
+}
+
+// _assertSecretsServerShape fails to compile if m0.SecretsServer gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertSecretsServerShape(m m0.SecretsServer) {
+	type shape m0.SecretsServer
+	_ = shape{
+		m.Model,
+		m.Name,
+		m.URL,
+		m.TlsPin,
+		m.Folders,
+		m.SealKey,
+		m.Version,
+		m.SecretCount,
+		m.RulesSerial,
+		m.RulesHash,
+		m.RulesPushedAt,
+		m.LogSeq,
+		m.LogHead,
+		m.LogGap,
+		m.LogGapAt,
+		m.LastContactAt,
+		m.LastError,
+		m.LastErrorAt,
+		m.CreatedBy,
+	}
+}
+
 // _assertServerLoginShape fails to compile if m0.ServerLogin gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertServerLoginShape(m m0.ServerLogin) {
