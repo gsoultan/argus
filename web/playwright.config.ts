@@ -70,6 +70,8 @@ export default defineConfig({
         'rm -rf dist-monolith'
         + ' && VITE_CONTROL_URL= bunx vite build --logLevel error'
         + ' && VITE_CONTROL_URL=/ bunx vite build --outDir dist-live --logLevel error'
+        // The Secrets section, served beside the shell as it is deployed.
+        + ' && MF_OUT=dist-live bunx vite build -c vite.mf.config.ts --logLevel error'
         + ' && ARGUS_CSS=monolith VITE_CONTROL_URL= bunx vite build --outDir dist-monolith --logLevel error'
         + ' && touch dist-monolith/.build-complete'
         + ' && bunx vite preview --port 5510 --strictPort',

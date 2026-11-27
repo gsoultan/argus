@@ -1024,6 +1024,14 @@ jobs:
           test -s "$f"
           if grep -q "^import " "$f"; then echo "$f imports a module the console does not lend it"; exit 1; fi
           if grep -q "react-dom\|__SECRET_INTERNALS\|mantine-provider" "$f"; then echo "$f bundles its own copy of React or Mantine"; exit 1; fi
+          # A weight budget: 45 KB and 11 KB compressed when it was set. It
+          # loads on every visit to Secrets, and the borrowing above is what
+          # keeps it small; a budget broken is a dependency that came along.
+          raw=$(wc -c < "$f"); gz=$(gzip -9c "$f" | wc -c)
+          echo "secrets screens: $raw bytes, $gz compressed"
+          if [ "$raw" -gt 81920 ] || [ "$gz" -gt 20480 ]; then
+            echo "::error::$f is $raw bytes ($gz compressed), over its budget of 80 KB (20 KB compressed)"; exit 1
+          fi
       - name: Confirm the service worker still denies the auth path
         # The rule that broke SSO for every returning visitor. It is one regex
         # in vite.config.ts and nothing else would notice it going missing.
