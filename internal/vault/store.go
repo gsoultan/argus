@@ -37,10 +37,13 @@ var (
 	// metaSealKeyPQ is the ML-KEM-768 + X25519 key new values are sealed to
 	// (format v2). Stores made before it get one on their next start.
 	metaSealKeyPQ = []byte("seal.pq.key")
-	metaLogSeq    = []byte("log.seq")
-	metaLogHead   = []byte("log.head")
-	metaLogBase   = []byte("log.base")
-	metaLogAcked  = []byte("log.acked")
+	// metaCommitOnly is set once argus-secret rekey has re-encrypted every
+	// wrapped key and value in format v2: format v1 no longer opens.
+	metaCommitOnly = []byte("wrap.v2only")
+	metaLogSeq     = []byte("log.seq")
+	metaLogHead    = []byte("log.head")
+	metaLogBase    = []byte("log.base")
+	metaLogAcked   = []byte("log.acked")
 )
 
 // rootCheck is wrapped under the root key when the store is made. A root key
@@ -125,7 +128,9 @@ type Store struct {
 	sealPQ hpke.PrivateKey
 	// requirePQ refuses values sealed in format v1 (X25519 only).
 	requirePQ bool
-	now       func() time.Time
+	// legacy opens stored values wrapped in format v1 (not committing).
+	legacy bool
+	now    func() time.Time
 }
 
 // Open opens or creates the store in dir. rootKey wraps everything; org names
@@ -160,18 +165,19 @@ func (s *Store) init(tx *bbolt.Tx, root []byte) error {
 	}
 	meta := tx.Bucket(bucketMeta)
 	if check := meta.Get(metaCheck); check != nil {
-		plain, err := unwrap(root, check, []byte("root-check"))
+		s.legacy = meta.Get(metaCommitOnly) == nil
+		plain, err := unwrap(root, check, []byte("root-check"), s.legacy)
 		if err != nil || !bytes.Equal(plain, rootCheck) {
 			return ErrWrongRootKey
 		}
 		if got := string(meta.Get(metaOrg)); got != s.org {
 			return fmt.Errorf("this store belongs to organization %q, not %q", got, s.org)
 		}
-		orgKey, err := unwrap(root, meta.Get(metaOrgKey), []byte("org-key\x00"+s.org))
+		orgKey, err := unwrap(root, meta.Get(metaOrgKey), []byte("org-key\x00"+s.org), s.legacy)
 		if err != nil {
 			return fmt.Errorf("organization key: %w", err)
 		}
-		sealRaw, err := unwrap(root, meta.Get(metaSealKey), []byte("seal-key"))
+		sealRaw, err := unwrap(root, meta.Get(metaSealKey), []byte("seal-key"), s.legacy)
 		if err != nil {
 			return fmt.Errorf("seal key: %w", err)
 		}
@@ -180,6 +186,7 @@ func (s *Store) init(tx *bbolt.Tx, root []byte) error {
 			return err
 		}
 		s.orgKey, s.seal = orgKey, seal
+		lockMemory(s.orgKey)
 		return s.loadSealPQ(meta, root)
 	}
 	// A new store.
@@ -206,12 +213,14 @@ func (s *Store) init(tx *bbolt.Tx, root []byte) error {
 	for k, v := range map[string][]byte{
 		string(metaCheck): check, string(metaOrg): []byte(s.org), string(metaOrgKey): wrappedOrg,
 		string(metaSealKey): wrappedSeal, string(metaLogHead): []byte(genesis),
+		string(metaCommitOnly): []byte("1"),
 	} {
 		if err := meta.Put([]byte(k), v); err != nil {
 			return err
 		}
 	}
 	s.orgKey, s.seal = orgKey, seal
+	lockMemory(s.orgKey)
 	return s.loadSealPQ(meta, root)
 }
 
@@ -219,7 +228,7 @@ func (s *Store) init(tx *bbolt.Tx, root []byte) error {
 // none yet.
 func (s *Store) loadSealPQ(meta *bbolt.Bucket, root []byte) error {
 	if w := meta.Get(metaSealKeyPQ); w != nil {
-		raw, err := unwrap(root, w, []byte("seal-key-pq"))
+		raw, err := unwrap(root, w, []byte("seal-key-pq"), s.legacy)
 		if err != nil {
 			return fmt.Errorf("post-quantum seal key: %w", err)
 		}
@@ -254,8 +263,12 @@ func (s *Store) loadSealPQ(meta *bbolt.Bucket, root []byte) error {
 // RequirePostQuantum makes the store refuse values sealed in format v1.
 func (s *Store) RequirePostQuantum(on bool) { s.requirePQ = on }
 
-// Close closes the database.
-func (s *Store) Close() error { return s.db.Close() }
+// Close closes the database and clears the organization key from memory.
+func (s *Store) Close() error {
+	err := s.db.Close()
+	clear(s.orgKey)
+	return err
+}
 
 // Organization is the organization this store belongs to.
 func (s *Store) Organization() string { return s.org }
@@ -703,19 +716,7 @@ func (s *Store) dropOldVersions(tx *bbolt.Tx, sec *Secret) error {
 }
 
 func (s *Store) putValue(tx *bbolt.Tx, name string, n int, plain []byte) error {
-	dek, err := randomKey()
-	if err != nil {
-		return err
-	}
-	ct, err := wrap(dek, plain, valueAAD(name, n))
-	if err != nil {
-		return err
-	}
-	wrapped, err := wrap(s.orgKey, dek, dekAAD(s.org, name, n))
-	if err != nil {
-		return err
-	}
-	raw, err := json.Marshal(sealedValue{DEK: wrapped, Value: ct})
+	raw, err := sealValue(s.orgKey, s.org, name, n, plain)
 	if err != nil {
 		return err
 	}
@@ -727,19 +728,7 @@ func (s *Store) getValue(tx *bbolt.Tx, name string, n int) ([]byte, error) {
 	if raw == nil {
 		return nil, fmt.Errorf("%s version %d has no stored value", name, n)
 	}
-	var sv sealedValue
-	if err := json.Unmarshal(raw, &sv); err != nil {
-		return nil, err
-	}
-	dek, err := unwrap(s.orgKey, sv.DEK, dekAAD(s.org, name, n))
-	if err != nil {
-		return nil, fmt.Errorf("%s version %d: data key %w", name, n, err)
-	}
-	plain, err := unwrap(dek, sv.Value, valueAAD(name, n))
-	if err != nil {
-		return nil, fmt.Errorf("%s version %d: value %w", name, n, err)
-	}
-	return plain, nil
+	return s.getValueRaw(raw, name, n, s.legacy)
 }
 
 func valueAAD(name string, n int) []byte { return fmt.Appendf(nil, "value\x00%s\x00%d", name, n) }

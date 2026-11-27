@@ -2,9 +2,9 @@ package secretwire
 
 import (
 	"bytes"
-	"encoding/base64"
 	"crypto/ecdh"
 	"crypto/rand"
+	"encoding/base64"
 	"testing"
 )
 

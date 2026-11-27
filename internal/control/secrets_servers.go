@@ -888,7 +888,8 @@ func secretsAuditEvent(srv SecretsServer, e vault.Entry, hash string) AuditEvent
 		actor = e.Actor.ID
 	}
 	severity := "notice"
-	if e.Outcome == vault.OutcomeRefused {
+	if e.Outcome == vault.OutcomeRefused || e.Action == "rekey" {
+		// A rekey is rare and changes what opens the store: worth a look.
 		severity = "warning"
 	}
 	var d strings.Builder
@@ -936,6 +937,8 @@ func secretsActionWords(action string) string {
 		return "Restored"
 	case "purge":
 		return "Purged"
+	case "rekey":
+		return "Re-encrypted"
 	}
 	if strings.HasPrefix(action, "label.") {
 		return "Labelled " + strings.TrimPrefix(action, "label.")

@@ -33,9 +33,14 @@ type Config struct {
 	DataDir string `yaml:"data_dir"`
 	// RootKeyFile holds the 32-byte root key. Made on first start when
 	// missing; argus-secret refuses to start when others can read it.
-	RootKeyFile  string `yaml:"root_key_file"`
-	Organization string `yaml:"organization"`
-	TLS          struct {
+	RootKeyFile string `yaml:"root_key_file"`
+	// RootKeyCommand gets the root key from a KMS, a TPM tool or a hardware
+	// token instead of a file, so it is never on disk in the clear: argv,
+	// run without a shell, printing the 32 bytes raw or in base64. A systemd
+	// credential named argus-secret-root-key is used when this is empty.
+	RootKeyCommand []string `yaml:"root_key_command"`
+	Organization   string   `yaml:"organization"`
+	TLS            struct {
 		CertFile string `yaml:"cert_file"`
 		KeyFile  string `yaml:"key_file"`
 	} `yaml:"tls"`
@@ -82,6 +87,9 @@ func (c *Config) Validate() error {
 	}
 	if c.RulesMaxAge < time.Minute || c.RulesMaxAge > 24*time.Hour {
 		return errors.New("rules_max_age is between 1m and 24h")
+	}
+	if len(c.RootKeyCommand) > 0 && strings.TrimSpace(c.RootKeyCommand[0]) == "" {
+		return errors.New("root_key_command starts with the program to run")
 	}
 	if (c.TLS.CertFile == "") != (c.TLS.KeyFile == "") {
 		return errors.New("tls.cert_file and tls.key_file are given together")
@@ -187,6 +195,22 @@ func LoadRootKey(path string) (key []byte, created bool, err error) {
 	return key, true, secrets.MakePrivate(path)
 }
 
+// NewRootKeyFile makes a new random root key at path, which must not exist.
+func NewRootKeyFile(path string) ([]byte, error) {
+	if _, err := os.Stat(path); err == nil {
+		return nil, fmt.Errorf("%s already exists; remove it or finish the earlier rotation first", path)
+	}
+	key, created, err := LoadRootKey(path)
+	if err != nil {
+		return nil, err
+	}
+	if !created {
+		clear(key)
+		return nil, fmt.Errorf("%s already exists", path)
+	}
+	return key, nil
+}
+
 // Run serves until ctx ends.
 func Run(ctx context.Context, cfg Config, version string, log *slog.Logger) error {
 	cfg.Defaults()
@@ -200,13 +224,22 @@ func Run(ctx context.Context, cfg Config, version string, log *slog.Logger) erro
 	if cfg.Listen == ListenOff && enr == nil {
 		return errors.New("listen: off leaves only the tunnel, and this server has not enrolled: run argus-secret enroll first")
 	}
-	root, created, err := LoadRootKey(cfg.RootKeyFile)
+	root, src, created, err := LoadConfiguredRootKey(cfg)
 	if err != nil {
 		return fmt.Errorf("root key: %w", err)
 	}
+	lockMemory(root)
 	if created {
 		log.Warn("made a new root key; back it up now, nothing in this store opens without it", "file", cfg.RootKeyFile)
 	}
+	if src == RootKeyFromFile {
+		log.Warn("the root key is a file on disk: anyone who copies the disk can open every secret; protect it with a systemd credential (TPM) or root_key_command (KMS)", "file", cfg.RootKeyFile)
+	} else if _, err := os.Stat(cfg.RootKeyFile); err == nil {
+		log.Warn("the root key comes from "+string(src)+", but a clear copy is still on disk; remove it once this start succeeds", "file", cfg.RootKeyFile)
+	} else {
+		log.Info("root key loaded", "from", string(src))
+	}
+	hardenProcess(log)
 	store, err := Open(cfg.DataDir, root, cfg.Organization)
 	clear(root)
 	if err != nil {

@@ -30,6 +30,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "enroll" {
 		os.Exit(enroll(os.Args[2:]))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "rekey" {
+		os.Exit(rekey(os.Args[2:]))
+	}
 	configPath := flag.String("config", "/etc/argus-secret/secret.yaml", "configuration file")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	check := flag.Bool("check", false, "check the configuration and the store, then exit")
@@ -92,6 +95,79 @@ func enroll(args []string) int {
 		return 1
 	}
 	fmt.Printf("enrolled into organization %s as server %s; restart argus-secret to connect to %s\n", e.Org, e.ServerID, e.ControlURL)
+	return 0
+}
+
+// rekey replaces the organization key, gives every value a new data key and
+// re-encrypts everything in the committing format; --rotate-root also moves
+// it all under a new root key. Stop the service first: the store is locked
+// while argus-secret runs.
+func rekey(args []string) int {
+	fs := flag.NewFlagSet("argus-secret rekey", flag.ExitOnError)
+	configPath := fs.String("config", "/etc/argus-secret/secret.yaml", "configuration file")
+	rotateRoot := fs.Bool("rotate-root", false, "also make a new root key (root_key_file only)")
+	reason := fs.String("reason", "", "why, for the audit log")
+	_ = fs.Parse(args)
+	cfg, err := loadConfig(*configPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "configuration:", err)
+		return 2
+	}
+	cfg.Defaults()
+	if _, err := cfg.ApplyEnrollment(); err != nil {
+		fmt.Fprintln(os.Stderr, "configuration:", err)
+		return 2
+	}
+	root, src, _, err := vault.LoadConfiguredRootKey(cfg)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "root key:", err)
+		return 1
+	}
+	defer clear(root)
+	if *rotateRoot && src != vault.RootKeyFromFile {
+		fmt.Fprintf(os.Stderr, "the root key comes from %s: rotate it there, then run rekey without --rotate-root\n", src)
+		return 2
+	}
+	store, err := vault.Open(cfg.DataDir, root, cfg.Organization)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "store:", err, "(is argus-secret still running? stop it first)")
+		return 1
+	}
+	defer store.Close()
+	var newRoot []byte
+	next := cfg.RootKeyFile + ".new"
+	if *rotateRoot {
+		if newRoot, err = vault.NewRootKeyFile(next); err != nil {
+			fmt.Fprintln(os.Stderr, "new root key:", err)
+			return 1
+		}
+		defer clear(newRoot)
+	}
+	who := "argus-secret rekey"
+	if u := os.Getenv("SUDO_USER"); u != "" {
+		who += " by " + u
+	}
+	res, err := store.Rekey(root, newRoot, vault.Actor{Kind: vault.ActorSystem, ID: who}, *reason)
+	if err != nil {
+		if *rotateRoot {
+			_ = os.Remove(next)
+		}
+		fmt.Fprintln(os.Stderr, "rekey:", err, "(nothing was changed)")
+		return 1
+	}
+	if *rotateRoot {
+		// The store now opens only with the new key: put it in place. If this
+		// fails, the new key is at root.key.new; move it over root.key by hand.
+		if err := os.Rename(next, cfg.RootKeyFile); err != nil {
+			fmt.Fprintf(os.Stderr, "the store moved to the new root key, but it could not replace %s: %v\nmove %s over it before starting argus-secret\n", cfg.RootKeyFile, err, next)
+			return 1
+		}
+	}
+	fmt.Printf("re-encrypted %d values under a new organization key", res.Values)
+	if res.RootRotate {
+		fmt.Printf(" and a new root key in %s; back it up now and destroy copies of the old one", cfg.RootKeyFile)
+	}
+	fmt.Println(". Start argus-secret again.")
 	return 0
 }
 

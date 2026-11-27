@@ -127,12 +127,12 @@ type Recipient interface {
 type x25519Recipient struct{ pub *ecdh.PublicKey }
 
 func (r x25519Recipient) Seal(plain, aad []byte) ([]byte, error) { return SealTo(r.pub, plain, aad) }
-func (x25519Recipient) PostQuantum() bool                         { return false }
+func (x25519Recipient) PostQuantum() bool                        { return false }
 
 type pqRecipient struct{ pub hpke.PublicKey }
 
 func (r pqRecipient) Seal(plain, aad []byte) ([]byte, error) { return SealPQ(r.pub, plain, aad) }
-func (pqRecipient) PostQuantum() bool                         { return true }
+func (pqRecipient) PostQuantum() bool                        { return true }
 
 // EncodeKey is how public keys travel in JSON: base64url without padding.
 func EncodeKey(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }

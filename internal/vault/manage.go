@@ -253,11 +253,13 @@ type Status struct {
 	// SealKeyPQ is the post-quantum seal key (format v2), to prefer.
 	SealKeyPQ string `json:"sealKeyPQ"`
 	// PostQuantumOnly says format v1 is refused.
-	PostQuantumOnly bool     `json:"postQuantumOnly,omitempty"`
-	TLSPin          string   `json:"tlsPin,omitempty"`
-	Rules           RulesAt  `json:"rules"`
-	Log             LogState `json:"log"`
-	Secrets         int      `json:"secrets"`
+	PostQuantumOnly bool `json:"postQuantumOnly,omitempty"`
+	// Encryption is how the stored values are wrapped.
+	Encryption EncryptionState `json:"encryption"`
+	TLSPin     string          `json:"tlsPin,omitempty"`
+	Rules      RulesAt         `json:"rules"`
+	Log        LogState        `json:"log"`
+	Secrets    int             `json:"secrets"`
 }
 
 // PreferredSealKey is the key a new value should be sealed to: the
@@ -291,7 +293,12 @@ func (a *API) mStatus(w http.ResponseWriter, _ *http.Request, _ []byte, actor Ma
 		a.fail(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, Status{Org: a.store.Organization(), Version: a.version,
+	enc, err := a.store.Encryption()
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, Status{Org: a.store.Organization(), Version: a.version, Encryption: enc,
 		SealKey: secretwire.EncodeKey(a.store.SealPublicKey()), SealKeyPQ: secretwire.EncodeKey(a.store.SealPublicKeyPQ()),
 		PostQuantumOnly: a.store.requirePQ, TLSPin: a.tlsPin,
 		Rules: RulesAt{Serial: serial, Contacted: contacted, Fresh: fresh}, Log: ls, Secrets: len(secs)})
