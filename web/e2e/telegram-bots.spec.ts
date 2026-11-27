@@ -149,3 +149,24 @@ test("telegram bots: a group's chat ID is explained, and found as soon as the gr
   await expect(form.getByTestId('telegram-watching')).toBeHidden()
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/telegram-found.png` })
 })
+
+test('telegram bots: closing the form stops watching for a group', async ({ page }) => {
+  await open(page)
+  let looks = 0
+  await page.route('**/api/v1/telegram/chats', (r) => { looks++; return r.fulfill({ json: { chats: [] } }) })
+  await page.getByRole('button', { name: 'Add bot' }).click()
+  const form = page.getByRole('dialog', { name: 'Add a Telegram bot' })
+  await form.getByLabel('Bot token').fill('7091534211:AAFsupportsupportsupportsupport')
+  await form.getByRole('button', { name: 'Find chats' }).click()
+  await expect(form.getByTestId('telegram-watching')).toBeVisible()
+  // Another token mid-watch stops it: the next bot's groups are not the one just messaged.
+  await form.getByLabel('Bot token').fill('7091534211:AAFotherotherotherotherother')
+  await expect(form.getByTestId('telegram-watching')).toBeHidden()
+  await form.getByRole('button', { name: 'Find chats' }).click()
+  await expect(form.getByTestId('telegram-watching')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(form).toBeHidden()
+  const after = looks
+  await page.waitForTimeout(7_000)
+  expect(looks).toBe(after)
+})

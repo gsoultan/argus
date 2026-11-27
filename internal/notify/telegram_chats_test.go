@@ -14,8 +14,9 @@ import (
 // refuses every message: before this, both were offered next to the good ones.
 func TestRecentChatsOffersOnlyChatsThatStillWork(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/botT/getUpdates" {
-			t.Errorf("path = %s", r.URL.Path)
+		_ = r.ParseForm()
+		if r.URL.Path != "/botT/getUpdates" || r.Form.Get("offset") != "-100" {
+			t.Errorf("asked %s offset %q, want the newest updates", r.URL.Path, r.Form.Get("offset"))
 		}
 		_, _ = io.WriteString(w, `{"ok":true,"result":[
 			{"my_chat_member":{"chat":{"id":-4001,"type":"group","title":"Ops"},"new_chat_member":{"status":"member"}}},

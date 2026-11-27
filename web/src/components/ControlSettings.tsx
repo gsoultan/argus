@@ -1504,6 +1504,7 @@ function PlatformChats({ t, onChats }: { t: Settings['telegram']; onChats: (ids:
         notifyOk('Found it', `${chats.map((c) => c.title || c.id).join(', ')} ${groups.length ? 'is added to Chat ids' : 'is listed below'}.`)
       }
     },
+    t.botToken?.trim() ?? '',
   )
   const toggle = (id: string, on: boolean) =>
     onChats(on ? [...t.chatIds.filter((x) => x !== id), id] : t.chatIds.filter((x) => x !== id))

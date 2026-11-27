@@ -212,6 +212,7 @@ function BotForm({ v, bot, onClose }: { v: TelegramView; bot: TelegramBot | null
         notifyOk('Found it', `${found.map((c) => chatOption(c).label).join(', ')} ${groups.length ? 'is ticked' : 'is listed'} below.`)
       }
     },
+    token.trim() || bot?.id || '',
   )
   const addTyped = () => {
     const id = typed.trim()

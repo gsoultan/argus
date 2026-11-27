@@ -289,7 +289,11 @@ func (t *Telegram) RecentChats(ctx context.Context) ([]TelegramChat, error) {
 		EditedMessage     *withChat `json:"edited_message"`
 		EditedChannelPost *withChat `json:"edited_channel_post"`
 	}
-	if err := t.call(ctx, "getUpdates", url.Values{"limit": {"100"}, "timeout": {"0"}}, &updates); err != nil {
+	// offset -100 is the newest hundred: without it Telegram answers with the
+	// oldest, and on a busy bot the message just sent to find a group is
+	// never among them. Older updates are dropped, which only matters to a
+	// program polling the same bot -- and two cannot poll one bot anyway.
+	if err := t.call(ctx, "getUpdates", url.Values{"offset": {"-100"}, "limit": {"100"}, "timeout": {"0"}}, &updates); err != nil {
 		return nil, err
 	}
 	// Updates come oldest first; the last word on a chat decides whether

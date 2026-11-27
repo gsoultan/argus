@@ -161,27 +161,51 @@ export function ChatHelp({ username, initiallyOpen, findLabel }: {
  * then, while watching, only ones not seen before (`fresh` true).
  */
 export function useChatFinder(lookup: () => Promise<TelegramChat[]>, known: string[],
-  onFound: (chats: TelegramChat[], fresh: boolean) => void) {
+  onFound: (chats: TelegramChat[], fresh: boolean) => void,
+  /** What lookup asks with (the token or bot): a change stops a watch, so another bot's groups are never ticked. */
+  key: string) {
   const [busy, setBusy] = useState(false)
   const [watching, setWatching] = useState(false)
   const [missed, setMissed] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Every find, stop, key change and unmount starts a new generation; a
+  // lookup that answers for an older one is ignored, so a slow answer can
+  // never start a second loop or act on a closed form.
+  const gen = useRef(0)
   const until = useRef(0)
   const seen = useRef<Set<string>>(new Set())
   const latest = useRef({ lookup, onFound })
   latest.current = { lookup, onFound }
 
   const stop = () => {
+    gen.current++
     if (timer.current) clearTimeout(timer.current)
     timer.current = null
     setWatching(false)
+    setBusy(false)
   }
-  useEffect(() => () => { if (timer.current) clearTimeout(timer.current) }, [])
+  useEffect(() => () => {
+    gen.current++
+    if (timer.current) clearTimeout(timer.current)
+  }, [])
+  const lastKey = useRef(key)
+  useEffect(() => {
+    if (lastKey.current === key) return
+    lastKey.current = key
+    stop()
+    setMissed(false)
+  }, [key])
 
-  const tick = () => {
+  const tick = (g: number) => {
     timer.current = setTimeout(() => {
+      timer.current = null
+      const again = () => {
+        if (g !== gen.current) return
+        if (Date.now() >= until.current) { stop(); setMissed(true); return }
+        tick(g)
+      }
       latest.current.lookup().then((chats) => {
-        if (!timer.current) return
+        if (g !== gen.current) return
         const fresh = chats.filter((c) => !seen.current.has(c.id))
         if (fresh.length > 0) {
           for (const c of fresh) seen.current.add(c.id)
@@ -189,37 +213,28 @@ export function useChatFinder(lookup: () => Promise<TelegramChat[]>, known: stri
           latest.current.onFound(fresh, true)
           return
         }
-        if (Date.now() >= until.current) {
-          stop()
-          setMissed(true)
-          return
-        }
-        tick()
-      }, () => {
-        // A failed look while watching is retried until the time is up;
-        // the first look already showed why, if it failed.
-        if (!timer.current) return
-        if (Date.now() >= until.current) { stop(); setMissed(true); return }
-        tick()
-      })
+        again()
+      }, again) // a failed look while watching is retried until the time is up
     }, WATCH_EVERY_MS)
   }
 
   const find = () => {
     stop()
+    const g = gen.current
     setMissed(false)
     setBusy(true)
     void run(async () => {
       const chats = await latest.current.lookup()
+      if (g !== gen.current) return
       const before = new Set(known)
       seen.current = new Set([...known, ...chats.map((c) => c.id)])
       latest.current.onFound(chats, false)
       if (!chats.some((c) => !before.has(c.id))) {
         until.current = Date.now() + WATCH_MS
         setWatching(true)
-        tick()
+        tick(g)
       }
-    }, { failure: 'Chats not found' }).finally(() => setBusy(false))
+    }, { failure: 'Chats not found' }).finally(() => { if (g === gen.current) setBusy(false) })
   }
   return { find, stop, busy, watching, missed }
 }
