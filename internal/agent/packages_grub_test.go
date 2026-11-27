@@ -53,11 +53,8 @@ func (g *grubDisk) run(ctx context.Context, out io.Writer, env []string, name st
 	case cmd == "findmnt -n -o SOURCE /":
 		fmt.Fprintln(out, "/dev/sda2")
 		return 0, nil
-	case cmd == "lsblk -n -o PKNAME /dev/sda2":
-		fmt.Fprintln(out, "sda")
-		return 0, nil
-	case cmd == "lsblk -n -o PKNAME /dev/sda":
-		fmt.Fprintln(out)
+	case cmd == "lsblk -n -r -s -p -o NAME,TYPE /dev/sda2":
+		fmt.Fprintln(out, "/dev/sda2 part\n/dev/sda disk")
 		return 0, nil
 	case name == "debconf-set-selections":
 		b, _ := os.ReadFile(args[0])
@@ -173,5 +170,102 @@ func TestGrubPresent(t *testing.T) {
 		if got := grubPresent(status); got != want {
 			t.Errorf("grubPresent(%q) = %v, want %v", status, got, want)
 		}
+	}
+}
+
+// bootDisk follows /boot (or /) down to the whole disk under it, through
+// partitions, LVM, md and LUKS, and stops when that is more than one disk.
+func TestBootDiskLayouts(t *testing.T) {
+	for _, tc := range []struct {
+		name, boot, root, chain, want, why string
+	}{
+		{
+			// The Nutanix server: /boot on sda2, / on LVM on sda3, all on sda.
+			// The old lookup read sda2's dependants and gave up on "sda, sda3".
+			name: "boot partition beside an LVM partition", boot: "/dev/sda2",
+			chain: "/dev/sda2 part\n/dev/sda disk\n", want: "/dev/sda",
+		},
+		{
+			name: "LVM over two partitions of one disk", root: "/dev/mapper/ubuntu--vg-ubuntu--lv",
+			chain: "/dev/mapper/ubuntu--vg-ubuntu--lv lvm\n/dev/sda3 part\n/dev/sda disk\n" +
+				"/dev/sda2 part\n/dev/sda disk\n",
+			want: "/dev/sda",
+		},
+		{
+			name: "LUKS on LVM on NVMe", root: "/dev/mapper/root_crypt",
+			chain: "/dev/mapper/root_crypt crypt\n/dev/mapper/vg-root lvm\n/dev/nvme0n1p3 part\n/dev/nvme0n1 disk\n",
+			want:  "/dev/nvme0n1",
+		},
+		{
+			name: "plain partition", root: "/dev/vda1",
+			chain: "/dev/vda1 part\n/dev/vda disk\n", want: "/dev/vda",
+		},
+		{
+			name: "RAID 1 over two disks", root: "/dev/md0",
+			chain: "/dev/md0 raid1\n/dev/sda2 part\n/dev/sda disk\n/dev/sdb2 part\n/dev/sdb disk\n",
+			why:   "/dev/md0 spans several disks (/dev/sda, /dev/sdb)",
+		},
+		{
+			name: "no disk at all", root: "/dev/loop0",
+			chain: "/dev/loop0 loop\n", why: "lsblk found no whole disk under /dev/loop0",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := tc.boot
+			if src == "" {
+				src = tc.root
+			}
+			run := func(_ context.Context, out io.Writer, _ []string, name string, args ...string) (int, error) {
+				switch cmd := strings.TrimSpace(name + " " + strings.Join(args, " ")); cmd {
+				case "findmnt -n -o SOURCE /boot":
+					if tc.boot == "" {
+						return 1, nil
+					}
+					fmt.Fprintln(out, tc.boot)
+				case "findmnt -n -o SOURCE /":
+					fmt.Fprintln(out, tc.root)
+				case "lsblk -n -r -s -p -o NAME,TYPE " + src:
+					fmt.Fprint(out, tc.chain)
+				default:
+					return 1, nil
+				}
+				return 0, nil
+			}
+			disk, why := bootDisk(context.Background(), run)
+			if disk != tc.want || why != tc.why {
+				t.Errorf("bootDisk = %q, %q; want %q, %q", disk, why, tc.want, tc.why)
+			}
+		})
+	}
+}
+
+// The update that failed on the Nutanix server: the disk on record is gone,
+// /boot is on sda2 and / on LVM on sda3. GRUB is told /dev/sda before apt
+// finishes configuring grub-pc, instead of the run giving up.
+func TestApplyAllAnswersGrubOnSplitBootLayout(t *testing.T) {
+	f := newFakeApt()
+	a, _ := applier(t, f, PackageRunRequest{ID: "run-grub-0004", Mode: PackagesAll})
+	g := newGrubDisk(t, f.run)
+	a.Run = func(ctx context.Context, out io.Writer, env []string, name string, args ...string) (int, error) {
+		switch cmd := strings.TrimSpace(name + " " + strings.Join(args, " ")); cmd {
+		case "findmnt -n -o SOURCE /boot":
+			fmt.Fprintln(out, "/dev/sda2")
+			return 0, nil
+		case "lsblk -n -r -s -p -o NAME,TYPE /dev/sda2":
+			fmt.Fprint(out, "/dev/sda2 part\n/dev/sda disk\n")
+			return 0, nil
+		}
+		return g.run(ctx, out, env, name, args...)
+	}
+	st := a.Apply(context.Background())
+	if st.State != RunDone {
+		t.Fatalf("state = %s (%s)", st.State, st.Message)
+	}
+	if g.answered != sdaAnswer {
+		t.Errorf("GRUB was told %q", g.answered)
+	}
+	set, install := g.at("debconf-set-selections"), g.at("install --only-upgrade")
+	if set < 0 || install < 0 || set > install {
+		t.Errorf("GRUB answered at %d, install at %d: %v", set, install, g.calls)
 	}
 }

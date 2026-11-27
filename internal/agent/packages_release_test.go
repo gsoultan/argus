@@ -942,9 +942,9 @@ func grubHost(t *testing.T, onRecord string, lsblk map[string]string) (*scriptRu
 		},
 		"debconf-set-selections": func(io.Writer, []string) int { return 0 },
 	}
-	for dev, parents := range lsblk {
-		on["lsblk -n -o PKNAME "+dev] = func(w io.Writer, _ []string) int {
-			fmt.Fprint(w, parents)
+	for dev, chain := range lsblk {
+		on["lsblk -n -r -s -p -o NAME,TYPE "+dev] = func(w io.Writer, _ []string) int {
+			fmt.Fprint(w, chain)
 			return 0
 		}
 	}
@@ -962,9 +962,7 @@ func grubHost(t *testing.T, onRecord string, lsblk map[string]string) (*scriptRu
 
 func TestApplyReleaseAnswersGrubsDiskFirst(t *testing.T) {
 	sr, answered := grubHost(t, "/dev/disk/by-id/ata-gone", map[string]string{
-		"/dev/mapper/ubuntu--vg-ubuntu--lv": "vda3\n",
-		"/dev/vda3":                         "vda\n",
-		"/dev/vda":                          "\n",
+		"/dev/mapper/ubuntu--vg-ubuntu--lv": "/dev/mapper/ubuntu--vg-ubuntu--lv lvm\n/dev/vda3 part\n/dev/vda disk\n",
 	})
 	upgraded := false
 	sr.on["do-release-upgrade -f DistUpgradeViewNonInteractive"] = func(io.Writer, []string) int {
@@ -983,8 +981,8 @@ func TestApplyReleaseAnswersGrubsDiskFirst(t *testing.T) {
 
 func TestApplyReleaseStopsWhenGrubsDiskCannotBeTold(t *testing.T) {
 	sr, answered := grubHost(t, "", map[string]string{
-		"/dev/mapper/ubuntu--vg-ubuntu--lv": "md0\n",
-		"/dev/md0":                          "sda2\nsdb2\n",
+		"/dev/mapper/ubuntu--vg-ubuntu--lv": "/dev/mapper/ubuntu--vg-ubuntu--lv lvm\n/dev/md0 raid1\n" +
+			"/dev/sda2 part\n/dev/sda disk\n/dev/sdb2 part\n/dev/sdb disk\n",
 	})
 	a, rebooted := releaseApplier(t, sr, looks("apt-get", "dpkg-query", "do-release-upgrade"), "26.04")
 	st := a.Apply(context.Background())

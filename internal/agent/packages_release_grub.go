@@ -81,8 +81,14 @@ func parseGrubDevices(b []byte) []string {
 
 // bootDisk is the whole disk the server boots from: the one under /boot, or
 // under / when /boot is not a mount of its own, followed down through
-// partitions, LVM and the like. "" with a reason when it cannot be told, as
-// for a RAID set spread over several disks.
+// partitions, LVM, md RAID, LUKS and the like. "" with a reason when it
+// cannot be told, as for a RAID set spread over several disks.
+//
+// `lsblk -s` (inverse) lists the device and everything it is built on, and
+// only that: an LVM volume over two partitions of the same disk, or a disk
+// grown with a new partition added to the volume group, ends at that one
+// disk. Plain `lsblk DEV` lists what is built on DEV instead, which once
+// made /boot on sda2 read as spread over "sda, sda3".
 func (a *PackageApplier) bootDisk(ctx context.Context) (string, string) { return bootDisk(ctx, a.Run) }
 
 func bootDisk(ctx context.Context, run cmdRunner) (string, string) {
@@ -98,28 +104,35 @@ func bootDisk(ctx context.Context, run cmdRunner) (string, string) {
 	if !strings.HasPrefix(src, "/dev/") {
 		return "", "findmnt did not name the device / is on"
 	}
-	dev := src
-	for range 6 {
-		b, code, err := output(ctx, run, nil, "lsblk", "-n", "-o", "PKNAME", dev)
-		if err != nil || code != 0 {
-			return "", "lsblk could not say what " + dev + " is on"
-		}
-		var parents []string
-		for _, p := range strings.Split(string(b), "\n") {
-			if p = strings.TrimSpace(p); p != "" && !hasString(parents, p) {
-				parents = append(parents, p)
-			}
-		}
-		switch len(parents) {
-		case 0:
-			return dev, ""
-		case 1:
-			dev = "/dev/" + parents[0]
-		default:
-			return "", src + " spans several disks (" + strings.Join(parents, ", ") + ")"
+	b, code, err := output(ctx, run, nil, "lsblk", "-n", "-r", "-s", "-p", "-o", "NAME,TYPE", src)
+	if err != nil || code != 0 {
+		return "", "lsblk could not say what " + src + " is on"
+	}
+	disks := wholeDisks(b)
+	switch len(disks) {
+	case 0:
+		return "", "lsblk found no whole disk under " + src
+	case 1:
+		return disks[0], ""
+	}
+	return "", src + " spans several disks (" + strings.Join(disks, ", ") + ")"
+}
+
+// wholeDisks reads `lsblk -n -r -s -p -o NAME,TYPE DEV`, one device per
+// line, DEV first and then what it is built on, and keeps the whole disks:
+//
+//	/dev/mapper/ubuntu--vg-ubuntu--lv lvm
+//	/dev/sda3 part
+//	/dev/sda disk
+func wholeDisks(b []byte) []string {
+	var out []string
+	for _, line := range strings.Split(string(b), "\n") {
+		f := strings.Fields(line)
+		if len(f) == 2 && f[1] == "disk" && strings.HasPrefix(f[0], "/dev/") && !hasString(out, f[0]) {
+			out = append(out, f[0])
 		}
 	}
-	return "", "lsblk's chain under " + src + " does not end"
+	return out
 }
 
 // answerGrub makes sure grub-pc knows which disk to install to before an
