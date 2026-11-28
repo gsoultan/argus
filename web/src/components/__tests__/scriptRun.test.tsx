@@ -1,3 +1,4 @@
+import { isRailCount } from '~/components/DatabaseWorkspace'
 import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DatabaseWorkspace } from '~/components/DatabaseWorkspace'
@@ -52,7 +53,8 @@ function type(sql: string) {
   fireEvent.keyDown(screen.getByLabelText('SQL'), { key: 'Enter', ctrlKey: true })
 }
 
-const runs = (ws: FakeSocket) => ws.sent.filter((r) => r.op === 'run')
+// The rail's own counts are not the person's statements.
+const runs = (ws: FakeSocket) => ws.sent.filter((r) => r.op === 'run' && !isRailCount(String(r.sql)))
 
 /** Waits for the next run request, checks its text, and answers it. */
 async function step(ws: FakeSocket, n: number, sql: string, ans: Record<string, unknown>) {

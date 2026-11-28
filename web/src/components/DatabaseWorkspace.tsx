@@ -1411,7 +1411,27 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   // The list of databases already carries each one's newest backup, so the
   // rail can show its age without asking the server anything new.
   const { data: all } = useQuery({ ...databasesQuery(), staleTime: 60_000 })
-  const railItems = withBackupAge(railFor(dialect), all?.lastBackups?.[database.id])
+  // The rail's counts: a few cheap reads when the session opens and each time
+  // the person changes section. A count that fails (no right to read it) is
+  // simply not shown.
+  const [counts, setCounts] = useState<RailCounts>({})
+  const railKeyForCounts = view === 'diagram' ? 'diagram' : panel
+  useEffect(() => {
+    if (status !== 'ready') return
+    let live = true
+    void (async () => {
+      const next: RailCounts = {}
+      for (const c of railCountQueries(dialect, level)) {
+        const r = await collectWithId(c.sql, 1)
+        if (r.error || !r.rows[0]) continue
+        const v = c.read(r.rows[0])
+        if (v) next[c.key] = v
+      }
+      if (live) setCounts(next)
+    })()
+    return () => { live = false }
+  }, [status, dialect, level, railKeyForCounts, collectWithId])
+  const railItems = withCounts(withBackupAge(railFor(dialect), all?.lastBackups?.[database.id]), counts)
   const railKey = view === 'diagram' ? 'diagram' : panel
   const onWork = railKey === 'query' || railKey === 'diagram'
   const [railOpen, toggleRail] = useRailFold(onWork)
@@ -1896,6 +1916,50 @@ const WORK_DIAGRAM: RailItem = { key: 'diagram', label: 'Diagram', icon: IconSch
  * only: the others read Postgres's own catalogs. They used to open from a
  * link alone, as MySQL had no Manage tab.
  */
+export type RailCounts = Record<string, NonNullable<RailItem['count']>>
+
+const n = (v: string | null | undefined) => Number(v ?? 0) || 0
+
+/**
+ * The reads behind the rail's counts, one row each. Replication is read only
+ * for a DBA, who is the one person who can open it.
+ */
+export function railCountQueries(dialect: Dialect, level: DBLevel | ''): { key: string; sql: string; read: (row: (string | null)[]) => RailItem['count'] | undefined }[] {
+  const dba = level === 'dba' || level === 'owner'
+  if (dialect === 'postgres') {
+    const out: ReturnType<typeof railCountQueries> = [{
+      key: 'activity',
+      sql: `SELECT count(*) FILTER (WHERE cardinality(pg_blocking_pids(pid)) > 0)::text, count(*) FILTER (WHERE state = 'idle in transaction')::text FROM pg_stat_activity WHERE datname = current_database()`,
+      read: ([w, i]) => n(w) ? { text: `${n(w)} waiting`, tone: 'denied' } : n(i) ? { text: `${n(i)} idle in tx`, tone: 'pending' } : undefined,
+    }]
+    if (dba) out.push({
+      key: 'replication',
+      sql: `SELECT (SELECT count(*) FROM pg_publication)::text, (SELECT count(*) FROM pg_subscription WHERE subdbid = (SELECT oid FROM pg_database WHERE datname = current_database()))::text, (SELECT count(*) FROM pg_subscription WHERE subdbid = (SELECT oid FROM pg_database WHERE datname = current_database()) AND NOT subenabled)::text, (SELECT count(*) FROM pg_stat_replication)::text`,
+      read: ([p, s, off, r]) => {
+        const total = n(p) + n(s) + n(r)
+        if (n(off)) return { text: `${n(off)} off`, tone: 'denied' }
+        return total ? { text: String(total) } : undefined
+      },
+    })
+    return out
+  }
+  if (dialect === 'mssql' && dba) return [{
+    key: 'activity',
+    sql: `SELECT CAST(count(*) AS varchar(12)) FROM sys.dm_exec_requests WHERE blocking_session_id <> 0 AND database_id = DB_ID()`,
+    read: ([w]) => (n(w) ? { text: `${n(w)} waiting`, tone: 'denied' } : undefined),
+  }]
+  return []
+}
+
+/** True for a statement the rail sends for its counts, not one the person ran. */
+export function isRailCount(sql: string): boolean {
+  return (['postgres', 'mssql'] as const).some((d) => railCountQueries(d, 'dba').some((q) => q.sql === sql))
+}
+
+export function withCounts(items: RailItem[], counts: RailCounts): RailItem[] {
+  return items.map((i) => (counts[i.key] && !i.count ? { ...i, count: counts[i.key] } : i))
+}
+
 /** Puts the newest backup's age beside Backups; a failed or day-old one is flagged. */
 export function withBackupAge(items: RailItem[], b: DatabaseBackup | undefined, now = Date.now()): RailItem[] {
   if (!b) return items

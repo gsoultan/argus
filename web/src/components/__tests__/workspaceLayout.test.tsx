@@ -1,6 +1,6 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DatabaseWorkspace, railFor, withBackupAge } from '~/components/DatabaseWorkspace'
+import { DatabaseWorkspace, railCountQueries, railFor, withBackupAge, withCounts } from '~/components/DatabaseWorkspace'
 import { renderWithProviders } from '~/test/render'
 import type { DBLevel, Database, DatabaseBackup } from '~/types/domain'
 import { compactCount } from '~/components/DatabaseWorkspace'
@@ -194,5 +194,31 @@ describe('withBackupAge', () => {
   })
   it('leaves the rail alone with no backup', () => {
     expect(withBackupAge(items, undefined, now)).toBe(items)
+  })
+})
+
+describe('rail counts', () => {
+  const read = (key: string, row: (string | null)[], level: DBLevel = 'dba') =>
+    railCountQueries('postgres', level).find((q) => q.key === key)?.read(row)
+  it('names connections waiting on a lock first, then idle transactions', () => {
+    expect(read('activity', ['1', '3'])).toEqual({ text: '1 waiting', tone: 'denied' })
+    expect(read('activity', ['0', '2'])).toEqual({ text: '2 idle in tx', tone: 'pending' })
+    expect(read('activity', ['0', '0'])).toBeUndefined()
+  })
+  it('counts replication only for a DBA, and flags a subscription that is off', () => {
+    expect(railCountQueries('postgres', 'write').map((q) => q.key)).toEqual(['activity'])
+    expect(read('replication', ['2', '4', '0', '1'])).toEqual({ text: '7' })
+    expect(read('replication', ['2', '4', '2', '1'])).toEqual({ text: '2 off', tone: 'denied' })
+  })
+  it('asks nothing of MySQL, and SQL Server only for a DBA', () => {
+    expect(railCountQueries('mysql', 'dba')).toEqual([])
+    expect(railCountQueries('mssql', 'read')).toEqual([])
+    expect(railCountQueries('mssql', 'dba').map((q) => q.key)).toEqual(['activity'])
+  })
+  it('puts a count on its item and keeps the backup age', () => {
+    const items = withBackupAge(railFor('postgres'), { state: 'done', startedAt: new Date().toISOString() } as unknown as DatabaseBackup)
+    const out = withCounts(items, { activity: { text: '1 waiting', tone: 'denied' }, backups: { text: 'x' } })
+    expect(out.find((i) => i.key === 'activity')?.count?.text).toBe('1 waiting')
+    expect(out.find((i) => i.key === 'backups')?.count?.text).toBe('0m ago')
   })
 })
