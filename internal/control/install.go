@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/auth"
 )
@@ -127,7 +127,7 @@ type DatabaseCheck struct {
 func CheckDatabase(ctx context.Context, dsn string) (DatabaseCheck, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	conn, err := pgx.Connect(ctx, dsn)
+	conn, err := caduceus.Connect(ctx, dsn, caduceus.Options{})
 	if err != nil {
 		return DatabaseCheck{}, err
 	}

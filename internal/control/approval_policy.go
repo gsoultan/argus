@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -389,7 +389,7 @@ func (s *Store) ApprovalPolicy(ctx context.Context) (ApprovalPolicy, error) {
 	err := s.db(ctx).QueryRow(ctx, `SELECT require_reason, notify_production, updated_by, updated_at
 		FROM approval_policy_settings WHERE id`).Scan(&p.RequireReason, &p.NotifyProduction, &p.UpdatedBy, &at)
 	switch {
-	case errors.Is(err, pgx.ErrNoRows):
+	case errors.Is(err, caduceus.ErrNoRows):
 	case err != nil:
 		return p, err
 	case p.UpdatedBy != "":
@@ -622,7 +622,7 @@ func (a *API) actsDirectly(ctx context.Context, kind ApprovalKind, env, email st
 	err = a.store.db(ctx).QueryRow(ctx, `SELECT role, disabled_at IS NOT NULL FROM users WHERE lower(email) = lower($1)`,
 		email).Scan(&role, &disabled)
 	if err != nil {
-		if !errors.Is(err, pgx.ErrNoRows) {
+		if !errors.Is(err, caduceus.ErrNoRows) {
 			a.log.Error("could not read a role for the approval policy; a second person approves", "error", err)
 		}
 		return nil
@@ -738,7 +738,7 @@ var ErrPolicyChangeNotFound = errors.New("no such change to the approval policy;
 
 const policyChangeColumns = `id::text, requested_by, requested_at, reason, proposal, base, state, decided_by, decided_at, note`
 
-func scanPolicyChange(row pgx.Row) (ApprovalPolicyChange, error) {
+func scanPolicyChange(row rowScanner) (ApprovalPolicyChange, error) {
 	var c ApprovalPolicyChange
 	var raw []byte
 	err := row.Scan(&c.ID, &c.RequestedBy, &c.RequestedAt, &c.Reason, &raw, &c.Base, &c.State,
@@ -773,7 +773,7 @@ func (s *Store) AskApprovalPolicyChange(ctx context.Context, next ApprovalPolicy
 func (s *Store) PendingApprovalPolicyChange(ctx context.Context) (*ApprovalPolicyChange, error) {
 	c, err := scanPolicyChange(s.db(ctx).QueryRow(ctx, `SELECT `+policyChangeColumns+`
 		FROM approval_policy_changes WHERE state = 'pending'`))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -791,7 +791,7 @@ func (s *Store) CloseApprovalPolicyChange(ctx context.Context, id, state, by, no
 	c, err := scanPolicyChange(s.db(ctx).QueryRow(ctx, `
 		UPDATE approval_policy_changes SET state = $2, decided_by = $3, decided_at = now(), note = $4
 		 WHERE id = $1::uuid AND state = 'pending' RETURNING `+policyChangeColumns, id, state, by, note))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return c, ErrPolicyChangeNotFound
 	}
 	return c, err

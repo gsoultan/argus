@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 // Console alerts: the bell in the console header.
@@ -215,7 +215,7 @@ func clip(s string, n int) string {
 const alertColumns = `a.seq, a.at, a.kind, a.severity, a.title, a.detail, a.link, a.audience, a.recipient, a.actor,
 	a.subject, a.closed, a.closed_at`
 
-func scanAlert(row pgx.Row, extra ...any) (ConsoleAlert, error) {
+func scanAlert(row rowScanner, extra ...any) (ConsoleAlert, error) {
 	var al ConsoleAlert
 	dest := append([]any{&al.Seq, &al.At, &al.Kind, &al.Severity, &al.Title, &al.Detail, &al.Link,
 		&al.Audience, &al.Recipient, &al.Actor, &al.Subject, &al.Closed, &al.ClosedAt}, extra...)
@@ -251,7 +251,7 @@ func (s *Store) CloseConsoleAlerts(ctx context.Context, subject, closed string) 
 	return collectAlerts(rows)
 }
 
-func collectAlerts(rows pgx.Rows) ([]ConsoleAlert, error) {
+func collectAlerts(rows *caduceus.Rows) ([]ConsoleAlert, error) {
 	defer rows.Close()
 	var out []ConsoleAlert
 	for rows.Next() {
@@ -293,7 +293,7 @@ func (s *Store) AlertPrefs(ctx context.Context, email string) (AlertPrefs, error
 	err := s.db(ctx).QueryRow(ctx, `
 		SELECT muted, new_devices_only, popup, sound FROM console_alert_prefs WHERE email = $1`,
 		strings.ToLower(email)).Scan(&p.Muted, &p.NewDevicesOnly, &p.Popup, &p.Sound)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return DefaultAlertPrefs, nil
 	}
 	if p.Muted == nil {
@@ -403,7 +403,7 @@ func (s *Store) UnreadConsoleAlerts(ctx context.Context, rd alertReader) (int, e
 // including upTo when it is above zero.
 func (s *Store) MarkConsoleAlertsRead(ctx context.Context, email string, seqs []int64, upTo int64) error {
 	email = strings.ToLower(email)
-	return pgx.BeginFunc(ctx, s.db(ctx), func(tx pgx.Tx) error {
+	return caduceus.BeginFunc(ctx, s.db(ctx), func(tx *caduceus.Tx) error {
 		if upTo > 0 {
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO console_alert_prefs (email, read_seq) VALUES ($1, $2)

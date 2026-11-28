@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/auth"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/gsoultan/caduceus"
 )
 
 // A control plane whose database cannot be read must not tell the sign-in
@@ -19,13 +19,13 @@ import (
 // first-run page and its `users add` command, and looked wiped.
 func TestSignInPageSaysTheDatabaseIsUnreadableNotThatItIsEmpty(t *testing.T) {
 	// Nothing listens on port 1, so every query fails, as with Postgres
-	// stopped. pgxpool connects lazily, so this opens without one.
-	cfg, err := pgxpool.ParseConfig("postgres://argus:argus@127.0.0.1:1/argus?sslmode=disable&connect_timeout=1")
+	// stopped. caduceus.Pool connects lazily, so this opens without one.
+	cfg, err := caduceus.ParsePoolConfig("postgres://argus:argus@127.0.0.1:1/argus?sslmode=disable&connect_timeout=1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	cfg.ConnConfig.ConnectTimeout = time.Second
-	pool, err := pgxpool.NewWithConfig(t.Context(), cfg)
+	pool, err := caduceus.NewPoolConfig(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

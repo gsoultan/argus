@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -923,7 +923,7 @@ var errNoScript = errors.New("no such script")
 func (a *API) failScript(w http.ResponseWriter, err error) {
 	var pgErr interface{ SQLState() string }
 	switch {
-	case errors.Is(err, errNoScript), errors.Is(err, pgx.ErrNoRows):
+	case errors.Is(err, errNoScript), errors.Is(err, caduceus.ErrNoRows):
 		writeErr(w, http.StatusNotFound, "no such script")
 	case errors.As(err, &pgErr) && pgErr.SQLState() == "23505":
 		writeErr(w, http.StatusConflict, "a script by that name is already in the library")
@@ -939,7 +939,7 @@ const scriptVersionCols = `v.id::text, v.script_id::text, v.version, v.install, 
 	v.author, v.created_at, v.reviewed_by, v.reviewed_at, v.self_reviewed, v.accepted, v.tried_on, v.tried_at,
 	v.signature, s.name, s.platform, s.archived_at IS NOT NULL`
 
-func scanScriptVersion(row pgx.Row) (ScriptVersion, error) {
+func scanScriptVersion(row rowScanner) (ScriptVersion, error) {
 	var (
 		v                          ScriptVersion
 		params, findings, accepted []byte
@@ -982,7 +982,7 @@ func (s *Store) script(ctx context.Context, id string) (SoftwareScript, error) {
 	err := s.db(ctx).QueryRow(ctx, `SELECT id::text, name, platform, description, created_by, created_at
 		FROM software_scripts WHERE id = $1::uuid AND archived_at IS NULL`, id).Scan(&sc.ID, &sc.Name, &sc.Platform,
 		&sc.Description, &sc.CreatedBy, &sc.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return sc, errNoScript
 	}
 	if err != nil {
@@ -1089,7 +1089,7 @@ func (s *Store) addScriptVersion(ctx context.Context, scriptID, by string, v *Sc
 	return tx.Commit(ctx)
 }
 
-func insertScriptVersion(ctx context.Context, tx pgx.Tx, scriptID, by string, v *ScriptVersion) error {
+func insertScriptVersion(ctx context.Context, tx *caduceus.Tx, scriptID, by string, v *ScriptVersion) error {
 	params, _ := json.Marshal(v.Params)
 	findings, _ := json.Marshal(v.Findings)
 	return tx.QueryRow(ctx, `
@@ -1108,7 +1108,7 @@ func (s *Store) failUnsentRun(ctx context.Context, host, id, msg string) (*Packa
 		UPDATE package_runs SET state = 'failed', step = '', message = $3, finished_at = now(), updated_at = now()
 		 WHERE id::text = $2 AND lower(hostname) = lower($1) AND state IN ('queued','running')
 		RETURNING `+packageRunCols, host, id, clip("Not sent to the server: "+msg, 1000)), false)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, nil
 	}
 	return &r, err

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -448,7 +448,7 @@ func (s *Store) LogCleanupPolicy(ctx context.Context) (LogCleanupPolicy, error) 
 	}
 	err = s.db(ctx).QueryRow(ctx, `SELECT log_clean_paths, log_protect_paths FROM gateway_policy LIMIT 1`).
 		Scan(&p.Paths, &p.Protect)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		err = nil
 	}
 	if p.Paths == nil {
@@ -807,7 +807,7 @@ func (s *Store) recordLogBeat(ctx context.Context, host string, b LogBeat) (*Log
 		WITH old AS (SELECT hostname, logs FROM agents WHERE lower(hostname) = lower($1) FOR UPDATE)
 		UPDATE agents a SET logs = $2::jsonb FROM old WHERE a.hostname = old.hostname
 		RETURNING old.logs`, host, rb).Scan(&old)
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && len(old) == 0) {
+	if errors.Is(err, caduceus.ErrNoRows) || (err == nil && len(old) == 0) {
 		return nil, nil
 	}
 	if err != nil {
@@ -828,7 +828,7 @@ func (s *Store) logReportFor(ctx context.Context, host string) (*LogReport, *log
 	)
 	err := s.db(ctx).QueryRow(ctx, `SELECT logs, logs_state, logs_scan_id FROM agents WHERE lower(hostname) = lower($1)`,
 		host).Scan(&rb, &sb, &scan)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, nil, false, nil
 	}
 	if err != nil {
@@ -856,7 +856,7 @@ func (s *Store) logReportFor(ctx context.Context, host string) (*LogReport, *log
 func (s *Store) logScanAsked(ctx context.Context, host string) (string, error) {
 	var id *string
 	err := s.db(ctx).QueryRow(ctx, `SELECT logs_scan_id FROM agents WHERE lower(hostname) = lower($1)`, host).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) || id == nil {
+	if errors.Is(err, caduceus.ErrNoRows) || id == nil {
 		return "", nil
 	}
 	return *id, err
@@ -902,7 +902,7 @@ const logRunCols = `id::text, hostname, asset_hostname, trigger, state, items, s
 	requested_by, requested_at, decided_by, decided_at, sent_at, started_at, finished_at, updated_at, step,
 	message, freed, removed, removed_more, skipped, actions`
 
-func scanLogRun(row pgx.Row, full bool) (LogCleanupRun, error) {
+func scanLogRun(row rowScanner, full bool) (LogCleanupRun, error) {
 	var (
 		r                      LogCleanupRun
 		removed, skipped, acts []byte
@@ -1008,7 +1008,7 @@ func (s *Store) CreateLogRun(ctx context.Context, n newLogRun) (LogCleanupRun, e
 // LogRunByID reads a cleanup with everything it removed.
 func (s *Store) LogRunByID(ctx context.Context, id string) (LogCleanupRun, error) {
 	r, err := scanLogRun(s.db(ctx).QueryRow(ctx, `SELECT `+logRunCols+` FROM log_cleanup_runs WHERE id::text = $1`, id), true)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return r, ErrLogRunNotFound
 	}
 	return r, err
@@ -1042,7 +1042,7 @@ func (s *Store) logRunToSend(ctx context.Context, host string) (*LogCleanupRun, 
 		              WHERE lower(hostname) = lower($1) AND state IN ('queued','running')
 		              ORDER BY requested_at LIMIT 1)
 		RETURNING `+logRunCols, host), false)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -1098,7 +1098,7 @@ func (s *Store) recordLogRunStatus(ctx context.Context, host string, st LogRunSt
 		RETURNING `+logRunCols, host, st.ID, state, clip(st.Step, 300), clip(st.Message, 2000), st.Freed,
 		removed, st.More, skipped)
 	r, err := scanLogRun(row, false)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -1135,7 +1135,7 @@ func (s *Store) DecideLogRun(ctx context.Context, id, by string, approve, own bo
 		 WHERE id::text = $1 AND state = 'awaiting_approval'
 		RETURNING `+logRunCols, id, next, by)
 	r, err = scanLogRun(row, false)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return r, fmt.Errorf("%w: someone decided this cleanup already", ErrRunState)
 	}
 	if err != nil && isUniqueViolation(err) {
@@ -1153,7 +1153,7 @@ func (s *Store) CancelLogRun(ctx context.Context, id, by string) (LogCleanupRun,
 		   AND (state = 'awaiting_approval' OR (state = 'queued' AND sent_at IS NULL))
 		RETURNING `+logRunCols, id, by)
 	r, err := scanLogRun(row, false)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		cur, gerr := s.LogRunByID(ctx, id)
 		if gerr != nil {
 			return cur, gerr

@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/tunnel"
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -43,7 +43,7 @@ func (s *Store) hostFirewallOf(ctx context.Context, host string) (tunnel.HostFir
 	var raw []byte
 	err := s.db(ctx).QueryRow(ctx, `SELECT firewall FROM agents WHERE lower(hostname) = lower($1)
 		 ORDER BY last_seen_at DESC LIMIT 1`, host).Scan(&raw)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return tunnel.HostFirewall{}, false, nil
 	}
 	if err != nil {
@@ -135,7 +135,7 @@ func (a *API) buildFWChange(ctx context.Context, t fwTarget, d FWDelta, id strin
 	slices.Sort(ids)
 	for _, pid := range ids {
 		lines, out, err := a.store.fwPolicyVersion(ctx, a.store.db(ctx), pid, b.after.Policies[pid])
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, caduceus.ErrNoRows) {
 			continue // a policy deleted since; its lines come off
 		}
 		if err != nil {
@@ -221,7 +221,7 @@ func (a *API) heartbeatFirewall(ctx context.Context, host string, b *tunnel.Fire
 	}
 	assetID, _, _, err := a.store.assetForAgent(ctx, host)
 	if err != nil {
-		if !errors.Is(err, pgx.ErrNoRows) {
+		if !errors.Is(err, caduceus.ErrNoRows) {
 			a.log.Error("heartbeat: cannot find the server for its firewall", "hostname", host, "error", err)
 		}
 		return o

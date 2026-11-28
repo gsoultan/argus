@@ -5,7 +5,8 @@ import (
 	"fmt"
 
 	"github.com/gsoultan/argus/internal/tunnel"
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/gsoultan/caduceus"
+	"github.com/gsoultan/caduceus/wire"
 )
 
 /*
@@ -35,12 +36,12 @@ func (s *pgSession) capOpen(ctx context.Context, req tunnel.PGRequest, c tunnel.
 	}
 	switch s.conn.TxStatus() {
 	case 'I':
-		if _, err := s.conn.Exec(ctx, "BEGIN").ReadAll(); err != nil {
+		if _, err := pgExec(ctx, s.conn, "BEGIN"); err != nil {
 			return "", err
 		}
 		return "tx", nil
 	case 'T':
-		if _, err := s.conn.Exec(ctx, "SAVEPOINT "+capSavepoint).ReadAll(); err != nil {
+		if _, err := pgExec(ctx, s.conn, "SAVEPOINT "+capSavepoint); err != nil {
 			return "", err
 		}
 		return "sp", nil
@@ -58,23 +59,23 @@ func (s *pgSession) capClose(ctx context.Context, kind string, changed int64, li
 	ctx = context.WithoutCancel(ctx)
 	over := err == nil && limit != nil && changed > *limit
 	if over {
-		err = &pgconn.PgError{Code: tunnel.GuardOverCap, Severity: "ERROR",
+		err = &wire.Error{Code: tunnel.GuardOverCap, Severity: "ERROR",
 			Message: fmt.Sprintf("this change would affect %d rows, more than the %d that were approved; nothing was changed. "+
 				"The data changed since you asked, so ask again", changed, *limit)}
 	}
 	switch {
 	case kind == "tx" && err == nil:
-		if _, cerr := s.conn.Exec(ctx, "COMMIT").ReadAll(); cerr != nil {
+		if _, cerr := pgExec(ctx, s.conn, "COMMIT"); cerr != nil {
 			return cerr
 		}
 	case kind == "tx":
-		_, _ = s.conn.Exec(ctx, "ROLLBACK").ReadAll()
+		_, _ = pgExec(ctx, s.conn, "ROLLBACK")
 	case err == nil:
-		if _, cerr := s.conn.Exec(ctx, "RELEASE SAVEPOINT "+capSavepoint).ReadAll(); cerr != nil {
+		if _, cerr := pgExec(ctx, s.conn, "RELEASE SAVEPOINT "+capSavepoint); cerr != nil {
 			return cerr
 		}
 	case over:
-		_, _ = s.conn.Exec(ctx, "ROLLBACK TO SAVEPOINT "+capSavepoint+"; RELEASE SAVEPOINT "+capSavepoint).ReadAll()
+		_, _ = pgExec(ctx, s.conn, "ROLLBACK TO SAVEPOINT "+capSavepoint+"; RELEASE SAVEPOINT "+capSavepoint)
 	}
 	// A failed statement inside a savepoint leaves the transaction aborted,
 	// as it would have been without the cap; the person rolls it back.
@@ -82,7 +83,7 @@ func (s *pgSession) capClose(ctx context.Context, kind string, changed int64, li
 }
 
 // changedRows is how many rows a statement's tag says it changed.
-func changedRows(tag pgconn.CommandTag) int64 {
+func changedRows(tag caduceus.CommandTag) int64 {
 	if tag.Select() {
 		return 0
 	}

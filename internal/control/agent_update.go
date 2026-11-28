@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -227,7 +227,7 @@ func (s *Store) requestAgent(ctx context.Context, hostname, version string, now,
 	err := s.db(ctx).QueryRow(ctx, `
 		SELECT control_host FROM agent_credentials
 		 WHERE lower(hostname) = lower($1) AND revoked_at IS NULL`, hostname).Scan(&controlHost)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return r, ErrNoLiveAgent
 	}
 	if err != nil {
@@ -252,7 +252,7 @@ func (s *Store) requestAgent(ctx context.Context, hostname, version string, now,
 		          update_requested_by`,
 		hostname, version, now, by, restart).Scan(&r.ID, &r.Version, &r.Now, &r.Restart,
 		&r.RequestedAt, &r.RequestedBy)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return r, ErrNoLiveAgent
 	}
 	return r, err
@@ -275,7 +275,7 @@ func (s *Store) CancelAgentUpdate(ctx context.Context, hostname string) (*AgentU
 		  FROM old WHERE c.id = old.id
 		RETURNING old.update_id, old.update_version, old.update_restart`,
 		hostname).Scan(&r.ID, &r.Version, &r.Restart)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -293,7 +293,7 @@ func (s *Store) agentUpdateFor(ctx context.Context, hostname string) (*AgentUpda
 		  FROM agent_credentials
 		 WHERE lower(hostname) = lower($1) AND revoked_at IS NULL AND update_id IS NOT NULL`,
 		hostname).Scan(&r.ID, &r.Version, &r.Now, &r.Restart)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -334,7 +334,7 @@ func (s *Store) recordAgentUpdate(ctx context.Context, hostname string,
 		RETURNING old.update_id, old.update_version, old.update_now, old.update_restart,
 		          old.update_requested_at, COALESCE(old.update_requested_by, '')`,
 		hostname, st.ID).Scan(&r.ID, &r.Version, &r.Now, &r.Restart, &r.RequestedAt, &r.RequestedBy)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

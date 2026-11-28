@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/gsoultan/caduceus/wire"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -87,10 +87,10 @@ func TestPGReplicaCloneEndToEnd(t *testing.T) {
 		return err
 	}
 	ctx := context.Background()
-	pcfg, _ := pgconn.ParseConfig(primaryDSN)
+	pcfg, _ := wire.ParseConfig(primaryDSN)
 	replicaDSN := strings.Replace(strings.Replace(primaryDSN, ":"+strconv.Itoa(int(pcfg.Port))+"/", ":"+port+"/", 1),
 		"/"+pcfg.Database+"?", "/postgres?", 1)
-	primary, err := pgconn.Connect(ctx, primaryDSN)
+	primary, err := pgConnect(ctx, primaryDSN)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +200,7 @@ func TestPGReplicaCloneEndToEnd(t *testing.T) {
 		time.Sleep(500 * time.Millisecond)
 	}
 	// The lag watch sees it streaming and caught up once a change arrives.
-	if err := primary.Exec(ctx, `CREATE TABLE argus_t_lag (x int); DROP TABLE argus_t_lag`).Close(); err != nil {
+	if err := pgRun(ctx, primary, `CREATE TABLE argus_t_lag (x int); DROP TABLE argus_t_lag`); err != nil {
 		t.Fatal(err)
 	}
 	for {

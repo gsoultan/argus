@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -117,7 +117,7 @@ func (s *Store) RenameCheckGroup(ctx context.Context, id, name string) (string, 
 	var old string
 	err = s.db(ctx).QueryRow(ctx, `UPDATE check_groups g SET name = $2 FROM check_groups o
 		WHERE g.id::text = $1 AND o.id = g.id RETURNING o.name`, id, name).Scan(&old)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return "", ErrNoCheckGroup
 	}
 	return old, groupNameErr(err)
@@ -128,7 +128,7 @@ func (s *Store) RenameCheckGroup(ctx context.Context, id, name string) (string, 
 func (s *Store) DeleteCheckGroup(ctx context.Context, id string) (string, error) {
 	var name string
 	err := s.db(ctx).QueryRow(ctx, `DELETE FROM check_groups WHERE id::text = $1 RETURNING name`, id).Scan(&name)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return "", ErrNoCheckGroup
 	}
 	return name, err
@@ -339,7 +339,7 @@ func (s *Store) SetWebsitePaused(ctx context.Context, id string, paused bool) (W
 	c, err := scanWebsite(s.db(ctx).QueryRow(ctx, `UPDATE checks SET paused = $2, updated_at = now(),
 		next_at = CASE WHEN $2 THEN next_at ELSE now() END
 		WHERE id::text = $1 AND kind = 'website' RETURNING `+websiteCols, id, paused))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return c, ErrNoWebsite
 	}
 	return c, err

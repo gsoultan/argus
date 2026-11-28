@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -338,7 +338,7 @@ const deviceCols = `id::text, name, COALESCE(settings->>'host', ''), COALESCE((s
 const deviceSettings = `jsonb_build_object('host', $2::text, 'port', $3::int, 'version', $4::text, 'user', $5::text,
 	'authProto', $6::text, 'privProto', $7::text, 'watch', $8::jsonb)`
 
-func scanDevice(row pgx.Row) (NetworkDevice, error) {
+func scanDevice(row rowScanner) (NetworkDevice, error) {
 	var d NetworkDevice
 	var watch, last []byte
 	err := row.Scan(&d.ID, &d.Name, &d.Host, &d.Port, &d.Version, &d.User, &d.AuthProto, &d.PrivProto, &watch, &d.secretsSealed,
@@ -361,7 +361,7 @@ func scanDevice(row pgx.Row) (NetworkDevice, error) {
 	return d, nil
 }
 
-func scanDevices(rows pgx.Rows, err error) ([]NetworkDevice, error) {
+func scanDevices(rows *caduceus.Rows, err error) ([]NetworkDevice, error) {
 	if err != nil {
 		return nil, err
 	}
@@ -385,7 +385,7 @@ func (s *Store) NetworkDevices(ctx context.Context) ([]NetworkDevice, error) {
 // NetworkDevice is one device.
 func (s *Store) NetworkDevice(ctx context.Context, id string) (NetworkDevice, error) {
 	d, err := scanDevice(s.db(ctx).QueryRow(ctx, `SELECT `+deviceCols+` FROM checks WHERE id::text = $1 AND kind = 'snmp'`, id))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return d, ErrNoDevice
 	}
 	return d, err
@@ -433,7 +433,7 @@ func (s *Store) UpdateNetworkDevice(ctx context.Context, id string, in NetworkDe
 		WHERE id::text = $14 AND kind = 'snmp' RETURNING `+deviceCols,
 		in.Name, in.Host, in.Port, in.Version, in.User, in.AuthProto, in.PrivProto, string(watch),
 		in.secretsSealed, in.EverySeconds, in.TimeoutSeconds, in.CheckFrom, in.Paused, id, moved))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return before, after, ErrNoDevice
 	}
 	if err == nil && moved {
@@ -447,7 +447,7 @@ func (s *Store) UpdateNetworkDevice(ctx context.Context, id string, in NetworkDe
 // DeleteNetworkDevice removes a device and its history.
 func (s *Store) DeleteNetworkDevice(ctx context.Context, id string) (NetworkDevice, error) {
 	d, err := scanDevice(s.db(ctx).QueryRow(ctx, `DELETE FROM checks WHERE id::text = $1 AND kind = 'snmp' RETURNING `+deviceCols, id))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return d, ErrNoDevice
 	}
 	return d, err
@@ -477,7 +477,7 @@ func (s *Store) SetCheckPaused(ctx context.Context, id string, paused bool) (str
 	err := s.db(ctx).QueryRow(ctx, `UPDATE checks SET paused = $2, updated_at = now(),
 		next_at = CASE WHEN $2 THEN next_at ELSE now() END
 		WHERE id::text = $1 RETURNING name`, id, paused).Scan(&name)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return "", ErrNoDevice
 	}
 	return name, err
@@ -486,7 +486,7 @@ func (s *Store) SetCheckPaused(ctx context.Context, id string, paused bool) (str
 // CheckLabel is a check's name and kind, for the audit log.
 func (s *Store) CheckLabel(ctx context.Context, id string) (name, kind string, err error) {
 	err = s.db(ctx).QueryRow(ctx, `SELECT name, kind FROM checks WHERE id::text = $1`, id).Scan(&name, &kind)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return "", "", ErrNoWebsite
 	}
 	return name, kind, err

@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/tunnel"
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -219,7 +219,7 @@ func (s *Store) UseStatementApproval(ctx context.Context, requestID, email, dbID
 	if err == nil {
 		return rowCap, nil
 	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	if !errors.Is(err, caduceus.ErrNoRows) {
 		return nil, fmt.Errorf("checking the approval: %w", err)
 	}
 	// Why not, in words.
@@ -237,7 +237,7 @@ func (s *Store) UseStatementApproval(ctx context.Context, requestID, email, dbID
 		GROUP BY r.state, s.requester_email, s.database_id, r.expires_at`, requestID, digest).
 		Scan(&state, &requester, &db, &expires, &matching, &unused)
 	switch {
-	case errors.Is(err, pgx.ErrNoRows):
+	case errors.Is(err, caduceus.ErrNoRows):
 		return nil, errNoApproval{"that approval does not exist"}
 	case err != nil:
 		return nil, fmt.Errorf("checking the approval: %w", err)

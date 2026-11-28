@@ -11,8 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/gsoultan/caduceus"
 )
 
 // Organizations: several of them sharing one control plane.
@@ -104,7 +103,7 @@ func defaultTenant() *Tenant {
 // time per chain, and two organizations' events must never share a batch.
 type tenantDB struct {
 	id   string
-	pool *pgxpool.Pool
+	pool *caduceus.Pool
 
 	auditMu      sync.Mutex
 	auditQueue   []*auditAppend
@@ -112,7 +111,7 @@ type tenantDB struct {
 }
 
 // db returns the pool for ctx's organization.
-func (s *Store) db(ctx context.Context) *pgxpool.Pool { return s.tdb(ctx).pool }
+func (s *Store) db(ctx context.Context) *caduceus.Pool { return s.tdb(ctx).pool }
 
 // tdb resolves ctx's organization to its connection.
 //
@@ -162,7 +161,7 @@ func (s *Store) refusedLocked() *tenantDB {
 	}
 	cfg := s.pool.Config()
 	cfg.MinConns = 0
-	p, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	p, err := caduceus.NewPoolConfig(context.Background(), cfg)
 	if err == nil {
 		p.Close()
 	}
@@ -185,8 +184,8 @@ func (s *Store) openTenantDB(t *Tenant) (*tenantDB, error) {
 	if cfg.ConnConfig.RuntimeParams == nil {
 		cfg.ConnConfig.RuntimeParams = map[string]string{}
 	}
-	cfg.ConnConfig.RuntimeParams["search_path"] = pgx.Identifier{t.Schema}.Sanitize()
-	p, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	cfg.ConnConfig.RuntimeParams["search_path"] = caduceus.Identifier{t.Schema}.Sanitize()
+	p, err := caduceus.NewPoolConfig(context.Background(), cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -374,7 +373,7 @@ func (s *Store) migrateTenants(ctx context.Context) error {
 
 const tenantColumns = `id, slug, name, schema_name, created_at, created_by, disabled_at, disabled_by`
 
-func scanTenant(row pgx.Row) (Tenant, error) {
+func scanTenant(row rowScanner) (Tenant, error) {
 	var t Tenant
 	err := row.Scan(&t.ID, &t.Slug, &t.Name, &t.Schema, &t.CreatedAt, &t.CreatedBy,
 		&t.DisabledAt, &t.DisabledBy)
@@ -407,7 +406,7 @@ func (s *Store) TenantByID(ctx context.Context, id string) (*Tenant, error) {
 	}
 	t, err := scanTenant(s.pool.QueryRow(ctx, `SELECT `+tenantColumns+`
 		FROM argus_platform.tenants WHERE id = $1`, id))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, ErrUnknownTenant
 	}
 	if err != nil {
@@ -427,7 +426,7 @@ func (s *Store) TenantBySlug(ctx context.Context, slug string) (*Tenant, error) 
 	}
 	t, err := scanTenant(s.pool.QueryRow(ctx, `SELECT `+tenantColumns+`
 		FROM argus_platform.tenants WHERE slug = $1`, slug))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, ErrUnknownTenant
 	}
 	if err != nil {
@@ -492,13 +491,13 @@ func (s *Store) CreateTenant(ctx context.Context, in NewTenant, by string) (*Ten
 		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT DO NOTHING
 		RETURNING created_at`, t.ID, t.Slug, t.Name, t.Schema, by).Scan(&t.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, ErrSlugTaken
 	}
 	if err != nil {
 		return nil, err
 	}
-	schema := pgx.Identifier{t.Schema}.Sanitize()
+	schema := caduceus.Identifier{t.Schema}.Sanitize()
 	if _, err := tx.Exec(ctx, `CREATE SCHEMA `+schema); err != nil {
 		return nil, fmt.Errorf("create schema: %w", err)
 	}
@@ -565,7 +564,7 @@ func (s *Store) RenameTenant(ctx context.Context, id, name string) (*Tenant, err
 	t, err := scanTenant(s.pool.QueryRow(ctx, `
 		UPDATE argus_platform.tenants SET name = $2 WHERE id = $1
 		RETURNING `+tenantColumns, id, name))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, ErrUnknownTenant
 	}
 	if err != nil {
@@ -626,7 +625,7 @@ func (s *Store) SetTenantDisabled(ctx context.Context, id string, disabled bool,
 		      WHERE id = $1 AND $2::text IS NOT NULL RETURNING ` + tenantColumns
 	}
 	t, err := scanTenant(s.pool.QueryRow(ctx, q, id, by))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, ErrUnknownTenant
 	}
 	if err != nil {

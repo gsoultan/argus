@@ -34,7 +34,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/control/cfapi"
 )
@@ -123,13 +123,13 @@ func (a *API) openCloudflareToken(ctx context.Context, sealed []byte) (string, e
 
 const cloudflareColumns = `id::text, name, account_id, token_tail, synced_at, last_error, last_error_at, created_by, created_at, snapshot`
 
-func scanCloudflare(row pgx.Row, extra ...any) (CloudflareAccount, error) {
+func scanCloudflare(row rowScanner, extra ...any) (CloudflareAccount, error) {
 	var c CloudflareAccount
 	var snap []byte
 	dest := append([]any{&c.ID, &c.Name, &c.AccountID, &c.TokenTail, &c.SyncedAt, &c.LastError, &c.LastErrorAt,
 		&c.CreatedBy, &c.CreatedAt, &snap}, extra...)
 	if err := row.Scan(dest...); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, caduceus.ErrNoRows) {
 			return c, ErrNoCloudflareAccount
 		}
 		return c, err

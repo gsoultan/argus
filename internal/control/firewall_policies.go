@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -93,7 +93,7 @@ var ErrFWPolicyName = errors.New("another firewall policy has that name")
 const fwPolicyCols = `id::text, name, description, version, lines, default_out, starter, created_by, created_at,
 	updated_by, updated_at`
 
-func scanFWPolicy(row pgx.Row) (FirewallPolicy, error) {
+func scanFWPolicy(row rowScanner) (FirewallPolicy, error) {
 	var p FirewallPolicy
 	var lines []byte
 	err := row.Scan(&p.ID, &p.Name, &p.Description, &p.Version, &lines, &p.DefaultOut, &p.Starter, &p.CreatedBy,
@@ -145,7 +145,7 @@ func (s *Store) FWPolicyByID(ctx context.Context, id string) (FirewallPolicy, er
 		return FirewallPolicy{}, ErrFWPolicyNotFound
 	}
 	p, err := scanFWPolicy(s.db(ctx).QueryRow(ctx, `SELECT `+fwPolicyCols+` FROM firewall_policies WHERE id::text = $1`, id))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return p, ErrFWPolicyNotFound
 	}
 	if err != nil {
@@ -190,7 +190,7 @@ func (s *Store) fillFWPolicy(ctx context.Context, p *FirewallPolicy, servers boo
 const fwRolloutCols = `id::text, policy_id::text, policy_name, version, state, summary, requested_by, requested_at,
 	decided_by, decided_at, ended_at, message`
 
-func scanFWRollout(row pgx.Row) (FWRollout, error) {
+func scanFWRollout(row rowScanner) (FWRollout, error) {
 	var r FWRollout
 	err := row.Scan(&r.ID, &r.PolicyID, &r.PolicyName, &r.Version, &r.State, &r.Summary, &r.RequestedBy,
 		&r.RequestedAt, &r.DecidedBy, &r.DecidedAt, &r.EndedAt, &r.Message)
@@ -200,7 +200,7 @@ func scanFWRollout(row pgx.Row) (FWRollout, error) {
 func (s *Store) latestFWRollout(ctx context.Context, policyID string, servers bool) (*FWRollout, error) {
 	r, err := scanFWRollout(s.db(ctx).QueryRow(ctx, `SELECT `+fwRolloutCols+` FROM firewall_rollouts
 		 WHERE policy_id::text = $1 ORDER BY requested_at DESC LIMIT 1`, policyID))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -215,7 +215,7 @@ func (s *Store) FWRolloutByID(ctx context.Context, id string) (FWRollout, error)
 		return FWRollout{}, ErrFWChangeNotFound
 	}
 	r, err := scanFWRollout(s.db(ctx).QueryRow(ctx, `SELECT `+fwRolloutCols+` FROM firewall_rollouts WHERE id::text = $1`, id))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return r, ErrFWChangeNotFound
 	}
 	if err != nil {
@@ -363,7 +363,7 @@ func (s *Store) UpdateFWPolicy(ctx context.Context, id string, in fwPolicyInput,
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	old, err := scanFWPolicy(tx.QueryRow(ctx, `SELECT `+fwPolicyCols+` FROM firewall_policies WHERE id::text = $1 FOR UPDATE`, id))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return old, false, ErrFWPolicyNotFound
 	}
 	if err != nil {

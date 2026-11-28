@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -141,7 +141,7 @@ func (s *Store) ensurePersonalLoginNames(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	emails, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	emails, err := caduceus.CollectRows(rows, caduceus.RowTo[string])
 	if err != nil {
 		return err
 	}
@@ -159,7 +159,7 @@ func (s *Store) ensureLoginName(ctx context.Context, email string) (string, erro
 	var current *string
 	err := s.db(ctx).QueryRow(ctx,
 		`SELECT login_name FROM users WHERE lower(email) = lower($1)`, email).Scan(&current)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return "", ErrNoAccount
 	}
 	if err != nil {
@@ -205,7 +205,7 @@ func (s *Store) SetLoginName(ctx context.Context, email, name string) (before st
 		  FROM users o
 		 WHERE n.id = o.id AND lower(n.email) = lower($1)
 		RETURNING o.login_name`, email, name).Scan(&old)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return "", ErrNoAccount
 	}
 	if err != nil && isUniqueViolation(err) {
@@ -319,7 +319,7 @@ func (s *Store) ServerAccountOf(ctx context.Context, email string) (ServerAccoun
 	err := s.db(ctx).QueryRow(ctx, `
 		SELECT login_name, ssh_public_key FROM users WHERE lower(email) = lower($1)`,
 		email).Scan(&name, &out.SSHKey)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return out, ErrNoAccount
 	}
 	if err != nil {

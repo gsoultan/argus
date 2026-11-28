@@ -9,7 +9,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -89,7 +89,7 @@ func (s *Store) requestableAccountsFor(ctx context.Context, hostname string) (Re
 		   AND (a.hostname = lower($1) OR split_part(a.hostname, '.', 1) = lower($1))
 		 ORDER BY a.hostname = lower($1) DESC
 		 LIMIT 1`, hostname).Scan(&principals, &controlApproval, &reported)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return out, nil
 	}
 	if err != nil {

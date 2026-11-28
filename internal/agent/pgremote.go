@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/gsoultan/caduceus/wire"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -157,14 +157,14 @@ func pgRemoteAdmin(ctx context.Context, l pgLocator, req PGAdminRequest) PGAdmin
 	}
 	var failed []string
 	for _, lg := range logins {
-		cfg, err := pgconn.ParseConfig("sslmode=prefer")
+		cfg, err := wire.ParseConfig("sslmode=prefer")
 		if err != nil {
 			return PGAdminResult{Error: err.Error()}
 		}
 		cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.Database = req.Socket, uint16(req.Port), lg.User, lg.Password, req.Database
 		cfg.ConnectTimeout = pgRemoteWait
 		cfg.RuntimeParams = map[string]string{"application_name": "argus-admin"}
-		conn, err := pgconn.ConnectConfig(ctx, cfg)
+		conn, err := pgConnectConfig(ctx, cfg)
 		if err != nil {
 			failed = append(failed, fmt.Sprintf("%s (from %s): %s", lg.User, lg.From, pgSignInWhy(err)))
 			continue
@@ -259,7 +259,7 @@ func pgAuthWhere(b pgBouncerSeen) string {
 
 // pgSignInWhy is the readable end of a connection error.
 func pgSignInWhy(err error) string {
-	var pe *pgconn.PgError
+	var pe *wire.Error
 	if errors.As(err, &pe) {
 		return pe.Message
 	}

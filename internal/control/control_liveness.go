@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -241,7 +241,7 @@ func (s *Store) LastControlOutage(ctx context.Context) (*ControlOutage, error) {
 	var o ControlOutage
 	err := s.pool.QueryRow(ctx, `SELECT started_at, ended_at, found_by FROM argus_platform.control_outages
 		ORDER BY started_at DESC LIMIT 1`).Scan(&o.StartedAt, &o.EndedAt, &o.FoundBy)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

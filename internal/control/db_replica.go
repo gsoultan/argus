@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/gsoultan/caduceus"
+	"github.com/gsoultan/caduceus/wire"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -94,7 +94,7 @@ const replicaCols = `r.id::text, r.database_id::text, d.dbname, pa.hostname, r.a
 const replicaFrom = ` FROM database_replicas r JOIN databases d ON d.id = r.database_id
 	JOIN assets pa ON pa.id = d.asset_id JOIN assets ra ON ra.id = r.asset_id `
 
-func scanReplica(row pgx.Row) (DatabaseReplica, error) {
+func scanReplica(row rowScanner) (DatabaseReplica, error) {
 	var r DatabaseReplica
 	err := row.Scan(&r.ID, &r.DatabaseID, &r.DBName, &r.PrimaryHostname, &r.AssetID, &r.Hostname, &r.Name,
 		&r.ReplicaAddress, &r.PrimaryAddress, &r.RequestedBy, &r.Reason, &r.RequestID, &r.State, &r.Stage, &r.Detail,
@@ -111,7 +111,7 @@ func (s *Store) CreateReplica(ctx context.Context, r DatabaseReplica) (DatabaseR
 	err := s.db(ctx).QueryRow(ctx, `INSERT INTO database_replicas (database_id, asset_id, name, replica_address,
 		primary_address, requested_by, reason) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7) RETURNING id::text`,
 		r.DatabaseID, r.AssetID, r.Name, r.ReplicaAddress, r.PrimaryAddress, r.RequestedBy, r.Reason).Scan(&id)
-	var pe *pgconn.PgError
+	var pe *wire.Error
 	if errors.As(err, &pe) && pe.Code == "23505" {
 		return r, ErrReplicaTaken
 	}
@@ -127,7 +127,7 @@ var ErrReplicaTaken = errors.New("that database already has a replica by that na
 // Replica is one by id.
 func (s *Store) Replica(ctx context.Context, id string) (DatabaseReplica, error) {
 	r, err := scanReplica(s.db(ctx).QueryRow(ctx, `SELECT `+replicaCols+replicaFrom+`WHERE r.id = $1::uuid`, id))
-	if errors.Is(err, pgx.ErrNoRows) || notUUID(err) {
+	if errors.Is(err, caduceus.ErrNoRows) || notUUID(err) {
 		return r, ErrReplicaNotFound
 	}
 	return r, err
@@ -136,7 +136,7 @@ func (s *Store) Replica(ctx context.Context, id string) (DatabaseReplica, error)
 // ReplicaByRequest is the replica an approval request stands for.
 func (s *Store) ReplicaByRequest(ctx context.Context, requestID string) (DatabaseReplica, error) {
 	r, err := scanReplica(s.db(ctx).QueryRow(ctx, `SELECT `+replicaCols+replicaFrom+`WHERE r.request_id = $1::uuid`, requestID))
-	if errors.Is(err, pgx.ErrNoRows) || notUUID(err) {
+	if errors.Is(err, caduceus.ErrNoRows) || notUUID(err) {
 		return r, ErrReplicaNotFound
 	}
 	return r, err

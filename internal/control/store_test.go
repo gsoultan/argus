@@ -524,7 +524,7 @@ func TestAuditChainVerifiesWithNanosecondTimestamps(t *testing.T) {
 // The console recomputes these digests from the JSON this API serves, so the
 // timestamp it receives has to be the exact string chainHash hashed.
 //
-// pgx returns the driver's session timezone, and json.Marshal renders whatever
+// The driver may return another time zone, and json.Marshal renders whatever
 // location the value carries. Without normalising to UTC on read, the console
 // would be handed "…+07:00" and asked to reproduce a hash taken over "…Z" --
 // and would report every served log as tampered.

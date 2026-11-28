@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/auth"
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 // Server-side state behind a console cookie.
@@ -110,7 +110,7 @@ func (s *Store) sessionRow(ctx context.Context, email, sid string) (sessionRow, 
 		 WHERE lower(u.email) = lower($1)`, email, sid).
 		Scan(&a.Email, &a.DisplayName, &a.Role, &disabledAt, &a.ValidAfter, &a.Revoked,
 			&a.MFAEnrolled, &a.hasPassword, &home, &a.PasswordChangeRequired)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return a, "", ErrNoAccount
 	}
 	if err != nil {
@@ -225,7 +225,7 @@ func (s *Store) ResetMFA(ctx context.Context, email string) error {
 		                 totp_last_step = NULL, sessions_valid_after = $2
 		 WHERE lower(email) = lower($1)
 		 RETURNING id::text`, email, revocationMoment()).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return ErrNoAccount
 	}
 	if err != nil {

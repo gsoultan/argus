@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -146,7 +146,7 @@ const directLoginSelect = `
 	       auth_method, key_fingerprint, key_type, key_comment, key_found
 	  FROM direct_login_requests`
 
-func scanDirectLogin(row pgx.Row) (DirectLogin, error) {
+func scanDirectLogin(row rowScanner) (DirectLogin, error) {
 	var d DirectLogin
 	err := row.Scan(&d.ID, &d.Hostname, &d.Principal, &d.ClientAddr, &d.Command,
 		&d.State, &d.CreatedAt, &d.ExpiresAt, &d.DecidedAt, &d.DecidedByEmail, &d.DecisionNote,
@@ -190,7 +190,7 @@ func (s *Store) SetAssetDirectSSH(ctx context.Context, id, mode string) (before 
 		  FROM assets o
 		 WHERE n.id = o.id AND n.id::text = $1 AND n.archived_at IS NULL
 		RETURNING o.direct_ssh`, id, next).Scan(&before)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, ErrAssetNotFound
 	}
 	return before, err
@@ -212,7 +212,7 @@ func (s *Store) CreateDirectLogin(ctx context.Context, d DirectLogin) (DirectLog
 		d.Hostname, d.Principal, d.ClientAddr, d.Command,
 		fmt.Sprintf("%d seconds", int(DirectLoginWait.Seconds())), maxPendingDirectLogins,
 		d.AuthMethod, d.KeyFingerprint, d.KeyType, d.KeyComment, d.KeyFound))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return DirectLogin{}, ErrTooManyDirectLogins
 	}
 	return out, err
@@ -221,7 +221,7 @@ func (s *Store) CreateDirectLogin(ctx context.Context, d DirectLogin) (DirectLog
 // DirectLoginByID reads one request.
 func (s *Store) DirectLoginByID(ctx context.Context, id string) (DirectLogin, error) {
 	d, err := scanDirectLogin(s.db(ctx).QueryRow(ctx, directLoginSelect+` WHERE id::text = $1`, id))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return d, ErrDirectLoginNotFound
 	}
 	return d, err
@@ -247,7 +247,7 @@ func (s *Store) DecideDirectLogin(
 		          created_at, expires_at, decided_at, decided_by_email, decision_note,
 		          auth_method, key_fingerprint, key_type, key_comment, key_found`,
 		id, state, actor, notePtr))
-	if !errors.Is(err, pgx.ErrNoRows) {
+	if !errors.Is(err, caduceus.ErrNoRows) {
 		return d, err
 	}
 	// Not decided: say why.

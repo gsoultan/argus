@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -58,7 +58,7 @@ func (s *Store) RecoveryPublic(ctx context.Context) (pub ed25519.PublicKey, repl
 	var enc string
 	err = s.pool.QueryRow(ctx, `SELECT public_key, replace_token FROM argus_platform.recovery_key`).
 		Scan(&enc, &replace)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, "", nil
 	}
 	if err != nil {
@@ -102,7 +102,7 @@ func (s *Store) RekeyOrder(ctx context.Context, tenantID string) (string, error)
 	var tok string
 	err := s.pool.QueryRow(ctx, `SELECT token FROM argus_platform.rekey_orders WHERE tenant_id = $1`,
 		tenantID).Scan(&tok)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return "", nil
 	}
 	return tok, err
@@ -203,7 +203,7 @@ func (a *API) recoveryView(ctx context.Context) (RecoveryKey, error) {
 	var v RecoveryKey
 	err := a.store.pool.QueryRow(ctx, `SELECT public_key, created_at, created_by FROM argus_platform.recovery_key`).
 		Scan(&v.PublicKey, &v.CreatedAt, &v.CreatedBy)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return v, nil
 	}
 	if err != nil {

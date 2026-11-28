@@ -8,9 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
-
 	"github.com/gsoultan/argus/internal/tunnel"
+	"github.com/gsoultan/caduceus/wire"
 )
 
 /*
@@ -161,27 +160,28 @@ func (l pgLocator) processUser(pid string) (string, error) {
 }
 
 // readPoolerConsole runs the admin console's read-only SHOW commands. The
-// console speaks the simple query protocol only, which pgconn.Exec uses.
+// console speaks the simple query protocol only, which wire.Conn.Exec uses.
 func readPoolerConsole(ctx context.Context, connString string) PoolerConsoleResult {
-	conn, err := pgconn.Connect(ctx, connString)
+	config, err := wire.ParseConfig(connString)
+	if err != nil {
+		return PoolerConsoleResult{Error: err.Error()}
+	}
+	conn, err := wire.Connect(ctx, config)
 	if err != nil {
 		return PoolerConsoleResult{Error: err.Error()}
 	}
 	defer conn.Close(context.Background())
 	var res PoolerConsoleResult
 	show := func(what string) (*tunnel.PoolerTable, error) {
-		rs, err := conn.Exec(ctx, "SHOW "+what).ReadAll()
+		rs, err := conn.Exec(ctx, "SHOW "+what)
 		if err != nil {
 			return nil, err
 		}
 		t := &tunnel.PoolerTable{Cols: []string{}, Rows: [][]string{}}
-		if len(rs) == 0 {
-			return t, nil
-		}
-		for _, f := range rs[0].FieldDescriptions {
+		for _, f := range rs.Fields {
 			t.Cols = append(t.Cols, f.Name)
 		}
-		for i, r := range rs[0].Rows {
+		for i, r := range rs.Rows {
 			if i >= poolerConsoleRows {
 				break
 			}

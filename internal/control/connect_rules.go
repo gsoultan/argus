@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -113,7 +113,7 @@ func (s *Store) ConnectRules(ctx context.Context) (ConnectRules, error) {
 	out := DefaultConnectRules()
 	var raw []byte
 	err := s.db(ctx).QueryRow(ctx, `SELECT connect_rules FROM gateway_policy WHERE id = TRUE`).Scan(&raw)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return out, nil
 	}
 	if err != nil {
@@ -165,7 +165,7 @@ func (s *Store) assetConnect(ctx context.Context, target string) (kind string, o
 		  AND (a.hostname = lower($1) OR split_part(a.hostname, '.', 1) = lower($1))
 		ORDER BY (a.hostname = lower($1)) DESC
 		LIMIT 1`, target).Scan(&kind, &own)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return "server", nil, nil
 	}
 	return kind, own, err

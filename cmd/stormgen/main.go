@@ -15,7 +15,7 @@ package main
 
 import (
 	argusrmodel "github.com/gsoultan/argus/internal/control/rmodel"
-	"github.com/gsoultan/storm/tool"
+	"github.com/gsoultan/storm/v2/tool"
 )
 
 func main() { tool.Main(argusrmodel.All(), nil) }

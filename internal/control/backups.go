@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -266,7 +266,7 @@ const scheduleCols = `database_id::text, enabled, every, at_hour, at_minute, wee
 	keep_last, keep_days, next_run_at, misses, updated_by, updated_at,
 	test_every, test_hour, test_minute, test_weekday, test_next_at, test_checks, test_overdue_at`
 
-func scanSchedule(row pgx.Row) (BackupSchedule, error) {
+func scanSchedule(row rowScanner) (BackupSchedule, error) {
 	var b BackupSchedule
 	var checks []byte
 	err := row.Scan(&b.DatabaseID, &b.Enabled, &b.Every, &b.AtHour, &b.AtMinute, &b.Weekday, &b.Destination,
@@ -284,7 +284,7 @@ func scanSchedule(row pgx.Row) (BackupSchedule, error) {
 func (s *Store) BackupSchedule(ctx context.Context, dbID string) (BackupSchedule, error) {
 	b, err := scanSchedule(s.db(ctx).QueryRow(ctx,
 		`SELECT `+scheduleCols+` FROM database_backup_schedules WHERE database_id = $1::uuid`, dbID))
-	if errors.Is(err, pgx.ErrNoRows) || notUUID(err) {
+	if errors.Is(err, caduceus.ErrNoRows) || notUUID(err) {
 		return DefaultBackupSchedule(dbID), nil
 	}
 	return b, err
@@ -365,7 +365,7 @@ func (s *Store) CountScheduledOutcome(ctx context.Context, dbID string, ok bool)
 	err := s.db(ctx).QueryRow(ctx, `UPDATE database_backup_schedules
 		SET misses = CASE WHEN $2 THEN 0 ELSE misses + 1 END
 		WHERE database_id = $1::uuid RETURNING misses`, dbID, ok).Scan(&misses)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return 0, nil
 	}
 	return misses, err
@@ -377,7 +377,7 @@ const backupCols = `id::text, database_id::text, started_by, reason, state, stag
 	local_path, storage_key, bytes, sha256, wrapped_key, key_id, server_version, dump_version, verified, pinned,
 	started_at, finished_at, reported_at`
 
-func scanBackup(row pgx.Row) (DatabaseBackup, error) {
+func scanBackup(row rowScanner) (DatabaseBackup, error) {
 	var b DatabaseBackup
 	err := row.Scan(&b.ID, &b.DatabaseID, &b.StartedBy, &b.Reason, &b.State, &b.Stage, &b.Detail, &b.Error,
 		&b.Destination, &b.localPath, &b.storageKey, &b.Bytes, &b.SHA256, &b.wrappedKey, &b.KeyID,
@@ -459,7 +459,7 @@ func (s *Store) FailStaleBackups(ctx context.Context, after time.Duration) ([]Da
 // Backup is one backup by id.
 func (s *Store) Backup(ctx context.Context, id string) (DatabaseBackup, error) {
 	b, err := scanBackup(s.db(ctx).QueryRow(ctx, `SELECT `+backupCols+` FROM database_backups WHERE id = $1::uuid`, id))
-	if errors.Is(err, pgx.ErrNoRows) || notUUID(err) {
+	if errors.Is(err, caduceus.ErrNoRows) || notUUID(err) {
 		return b, ErrBackupNotFound
 	}
 	return b, err
@@ -516,7 +516,7 @@ func (s *Store) LastBackups(ctx context.Context) (map[string]DatabaseBackup, err
 func (s *Store) PinBackup(ctx context.Context, id string, pinned bool) (DatabaseBackup, error) {
 	b, err := scanBackup(s.db(ctx).QueryRow(ctx, `UPDATE database_backups SET pinned = $2
 		WHERE id = $1::uuid AND state = 'done' RETURNING `+backupCols, id, pinned))
-	if errors.Is(err, pgx.ErrNoRows) || notUUID(err) {
+	if errors.Is(err, caduceus.ErrNoRows) || notUUID(err) {
 		return b, ErrBackupNotFound
 	}
 	return b, err
@@ -580,7 +580,7 @@ const restoreCols = `r.id::text, r.backup_id::text, r.database_id::text, r.mode,
 const restoreFrom = ` FROM database_restores r JOIN database_backups b ON b.id = r.backup_id
 	JOIN databases d ON d.id = r.database_id JOIN assets a ON a.id = d.asset_id `
 
-func scanRestore(row pgx.Row) (DatabaseRestore, error) {
+func scanRestore(row rowScanner) (DatabaseRestore, error) {
 	var r DatabaseRestore
 	err := row.Scan(&r.ID, &r.BackupID, &r.DatabaseID, &r.Mode, &r.NewName, &r.RequestedBy, &r.Reason,
 		&r.RequestID, &r.State, &r.Stage, &r.Detail, &r.Error, &r.RenamedTo, &r.KeepUntil, &r.KeptDropped,
@@ -617,7 +617,7 @@ func (s *Store) CreateRestore(ctx context.Context, r DatabaseRestore) (DatabaseR
 // Restore is one restore by id.
 func (s *Store) Restore(ctx context.Context, id string) (DatabaseRestore, error) {
 	r, err := scanRestore(s.db(ctx).QueryRow(ctx, `SELECT `+restoreCols+restoreFrom+`WHERE r.id = $1::uuid`, id))
-	if errors.Is(err, pgx.ErrNoRows) || notUUID(err) {
+	if errors.Is(err, caduceus.ErrNoRows) || notUUID(err) {
 		return r, ErrRestoreNotFound
 	}
 	return r, err
@@ -626,7 +626,7 @@ func (s *Store) Restore(ctx context.Context, id string) (DatabaseRestore, error)
 // RestoreByRequest is the restore an approval request is for.
 func (s *Store) RestoreByRequest(ctx context.Context, requestID string) (DatabaseRestore, error) {
 	r, err := scanRestore(s.db(ctx).QueryRow(ctx, `SELECT `+restoreCols+restoreFrom+`WHERE r.request_id = $1::uuid`, requestID))
-	if errors.Is(err, pgx.ErrNoRows) || notUUID(err) {
+	if errors.Is(err, caduceus.ErrNoRows) || notUUID(err) {
 		return r, ErrRestoreNotFound
 	}
 	return r, err

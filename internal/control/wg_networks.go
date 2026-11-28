@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/control/cloud"
 )
@@ -561,7 +561,7 @@ func (s *Store) wgHosts(ctx context.Context) (map[string]string, error) {
 const wgNetworkColumns = `id::text, name, shape, cidr, port, iface, state, pending, pending_by, pending_at,
 	requested_by, approved_by, approved_at, generation, created_at, staff_default, staff_days, staff_mfa`
 
-func scanWGNetwork(row pgx.Row) (WGNetwork, error) {
+func scanWGNetwork(row rowScanner) (WGNetwork, error) {
 	var (
 		n       WGNetwork
 		pending []byte
@@ -572,7 +572,7 @@ func scanWGNetwork(row pgx.Row) (WGNetwork, error) {
 	if n.Shape == wgShapeStaff {
 		n.Staff = &policy
 	}
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return n, ErrNoWGNetwork
 	}
 	if err != nil {
@@ -900,7 +900,7 @@ func (s *Store) recordWGNetBeat(ctx context.Context, host, assetID string, b WGN
 		UPDATE agents g SET wgnet_state = $2::jsonb FROM old
 		 WHERE g.hostname = old.hostname
 		RETURNING old.wgnet_state`, host, nb).Scan(&prevRaw)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	if err != nil && !errors.Is(err, caduceus.ErrNoRows) {
 		return nil, err
 	}
 	var prev *WGNetRun
@@ -1042,7 +1042,7 @@ func (a *API) heartbeatWGNet(ctx context.Context, host string, b *WGNetBeat) *WG
 	}
 	assetID, assetHost, _, err := a.store.assetForAgent(ctx, host)
 	if err != nil {
-		if !errors.Is(err, pgx.ErrNoRows) {
+		if !errors.Is(err, caduceus.ErrNoRows) {
 			a.log.Error("heartbeat: cannot find the server for its networks", "hostname", host, "error", err)
 		}
 		return nil

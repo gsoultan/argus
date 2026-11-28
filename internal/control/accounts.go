@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/auth"
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 // Local accounts: the users Argus authenticates itself.
@@ -82,7 +82,7 @@ func (s *Store) Account(ctx context.Context, email string) (*Account, error) {
 		  FROM users WHERE lower(email) = lower($1)`, email).
 		Scan(&a.ID, &a.Email, &a.DisplayName, &a.Role, &pw, &secret, &enrolledAt, &disabledAt,
 			&home, &a.Shareable, &a.PasswordChangeRequired, &a.PasswordExpiresAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, ErrNoAccount
 	}
 	if err != nil {
@@ -400,7 +400,7 @@ func (s *Store) CreateAccountWith(ctx context.Context, n NewAccount) (string, er
 		 WHERE users.home_tenant IS NULL
 		RETURNING id::text`, email, displayName, n.Role, hash,
 		n.TemporaryUntil != nil, n.TemporaryUntil).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return "", ErrSharedAccount
 	}
 	if err != nil {
@@ -499,7 +499,7 @@ func (s *Store) SetAccountDisabledBy(ctx context.Context, email string, disabled
 	err = tx.QueryRow(ctx,
 		`SELECT role, disabled_at FROM users WHERE lower(email) = lower($1) FOR UPDATE`,
 		email).Scan(&role, &already)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return ErrNoAccount
 	}
 	if err != nil {
@@ -599,7 +599,7 @@ func (s *Store) SetAccountRole(ctx context.Context, email, role string) (string,
 	var before string
 	err = tx.QueryRow(ctx,
 		`SELECT role FROM users WHERE lower(email) = lower($1) FOR UPDATE`, email).Scan(&before)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return "", ErrNoAccount
 	}
 	if err != nil {

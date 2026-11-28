@@ -227,8 +227,8 @@ func sessionFlushes() int { return session.ShapeFlushes() }
 // diffSession compares two rows by VALUE, which for a timestamptz means the
 // instant and not its rendering.
 //
-// pgx decodes timestamptz into the connection's time zone; storm decodes into
-// UTC. Both are the same instant — a timestamptz stores no zone, and the
+// The hand-written scans may decode timestamptz into a local time zone;
+// storm decodes into UTC. Both are the same instant — a timestamptz stores no zone, and the
 // client picks one to render it in — so reflect.DeepEqual reports a difference
 // that does not exist, because time.Time carries its Location.
 //

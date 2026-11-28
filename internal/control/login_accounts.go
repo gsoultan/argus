@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -61,7 +61,7 @@ func (s *Store) LoginAccountsFor(ctx context.Context, id string) (ServerLoginAcc
 		        ORDER BY g.last_seen_at DESC NULLS LAST
 		        LIMIT 1) ag ON TRUE
 		 WHERE a.id::text = $1 AND a.archived_at IS NULL`, id).Scan(&accounts, &auth, &seen)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return ServerLoginAccounts{}, ErrAssetNotFound
 	}
 	if err != nil {

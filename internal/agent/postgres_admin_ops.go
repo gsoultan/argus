@@ -9,7 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/gsoultan/caduceus"
+	"github.com/gsoultan/caduceus/wire"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -616,7 +617,7 @@ type PGAdminDone struct {
 }
 
 // pgAdminOp runs one administrative operation on conn, a superuser's.
-func pgAdminOp(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAdminResult {
+func pgAdminOp(ctx context.Context, conn *caduceus.Conn, req PGAdminRequest) PGAdminResult {
 	op := req.Admin
 	if op == nil {
 		return PGAdminResult{Error: "no operation"}
@@ -647,8 +648,7 @@ func pgAdminOp(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGA
 	case tunnel.AdminExtensionCreate:
 		// A clear refusal for a name the server does not have, rather than
 		// Postgres's "could not open extension control file".
-		res := conn.ExecParams(ctx, `SELECT 1 FROM pg_available_extensions WHERE name = $1`,
-			[][]byte{[]byte(op.Name)}, nil, nil, nil).Read()
+		res := pgRead(ctx, conn, `SELECT 1 FROM pg_available_extensions WHERE name = $1`, [][]byte{[]byte(op.Name)})
 		if res.Err != nil {
 			return pgAdminFailed(res.Err, built)
 		}
@@ -659,12 +659,12 @@ func pgAdminOp(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGA
 	default:
 		var tag string
 		for _, s := range built.run {
-			t, err := conn.Exec(ctx, s).ReadAll()
+			t, err := pgExec(ctx, conn, s)
 			if err != nil {
 				return pgAdminFailed(err, built)
 			}
-			if len(t) > 0 && !strings.HasPrefix(s, "COMMENT") {
-				tag = t[len(t)-1].CommandTag.String()
+			if !strings.HasPrefix(s, "COMMENT") {
+				tag = t.Tag.String()
 			}
 		}
 		data = PGAdminDone{SQL: built.text(), Tag: tag}
@@ -681,14 +681,14 @@ func pgAdminOp(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGA
 
 func pgAdminFailed(err error, built adminSQL) PGAdminResult {
 	r := PGAdminResult{Error: err.Error(), SQL: built.text()}
-	var pgErr *pgconn.PgError
+	var pgErr *wire.Error
 	if errors.As(err, &pgErr) {
 		r.Error, r.Code, r.Detail, r.Hint = pgErr.Message, pgErr.Code, pgErr.Detail, pgErr.Hint
 	}
 	return r
 }
 
-func listExtensions(ctx context.Context, conn *pgconn.PgConn) ([]PGExtension, error) {
+func listExtensions(ctx context.Context, conn *caduceus.Conn) ([]PGExtension, error) {
 	const sql = `SELECT ae.name, coalesce(e.extversion, ''), coalesce(ae.default_version, ''),
   coalesce(n.nspname, ''), coalesce(e.extrelocatable, false),
   coalesce((SELECT bool_or(v.trusted) FROM pg_available_extension_versions v WHERE v.name = ae.name AND v.version = ae.default_version), false),
@@ -699,7 +699,7 @@ FROM pg_available_extensions ae
 LEFT JOIN pg_extension e ON e.extname = ae.name
 LEFT JOIN pg_namespace n ON n.oid = e.extnamespace
 ORDER BY e.extname IS NULL, ae.name`
-	res := conn.ExecParams(ctx, sql, nil, nil, nil, nil).Read()
+	res := pgRead(ctx, conn, sql, nil)
 	if res.Err != nil {
 		return nil, res.Err
 	}
@@ -723,13 +723,13 @@ func setUpBy(comment string) string {
 	return ""
 }
 
-func listPublications(ctx context.Context, conn *pgconn.PgConn) ([]PGPublication, error) {
+func listPublications(ctx context.Context, conn *caduceus.Conn) ([]PGPublication, error) {
 	const sql = `SELECT p.pubname, pg_get_userbyid(p.pubowner), p.puballtables, p.pubinsert, p.pubupdate,
   p.pubdelete, p.pubtruncate, p.pubviaroot, coalesce(obj_description(p.oid, 'pg_publication'), ''),
   coalesce((SELECT string_agg(quote_ident(t.schemaname) || '.' || quote_ident(t.tablename), E'\n' ORDER BY t.schemaname, t.tablename)
             FROM pg_publication_tables t WHERE t.pubname = p.pubname), '')
 FROM pg_publication p ORDER BY p.pubname`
-	res := conn.ExecParams(ctx, sql, nil, nil, nil, nil).Read()
+	res := pgRead(ctx, conn, sql, nil)
 	if res.Err != nil {
 		return nil, res.Err
 	}
@@ -777,8 +777,8 @@ func subscriptionErrorCols(major int) (cols, join string) {
 	return cols, "LEFT JOIN pg_stat_subscription_stats ss ON ss.subid = s.oid"
 }
 
-func listSubscriptions(ctx context.Context, conn *pgconn.PgConn) ([]PGSubscription, error) {
-	major := pgMajor(conn.ParameterStatus("server_version"))
+func listSubscriptions(ctx context.Context, conn *caduceus.Conn) ([]PGSubscription, error) {
+	major := pgMajor(conn.Wire().ParameterStatus("server_version"))
 	errs, join := subscriptionErrorCols(major)
 	// How it applies: the columns arrived in 14 (binary, streaming) and 15
 	// (disable_on_error); streaming is a bool in 14 and a char in 16.
@@ -805,7 +805,7 @@ LEFT JOIN pg_stat_subscription st ON st.subid = s.oid AND st.relid IS NULL
 ` + join + `
 WHERE s.subdbid = (SELECT oid FROM pg_database WHERE datname = current_database())
 ORDER BY s.subname`
-	res := conn.ExecParams(ctx, sql, nil, nil, nil, nil).Read()
+	res := pgRead(ctx, conn, sql, nil)
 	if res.Err != nil {
 		return nil, res.Err
 	}

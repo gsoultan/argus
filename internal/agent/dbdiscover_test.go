@@ -13,8 +13,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgconn"
-
 	"github.com/gsoultan/argus/internal/tunnel"
 )
 
@@ -171,7 +169,7 @@ func TestPGDiscoverListsDatabases(t *testing.T) {
 	if dsn == "" {
 		t.Skip("ARGUS_TEST_PG_SUPER_DSN is not set")
 	}
-	conn, err := pgconn.Connect(context.Background(), dsn)
+	conn, err := pgConnect(context.Background(), dsn)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -303,7 +303,7 @@ func (s *Store) AgentNameForAsset(ctx context.Context, id string) (string, error
 		SELECT `+agentNameSQL+`
 		  FROM assets a
 		 WHERE a.id::text = $1 AND a.archived_at IS NULL`, id).Scan(&name)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return "", ErrAssetNotFound
 	}
 	if err != nil || name == nil {

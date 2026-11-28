@@ -5,8 +5,6 @@ package agent
 import (
 	"context"
 	"testing"
-
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Each shape the stats row has had reads as the counts it holds, and a
@@ -14,7 +12,7 @@ import (
 func TestSubscriptionErrorColsOnServer(t *testing.T) {
 	dsn, _, _, _ := pgTest(t)
 	ctx := context.Background()
-	conn, err := pgconn.Connect(ctx, dsn)
+	conn, err := pgConnect(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +27,7 @@ func TestSubscriptionErrorColsOnServer(t *testing.T) {
 		{"no stats row", "SELECT 1::bigint AS apply_error_count, 1::bigint AS sync_error_count WHERE false", "", ""},
 	} {
 		sql := "SELECT " + cols + " FROM (SELECT 1) s LEFT JOIN (" + c.row + ") ss ON true"
-		res := conn.ExecParams(ctx, sql, nil, nil, nil, nil).Read()
+		res := pgRead(ctx, conn, sql, nil)
 		if res.Err != nil {
 			t.Fatalf("%s: %v", c.name, res.Err)
 		}
@@ -40,9 +38,9 @@ func TestSubscriptionErrorColsOnServer(t *testing.T) {
 	// And the real query runs against whatever this server is.
 	subs, err := listSubscriptions(ctx, conn)
 	if err != nil {
-		t.Fatalf("listSubscriptions on %s: %v", conn.ParameterStatus("server_version"), err)
+		t.Fatalf("listSubscriptions on %s: %v", conn.Wire().ParameterStatus("server_version"), err)
 	}
-	if pgMajor(conn.ParameterStatus("server_version")) >= 15 {
+	if pgMajor(conn.Wire().ParameterStatus("server_version")) >= 15 {
 		for _, s := range subs {
 			if s.ApplyErrors == nil || s.SyncErrors == nil {
 				t.Fatalf("%s: error counts missing: %v %v", s.Name, s.ApplyErrors, s.SyncErrors)

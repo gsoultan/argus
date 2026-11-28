@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /* ── On a heartbeat ──────────────────────────────────────────────────────── */
@@ -29,7 +29,7 @@ func (a *API) heartbeatPackages(ctx context.Context, host string, b *PackageBeat
 	}
 	assetID, assetHost, tags, err := a.store.assetForAgent(ctx, host)
 	if err != nil {
-		if !errors.Is(err, pgx.ErrNoRows) {
+		if !errors.Is(err, caduceus.ErrNoRows) {
 			a.log.Error("heartbeat: cannot find the server for package updates", "hostname", host, "error", err)
 		}
 		return nil
@@ -426,7 +426,7 @@ func (a *API) packagesFor(ctx context.Context, asset Asset) (packageTarget, erro
 	err = a.store.db(ctx).QueryRow(ctx, `SELECT packages_check_id, last_seen_at FROM agents WHERE lower(hostname) = lower($1)`,
 		agent).Scan(&checkAsked, &heard)
 	switch {
-	case errors.Is(err, pgx.ErrNoRows):
+	case errors.Is(err, caduceus.ErrNoRows):
 	case err != nil:
 		return t, err
 	default:

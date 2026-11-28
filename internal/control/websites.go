@@ -18,7 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -458,7 +458,7 @@ func websiteSettings(url, status, keyword, method, body, names int) string {
 		'method', $%d::text, 'body', $%d::text, 'headerNames', to_jsonb($%d::text[]))`, url, status, keyword, method, body, names)
 }
 
-func scanWebsite(row pgx.Row) (WebsiteCheck, error) {
+func scanWebsite(row rowScanner) (WebsiteCheck, error) {
 	var c WebsiteCheck
 	err := row.Scan(&c.ID, &c.Name, &c.URL, &c.ExpectStatus, &c.Keyword, &c.EverySeconds, &c.TimeoutSeconds,
 		&c.ConfirmFrom, &c.Paused, &c.Telegram, &c.TelegramBot, &c.TelegramChats, &c.Method, &c.Body, &c.HeaderNames, &c.headersSealed, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt, &c.State, &c.StateSince,
@@ -501,7 +501,7 @@ func (s *Store) WebsiteChecks(ctx context.Context) ([]WebsiteCheck, error) {
 func (s *Store) WebsiteCheck(ctx context.Context, id string) (WebsiteCheck, error) {
 	c, err := scanWebsite(s.db(ctx).QueryRow(ctx, `SELECT `+websiteCols+` FROM checks
 		WHERE id::text = $1 AND kind = 'website'`, id))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return c, ErrNoWebsite
 	}
 	return c, err
@@ -568,7 +568,7 @@ func (s *Store) UpdateWebsiteCheck(ctx context.Context, id string, in WebsiteInp
 		WHERE id::text = $1 AND kind = 'website' RETURNING `+websiteCols,
 		id, in.Name, in.URL, in.ExpectStatus, in.Keyword, in.EverySeconds, in.TimeoutSeconds, in.ConfirmFrom, in.Paused,
 		in.Telegram, in.TelegramChats, in.TelegramBot, in.Method, in.Body, in.headerNames, in.headersSealed))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return before, after, ErrNoWebsite
 	}
 	if err != nil {
@@ -592,7 +592,7 @@ func (s *Store) UpdateWebsiteCheck(ctx context.Context, id string, in WebsiteInp
 func (s *Store) DeleteWebsiteCheck(ctx context.Context, id string) (WebsiteCheck, error) {
 	c, err := scanWebsite(s.db(ctx).QueryRow(ctx, `DELETE FROM checks WHERE id::text = $1 AND kind = 'website'
 		RETURNING `+websiteCols, id))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return c, ErrNoWebsite
 	}
 	return c, err
@@ -696,7 +696,7 @@ func (s *Store) recordCheckRound(ctx context.Context, id string, r websiteRoundR
 	var failing, every int
 	err = tx.QueryRow(ctx, `SELECT state, state_since, failing_rounds, every_seconds FROM checks WHERE id::text = $1 FOR UPDATE`, id).
 		Scan(&state, &since, &failing, &every)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, nil // deleted while it was being checked
 	}
 	if err != nil {
@@ -714,7 +714,7 @@ func (s *Store) recordCheckRound(ctx context.Context, id string, r websiteRoundR
 				WHERE check_id::text = $1 AND ended_at IS NULL
 				RETURNING id, check_id::text, started_at, ended_at, cause, confirmed`, id, at).
 				Scan(&o.ID, &o.CheckID, &o.StartedAt, &o.EndedAt, &o.Cause, &o.Confirmed)
-			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			if err != nil && !errors.Is(err, caduceus.ErrNoRows) {
 				return nil, err
 			}
 			if err == nil {
@@ -762,7 +762,7 @@ func (s *Store) recordCheckRound(ctx context.Context, id string, r websiteRoundR
 			o := WebsiteOutage{CheckID: id, StartedAt: first, Cause: clip(r.Detail, 500), Confirmed: clip(r.Confirmed, 300)}
 			if err := tx.QueryRow(ctx, `INSERT INTO check_outages (check_id, started_at, cause, confirmed)
 				VALUES ($1::uuid, $2, $3, $4) ON CONFLICT (check_id) WHERE ended_at IS NULL DO NOTHING
-				RETURNING id`, id, o.StartedAt, o.Cause, o.Confirmed).Scan(&o.ID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				RETURNING id`, id, o.StartedAt, o.Cause, o.Confirmed).Scan(&o.ID); err != nil && !errors.Is(err, caduceus.ErrNoRows) {
 				return nil, err
 			}
 			state, since = "down", &first

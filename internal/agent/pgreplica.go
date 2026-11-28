@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -38,8 +38,8 @@ A role or slot of the same name that Argus did not make is never touched.
 // starts with roleMarker, so the owner-level sweep leaves the role alone.
 const replicaMarker = roleMarker + " replica by="
 
-func pgReplicaOp(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAdminResult {
-	version := conn.ParameterStatus("server_version")
+func pgReplicaOp(ctx context.Context, conn *caduceus.Conn, req PGAdminRequest) PGAdminResult {
+	version := conn.Wire().ParameterStatus("server_version")
 	if req.Replica == nil {
 		return PGAdminResult{Error: "no replica named", Version: version}
 	}
@@ -73,12 +73,12 @@ func pgReplicaOp(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) P
 }
 
 // row runs a query with text parameters and returns its one row, or nil.
-func row(ctx context.Context, conn *pgconn.PgConn, sql string, args ...string) ([][]byte, error) {
+func row(ctx context.Context, conn *caduceus.Conn, sql string, args ...string) ([][]byte, error) {
 	params := make([][]byte, len(args))
 	for i, a := range args {
 		params[i] = []byte(a)
 	}
-	res := conn.ExecParams(ctx, sql, params, nil, nil, nil).Read()
+	res := pgRead(ctx, conn, sql, params)
 	if res.Err != nil {
 		return nil, res.Err
 	}
@@ -88,7 +88,7 @@ func row(ctx context.Context, conn *pgconn.PgConn, sql string, args ...string) (
 	return res.Rows[0], nil
 }
 
-func replicaCheck(ctx context.Context, conn *pgconn.PgConn, r tunnel.PGReplica) (tunnel.PGReplicaCheck, error) {
+func replicaCheck(ctx context.Context, conn *caduceus.Conn, r tunnel.PGReplica) (tunnel.PGReplicaCheck, error) {
 	c := tunnel.PGReplicaCheck{Role: r.Role(), Slot: r.Slot()}
 	v, err := row(ctx, conn, `SELECT current_setting('server_version'), current_setting('server_version_num'),
 		current_setting('wal_level'), current_setting('max_wal_senders'),
@@ -174,10 +174,10 @@ func localOnly(listen string) bool {
 // matched, if any, and whether that line lets the replica in with a password.
 // A line it cannot judge from here (a host name, samenet, a group the role is
 // not in yet) is passed over, as it would not match the new role.
-func hbaAllows(ctx context.Context, conn *pgconn.PgConn, role string, addr netip.Addr) (string, bool, error) {
-	res := conn.ExecParams(ctx, `SELECT line_number, type, array_to_string(database, ','), array_to_string(user_name, ','),
+func hbaAllows(ctx context.Context, conn *caduceus.Conn, role string, addr netip.Addr) (string, bool, error) {
+	res := pgRead(ctx, conn, `SELECT line_number, type, array_to_string(database, ','), array_to_string(user_name, ','),
 		coalesce(address, ''), coalesce(netmask, ''), coalesce(auth_method, '')
-		FROM pg_hba_file_rules WHERE error IS NULL ORDER BY line_number`, nil, nil, nil, nil).Read()
+		FROM pg_hba_file_rules WHERE error IS NULL ORDER BY line_number`, nil)
 	if res.Err != nil {
 		return "", false, res.Err
 	}
@@ -247,7 +247,7 @@ func addrMatches(address, mask string, addr netip.Addr) bool {
 }
 
 // replicaRoleState says whether the role exists and whether Argus made it.
-func replicaRoleState(ctx context.Context, conn *pgconn.PgConn, role string) (exists, ours bool, err error) {
+func replicaRoleState(ctx context.Context, conn *caduceus.Conn, role string) (exists, ours bool, err error) {
 	v, err := row(ctx, conn, `SELECT coalesce(shobj_description(oid, 'pg_authid'), ''), rolsuper OR rolcreaterole OR rolcreatedb OR rolbypassrls
 		FROM pg_roles WHERE rolname = $1`, role)
 	if err != nil || v == nil {
@@ -264,7 +264,7 @@ type PGReplicaPrepared struct {
 	SlotCreated bool   `json:"slotCreated"`
 }
 
-func replicaPrepare(ctx context.Context, conn *pgconn.PgConn, r tunnel.PGReplica) (PGReplicaPrepared, error) {
+func replicaPrepare(ctx context.Context, conn *caduceus.Conn, r tunnel.PGReplica) (PGReplicaPrepared, error) {
 	out := PGReplicaPrepared{Role: r.Role(), Slot: r.Slot()}
 	if !scramPattern.MatchString(r.Verifier) {
 		return out, fmt.Errorf("the replication password is not a SCRAM verifier")
@@ -278,12 +278,12 @@ func replicaPrepare(ctx context.Context, conn *pgconn.PgConn, r tunnel.PGReplica
 	case exists && !ours:
 		return out, fmt.Errorf("a role named %s exists and Argus did not make it; Argus leaves it alone", r.Role())
 	case exists:
-		if err := conn.Exec(ctx, "ALTER ROLE "+role+" WITH REPLICATION LOGIN NOINHERIT CONNECTION LIMIT 3 PASSWORD "+quoteLiteral(r.Verifier)).Close(); err != nil {
+		if err := pgRun(ctx, conn, "ALTER ROLE "+role+" WITH REPLICATION LOGIN NOINHERIT CONNECTION LIMIT 3 PASSWORD "+quoteLiteral(r.Verifier)); err != nil {
 			return out, err
 		}
 	default:
-		if err := conn.Exec(ctx, "CREATE ROLE "+role+" WITH REPLICATION LOGIN NOINHERIT CONNECTION LIMIT 3 PASSWORD "+quoteLiteral(r.Verifier)+
-			"; COMMENT ON ROLE "+role+" IS "+quoteLiteral(replicaMarker+r.By)).Close(); err != nil {
+		if err := pgRun(ctx, conn, "CREATE ROLE "+role+" WITH REPLICATION LOGIN NOINHERIT CONNECTION LIMIT 3 PASSWORD "+quoteLiteral(r.Verifier)+
+			"; COMMENT ON ROLE "+role+" IS "+quoteLiteral(replicaMarker+r.By)); err != nil {
 			return out, err
 		}
 		out.RoleCreated = true
@@ -315,7 +315,7 @@ type PGReplicaDropped struct {
 	HBARemoved  bool `json:"hbaRemoved"`
 }
 
-func replicaDrop(ctx context.Context, conn *pgconn.PgConn, r tunnel.PGReplica) (PGReplicaDropped, error) {
+func replicaDrop(ctx context.Context, conn *caduceus.Conn, r tunnel.PGReplica) (PGReplicaDropped, error) {
 	var out PGReplicaDropped
 	v, err := row(ctx, conn, `SELECT slot_type, active FROM pg_replication_slots WHERE slot_name = $1`, r.Slot())
 	if err != nil {
@@ -340,7 +340,7 @@ func replicaDrop(ctx context.Context, conn *pgconn.PgConn, r tunnel.PGReplica) (
 		if _, err := row(ctx, conn, `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = $1`, r.Role()); err != nil {
 			return out, err
 		}
-		if err := conn.Exec(ctx, "DROP ROLE "+pgx(r.Role())).Close(); err != nil {
+		if err := pgRun(ctx, conn, "DROP ROLE "+pgx(r.Role())); err != nil {
 			return out, err
 		}
 		out.RoleDropped = true
@@ -420,7 +420,7 @@ type PGReplicaAllowed struct {
 	Added bool   `json:"added"`
 }
 
-func replicaAllow(ctx context.Context, conn *pgconn.PgConn, r tunnel.PGReplica) (PGReplicaAllowed, error) {
+func replicaAllow(ctx context.Context, conn *caduceus.Conn, r tunnel.PGReplica) (PGReplicaAllowed, error) {
 	var out PGReplicaAllowed
 	if r.Address == "" {
 		return out, fmt.Errorf("name the replica's address")
@@ -443,7 +443,7 @@ func replicaAllow(ctx context.Context, conn *pgconn.PgConn, r tunnel.PGReplica) 
 
 // hbaEdit changes pg_hba.conf, has Postgres check it, and reloads; on any
 // error in the new file it puts the old one back.
-func hbaEdit(ctx context.Context, conn *pgconn.PgConn, file string, change func(string) string, done func()) error {
+func hbaEdit(ctx context.Context, conn *caduceus.Conn, file string, change func(string) string, done func()) error {
 	before, err := hbaFiles.read(file)
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", file, err)
@@ -473,7 +473,7 @@ func hbaEdit(ctx context.Context, conn *pgconn.PgConn, file string, change func(
 }
 
 // replicaStatus reads the replica's WAL sender and slot on the primary.
-func replicaStatus(ctx context.Context, conn *pgconn.PgConn, r tunnel.PGReplica) (tunnel.PGReplicaStatus, error) {
+func replicaStatus(ctx context.Context, conn *caduceus.Conn, r tunnel.PGReplica) (tunnel.PGReplicaStatus, error) {
 	st := tunnel.PGReplicaStatus{LagBytes: -1}
 	v, err := row(ctx, conn, `SELECT
 		EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = $2),

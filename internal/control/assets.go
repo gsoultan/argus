@@ -11,7 +11,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -46,7 +46,7 @@ const assetSelect = `
 	                  AND c.tunnel_seen_at > now() - interval '90 seconds') -- tunnelFreshFor
 	FROM assets a`
 
-func scanAsset(rows pgx.Rows) (Asset, error) {
+func scanAsset(rows *caduceus.Rows) (Asset, error) {
 	var a Asset
 	err := rows.Scan(&a.ID, &a.Hostname, &a.Address, &a.Port, &a.Protocol, &a.OS,
 		&a.Tags, &a.GroupName, &a.Source, &a.CredentialRef, &a.Domain,
@@ -474,7 +474,7 @@ func (s *Store) updateAsset(ctx context.Context, id string, in AssetInput) (Asse
 		        LIMIT 1) g ON true
 		 WHERE a.id = $1::uuid AND a.archived_at IS NULL
 		   FOR UPDATE OF a`, id).Scan(&old, &agentName)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return Asset{}, AssetRename{}, ErrAssetNotFound
 	}
 	if err != nil {
@@ -893,7 +893,7 @@ func (s *Store) AssetDesktopOpen(ctx context.Context, target string) (kind, mode
 		  AND (a.hostname = lower($1) OR split_part(a.hostname, '.', 1) = lower($1))
 		ORDER BY (a.hostname = lower($1)) DESC
 		LIMIT 1`, target).Scan(&kind, &mode)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return "server", "rdp", nil
 	}
 	return kind, mode, err
@@ -910,7 +910,7 @@ func (s *Store) ControlNeedsApproval(ctx context.Context, target string) (bool, 
 		  AND (a.hostname = lower($1) OR split_part(a.hostname, '.', 1) = lower($1))
 		ORDER BY (a.hostname = lower($1)) DESC
 		LIMIT 1`, target).Scan(&needs)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return false, nil
 	}
 	return needs, err
@@ -952,7 +952,7 @@ func (s *Store) AgentNameFor(ctx context.Context, target string) (string, error)
 		        OR split_part(a.hostname, '.', 1) = lower($1))
 		 ORDER BY (a.hostname = lower($1)) DESC, (a.agent_hostname = $1) DESC NULLS LAST
 		 LIMIT 1`, target).Scan(&name)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return target, nil
 	}
 	return name, err

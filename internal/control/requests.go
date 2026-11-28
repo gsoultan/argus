@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 // AccessRequest is a time-bounded, justified ask for elevated access.
@@ -97,7 +97,7 @@ const requestColumns = `id::text, requester_email, asset_hostnames, principal,
 	COALESCE((SELECT d.engine IN ('rabbitmq', 'kafka', 'nats') FROM databases d
 	          WHERE d.id = access_requests.database_id), false)`
 
-func scanRequest(row pgx.Row) (AccessRequest, error) {
+func scanRequest(row rowScanner) (AccessRequest, error) {
 	var r AccessRequest
 	err := row.Scan(&r.ID, &r.RequesterEmail, &r.AssetHostnames, &r.Principal,
 		&r.Justification, &r.DurationMinutes, &r.State, &r.CreatedAt, &r.DecidedAt,
@@ -163,7 +163,7 @@ func (s *Store) DecideRequest(ctx context.Context, id, decision, note, decidedBy
 		SELECT requester_email, state, duration_minutes, decided_by_email
 		FROM access_requests WHERE id = $1 FOR UPDATE`, id).
 		Scan(&requester, &state, &duration, &by)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return AccessRequest{}, ErrRequestNotFound
 	}
 	if err != nil {
@@ -218,7 +218,7 @@ func (s *Store) CancelRequest(ctx context.Context, id, email, note string) (Acce
 	err = tx.QueryRow(ctx, `
 		SELECT requester_email, state, decided_by_email
 		FROM access_requests WHERE id = $1 FOR UPDATE`, id).Scan(&requester, &state, &by)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return AccessRequest{}, ErrRequestNotFound
 	}
 	if err != nil {
@@ -254,7 +254,7 @@ func (s *Store) Request(ctx context.Context, id string) (AccessRequest, string, 
 		FROM access_requests WHERE id = $1`, id).Scan(&r.ID, &r.RequesterEmail, &r.AssetHostnames, &r.Principal,
 		&r.Justification, &r.DurationMinutes, &r.State, &r.CreatedAt, &r.DecidedAt,
 		&r.DecidedByEmail, &r.DecisionNote, &r.ExpiresAt, &r.BreakGlass, &r.RestoreID, &r.Broker, &dbID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return AccessRequest{}, "", ErrRequestNotFound
 	}
 	if err != nil {
@@ -341,7 +341,7 @@ func (s *Store) ActiveGrant(ctx context.Context, email, host, principal string) 
 		  AND $3 = ANY(asset_hostnames)
 		ORDER BY expires_at DESC
 		LIMIT 1`, email, principal, host).Scan(&expires)
-	if err == pgx.ErrNoRows {
+	if err == caduceus.ErrNoRows {
 		return false, nil, nil
 	}
 	if err != nil {

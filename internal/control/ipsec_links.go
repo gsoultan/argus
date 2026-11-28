@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/control/cloud"
 )
@@ -264,7 +264,7 @@ func checkIPsecDraft(d *IPsecDraft, hosts map[string]string, own map[string][]ne
 const ipsecColumns = `l.id::text, l.name, l.conn, l.asset_id::text, a.hostname, l.peer, l.local_ranges, l.remote_ranges, l.proposals,
 	l.state, l.pending, l.pending_by, l.pending_at, l.requested_by, l.approved_by, l.approved_at, l.created_at`
 
-func scanIPsec(row pgx.Row, extra ...any) (IPsecLink, error) {
+func scanIPsec(row rowScanner, extra ...any) (IPsecLink, error) {
 	var (
 		l       IPsecLink
 		pending []byte
@@ -272,7 +272,7 @@ func scanIPsec(row pgx.Row, extra ...any) (IPsecLink, error) {
 	dest := append([]any{&l.ID, &l.Name, &l.Conn, &l.AssetID, &l.Hostname, &l.Peer, &l.LocalRanges, &l.RemoteRanges, &l.Proposals,
 		&l.State, &pending, &l.PendingBy, &l.PendingAt, &l.RequestedBy, &l.ApprovedBy, &l.ApprovedAt, &l.CreatedAt}, extra...)
 	err := row.Scan(dest...)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return l, ErrNoIPsecLink
 	}
 	if err != nil {

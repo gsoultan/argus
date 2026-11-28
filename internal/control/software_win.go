@@ -18,7 +18,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/apk"
 	"github.com/gsoultan/argus/internal/storage"
@@ -222,7 +222,7 @@ func (a *API) postSoftwareFileRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f, err := a.store.softwareFile(r.Context(), in.FileID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "no such file in the library")
 		return
 	}
@@ -410,7 +410,7 @@ func (a *API) addWindowsFile(w http.ResponseWriter, r *http.Request, by string, 
 	if existing, err := a.store.softwareFileBySHA(r.Context(), sum); err == nil {
 		writeJSON(w, http.StatusOK, existing)
 		return
-	} else if !errors.Is(err, pgx.ErrNoRows) {
+	} else if !errors.Is(err, caduceus.ErrNoRows) {
 		a.fail(w, "software file", err)
 		return
 	}

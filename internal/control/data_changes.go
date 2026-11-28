@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/tunnel"
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -255,13 +255,13 @@ func (t *changeTracker) write(chs []DataChange) {
 
 // RecordDataChanges writes committed changes to the log.
 func (s *Store) RecordDataChanges(ctx context.Context, dbID, session, actor string, chs []DataChange) error {
-	b := &pgx.Batch{}
+	b := &caduceus.Batch{}
 	for _, c := range chs {
 		b.Queue(`INSERT INTO database_changes (database_id, session_id, actor_email, verb, objects, rows, tag, sql, approval_id)
 			VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9)`,
 			dbID, session, actor, c.Verb, c.Objects, c.Rows, c.Tag, c.SQL, c.ApprovalID)
 	}
-	return s.db(ctx).SendBatch(ctx, b).Close()
+	return b.Run(ctx, s.db(ctx))
 }
 
 // DataChanges lists a database's log, newest first, before seq when given.
@@ -276,7 +276,7 @@ func (s *Store) DataChanges(ctx context.Context, dbID string, before int64, limi
 	if err != nil {
 		return nil, fmt.Errorf("data changes: %w", err)
 	}
-	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (DataChange, error) {
+	return caduceus.CollectRows(rows, func(r caduceus.CollectableRow) (DataChange, error) {
 		var c DataChange
 		err := r.Scan(&c.Seq, &c.At, &c.SessionID, &c.Actor, &c.Verb, &c.Objects, &c.Rows, &c.Tag, &c.SQL, &c.ApprovalID)
 		return c, err
@@ -310,7 +310,7 @@ func (s *Store) DataChangeRecipients(ctx context.Context, dbID, actor string) ([
 	if err != nil {
 		return nil, err
 	}
-	return pgx.CollectRows(rows, pgx.RowTo[string])
+	return caduceus.CollectRows(rows, caduceus.RowTo[string])
 }
 
 var changeWords = map[string][2]string{

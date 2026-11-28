@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/tunnel"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const debianHBA = `# Database administrative login by Unix domain socket
@@ -284,7 +283,7 @@ func TestPGNetworkHelperOnARealPostgres(t *testing.T) {
 		t.Skip("ARGUS_TEST_DATABASE_URL is not set")
 	}
 	ctx := context.Background()
-	conn, err := pgconn.Connect(ctx, dsn)
+	conn, err := pgConnect(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,8 +299,8 @@ func TestPGNetworkHelperOnARealPostgres(t *testing.T) {
 	listen, _ := showText(ctx, conn, "SHOW listen_addresses")
 	t.Cleanup(func() {
 		_ = os.WriteFile(hba, before, 0o600)
-		_, _ = conn.Exec(ctx, "ALTER SYSTEM SET listen_addresses = "+quoteLiteral(listen)).ReadAll()
-		_, _ = conn.Exec(ctx, "SELECT pg_reload_conf()").ReadAll()
+		_, _ = pgExec(ctx, conn, "ALTER SYSTEM SET listen_addresses = "+quoteLiteral(listen))
+		_, _ = pgExec(ctx, conn, "SELECT pg_reload_conf()")
 	})
 
 	op := &tunnel.PGAdminOp{Kind: tunnel.AdminNetworkSet, Reach: tunnel.ReachSelected,

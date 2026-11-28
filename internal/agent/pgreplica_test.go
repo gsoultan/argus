@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgconn"
-
 	"github.com/gsoultan/argus/internal/tunnel"
 )
 
@@ -57,7 +55,7 @@ func TestPGReplicaOnThePrimary(t *testing.T) {
 		t.Skip("ARGUS_TEST_PG_SUPER_DSN is not set")
 	}
 	ctx := context.Background()
-	conn, err := pgconn.Connect(ctx, dsn)
+	conn, err := pgConnect(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,8 +72,8 @@ func TestPGReplicaOnThePrimary(t *testing.T) {
 		return res
 	}
 	cleanup := func() {
-		_ = conn.Exec(ctx, `SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name LIKE 'argus_replica_t\_%';
-			DROP ROLE IF EXISTS argus_repl_t_r1; DROP ROLE IF EXISTS argus_repl_t_r2`).Close()
+		_ = pgRun(ctx, conn, `SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name LIKE 'argus_replica_t\_%';
+			DROP ROLE IF EXISTS argus_repl_t_r1; DROP ROLE IF EXISTS argus_repl_t_r2`)
 	}
 	cleanup()
 	t.Cleanup(func() { run("replica-drop", r, nil); cleanup() })
@@ -121,7 +119,7 @@ func TestPGReplicaOnThePrimary(t *testing.T) {
 	}
 
 	// Someone else's role of that name is left alone.
-	if err := conn.Exec(ctx, `CREATE ROLE argus_repl_t_r2 LOGIN`).Close(); err != nil {
+	if err := pgRun(ctx, conn, `CREATE ROLE argus_repl_t_r2 LOGIN`); err != nil {
 		t.Fatal(err)
 	}
 	other := tunnel.PGReplica{Name: "t_r2", Verifier: v}

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -296,7 +296,7 @@ const testCols = `t.id::text, t.backup_id::text, t.database_id::text, t.started_
 
 const testFrom = ` FROM database_backup_tests t JOIN database_backups b ON b.id = t.backup_id `
 
-func scanTest(row pgx.Row) (BackupTest, error) {
+func scanTest(row rowScanner) (BackupTest, error) {
 	var t BackupTest
 	var report []byte
 	err := row.Scan(&t.ID, &t.BackupID, &t.DatabaseID, &t.StartedBy, &t.State, &t.Stage, &t.Detail, &t.Error,
@@ -308,7 +308,7 @@ func scanTest(row pgx.Row) (BackupTest, error) {
 	return t, err
 }
 
-func scanTests(rows pgx.Rows, err error) ([]BackupTest, error) {
+func scanTests(rows *caduceus.Rows, err error) ([]BackupTest, error) {
 	if err != nil {
 		if notUUID(err) {
 			return nil, ErrDatabaseNotFound
@@ -375,7 +375,7 @@ func (s *Store) FinishBackupTest(ctx context.Context, t BackupTest) (BackupTest,
 // BackupTest is one test by id.
 func (s *Store) BackupTest(ctx context.Context, id string) (BackupTest, error) {
 	t, err := scanTest(s.db(ctx).QueryRow(ctx, `SELECT `+testCols+testFrom+`WHERE t.id = $1::uuid`, id))
-	if errors.Is(err, pgx.ErrNoRows) || notUUID(err) {
+	if errors.Is(err, caduceus.ErrNoRows) || notUUID(err) {
 		return t, ErrTestNotFound
 	}
 	return t, err
@@ -395,7 +395,7 @@ func (s *Store) BackupTests(ctx context.Context, dbID string, limit int) ([]Back
 func (s *Store) LastGoodTest(ctx context.Context, dbID string) (*BackupTest, error) {
 	t, err := scanTest(s.db(ctx).QueryRow(ctx, `SELECT `+testCols+testFrom+`WHERE t.database_id = $1::uuid
 		AND t.state IN ('passed', 'warned') AND b.state = 'done' ORDER BY b.started_at DESC, t.finished_at DESC LIMIT 1`, dbID))
-	if errors.Is(err, pgx.ErrNoRows) || notUUID(err) {
+	if errors.Is(err, caduceus.ErrNoRows) || notUUID(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -411,7 +411,7 @@ func (s *Store) UntestedBackup(ctx context.Context, dbID string) (DatabaseBackup
 		WHERE b.database_id = $1::uuid AND b.state = 'done'
 		  AND NOT EXISTS (SELECT 1 FROM database_backup_tests t WHERE t.backup_id = b.id AND t.state <> 'skipped')
 		ORDER BY b.started_at DESC LIMIT 1`, dbID))
-	if errors.Is(err, pgx.ErrNoRows) || notUUID(err) {
+	if errors.Is(err, caduceus.ErrNoRows) || notUUID(err) {
 		return b, ErrBackupNotFound
 	}
 	return b, err

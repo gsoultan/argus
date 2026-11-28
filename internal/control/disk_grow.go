@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -388,7 +388,7 @@ func (s *Store) diskReportFor(ctx context.Context, host string) (*DiskReport, *d
 	)
 	err := s.db(ctx).QueryRow(ctx, `SELECT disks, disks_state, disks_scan_id FROM agents WHERE lower(hostname) = lower($1)`,
 		host).Scan(&rb, &sb, &scan)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, nil, false, nil
 	}
 	if err != nil {
@@ -422,7 +422,7 @@ func (s *Store) diskScanAsked(ctx context.Context, host string) (string, bool, e
 	)
 	err := s.db(ctx).QueryRow(ctx, `SELECT disks_scan_id, disks_rescan FROM agents WHERE lower(hostname) = lower($1)`,
 		host).Scan(&id, &rescan)
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && id == nil) {
+	if errors.Is(err, caduceus.ErrNoRows) || (err == nil && id == nil) {
 		return "", false, nil
 	}
 	if err != nil {
@@ -480,7 +480,7 @@ const diskRunCols = `id::text, hostname, asset_hostname, trigger, state, fs_key,
 	planned_bytes, summary, reason, requested_by, requested_at, decided_by, decided_at, sent_at, started_at,
 	finished_at, updated_at, step, message, steps, table_before, size_before, size_after`
 
-func scanDiskRun(row pgx.Row) (DiskGrowRun, error) {
+func scanDiskRun(row rowScanner) (DiskGrowRun, error) {
 	var (
 		r           DiskGrowRun
 		path, steps []byte
@@ -609,7 +609,7 @@ func (s *Store) CreateDiskRun(ctx context.Context, n newDiskRun) (DiskGrowRun, e
 // DiskRunByID reads a grow.
 func (s *Store) DiskRunByID(ctx context.Context, id string) (DiskGrowRun, error) {
 	r, err := scanDiskRun(s.db(ctx).QueryRow(ctx, `SELECT `+diskRunCols+` FROM disk_grow_runs WHERE id::text = $1`, id))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return r, ErrDiskRunNotFound
 	}
 	return r, err
@@ -643,7 +643,7 @@ func (s *Store) diskRunToSend(ctx context.Context, host string) (*DiskGrowRun, e
 		              WHERE lower(hostname) = lower($1) AND state IN ('queued','running')
 		              ORDER BY requested_at LIMIT 1)
 		RETURNING `+diskRunCols, host))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -690,7 +690,7 @@ func (s *Store) recordDiskRunStatus(ctx context.Context, host string, st DiskRun
 		RETURNING `+diskRunCols, host, st.ID, state, clip(st.Step, 300), clip(st.Message, 2000), steps,
 		clip(st.TableBefore, 16000), st.After)
 	r, err := scanDiskRun(row)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -727,7 +727,7 @@ func (s *Store) DecideDiskRun(ctx context.Context, id, by string, approve, own b
 		 WHERE id::text = $1 AND state = 'awaiting_approval'
 		RETURNING `+diskRunCols, id, next, by)
 	r, err = scanDiskRun(row)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return r, fmt.Errorf("%w: someone decided this grow already", ErrRunState)
 	}
 	if err != nil && isUniqueViolation(err) {
@@ -745,7 +745,7 @@ func (s *Store) CancelDiskRun(ctx context.Context, id, by string) (DiskGrowRun, 
 		   AND (state = 'awaiting_approval' OR (state = 'queued' AND sent_at IS NULL))
 		RETURNING `+diskRunCols, id, by)
 	r, err := scanDiskRun(row)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		cur, gerr := s.DiskRunByID(ctx, id)
 		if gerr != nil {
 			return cur, gerr

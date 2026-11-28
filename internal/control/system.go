@@ -14,7 +14,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -657,7 +657,7 @@ func (s *Store) SystemFor(ctx context.Context, id string) (ServerSystem, error) 
 		        ORDER BY g.last_seen_at DESC NULLS LAST
 		        LIMIT 1) ag ON TRUE
 		 WHERE a.id::text = $1 AND a.archived_at IS NULL`, id).Scan(&osName, &sysRaw, &uRaw, &usageAt, &flat)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return ServerSystem{}, ErrAssetNotFound
 	}
 	if err != nil {

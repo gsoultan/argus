@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -35,15 +35,14 @@ const (
 	testStatementTimeout = "60s"
 )
 
-func pgTestOp(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAdminResult {
-	version := conn.ParameterStatus("server_version")
+func pgTestOp(ctx context.Context, conn *caduceus.Conn, req PGAdminRequest) PGAdminResult {
+	version := conn.Wire().ParameterStatus("server_version")
 	switch req.Op {
 	case "database-size":
 		if !tunnel.ValidDBName.MatchString(req.Target) {
 			return PGAdminResult{Error: "not a database name Argus will act on: " + req.Target}
 		}
-		res := conn.ExecParams(ctx, `SELECT pg_database_size($1), current_setting('data_directory')`,
-			[][]byte{[]byte(req.Target)}, nil, nil, nil).Read()
+		res := pgRead(ctx, conn, `SELECT pg_database_size($1), current_setting('data_directory')`, [][]byte{[]byte(req.Target)})
 		if res.Err != nil {
 			return PGAdminResult{Error: res.Err.Error(), Version: version}
 		}
@@ -61,8 +60,8 @@ func pgTestOp(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAd
 		if !tunnel.ValidTestDB.MatchString(req.Target) {
 			return PGAdminResult{Error: "Argus only drops the test copies it made; " + req.Target + " is not one"}
 		}
-		_ = conn.ExecParams(ctx, `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-			WHERE datname = $1 AND pid <> pg_backend_pid()`, [][]byte{[]byte(req.Target)}, nil, nil, nil).Read()
+		_ = pgRead(ctx, conn, `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+			WHERE datname = $1 AND pid <> pg_backend_pid()`, [][]byte{[]byte(req.Target)})
 		if err := execAll(ctx, conn, "DROP DATABASE IF EXISTS "+pgx(req.Target)); err != nil {
 			return PGAdminResult{Error: err.Error(), Version: version}
 		}
@@ -87,16 +86,16 @@ func pgTestOp(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAd
 }
 
 // pgReadTestCopy counts what a restored copy holds.
-func pgReadTestCopy(ctx context.Context, conn *pgconn.PgConn) (tunnel.TestData, error) {
+func pgReadTestCopy(ctx context.Context, conn *caduceus.Conn) (tunnel.TestData, error) {
 	var d tunnel.TestData
 	if err := execAll(ctx, conn, "SET statement_timeout = '"+testStatementTimeout+"'"); err != nil {
 		return d, err
 	}
-	res := conn.ExecParams(ctx, `SELECT n.nspname, c.relname FROM pg_class c
+	res := pgRead(ctx, conn, `SELECT n.nspname, c.relname FROM pg_class c
 		JOIN pg_namespace n ON n.oid = c.relnamespace
 		WHERE c.relkind = 'r' AND n.nspname NOT IN ('pg_catalog', 'information_schema')
 		  AND n.nspname NOT LIKE 'pg\_toast%' AND n.nspname NOT LIKE 'pg\_temp%'
-		ORDER BY 1, 2`, nil, nil, nil, nil).Read()
+		ORDER BY 1, 2`, nil)
 	if res.Err != nil {
 		return d, res.Err
 	}
@@ -114,23 +113,22 @@ func pgReadTestCopy(ctx context.Context, conn *pgconn.PgConn) (tunnel.TestData, 
 			d.Tables = append(d.Tables, tunnel.TableRows{Name: name, Rows: rows})
 			continue
 		}
-		c := conn.ExecParams(ctx, "SELECT count(*) FROM "+ns+"."+rel, nil, nil, nil, nil).Read()
+		c := pgRead(ctx, conn, "SELECT count(*) FROM "+ns+"."+rel, nil)
 		if c.Err == nil && len(c.Rows) == 1 {
 			rows, _ = strconv.ParseInt(string(c.Rows[0][0]), 10, 64)
 		}
 		d.Tables = append(d.Tables, tunnel.TableRows{Name: name, Rows: rows})
 	}
-	ix := conn.ExecParams(ctx, `SELECT count(*), count(*) FILTER (WHERE NOT i.indisvalid) FROM pg_index i
+	ix := pgRead(ctx, conn, `SELECT count(*), count(*) FILTER (WHERE NOT i.indisvalid) FROM pg_index i
 		JOIN pg_class c ON c.oid = i.indrelid JOIN pg_namespace n ON n.oid = c.relnamespace
-		WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg\_toast%'`,
-		nil, nil, nil, nil).Read()
+		WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg\_toast%'`, nil)
 	if ix.Err != nil {
 		return d, ix.Err
 	}
 	n, _ := strconv.Atoi(string(ix.Rows[0][0]))
 	bad, _ := strconv.Atoi(string(ix.Rows[0][1]))
 	d.Indexes, d.InvalidIndexes = n, bad
-	sz := conn.ExecParams(ctx, `SELECT pg_database_size(current_database())`, nil, nil, nil, nil).Read()
+	sz := pgRead(ctx, conn, `SELECT pg_database_size(current_database())`, nil)
 	if sz.Err == nil && len(sz.Rows) == 1 {
 		d.Bytes, _ = strconv.ParseInt(string(sz.Rows[0][0]), 10, 64)
 	}
@@ -139,7 +137,7 @@ func pgReadTestCopy(ctx context.Context, conn *pgconn.PgConn) (tunnel.TestData, 
 
 // pgRunChecks runs each check in its own read-only transaction and keeps
 // only its first value.
-func pgRunChecks(ctx context.Context, conn *pgconn.PgConn, checks []tunnel.TestCheck) []tunnel.CheckResult {
+func pgRunChecks(ctx context.Context, conn *caduceus.Conn, checks []tunnel.TestCheck) []tunnel.CheckResult {
 	var out []tunnel.CheckResult
 	for _, c := range checks {
 		r := tunnel.CheckResult{Name: c.Name}
@@ -157,7 +155,7 @@ func pgRunChecks(ctx context.Context, conn *pgconn.PgConn, checks []tunnel.TestC
 		// The extended protocol takes exactly one statement, whatever the
 		// text says.
 		sql := strings.TrimSuffix(strings.TrimSpace(c.SQL), ";")
-		res := conn.ExecParams(ctx, sql, nil, nil, nil, nil).Read()
+		res := pgRead(ctx, conn, sql, nil)
 		_ = execAll(ctx, conn, "ROLLBACK")
 		switch {
 		case res.Err != nil:

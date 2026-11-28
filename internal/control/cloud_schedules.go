@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/control/cloud"
 )
@@ -86,13 +86,13 @@ var ErrCloudScheduleSettled = errors.New("nothing about this schedule is waiting
 const cloudScheduleCols = `id::text, name, timezone, windows, skip_dates, account_ids::text[], regions, mode, owner,
 	state, paused_reason, pending, pending_by, pending_at, reason, checked_at, created_by, created_at, updated_by, updated_at`
 
-func scanCloudSchedule(row pgx.Row) (CloudSchedule, error) {
+func scanCloudSchedule(row rowScanner) (CloudSchedule, error) {
 	var c CloudSchedule
 	var windows, pending []byte
 	err := row.Scan(&c.ID, &c.Name, &c.Timezone, &windows, &c.SkipDates, &c.AccountIDs, &c.Regions, &c.Mode, &c.Owner,
 		&c.State, &c.PausedReason, &pending, &c.PendingBy, &c.PendingAt, &c.Reason, &c.CheckedAt, &c.CreatedBy,
 		&c.CreatedAt, &c.UpdatedBy, &c.UpdatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return CloudSchedule{}, ErrCloudScheduleNotFound
 	}
 	if err != nil {
@@ -181,7 +181,7 @@ func (s *Store) UpdateCloudSchedule(ctx context.Context, id string, v CloudSched
 		pending = NULL, pending_by = NULL, pending_at = NULL
 		WHERE id::text = $1 RETURNING id::text`,
 		id, v.Name, v.Timezone, w, v.SkipDates, v.AccountIDs, v.Regions, v.Mode, by, reason).Scan(&got)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return CloudSchedule{}, ErrCloudScheduleNotFound
 	}
 	if err != nil {
@@ -362,7 +362,7 @@ type CloudScheduleRun struct {
 const cloudRunCols = `id::text, schedule_id::text, due_at, action, state, targets, request_ids, detail, attempts,
 	next_at, started_at, finished_at`
 
-func scanCloudRun(row pgx.Row) (CloudScheduleRun, error) {
+func scanCloudRun(row rowScanner) (CloudScheduleRun, error) {
 	var r CloudScheduleRun
 	var targets []byte
 	err := row.Scan(&r.ID, &r.ScheduleID, &r.DueAt, &r.Action, &r.State, &targets, &r.RequestIDs, &r.Detail, &r.Attempts,
@@ -386,7 +386,7 @@ func (s *Store) ClaimCloudScheduleRun(ctx context.Context, scheduleID string, du
 	r, err := scanCloudRun(s.db(ctx).QueryRow(ctx, `INSERT INTO cloud_schedule_runs (schedule_id, due_at, action, state)
 		VALUES ($1::uuid, $2, $3, 'running') ON CONFLICT (schedule_id, due_at, action) DO NOTHING
 		RETURNING `+cloudRunCols, scheduleID, due, string(act)))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return CloudScheduleRun{}, false, nil
 	}
 	return r, err == nil, err
@@ -496,7 +496,7 @@ func (s *Store) ClearCloudKeepRunning(ctx context.Context, accountID, instanceID
 	err := s.db(ctx).QueryRow(ctx, `DELETE FROM cloud_keep_running WHERE account_id::text = $1 AND instance_id = $2
 		RETURNING account_id::text, instance_id, until, reason, set_by, set_at`, accountID, instanceID).
 		Scan(&k.AccountID, &k.InstanceID, &k.Until, &k.Reason, &k.SetBy, &k.SetAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return k, false, nil
 	}
 	return k, err == nil, err

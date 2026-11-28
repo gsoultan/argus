@@ -62,7 +62,7 @@ var shared = []string{
 // control plane forwards nothing else (internal/tunnel/transport_ws.go), so
 // both ends link it through the shared tunnel package.
 var controlOnlyModules = []string{
-	"github.com/gsoultan/storm",
+	"github.com/gsoultan/storm/v2",
 	"github.com/minio/minio-go",
 	"gopkg.in/yaml.v3",
 	// github.com/google/uuid used to be here. The SQL Server driver the

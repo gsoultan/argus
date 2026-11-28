@@ -7,7 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/gsoultan/caduceus"
+	"github.com/gsoultan/caduceus/wire"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -36,7 +37,7 @@ fields tunnel.GrantCreate.Validate checked, so what the console previewed is
 what ran.
 */
 
-func pgCreateOp(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAdminResult {
+func pgCreateOp(ctx context.Context, conn *caduceus.Conn, req PGAdminRequest) PGAdminResult {
 	c := req.Create
 	if c == nil {
 		return PGAdminResult{Error: "nothing to create"}
@@ -45,7 +46,7 @@ func pgCreateOp(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PG
 	if err := cc.Validate(); err != nil {
 		return PGAdminResult{Error: err.Error()}
 	}
-	version := conn.ParameterStatus("server_version")
+	version := conn.Wire().ParameterStatus("server_version")
 	switch req.Op {
 	case "create-options":
 		o, err := pgCreateOptions(ctx, conn)
@@ -66,13 +67,13 @@ func pgCreateOp(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PG
 	return PGAdminResult{Error: "unknown operation " + req.Op}
 }
 
-func pgDatabaseExists(ctx context.Context, conn *pgconn.PgConn, name string) (bool, error) {
-	r := conn.ExecParams(ctx, `SELECT 1 FROM pg_database WHERE datname = $1`, [][]byte{[]byte(name)}, nil, nil, nil).Read()
+func pgDatabaseExists(ctx context.Context, conn *caduceus.Conn, name string) (bool, error) {
+	r := pgRead(ctx, conn, `SELECT 1 FROM pg_database WHERE datname = $1`, [][]byte{[]byte(name)})
 	return len(r.Rows) > 0, r.Err
 }
 
-func pgRoleExists(ctx context.Context, conn *pgconn.PgConn, name string) (bool, error) {
-	r := conn.ExecParams(ctx, `SELECT 1 FROM pg_roles WHERE rolname = $1`, [][]byte{[]byte(name)}, nil, nil, nil).Read()
+func pgRoleExists(ctx context.Context, conn *caduceus.Conn, name string) (bool, error) {
+	r := pgRead(ctx, conn, `SELECT 1 FROM pg_roles WHERE rolname = $1`, [][]byte{[]byte(name)})
 	return len(r.Rows) > 0, r.Err
 }
 
@@ -81,7 +82,7 @@ func pgRoleExists(ctx context.Context, conn *pgconn.PgConn, name string) (bool, 
 // application role is made with the verifier the agent computed; a role the
 // admin named must already be there. made says this call created a role
 // that must be dropped again if what follows fails.
-func pgEnsureOwner(ctx context.Context, conn *pgconn.PgConn, c tunnel.GrantCreate, req PGAdminRequest) (step tunnel.CreateStep, made bool, err error) {
+func pgEnsureOwner(ctx context.Context, conn *caduceus.Conn, c tunnel.GrantCreate, req PGAdminRequest) (step tunnel.CreateStep, made bool, err error) {
 	role := c.PGOwnerRole()
 	ok, err := pgRoleExists(ctx, conn, role)
 	if err != nil {
@@ -129,8 +130,8 @@ func pgEnsureOwner(ctx context.Context, conn *pgconn.PgConn, c tunnel.GrantCreat
 // pgJoinPooledApps makes role a member of tunnel.PoolerAppsRole, for
 // Argus's PgBouncer lookup. A superuser is never added: its password must
 // not reach PgBouncer's auth_user.
-func pgJoinPooledApps(ctx context.Context, conn *pgconn.PgConn, role string) error {
-	r := conn.ExecParams(ctx, `SELECT rolsuper FROM pg_roles WHERE rolname = $1`, [][]byte{[]byte(role)}, nil, nil, nil).Read()
+func pgJoinPooledApps(ctx context.Context, conn *caduceus.Conn, role string) error {
+	r := pgRead(ctx, conn, `SELECT rolsuper FROM pg_roles WHERE rolname = $1`, [][]byte{[]byte(role)})
 	if r.Err != nil {
 		return r.Err
 	}
@@ -144,7 +145,7 @@ type errNoRole string
 
 func (e errNoRole) Error() string { return "there is no role named " + string(e) + " on this server" }
 
-func pgCreateDatabase(ctx context.Context, conn *pgconn.PgConn, c tunnel.GrantCreate, req PGAdminRequest, version string) PGAdminResult {
+func pgCreateDatabase(ctx context.Context, conn *caduceus.Conn, c tunnel.GrantCreate, req PGAdminRequest, version string) PGAdminResult {
 	plan := tunnel.CreateDBPlan(c)
 	out := PGAdminResult{Version: version}
 	taken, err := pgDatabaseExists(ctx, conn, c.Name)
@@ -169,7 +170,7 @@ func pgCreateDatabase(ctx context.Context, conn *pgconn.PgConn, c tunnel.GrantCr
 	out.Steps = append(out.Steps, step)
 	// CREATE DATABASE cannot run in a transaction block: one statement,
 	// sent alone.
-	if _, err := conn.Exec(ctx, plan[0]).ReadAll(); err != nil {
+	if _, err := pgExec(ctx, conn, plan[0]); err != nil {
 		out.Error = pgErrText(err)
 		if pgCode(err) == "42P04" {
 			out.Exists = true
@@ -191,14 +192,14 @@ func pgCreateDatabase(ctx context.Context, conn *pgconn.PgConn, c tunnel.GrantCr
 
 // pgUndoRole drops a role this create made a moment ago, when the database
 // it was for could not be made: nothing else can own anything of it yet.
-func pgUndoRole(ctx context.Context, conn *pgconn.PgConn, role string) tunnel.CreateStep {
+func pgUndoRole(ctx context.Context, conn *caduceus.Conn, role string) tunnel.CreateStep {
 	if err := execAll(ctx, conn, "DROP ROLE IF EXISTS "+pgx(role)); err != nil {
 		return tunnel.CreateStep{Text: "Remove the role " + role + " again", Error: pgErrText(err)}
 	}
 	return tunnel.CreateStep{Text: "Removed the role " + role + " again, since the database was not made", OK: true}
 }
 
-func pgPrepareNew(ctx context.Context, conn *pgconn.PgConn, c tunnel.GrantCreate, req PGAdminRequest, version string) PGAdminResult {
+func pgPrepareNew(ctx context.Context, conn *caduceus.Conn, c tunnel.GrantCreate, req PGAdminRequest, version string) PGAdminResult {
 	out := PGAdminResult{Version: version, OK: true}
 	if err := pgEnsureLevels(ctx, conn, c.Name, tunnel.LevelOwner); err != nil {
 		out.Steps = append(out.Steps, tunnel.CreateStep{Text: "Set up Argus's level roles", Error: err.Error()})
@@ -217,13 +218,13 @@ func pgPrepareNew(ctx context.Context, conn *pgconn.PgConn, c tunnel.GrantCreate
 	}
 	plan := tunnel.CreateDBPlan(c)
 	for i, e := range c.Postgres.Extensions {
-		r := conn.ExecParams(ctx, `SELECT 1 FROM pg_available_extensions WHERE name = $1`, [][]byte{[]byte(e)}, nil, nil, nil).Read()
+		r := pgRead(ctx, conn, `SELECT 1 FROM pg_available_extensions WHERE name = $1`, [][]byte{[]byte(e)})
 		if r.Err == nil && len(r.Rows) == 0 {
 			out.Steps = append(out.Steps, tunnel.CreateStep{Text: "Enable " + e, Error: "no extension named " + e + " is installed on this server"})
 			out.OK = false
 			continue
 		}
-		if _, err := conn.Exec(ctx, plan[1+i]).ReadAll(); err != nil {
+		if _, err := pgExec(ctx, conn, plan[1+i]); err != nil {
 			out.Steps = append(out.Steps, tunnel.CreateStep{Text: "Enable " + e, Error: pgErrText(err)})
 			out.OK = false
 			continue
@@ -236,7 +237,7 @@ func pgPrepareNew(ctx context.Context, conn *pgconn.PgConn, c tunnel.GrantCreate
 	return out
 }
 
-func pgSetOwner(ctx context.Context, conn *pgconn.PgConn, c tunnel.GrantCreate, req PGAdminRequest, version string) PGAdminResult {
+func pgSetOwner(ctx context.Context, conn *caduceus.Conn, c tunnel.GrantCreate, req PGAdminRequest, version string) PGAdminResult {
 	out := PGAdminResult{Version: version}
 	there, err := pgDatabaseExists(ctx, conn, c.Name)
 	if err != nil {
@@ -257,7 +258,7 @@ func pgSetOwner(ctx context.Context, conn *pgconn.PgConn, c tunnel.GrantCreate, 
 	}
 	out.Steps = append(out.Steps, step)
 	alter := tunnel.PGAlterOwnerSQL(c)
-	if _, err := conn.Exec(ctx, alter).ReadAll(); err != nil {
+	if _, err := pgExec(ctx, conn, alter); err != nil {
 		out.Error = pgErrText(err)
 		if made {
 			out.Steps = append(out.Steps, pgUndoRole(ctx, conn, c.PGOwnerRole()))
@@ -272,12 +273,11 @@ func pgSetOwner(ctx context.Context, conn *pgconn.PgConn, c tunnel.GrantCreate, 
 // pgSetPassword gives the role that owns the database a new password. Only
 // that role, never a superuser and never one of Argus's own: a new password
 // here is for the app that owns the database.
-func pgSetPassword(ctx context.Context, conn *pgconn.PgConn, c tunnel.GrantCreate, req PGAdminRequest, version string) PGAdminResult {
+func pgSetPassword(ctx context.Context, conn *caduceus.Conn, c tunnel.GrantCreate, req PGAdminRequest, version string) PGAdminResult {
 	out := PGAdminResult{Version: version}
 	role := c.OwnerName()
-	r := conn.ExecParams(ctx, `SELECT r.rolsuper, coalesce(shobj_description(r.oid, 'pg_authid'), ''), d.datdba = r.oid
-		FROM pg_roles r, pg_database d WHERE r.rolname = $1 AND d.datname = $2`,
-		[][]byte{[]byte(role), []byte(c.Name)}, nil, nil, nil).Read()
+	r := pgRead(ctx, conn, `SELECT r.rolsuper, coalesce(shobj_description(r.oid, 'pg_authid'), ''), d.datdba = r.oid
+		FROM pg_roles r, pg_database d WHERE r.rolname = $1 AND d.datname = $2`, [][]byte{[]byte(role), []byte(c.Name)})
 	switch {
 	case r.Err != nil:
 		out.Error = pgErrText(r.Err)
@@ -308,9 +308,9 @@ func pgSetPassword(ctx context.Context, conn *pgconn.PgConn, c tunnel.GrantCreat
 	return out
 }
 
-func pgCreateOptions(ctx context.Context, conn *pgconn.PgConn) (*tunnel.CreateOptions, error) {
+func pgCreateOptions(ctx context.Context, conn *caduceus.Conn) (*tunnel.CreateOptions, error) {
 	o := &tunnel.CreateOptions{}
-	r := conn.ExecParams(ctx, `SELECT name FROM pg_available_extensions ORDER BY name LIMIT 500`, nil, nil, nil, nil).Read()
+	r := pgRead(ctx, conn, `SELECT name FROM pg_available_extensions ORDER BY name LIMIT 500`, nil)
 	if r.Err != nil {
 		return nil, r.Err
 	}
@@ -319,10 +319,10 @@ func pgCreateOptions(ctx context.Context, conn *pgconn.PgConn) (*tunnel.CreateOp
 	}
 	// Roles that may own: not Postgres's own, not Argus's level or personal
 	// roles, and none that can sign in as a superuser would be a surprise.
-	r = conn.ExecParams(ctx, `SELECT rolname FROM pg_roles
+	r = pgRead(ctx, conn, `SELECT rolname FROM pg_roles
 		WHERE rolname NOT LIKE 'pg\_%' AND rolname NOT LIKE 'argus\_%'
 		  AND coalesce(shobj_description(oid, 'pg_authid'), '') NOT LIKE 'argus-managed%'
-		ORDER BY rolsuper, rolname LIMIT 500`, nil, nil, nil, nil).Read()
+		ORDER BY rolsuper, rolname LIMIT 500`, nil)
 	if r.Err != nil {
 		return nil, r.Err
 	}
@@ -330,12 +330,12 @@ func pgCreateOptions(ctx context.Context, conn *pgconn.PgConn) (*tunnel.CreateOp
 		o.Roles = append(o.Roles, string(row[0]))
 	}
 	// The same roles as owners to pick from, with what each owns today.
-	r = conn.ExecParams(ctx, `SELECT r.rolname, r.rolsuper, r.rolcanlogin,
+	r = pgRead(ctx, conn, `SELECT r.rolname, r.rolsuper, r.rolcanlogin,
 		  (SELECT string_agg(d.datname, ', ' ORDER BY d.datname) FROM pg_database d WHERE d.datdba = r.oid AND NOT d.datistemplate)
 		FROM pg_roles r
 		WHERE r.rolname NOT LIKE 'pg\_%' AND r.rolname NOT LIKE 'argus\_%'
 		  AND coalesce(shobj_description(r.oid, 'pg_authid'), '') NOT LIKE 'argus-managed%'
-		ORDER BY r.rolsuper, r.rolname LIMIT 500`, nil, nil, nil, nil).Read()
+		ORDER BY r.rolsuper, r.rolname LIMIT 500`, nil)
 	if r.Err != nil {
 		return nil, r.Err
 	}
@@ -351,13 +351,11 @@ func pgCreateOptions(ctx context.Context, conn *pgconn.PgConn) (*tunnel.CreateOp
 		}
 		o.Users = append(o.Users, u)
 	}
-	r = conn.ExecParams(ctx, `SELECT pg_encoding_to_char(encoding), datcollate FROM pg_database WHERE datname = 'template1'`,
-		nil, nil, nil, nil).Read()
+	r = pgRead(ctx, conn, `SELECT pg_encoding_to_char(encoding), datcollate FROM pg_database WHERE datname = 'template1'`, nil)
 	if r.Err == nil && len(r.Rows) == 1 {
 		o.Encoding, o.Locale = string(r.Rows[0][0]), string(r.Rows[0][1])
 	}
-	r = conn.ExecParams(ctx, `SELECT datname FROM pg_database WHERE NOT datistemplate ORDER BY 1 LIMIT $1`,
-		[][]byte{[]byte(strconv.Itoa(tunnel.MaxDiscovered + 1))}, nil, nil, nil).Read()
+	r = pgRead(ctx, conn, `SELECT datname FROM pg_database WHERE NOT datistemplate ORDER BY 1 LIMIT $1`, [][]byte{[]byte(strconv.Itoa(tunnel.MaxDiscovered + 1))})
 	if r.Err != nil {
 		return nil, r.Err
 	}
@@ -372,14 +370,14 @@ func pgCreateOptions(ctx context.Context, conn *pgconn.PgConn) (*tunnel.CreateOp
 }
 
 func pgCode(err error) string {
-	if pe, ok := err.(*pgconn.PgError); ok {
+	if pe, ok := err.(*wire.Error); ok {
 		return pe.Code
 	}
 	return ""
 }
 
 func pgErrText(err error) string {
-	if pe, ok := err.(*pgconn.PgError); ok {
+	if pe, ok := err.(*wire.Error); ok {
 		return pe.Message
 	}
 	return err.Error()

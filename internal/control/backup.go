@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 // RecordingRef is a session the control plane believes has a stored
@@ -43,7 +43,7 @@ func (s *Store) RecordingIndex(ctx context.Context) ([]RecordingRef, error) {
 func (s *Store) AuditHashSeq(ctx context.Context, hash string) (int64, error) {
 	var seq int64
 	err := s.db(ctx).QueryRow(ctx, `SELECT seq FROM audit_events WHERE hash = $1`, hash).Scan(&seq)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return 0, nil
 	}
 	return seq, err

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -553,7 +553,7 @@ const packageRunCols = `id::text, hostname, asset_hostname, mode, packages, hold
 	  WHERE v.id = package_runs.script_version_id),
 	software_file_id::text, (SELECT f.name FROM software_files f WHERE f.id = package_runs.software_file_id), detail`
 
-func scanPackageRun(row pgx.Row, withLog bool) (PackageRun, error) {
+func scanPackageRun(row rowScanner, withLog bool) (PackageRun, error) {
 	var (
 		r        PackageRun
 		upgraded []byte
@@ -801,7 +801,7 @@ func (s *Store) PackagePolicy(ctx context.Context) (PackagePolicy, error) {
 		return p, err
 	}
 	err = s.db(ctx).QueryRow(ctx, `SELECT package_holds FROM gateway_policy LIMIT 1`).Scan(&p.Holds)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		err = nil
 	}
 	if p.Holds == nil {
@@ -974,7 +974,7 @@ func (s *Store) recordPackageBeat(ctx context.Context, host string, b PackageBea
 		WITH old AS (SELECT hostname, packages FROM agents WHERE lower(hostname) = lower($1) FOR UPDATE)
 		UPDATE agents a SET packages = $2::jsonb FROM old WHERE a.hostname = old.hostname
 		RETURNING old.packages`, host, rb).Scan(&old)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil || len(old) == 0 {
@@ -1057,7 +1057,7 @@ func (s *Store) recordPackageRunStatus(ctx context.Context, host string, st Pack
 		RETURNING `+packageRunCols, host, st.ID, state, st.Step, st.Message, st.Planned, up, restarted,
 		st.RebootRequired, st.Rebooted, st.Log, started, scriptReport, boundedDetail(st))
 	r, err := scanPackageRun(row, false)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -1111,7 +1111,7 @@ func (s *Store) packageRunToSend(ctx context.Context, host string) (*PackageRunO
 		              ORDER BY requested_at LIMIT 1)
 		RETURNING id::text, mode, packages, holds, reboot, items, purge, start_services, expect`, host).Scan(&o.ID,
 		&o.Mode, &o.Packages, &o.Holds, &o.Reboot, &items, &o.Purge, &o.StartServices, &o.Expect)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -1127,7 +1127,7 @@ func (s *Store) packageCheckAsked(ctx context.Context, host string) (string, err
 	var id *string
 	err := s.db(ctx).QueryRow(ctx, `SELECT packages_check_id FROM agents WHERE lower(hostname) = lower($1)`,
 		host).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) || id == nil {
+	if errors.Is(err, caduceus.ErrNoRows) || id == nil {
 		return "", nil
 	}
 	return *id, err
@@ -1138,7 +1138,7 @@ func (s *Store) packageReportFor(ctx context.Context, host string) (*PackageRepo
 	var rb, sb []byte
 	err := s.db(ctx).QueryRow(ctx, `SELECT packages, packages_state FROM agents WHERE lower(hostname) = lower($1)`,
 		host).Scan(&rb, &sb)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, nil, nil
 	}
 	if err != nil {
@@ -1204,7 +1204,7 @@ func (s *Store) hasPendingRun(ctx context.Context, q pgxQuerier, host string) (b
 }
 
 type pgxQuerier interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	QueryRow(ctx context.Context, sql string, args ...any) *caduceus.Row
 }
 
 func (s *Store) insertRun(ctx context.Context, q pgxQuerier, n newRun) (PackageRun, error) {
@@ -1363,7 +1363,7 @@ func (s *Store) advanceBatch(ctx context.Context, batch string) error {
 func (s *Store) PackageRunByID(ctx context.Context, id string) (PackageRun, error) {
 	r, err := scanPackageRun(s.db(ctx).QueryRow(ctx, `SELECT `+packageRunCols+` FROM package_runs
 		WHERE id::text = $1`, id), true)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return r, ErrRunNotFound
 	}
 	return r, err
@@ -1419,7 +1419,7 @@ func (s *Store) DecidePackageRun(ctx context.Context, id, by string, approve, ow
 		 WHERE id::text = $1 AND state = 'awaiting_approval'
 		RETURNING `+packageRunCols, id, next, by)
 	r, err = scanPackageRun(row, false)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return r, fmt.Errorf("%w: someone decided this run already", ErrRunState)
 	}
 	if err != nil && isUniqueViolation(err) {
@@ -1449,7 +1449,7 @@ func (s *Store) CancelPackageRun(ctx context.Context, id, by string) (PackageRun
 		   AND (state IN ('awaiting_approval','waiting') OR (state = 'queued' AND sent_at IS NULL))
 		RETURNING `+packageRunCols, id, by)
 	r, err := scanPackageRun(row, false)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		cur, gerr := s.PackageRunByID(ctx, id)
 		if gerr != nil {
 			return cur, gerr

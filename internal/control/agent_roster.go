@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -145,7 +145,7 @@ func (s *Store) ContinuedAs(ctx context.Context, id string) (string, error) {
 			 WHERE o.id::text = $1
 			 ORDER BY n.started_at DESC LIMIT 1`, cur).Scan(&next)
 		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
+			if errors.Is(err, caduceus.ErrNoRows) {
 				break
 			}
 			return "", err

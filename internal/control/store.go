@@ -22,10 +22,9 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/control/rgen/session"
-	"github.com/gsoultan/storm"
-	"github.com/gsoultan/storm/runtime/pgxdrv"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/gsoultan/caduceus"
+	"github.com/gsoultan/storm/v2"
+	"github.com/gsoultan/storm/v2/runtime/caduceusdrv"
 )
 
 //go:embed migrations/*.sql
@@ -42,7 +41,7 @@ const GenesisHash = "00000000000000000000000000000000000000000000000000000000000
 // registry. Every other organization gets a pool of its own, opened on first
 // use; see tenant.go.
 type Store struct {
-	pool *pgxpool.Pool
+	pool *caduceus.Pool
 
 	// def is the default organization's connection and audit queue.
 	def *tenantDB
@@ -86,12 +85,16 @@ func (s *Store) notifyChanged(ctx context.Context) {
 
 // Open connects and applies migrations.
 func Open(ctx context.Context, dsn string) (*Store, error) {
-	cfg, err := pgxpool.ParseConfig(dsn)
+	cfg, err := caduceus.ParsePoolConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", err)
 	}
+	// Every column in the format pgx used to ask for it in, binary for the
+	// built-in types: what storm's generated scanners decode, and what the
+	// hand-written scans here were written against.
+	cfg.Options = caduceusdrv.Options()
 	noJIT(cfg)
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	pool, err := caduceus.NewPoolConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", err)
 	}
@@ -121,17 +124,17 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 // connection pooler such as PgBouncer refuses a startup parameter it does not
 // know, and that would be an outage where this is only a cost. A server that
 // does not know jit refuses the SET, and the connection is used as it is.
-func noJIT(cfg *pgxpool.Config) {
+func noJIT(cfg *caduceus.PoolConfig) {
 	if _, set := cfg.ConnConfig.RuntimeParams["jit"]; set {
 		return
 	}
-	cfg.AfterConnect = func(ctx context.Context, c *pgx.Conn) error {
+	cfg.AfterConnect = func(ctx context.Context, c *caduceus.Conn) error {
 		_, _ = c.Exec(ctx, "SET jit = off")
 		return nil
 	}
 }
 
-func newStore(pool *pgxpool.Pool) *Store {
+func newStore(pool *caduceus.Pool) *Store {
 	return &Store{pool: pool, def: &tenantDB{id: DefaultTenantID, pool: pool},
 		tenants: map[string]*tenantDB{}}
 }
@@ -150,7 +153,7 @@ const migrationsTableDDL = `
 			applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`
 
-func ensureMigrationsTable(ctx context.Context, pool *pgxpool.Pool) error {
+func ensureMigrationsTable(ctx context.Context, pool *caduceus.Pool) error {
 	if _, err := pool.Exec(ctx, migrationsTableDDL); err != nil {
 		return fmt.Errorf("create migrations table: %w", err)
 	}
@@ -214,7 +217,7 @@ func (s *Store) applyMigrations(ctx context.Context, names []string) error {
 }
 
 // applyMigrationsOn is applyMigrations against one organization's pool.
-func applyMigrationsOn(ctx context.Context, pool *pgxpool.Pool, names []string) error {
+func applyMigrationsOn(ctx context.Context, pool *caduceus.Pool, names []string) error {
 	for _, name := range names {
 		var applied bool
 		err := pool.QueryRow(ctx,
@@ -431,7 +434,7 @@ func (s *Store) RecordSession(ctx context.Context, in Session) (created bool, er
 		 LIMIT 1`, in.AssetHostname).Scan(&id)
 	if err == nil {
 		assetID = &id
-	} else if err != pgx.ErrNoRows {
+	} else if err != caduceus.ErrNoRows {
 		return false, fmt.Errorf("resolve asset: %w", err)
 	}
 
@@ -556,7 +559,7 @@ func (s *Store) Sessions(ctx context.Context, f SessionFilter) ([]Session, error
 		WhereIf(f.UserEmail != "", session.UserEmail.Eq(f.UserEmail)).
 		Order(session.StartedAt.Desc()).
 		Limit(int64(limit)).
-		All(ctx, pgxdrv.Pool{P: s.db(ctx)}, nil)
+		All(ctx, stormExec{s.db(ctx)}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -664,7 +667,7 @@ func (s *Store) Session(ctx context.Context, id string) (*Session, error) {
 		&v.RecordingKey, &v.TerminatedBy, &v.TerminationReason, &v.LastReportedAt,
 		&v.EndInferred, &v.Kind, &v.DatabaseID,
 		&v.RecordingRemovedAt, &v.RecordingRemovedBy, &v.RecordingRemovedReason)
-	if err == pgx.ErrNoRows {
+	if err == caduceus.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
@@ -1110,7 +1113,7 @@ func (d *tenantDB) appendAuditBatch(ctx context.Context, batch []*auditAppend) e
 
 	prev := GenesisHash
 	err = tx.QueryRow(ctx, `SELECT hash FROM audit_events ORDER BY seq DESC LIMIT 1`).Scan(&prev)
-	if err != nil && err != pgx.ErrNoRows {
+	if err != nil && err != caduceus.ErrNoRows {
 		return err
 	}
 
@@ -1214,7 +1217,7 @@ func (s *Store) AuditEvents(ctx context.Context, limit, before int) ([]AuditEven
 		}
 		// UTC, because chainHash hashes the UTC rendering and this value is
 		// about to be marshalled to JSON for a console that recomputes the
-		// same digest. pgx returns the driver's session timezone, so without
+		// same digest. The driver may return another time zone, so without
 		// this the browser would be handed "…+07:00" and asked to reproduce a
 		// hash taken over "…Z".
 		e.At = e.At.UTC()
@@ -1345,7 +1348,7 @@ func (s *Store) ExecTracingFor(ctx context.Context, host string) (bool, string, 
 		    OR a.hostname = (SELECT agent_hostname FROM assets WHERE hostname = $1)
 		 ORDER BY a.last_seen_at DESC
 		 LIMIT 1`, host).Scan(&tracing, &reason)
-	if err == pgx.ErrNoRows {
+	if err == caduceus.ErrNoRows {
 		return false, "no agent has reported from this host", nil
 	}
 	if err != nil {
