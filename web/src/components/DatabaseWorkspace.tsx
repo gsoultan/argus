@@ -1505,7 +1505,8 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
           : <NeedsDBA what="Logins & access" onAskForAccess={onAskForAccess} />)}
         {view === 'query' && panel === 'roles' && dialect !== 'mssql' && (level === 'dba' ? <RolesManager {...adminProps} /> : <RolesPanel {...adminProps} />)}
         {view === 'query' && panel === 'extensions' && <ExtensionsPanel {...adminProps} />}
-        {view === 'query' && panel === 'replication' && dialect !== 'mssql' && <ReplicationPanel {...adminProps} database={database} />}
+        {view === 'query' && panel === 'replication' && dialect !== 'mssql' && <ReplicationPanel {...adminProps} database={database}
+          onOpenSql={(text, name) => { if (openTab({ sql: text, name })) { setPanel('query'); setView('query') } }} />}
         {view === 'query' && panel === 'network' && <NetworkPanel {...adminProps} assetId={database.assetId} engine={dialect === 'mysql' ? 'mysql' : 'postgres'} />}
         {view === 'query' && panel === 'trash' && <TrashPanel collect={collect} level={level} narrow={narrow} />}
         {view === 'query' && panel === 'changes' && <ChangesPanel databaseId={database.id} narrow={Boolean(narrow)} />}
