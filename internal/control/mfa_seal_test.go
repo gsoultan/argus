@@ -205,7 +205,15 @@ func TestSealedSecretsOpenOnlyUnderTheirKey(t *testing.T) {
 			t.Errorf("opened under %s", name)
 		}
 	}
-	tampered := sealed[:len(sealed)-2] + "AA"
+	// Change one character of the ciphertext to a different one. Writing a
+	// fixed "AA" over the end left the value as it was whenever it already
+	// ended in AA, about one run in 256.
+	i := len(sealed) - 10
+	c := byte('A')
+	if sealed[i] == c {
+		c = 'B'
+	}
+	tampered := sealed[:i] + string(c) + sealed[i+1:]
 	if _, err := openMFAWith(k1, tampered); err == nil {
 		t.Error("a changed sealed value opened")
 	}

@@ -30,7 +30,7 @@ require (
 	github.com/golang-sql/sqlexp v0.1.0
 	github.com/google/uuid v1.6.0
 	github.com/gosnmp/gosnmp v1.43.2
-	github.com/gsoultan/caduceus v0.1.2-0.20261128055014-f5f78376a4eb
+	github.com/gsoultan/caduceus v0.2.0
 	github.com/gsoultan/gsmail v0.11.0
 	github.com/gsoultan/panmail-sdk v0.1.1
 	github.com/gsoultan/storm/v2 v2.0.0-20261128060413-3a670af7df24
