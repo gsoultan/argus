@@ -7,13 +7,12 @@ import {
 } from '@mantine/core'
 import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import {
-  IconChevronDown, IconChevronRight, IconDownload, IconLock, IconMenu2, IconPlayerPlay,
+  IconChevronDown, IconChevronRight, IconDownload, IconMenu2, IconPlayerPlay,
   IconPlayerStop, IconTable, IconEye, IconFunction, IconHash, IconActivity, IconUsersGroup, IconPuzzle,
   IconArrowsExchange, IconArchive, IconNetwork, IconDots, IconStar, IconIndentIncrease, IconTrash, IconHistory,
-  IconAdjustmentsHorizontal, IconSettings, IconGauge, IconShieldCheck, IconListTree, IconClock,
+  IconAdjustmentsHorizontal, IconSettings, IconGauge, IconShieldCheck, IconListTree, IconClock, IconCode, IconSchema,
 } from '@tabler/icons-react'
-import { Link } from '@tanstack/react-router'
-import { EngineMark } from '~/components/EngineMark'
+import { DatabaseHeader, DatabaseRail, RailPicker, RailSettingsLink, useRailFold, type RailItem } from '~/components/DatabaseShell'
 import { FS, SP, INK } from '~/theme'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
 import { ResultsGrid } from '~/components/ResultsGrid'
@@ -50,7 +49,6 @@ import {
 import { notifyWarn } from '~/lib/notify'
 import type { SavedQuery } from '~/lib/live'
 import { NEEDS_APPROVAL, useStatementApproval, type CheckStatement } from '~/components/StatementApproval'
-import { ApprovalBadge, EnvBadge } from '~/components/ChangeImpact'
 import { ChangesWaitingBanner } from '~/components/ChangesWaiting'
 import { writesNeedApproval, type CheckLike } from '~/lib/changeApproval'
 import { ImportData, type ImportRun } from '~/components/ImportData'
@@ -149,7 +147,6 @@ interface PGAnswer {
 type Panel = 'query' | 'activity' | 'roles' | 'extensions' | 'replication' | 'network' | 'backups' | 'trash' | 'changes'
   | 'performance' | 'indexes' | 'integrity' | 'jobs' | 'dbsettings'
 type ManagePanel = Exclude<Panel, 'query'>
-type WorkspaceTab = 'query' | 'diagram' | 'manage'
 
 interface Result {
   id: number
@@ -280,15 +277,6 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   const collectors = useRef(new Map<number, Collected>())
   const [panel, setPanel] = useState<Panel>((dialect === 'mssql' && MSSQL_MANAGE.some((m) => m.key === initialPanel)) || (initialPanel === 'network' && dialect !== 'mssql') || (!notPg && (initialPanel === 'changes' || initialPanel === 'trash' || initialPanel === 'backups' || initialPanel === 'performance')) || (dialect === 'mysql' && initialPanel === 'performance') ? initialPanel as Panel : 'query')
   const [view, setView] = useState<'query' | 'diagram'>('query')
-  // The three tabs under the header. Manage is any administration panel;
-  // it reopens the one last looked at.
-  const lastManage = useRef<ManagePanel>(panel === 'query' ? 'activity' : panel)
-  if (panel !== 'query') lastManage.current = panel
-  const tabNow: WorkspaceTab = view === 'diagram' ? 'diagram' : panel === 'query' ? 'query' : 'manage'
-  const goTab = (t: WorkspaceTab) => {
-    setView(t === 'diagram' ? 'diagram' : 'query')
-    setPanel(t === 'manage' ? lastManage.current : 'query')
-  }
 
   // Tabs: each its own editor text, row limit, result and plan. Text is
   // kept in this browser per database; results never are.
@@ -1420,26 +1408,45 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
     </Group>
   )
 
+  const railItems = railFor(dialect)
+  const railKey = view === 'diagram' ? 'diagram' : panel
+  const onWork = railKey === 'query' || railKey === 'diagram'
+  const [railOpen, toggleRail] = useRailFold(onWork)
+  const pick = (key: string) => {
+    if (key === 'diagram') { setView('diagram'); setPanel('query'); return }
+    setView('query')
+    setPanel(key as Panel)
+  }
+  const where = database.hostname
+  const detail = [ready?.version ? engineVersion(database.engine, ready.version) : '', ready?.via === 'pgbouncer' ? 'via PgBouncer' : ''].filter(Boolean).join(' · ')
+
   return (
-    <Box style={{ display: 'flex', height: narrow ? 'auto' : 'calc(100dvh - var(--app-shell-header-offset, 60px))', minHeight: 480 }}>
+    <Box style={{ display: 'flex', flexDirection: 'column', height: narrow ? 'auto' : 'calc(100dvh - var(--app-shell-header-offset, 60px) - 45px)', minHeight: 480 }}>
+      <DatabaseHeader database={database} narrow={Boolean(narrow)} level={level} status={status} where={where} detail={detail || undefined}
+        canAsk={Boolean((access.approvable || onAskForAccess) && level === 'read')} onAskForAccess={onAskForAccess}
+        settings={orgAdmin}
+        left={narrow && railKey === 'query' ? (
+          <ActionIcon variant="subtle" onClick={tree.open} aria-label="Open the object tree"><IconMenu2 size={18} /></ActionIcon>
+        ) : undefined} />
+      {narrow && <RailPicker items={railItems} active={railKey} level={level} onPick={pick} />}
+      <Box style={{ display: 'flex', flex: 1, minHeight: 0 }}>
       {narrow ? (
         <Drawer opened={treeOpen} onClose={tree.close} size="85%" padding="xs" title={database.dbname}>
           {bar}
         </Drawer>
       ) : (
-        <Box w={tabNow === 'manage' ? 220 : 280} style={{ flexShrink: 0, borderRight: '1px solid var(--color-line)', overflow: 'hidden', background: 'var(--color-surface)' }}>
-          <ScrollArea h="100%" type="auto">
-            {tabNow === 'manage' ? <ManageNav panel={panel as ManagePanel} level={level} dialect={dialect} narrow={false} onPick={setPanel} /> : bar}
-          </ScrollArea>
-        </Box>
+        <>
+          <DatabaseRail items={railItems} active={railKey} level={level} open={railOpen} onPick={pick} onToggle={toggleRail}
+            footer={orgAdmin ? <RailSettingsLink dbId={database.id} /> : undefined} />
+          {railKey === 'query' && (
+            <Box w={280} style={{ flexShrink: 0, borderRight: '1px solid var(--color-line)', overflow: 'hidden', background: 'var(--color-surface)' }}>
+              <ScrollArea h="100%" type="auto">{bar}</ScrollArea>
+            </Box>
+          )}
+        </>
       )}
 
       <Box ref={area} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        <WorkspaceHeader database={database} narrow={Boolean(narrow)} level={level} status={status} version={ready?.version} viaPooler={ready?.via === 'pgbouncer'}
-          canAsk={Boolean((access.approvable || onAskForAccess) && level === 'read')} onAskForAccess={onAskForAccess}
-          settings={orgAdmin} tab={tabNow} onTab={goTab} onOpenTree={tree.open} />
-        {tabNow === 'manage' && narrow && <ManageNav panel={panel as ManagePanel} level={level} dialect={dialect} narrow onPick={setPanel} />}
-
         {writesNeedApproval(database) && <ChangesWaitingBanner database={database} me={me?.email} />}
         {fatal && (
           <Box px="md" py={SP.cozy} style={{ background: 'var(--mantine-color-rose-light)', color: 'var(--mantine-color-rose-light-color)' }}>
@@ -1524,6 +1531,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
             </>}
         </Box>
         </>}
+      </Box>
       </Box>
       {approvalDialog}
       {importing && <ImportData target={importing} narrow={Boolean(narrow)} onClose={() => setImporting(null)} run={runImport} />}
@@ -1831,112 +1839,13 @@ function ObjectNode({ o, schemaName, schema, onPick, onRun }: {
   )
 }
 
-/* ── Header and Manage ─────────────────────────────────────────────────── */
+/* ── The rail ───────────────────────────────────────────────────────────── */
 
 /*
-The workspace's one header. The name, server, engine version, label and
-approval rule used to appear in a breadcrumb row, in this header and again in
-a card at the top of the object tree; they are said once, here. A production
-database carries a rose edge across the top, so which world the next
-statement lands in is visible before it is read. Under it, three tabs: the
-editor, the diagram, and Manage, which holds every administration panel that
-used to hang under the object tree.
+Every panel of the workspace is one item of the rail (DatabaseShell): the
+editor and the diagram under Work, the administration panels under Look
+after and DBA. Each engine lists only the panels it has.
 */
-/** The server's version as the header says it: "Postgres 16.4", "MySQL 8.0.46", "MariaDB 10.11.14", "SQL Server 2022 (16.0.4135.4)". */
-function WorkspaceHeader({ database, narrow, level, status, version, viaPooler, canAsk, onAskForAccess, settings, tab, onTab, onOpenTree }: {
-  database: Database
-  narrow: boolean
-  level: DBLevel | ''
-  status: 'connecting' | 'ready' | 'closed'
-  version?: string
-  viaPooler: boolean
-  canAsk: boolean
-  onAskForAccess?: () => void
-  /** An organization admin: links to who can connect and the settings. */
-  settings?: boolean
-  tab: WorkspaceTab
-  onTab: (t: WorkspaceTab) => void
-  onOpenTree: () => void
-}) {
-  const prod = database.label === 'production'
-  const where = `${database.hostname}${version ? ` · ${engineVersion(database.engine, version)}` : ''}${viaPooler ? ' · via PgBouncer' : ''}`
-  const recorded = status === 'ready' ? 'Recorded' : status === 'connecting' ? 'Connecting' : 'Closed'
-  const tabs: { key: WorkspaceTab; label: string; hint: string }[] = database.engine === 'mysql'
-    ? [{ key: 'query', label: 'Query', hint: 'Write and run statements' }]
-    : database.engine === 'mssql'
-      ? [{ key: 'query', label: 'Query', hint: 'Write and run statements' },
-        { key: 'manage', label: 'Manage', hint: 'Activity, waits, integrity, backups, indexes, Agent jobs, logins and access, settings' }]
-    : [
-      { key: 'query', label: 'Query', hint: 'Write and run statements' },
-      { key: 'diagram', label: 'Diagram', hint: 'Tables and how they link' },
-      { key: 'manage', label: 'Manage', hint: 'Activity, backups, data changes, trash, roles, extensions, replication' },
-    ]
-  return (
-    <Box data-env={database.label} style={{ borderBottom: '1px solid var(--color-line)', background: 'var(--color-surface)',
-      boxShadow: prod ? 'inset 0 3px 0 var(--mantine-color-rose-6)' : undefined, paddingTop: prod ? 3 : 0 }}>
-      <Group gap="sm" px={narrow ? 'sm' : 'md'} pt={narrow ? 8 : 10} wrap="nowrap">
-        {narrow && (
-          <ActionIcon variant="subtle" onClick={onOpenTree} aria-label="Open the object tree">
-            <IconMenu2 size={18} />
-          </ActionIcon>
-        )}
-        <EngineMark engine={database.engine} size={narrow ? 26 : 30} />
-        <Box style={{ minWidth: 0, flexShrink: narrow ? 1 : 0 }}>
-          <Text fw={650} size={narrow ? FS.body : 'md'} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{database.dbname}</Text>
-          {narrow && <Text size={FS.micro} c="dimmed" ff="monospace" truncate>{where}</Text>}
-        </Box>
-        {!narrow && <Text size={FS.micro} c="dimmed" ff="monospace" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{where}</Text>}
-        <Box style={{ flexShrink: 0 }} ml={narrow ? 'auto' : undefined}><EnvBadge label={database.label} /></Box>
-        {!narrow && writesNeedApproval(database) && <Box style={{ flexShrink: 0 }}><ApprovalBadge /></Box>}
-        {!narrow && (
-          <Group gap={6} ml="auto" wrap="nowrap" style={{ flexShrink: 0 }}>
-            <Badge variant="light" color={level === 'read' ? 'slate' : 'azure'} radius="sm">
-              You can: {level ? level.toUpperCase() : '…'}
-            </Badge>
-            {canAsk && (
-              <Button size="xs" variant="default" onClick={onAskForAccess} leftSection={<IconLock size={12} />}>
-                Ask for write access
-              </Button>
-            )}
-            <Badge variant="light" color="rose" radius="sm" leftSection={<span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: 3, background: 'currentColor' }} />}>
-              {recorded}
-            </Badge>
-            {settings && (
-              <Tooltip label="Who can connect, and this database's settings" withArrow>
-                <Link to="/databases/$dbId/settings" params={{ dbId: database.id }} aria-label="Who can connect and settings"
-                  style={{ display: 'inline-flex', padding: 6, borderRadius: 6, color: 'var(--mantine-color-dimmed)' }}>
-                  <IconSettings size={16} />
-                </Link>
-              </Tooltip>
-            )}
-          </Group>
-        )}
-      </Group>
-      <Group gap={narrow ? 0 : 2} px={narrow ? 4 : 'xs'} mt={narrow ? 4 : 6} wrap="nowrap" role="tablist" aria-label="View">
-        {tabs.map((t) => {
-          const on = t.key === tab
-          return (
-            <UnstyledButton key={t.key} role="tab" aria-selected={on} onClick={() => onTab(t.key)} title={t.hint}
-              px={narrow ? 10 : 12} py={8}
-              style={{ borderBottom: `2px solid ${on ? 'var(--color-brand)' : 'transparent'}`, marginBottom: -1 }}>
-              <Text size={FS.body} fw={on ? 600 : 400} c={on ? undefined : 'dimmed'}>{t.label}</Text>
-            </UnstyledButton>
-          )
-        })}
-        {narrow && (
-          <Group gap={6} ml="auto" pr="xs" wrap="nowrap">
-            <Badge variant="light" color={level === 'read' ? 'slate' : 'azure'} radius="sm">{level ? level.toUpperCase() : '…'}</Badge>
-            {canAsk && (
-              <Button size="compact-xs" variant="default" onClick={onAskForAccess} leftSection={<IconLock size={12} />}>Ask</Button>
-            )}
-            <Badge variant="light" color="rose" radius="sm">{recorded}</Badge>
-          </Group>
-        )}
-      </Group>
-    </Box>
-  )
-}
-
 const MANAGE: { key: ManagePanel; label: string; icon: typeof IconTable; hint: string; dba?: boolean; group: 'care' | 'dba'; only?: Dialect }[] = [
   { key: 'activity', label: 'Activity & locks', icon: IconActivity, hint: 'What is running on this database now, and what waits on what', group: 'care' },
   { key: 'performance', label: 'Performance', icon: IconGauge, hint: 'Why this database is slow or heavy, and what to change, PgBouncer included', group: 'care', only: 'postgres' },
@@ -1974,54 +1883,25 @@ function NeedsDBA({ what, onAskForAccess }: { what: string; onAskForAccess?: () 
   )
 }
 
-/** The list of administration panels: a column on a wide screen, a row of chips on a phone. */
-function ManageNav({ panel, level, dialect, narrow, onPick }: {
-  panel: ManagePanel; level: DBLevel | ''; dialect: Dialect; narrow: boolean; onPick: (p: ManagePanel) => void
-}) {
-  const items = dialect === 'mssql' ? MSSQL_MANAGE : MANAGE.filter((m) => !m.only || m.only === dialect)
-  if (narrow) {
-    return (
-      <Group gap={6} px="sm" py={8} wrap="nowrap" role="tablist" aria-label="Manage"
-        style={{ overflowX: 'auto', scrollbarWidth: 'none', borderBottom: '1px solid var(--color-line)' }}>
-        {items.map((m) => (
-          <UnstyledButton key={m.key} role="tab" aria-selected={m.key === panel} onClick={() => onPick(m.key)}
-            px={10} py={5}
-            style={{ flexShrink: 0, borderRadius: 999, border: '1px solid', fontSize: 12.5,
-              borderColor: m.key === panel ? 'var(--color-brand)' : 'var(--color-line)',
-              background: m.key === panel ? 'var(--mantine-color-azure-light)' : 'var(--color-surface)',
-              color: m.key === panel ? 'var(--mantine-color-azure-light-color)' : undefined }}>
-            {m.label}
-          </UnstyledButton>
-        ))}
-      </Group>
-    )
-  }
-  const section = (group: 'care' | 'dba', title: string) => (
-    <Box mb="sm">
-      <Text size={FS.micro} c="dimmed" tt="uppercase" fw={600} px={10} py={4} style={{ letterSpacing: '.06em' }}>{title}</Text>
-      {items.filter((m) => m.group === group).map((m) => {
-        const on = m.key === panel
-        const Icon = m.icon
-        return (
-          <Tooltip key={m.key} label={m.dba && level !== 'dba' ? 'Needs DBA access' : m.hint} withArrow position="right" multiline w={240}>
-            <UnstyledButton onClick={() => onPick(m.key)} aria-current={on ? 'page' : undefined} px={10} py={7}
-              style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', borderRadius: 7, marginBottom: 1,
-                background: on ? 'var(--mantine-color-azure-light)' : undefined,
-                color: on ? 'var(--mantine-color-azure-light-color)' : undefined,
-                opacity: m.dba && level !== 'dba' ? 0.7 : 1 }}>
-              <Icon size={15} />
-              <Text size={FS.body} fw={on ? 600 : 400}>{m.label}</Text>
-              {m.dba && <Badge size="xs" variant="light" color="slate" ml="auto">DBA</Badge>}
-            </UnstyledButton>
-          </Tooltip>
-        )
-      })}
-    </Box>
-  )
-  return (
-    <Box p="xs" pt="sm" aria-label="Manage">
-      {items.some((m) => m.group === 'care') && section('care', 'Look after')}
-      {section('dba', 'DBA')}
-    </Box>
-  )
+const WORK_SQL: RailItem[] = [
+  { key: 'query', label: 'Query', icon: IconCode, hint: 'Write and run statements', group: 'work' },
+]
+const WORK_DIAGRAM: RailItem = { key: 'diagram', label: 'Diagram', icon: IconSchema, hint: 'Tables and how they link', group: 'work' }
+
+/**
+ * The rail of one SQL engine. MySQL has its Performance and Network panels
+ * only: the others read Postgres's own catalogs. They used to open from a
+ * link alone, as MySQL had no Manage tab.
+ */
+export function railFor(dialect: Dialect): RailItem[] {
+  const manage = dialect === 'mssql'
+    ? MSSQL_MANAGE
+    : dialect === 'mysql'
+      ? MANAGE.filter((m) => (m.key === 'performance' && m.only === 'mysql') || m.key === 'network')
+      : MANAGE.filter((m) => !m.only || m.only === 'postgres')
+  return [
+    ...WORK_SQL,
+    ...(dialect === 'postgres' ? [WORK_DIAGRAM] : []),
+    ...manage.map((m) => ({ key: m.key, label: m.label, icon: m.icon, hint: m.hint, dba: m.dba, group: m.group })),
+  ]
 }

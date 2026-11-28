@@ -110,7 +110,7 @@ describe('Redis management', () => {
 
   it('sends a new user’s password only as its SHA-256', async () => {
     const ws = await open()
-    fireEvent.click(screen.getByRole('tab', { name: 'Users & ACL' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Users & ACL' }))
     await ws.reply('acl_list', { type: 'result', data: { aclFile: true, users: [
       { name: 'default', on: true, nopass: true, passwords: [], keys: ['~*'], channels: ['&*'], commands: ['+@all'], selectors: [], argus: false, self: false, clients: 0 },
     ] } })
@@ -141,7 +141,7 @@ describe('Redis management', () => {
     addresses: [{ ip: '192.168.1.20', iface: 'eth0', prefix: '192.168.1.0/24', private: true, state: 'closed' }],
   }
   async function networkTab(ws: FakeSocket, data: Record<string, unknown>) {
-    fireEvent.click(screen.getByRole('tab', { name: 'Network' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Network' }))
     await ws.reply('network', { type: 'result', data })
     await screen.findByText(/Only programs on cache-01 can connect/)
   }

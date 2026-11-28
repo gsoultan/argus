@@ -1,16 +1,17 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActionIcon, Anchor, Badge, Box, Button, Checkbox, Drawer, Group, Loader, ScrollArea, SegmentedControl, Select, Stack, Table,
-  Tabs, Text, TextInput, Tooltip, UnstyledButton,
+  Text, TextInput, Tooltip, UnstyledButton,
 } from '@mantine/core'
 import { useDisclosure, useMediaQuery } from '@mantine/hooks'
-import { IconBolt, IconFolder, IconList, IconMenu2, IconPlayerStop, IconPlus, IconRefresh, IconSearch, IconSitemap, IconStack2 } from '@tabler/icons-react'
+import { IconGauge, IconKey, IconNetwork, IconSettings, IconUsersGroup, IconFolder, IconList, IconMenu2, IconPlayerStop, IconPlus, IconRefresh, IconSearch, IconSitemap, IconStack2 } from '@tabler/icons-react'
 import { redisArg } from '~/lib/redisArg'
 import { FS, SP } from '~/theme'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
 import { useCompletion } from '~/components/Autocomplete'
 import { completeRedis } from '~/lib/redisComplete'
-import { ConfirmByName, FatalBanner, StoreHeader } from '~/components/StoreChrome'
+import { ConfirmByName, FatalBanner } from '~/components/StoreChrome'
+import { DatabaseHeader, DatabaseRail, RailPicker, useRailFold, type RailItem } from '~/components/DatabaseShell'
 import { formatRedis, plain, useStoreSession, type RedisKey, type RedisValue, type StoreAnswer, type StoreRequest } from '~/components/useStoreSession'
 import { useRedisChange } from '~/components/redis/useRedisChange'
 import { RedisKeyEditor } from '~/components/redis/RedisKeyEditor'
@@ -62,13 +63,16 @@ export function RedisWorkspace({ database, access, getTicket, endpoint, onAskFor
   const can = (op: string) => ops.includes(op)
   const { change, dialog: approvalDialog } = useRedisChange(s, database)
   const [tab, setTab] = useState<Tab>(initialPanel === 'network' ? 'network' : 'keys')
-  const tabs: { id: Tab; label: string }[] = [
-    ...(can('info') ? [{ id: 'overview' as const, label: 'Overview' }] : []),
-    { id: 'keys', label: 'Keys' },
-    ...(can('config_get') ? [{ id: 'config' as const, label: 'Configuration' }] : []),
-    ...(can('acl_list') ? [{ id: 'users' as const, label: 'Users & ACL' }] : []),
-    ...(can('network') ? [{ id: 'network' as const, label: 'Network' }] : []),
+  // The rail: what used to be the row of tabs, each shown only when the
+  // session's user may run what it needs.
+  const railItems: RailItem[] = [
+    { key: 'keys', label: 'Keys', icon: IconKey, hint: 'Find, read and change keys; the command line', group: 'work' },
+    ...(can('info') ? [{ key: 'overview', label: 'Overview', icon: IconGauge, hint: 'Memory, operations, hit rate, saves and replicas', group: 'care' as const }] : []),
+    ...(can('config_get') ? [{ key: 'config', label: 'Configuration', icon: IconSettings, hint: 'The server’s settings, and changing them', group: 'dba' as const }] : []),
+    ...(can('acl_list') ? [{ key: 'users', label: 'Users & ACL', icon: IconUsersGroup, hint: 'Users, what each may run, and changing them', group: 'dba' as const }] : []),
+    ...(can('network') ? [{ key: 'network', label: 'Network', icon: IconNetwork, hint: 'Where it listens and which machines can connect', group: 'dba' as const }] : []),
   ]
+  const [railOpen, toggleRail] = useRailFold(tab === 'keys')
   const [view, setView] = useState<'list' | 'tree'>('list')
   const [prefix, setPrefix] = useState('')
   const [picked, setPicked] = useState<Set<string>>(new Set())
@@ -354,19 +358,17 @@ export function RedisWorkspace({ database, access, getTicket, endpoint, onAskFor
 
   return (
     <Box style={{ display: 'flex', flexDirection: 'column', height: narrow ? 'auto' : 'calc(100dvh - 120px)', minHeight: 480 }}>
-      <StoreHeader database={database} access={access} level={level} status={s.status} narrow={narrow}
-        onAskForAccess={onAskForAccess} icon={<IconBolt size={16} color="var(--color-brand)" />}
-        title={`Redis · db ${database.dbname}`}
-        detail={`${database.hostname}${s.ready?.version ? ` · ${s.ready.server === 'valkey' ? 'Valkey' : 'Redis'} ${s.ready.version}` : ''}${s.ready?.user ? ` · as ${s.ready.user}` : ''}`}
+      <DatabaseHeader database={database} narrow={narrow} level={level} status={s.status} where={database.hostname}
+        detail={[s.ready?.version ? `${s.ready.server === 'valkey' ? 'Valkey' : 'Redis'} ${s.ready.version}` : '', `db ${database.dbname}`, s.ready?.user ? `as ${s.ready.user}` : ''].filter(Boolean).join(' · ')}
+        canAsk={Boolean(access.approvable && onAskForAccess)} askLabel={`Ask for ${access.approvable}`} onAskForAccess={onAskForAccess}
         left={narrow && tab === 'keys' ? <ActionIcon variant="subtle" onClick={keysDrawer.open} aria-label="Open the key browser"><IconMenu2 size={18} /></ActionIcon> : undefined} />
-      <FatalBanner fatal={s.fatal} />
-      {tabs.length > 1 && (
-        <Tabs value={tab} onChange={(t) => t && setTab(t as Tab)} px="md">
-          <Tabs.List>
-            {tabs.map((t) => <Tabs.Tab key={t.id} value={t.id}>{t.label}</Tabs.Tab>)}
-          </Tabs.List>
-        </Tabs>
+      {narrow && railItems.length > 1 && <RailPicker items={railItems} active={tab} level={level} onPick={(k) => setTab(k as Tab)} />}
+      <Box style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+      {!narrow && railItems.length > 1 && (
+        <DatabaseRail items={railItems} active={tab} level={level} open={railOpen} onPick={(k) => setTab(k as Tab)} onToggle={toggleRail} />
       )}
+      <Box style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+      <FatalBanner fatal={s.fatal} />
       {tab === 'keys' ? keysPane : (
         <Box style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
           <Suspense fallback={<Loader size="sm" m="md" />}>
@@ -377,6 +379,8 @@ export function RedisWorkspace({ database, access, getTicket, endpoint, onAskFor
           </Suspense>
         </Box>
       )}
+      </Box>
+      </Box>
       {making && (
         <Suspense fallback={null}>
           <NewKey opened onClose={() => { setMaking(false); void scan('0', false) }} exists={keyExists} onRun={(l) => runCmd(l)} />

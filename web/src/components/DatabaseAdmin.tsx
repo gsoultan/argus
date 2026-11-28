@@ -141,8 +141,8 @@ function PanelHeader({ title, blurb, narrow, onBack, right }: {
     <Group gap="xs" px="md" py={SP.cozy} wrap="nowrap" style={{ borderBottom: '1px solid var(--color-line)' }}>
       {onBack && <ActionIcon variant="subtle" onClick={onBack} aria-label="Back to the query editor"><IconArrowLeft size={16} /></ActionIcon>}
       <Box style={{ minWidth: 0, flex: 1 }}>
-        <Text fw={650} size={FS.body}>{title}</Text>
-        {!narrow && <Text size={FS.micro} c="dimmed" lineClamp={1}>{blurb}</Text>}
+        <Text fw={650} size="md" style={{ letterSpacing: '-0.01em' }}>{title}</Text>
+        {!narrow && <Text size={FS.meta} c="dimmed" mt={2} lineClamp={2} maw={760}>{blurb}</Text>}
       </Box>
       {right}
     </Group>

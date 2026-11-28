@@ -1,53 +1,14 @@
-import { Badge, Box, Button, Group, Modal, Stack, Text, TextInput } from '@mantine/core'
-import { IconAlertTriangle, IconLock } from '@tabler/icons-react'
-import { useEffect, useState, type ReactNode } from 'react'
+import { Box, Button, Group, Modal, Stack, Text, TextInput } from '@mantine/core'
+import { IconAlertTriangle } from '@tabler/icons-react'
+import { useEffect, useState } from 'react'
 import { FS, SP } from '~/theme'
-import type { DBAccess, DBLevel, Database } from '~/types/domain'
 
 /*
-What the Redis and RabbitMQ workspaces share with the Postgres one: the bar
-across the top that says where you are, what you can do and that it is
-recorded; the banner when the session ends; and the type-the-name confirm.
+What the MongoDB, Redis and broker workspaces share: the banner when the
+session ends, and the type-the-name confirm. The header is DatabaseShell's.
 */
 
 export const LABEL_COLOR = { production: 'rose', staging: 'amber', development: 'teal' } as const
-
-export function StoreHeader({ database, icon, title, detail, level, access, status, onAskForAccess, narrow, left }: {
-  database: Database
-  icon: ReactNode
-  title: string
-  detail?: string
-  level: DBLevel | ''
-  access: DBAccess
-  status: 'connecting' | 'ready' | 'closed'
-  onAskForAccess?: () => void
-  narrow: boolean
-  left?: ReactNode
-}) {
-  return (
-    <Group gap="xs" px="md" py={SP.cozy} wrap="nowrap" style={{ borderBottom: '1px solid var(--color-line)' }}>
-      {left}
-      {icon}
-      <Text fw={650} size={FS.body} style={{ whiteSpace: 'nowrap' }}>{title}</Text>
-      {!narrow && detail && <Text size={FS.micro} c="dimmed" ff="monospace">{detail}</Text>}
-      <Badge variant="light" color={LABEL_COLOR[database.label]} radius="sm" style={{ flexShrink: 0 }}>{database.label}</Badge>
-      <Group gap={6} ml="auto" wrap="nowrap">
-        <Badge variant="light" color={level === 'read' ? 'slate' : 'azure'} radius="sm">
-          {narrow ? '' : 'You can: '}{level ? level.toUpperCase() : '…'}
-        </Badge>
-        {access.approvable && onAskForAccess && (
-          <Button size="xs" variant="default" onClick={onAskForAccess} leftSection={<IconLock size={12} />}>
-            {narrow ? 'Ask' : `Ask for ${access.approvable}`}
-          </Button>
-        )}
-        <Badge variant="light" color="rose" radius="sm"
-          leftSection={<span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: 3, background: 'currentColor' }} />}>
-          {status === 'ready' ? 'Recorded' : status === 'connecting' ? 'Connecting' : 'Closed'}
-        </Badge>
-      </Group>
-    </Group>
-  )
-}
 
 export function FatalBanner({ fatal }: { fatal: string | null }) {
   if (!fatal) return null
