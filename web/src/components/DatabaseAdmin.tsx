@@ -68,6 +68,8 @@ export interface AdminOp {
   binary?: boolean
   disableOnError?: boolean
   publisherGone?: boolean
+  /** subscription.skip: the publisher transaction to skip, where it finished. */
+  lsn?: string
   /** network.set: who may connect, and how (see DatabaseNetwork). */
   reach?: string
   addresses?: string[]

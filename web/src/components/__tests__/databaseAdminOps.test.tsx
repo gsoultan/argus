@@ -164,3 +164,53 @@ describe('Replay', () => {
     expect(statements[0]!.sql).toContain('password=[redacted]')
   })
 })
+
+describe('A subscription that turns itself off', () => {
+  const stopped: PGSubscription = { ...sub, name: 'athena_sub', enabled: false, workerPid: undefined, applyErrors: 4, syncErrors: 0, disableOnError: 'on' }
+  const why = {
+    name: 'athena_sub', enabled: false, disableOnError: 'on', owner: 'rangga.rudiyanto', origin: 'pg_16429', errors: 4,
+    log: '/var/log/postgresql/postgresql-19-main.log', turnedOff: true, turnedOffAt: '2026-11-28 09:56:22.434 UTC',
+    error: {
+      at: '2026-11-28 09:56:22.434 UTC', severity: 'ERROR', code: '23505', message: 'duplicate key value violates unique constraint "orders_pkey"',
+      detail: 'Key (id)=(5) already exists.', table: 'public.orders', change: 'INSERT', xid: '739', lsn: '0/1D5B8F0',
+      constraint: 'orders_pkey', keyColumns: 'id', keyValues: '5',
+    },
+  }
+
+  it('says why under it, with the fix, and opens the fix in the editor without running it', async () => {
+    const { admin, ops } = fakeAdmin((op) => (op.kind === 'subscription.list' ? [stopped] : op.kind === 'subscription.why' ? why : []))
+    const open = vi.fn()
+    ui(<ReplicationPanel {...base} admin={admin} level="dba" onOpenSql={open} />)
+    fireEvent.click(await screen.findByText('Subscriptions · 1'))
+    await waitFor(() => expect(screen.getByText(/turned itself off after an error/)).toBeInTheDocument())
+    expect(ops.filter((o) => o.kind === 'subscription.why')).toEqual([{ kind: 'subscription.why', name: 'athena_sub' }])
+    expect(screen.getByText('turned itself off')).toBeInTheDocument()
+    expect(screen.getByText(/already has a row with that key/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Open the fix in the editor' }))
+    expect(open).toHaveBeenCalledWith(expect.stringContaining("SELECT * FROM public.orders WHERE (id) = ('5');"), 'Fix athena_sub')
+    expect(ops.some((o) => o.kind === 'subscription.enable' || o.kind === 'subscription.skip')).toBe(false)
+  })
+
+  it('says so right away when Enable does not stick', async () => {
+    const { admin, ops } = fakeAdmin((op) => (op.kind === 'subscription.list' ? [stopped] : op.kind === 'subscription.why' ? why : []))
+    ui(<ReplicationPanel {...base} admin={admin} level="dba" />)
+    fireEvent.click(await screen.findByText('Subscriptions · 1'))
+    const enable = await screen.findByRole('button', { name: 'Enable' })
+    fireEvent.click(enable)
+    await waitFor(() => expect(screen.getByText(/You enabled it and it turned itself off again about \d+ s later/)).toBeInTheDocument(), { timeout: 5000 })
+    expect(ops.some((o) => o.kind === 'subscription.enable' && o.name === 'athena_sub')).toBe(true)
+  })
+
+  it('skips the failed transaction only after the consequence is acknowledged, by its LSN', async () => {
+    const { admin, ops } = fakeAdmin((op) => (op.kind === 'subscription.list' ? [stopped] : op.kind === 'subscription.why' ? why : []))
+    ui(<ReplicationPanel {...base} admin={admin} level="dba" />)
+    fireEvent.click(await screen.findByText('Subscriptions · 1'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Skip this transaction…' }))
+    const go = await screen.findByRole('button', { name: 'Skip it and enable' })
+    expect(go).toBeDisabled()
+    expect(ops.some((o) => o.kind === 'subscription.skip')).toBe(false)
+    fireEvent.click(screen.getByLabelText(/will not reach this database/))
+    await waitFor(() => expect(ops.at(-1)).toMatchObject({ kind: 'subscription.skip', name: 'athena_sub', lsn: '0/1D5B8F0', preview: true }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Skip it and enable' })).toBeEnabled())
+  })
+})

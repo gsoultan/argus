@@ -215,6 +215,13 @@ const (
 	AdminSubscriptionPublications = "subscription.publications"
 	AdminSubscriptionOptions      = "subscription.options"
 	AdminSubscriptionDrop         = "subscription.drop"
+	// AdminSubscriptionWhy reads why a subscription stopped: the last apply
+	// error the server logged for it, with its table and the LSN of the
+	// transaction it failed in. AdminSubscriptionSkip skips that one
+	// transaction (ALTER SUBSCRIPTION … SKIP) and turns the subscription
+	// back on; what the transaction changed never reaches this database.
+	AdminSubscriptionWhy  = "subscription.why"
+	AdminSubscriptionSkip = "subscription.skip"
 
 	// AdminNetwork reads which machines can connect: listen_addresses,
 	// Argus's pg_hba.conf lines and the server's firewall. AdminNetworkSet
@@ -267,6 +274,9 @@ type PGAdminOp struct {
 	// PublisherGone drops a subscription without contacting the publisher
 	// to remove its slot: the slot is then the publisher's to clean up.
 	PublisherGone bool `json:"publisherGone,omitempty"`
+	// LSN is the publisher transaction subscription.skip skips: the
+	// "finished at" of the error that stopped it.
+	LSN string `json:"lsn,omitempty"`
 	// For network.set: who may connect, the server's addresses Postgres
 	// listens on, the machines let in, the server's name typed to open it
 	// to anywhere, and whether Postgres may be restarted to listen anew.
@@ -305,7 +315,7 @@ type PGConnInfo struct {
 // and is neither recorded nor audited.
 func (o *PGAdminOp) Mutates() bool {
 	switch o.Kind {
-	case AdminExtensionList, AdminPublicationList, AdminSubscriptionList, AdminNetwork, AdminPoolerStats, AdminMySQLPerf,
+	case AdminExtensionList, AdminPublicationList, AdminSubscriptionList, AdminSubscriptionWhy, AdminNetwork, AdminPoolerStats, AdminMySQLPerf,
 		AdminRoleList, AdminRolePrivileges, AdminGrantObjects,
 		AdminMSPrincipals, AdminMSPermissions, AdminMSObjects,
 		AdminMSActivity, AdminMSPerformance, AdminMSIndexes, AdminMSIntegrity, AdminMSJobs, AdminMSSettings, AdminMSHealth,
