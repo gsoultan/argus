@@ -39,7 +39,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/hashchain"
 	"github.com/gsoultan/argus/internal/tlsconfig"
@@ -256,7 +256,7 @@ const secretsServerColumns = `id::text, name, mode, url, tls_pin, folders, seal_
 	created_by, created_at, credential_hash IS NOT NULL, enroll_expires_at, tunnel_seen_at, tunnel_replica,
 	tunnel_replica IS NOT NULL AND tunnel_seen_at > now() - interval '90 seconds'` // tunnelFreshFor
 
-func scanSecretsServer(row pgx.Row) (SecretsServer, error) {
+func scanSecretsServer(row rowScanner) (SecretsServer, error) {
 	var s SecretsServer
 	err := row.Scan(&s.ID, &s.Name, &s.Mode, &s.URL, &s.TLSPin, &s.Folders, &s.SealKey, &s.Version, &s.SecretCount,
 		&s.RulesSerial, &s.rulesHash, &s.RulesPushedAt, &s.LogSeq, &s.logHead, &s.LogGap, &s.LogGapAt,
@@ -292,7 +292,7 @@ func (s *Store) SecretsServer(ctx context.Context, id string) (SecretsServer, er
 		return SecretsServer{}, ErrNoSecretsServer
 	}
 	srv, err := scanSecretsServer(s.db(ctx).QueryRow(ctx, `SELECT `+secretsServerColumns+` FROM secrets_servers WHERE id = $1`, id))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return srv, ErrNoSecretsServer
 	}
 	return srv, err
@@ -302,7 +302,7 @@ func (s *Store) SecretsServer(ctx context.Context, id string) (SecretsServer, er
 func (s *Store) SecretsServerFor(ctx context.Context, name string) (SecretsServer, error) {
 	srv, err := scanSecretsServer(s.db(ctx).QueryRow(ctx, `SELECT `+secretsServerColumns+` FROM secrets_servers
 		WHERE $1 = ANY(folders)`, vault.Folder(name)))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return srv, ErrNoServerForSecret
 	}
 	return srv, err
@@ -312,7 +312,7 @@ func (s *Store) SecretsServerFor(ctx context.Context, name string) (SecretsServe
 // another server is refused: each name has exactly one home.
 func (s *Store) SaveSecretsServer(ctx context.Context, id string, in SecretsServerInput, sealKey, version, by string) (SecretsServer, error) {
 	var out SecretsServer
-	err := pgx.BeginFunc(ctx, s.db(ctx), func(tx pgx.Tx) error {
+	err := caduceus.BeginFunc(ctx, s.db(ctx), func(tx *caduceus.Tx) error {
 		// Two admins adding servers for the same folder at once would both
 		// pass the check below without this.
 		if _, err := tx.Exec(ctx, `LOCK TABLE secrets_servers IN SHARE ROW EXCLUSIVE MODE`); err != nil {
@@ -324,7 +324,7 @@ func (s *Store) SaveSecretsServer(ctx context.Context, id string, in SecretsServ
 		if err == nil {
 			return ErrInvalidSecrets{fmt.Sprintf("%s already keeps the folder %s; a folder lives on one server", other, folder)}
 		}
-		if !errors.Is(err, pgx.ErrNoRows) {
+		if !errors.Is(err, caduceus.ErrNoRows) {
 			return err
 		}
 		if id == "" {
@@ -348,7 +348,7 @@ func (s *Store) SaveSecretsServer(ctx context.Context, id string, in SecretsServ
 				version = CASE WHEN $7 = '' THEN version ELSE $7 END, rules_hash = '', updated_at = now()
 				WHERE id = $1 RETURNING `+secretsServerColumns,
 				id, in.Name, in.URL, in.TLSPin, in.Folders, sealKey, version))
-			if errors.Is(err, pgx.ErrNoRows) {
+			if errors.Is(err, caduceus.ErrNoRows) {
 				return ErrNoSecretsServer
 			}
 		}
@@ -367,7 +367,7 @@ func (s *Store) RemoveSecretsServer(ctx context.Context, id string) (SecretsServ
 		return SecretsServer{}, ErrNoSecretsServer
 	}
 	srv, err := scanSecretsServer(s.db(ctx).QueryRow(ctx, `DELETE FROM secrets_servers WHERE id = $1 RETURNING `+secretsServerColumns, id))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return srv, ErrNoSecretsServer
 	}
 	return srv, err
@@ -423,7 +423,7 @@ func (s *Store) resumeSecretsLog(ctx context.Context, id string, seq int64, head
 
 const secretRuleColumns = `id::text, path, subjects, can, needs_approval, note, created_by, created_at`
 
-func scanSecretRule(row pgx.Row) (SecretRule, error) {
+func scanSecretRule(row rowScanner) (SecretRule, error) {
 	var r SecretRule
 	var subjects []byte
 	err := row.Scan(&r.ID, &r.Path, &subjects, &r.Can, &r.NeedsApproval, &r.Note, &r.CreatedBy, &r.CreatedAt)
@@ -459,7 +459,7 @@ func (s *Store) SecretRules(ctx context.Context) ([]SecretRule, error) {
 func (s *Store) SaveSecretRule(ctx context.Context, id string, r SecretRule, by string) (SecretRule, error) {
 	subjects, _ := json.Marshal(r.Subjects)
 	var out SecretRule
-	err := pgx.BeginFunc(ctx, s.db(ctx), func(tx pgx.Tx) error {
+	err := caduceus.BeginFunc(ctx, s.db(ctx), func(tx *caduceus.Tx) error {
 		var err error
 		if id == "" {
 			var n int
@@ -480,7 +480,7 @@ func (s *Store) SaveSecretRule(ctx context.Context, id string, r SecretRule, by 
 		out, err = scanSecretRule(tx.QueryRow(ctx, `UPDATE secret_rules SET path = $2, subjects = $3, can = $4,
 			needs_approval = $5, note = $6, updated_at = now() WHERE id = $1 RETURNING `+secretRuleColumns,
 			id, r.Path, subjects, r.Can, r.NeedsApproval, r.Note))
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, caduceus.ErrNoRows) {
 			return ErrNoSecretRule
 		}
 		return err
@@ -494,7 +494,7 @@ func (s *Store) RemoveSecretRule(ctx context.Context, id string) (SecretRule, er
 		return SecretRule{}, ErrNoSecretRule
 	}
 	r, err := scanSecretRule(s.db(ctx).QueryRow(ctx, `DELETE FROM secret_rules WHERE id = $1 RETURNING `+secretRuleColumns, id))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return r, ErrNoSecretRule
 	}
 	return r, err

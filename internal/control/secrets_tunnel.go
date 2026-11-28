@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gsoultan/caduceus"
 	"github.com/hashicorp/yamux"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/gsoultan/argus/internal/vault"
 )
@@ -74,7 +74,7 @@ func (s *Store) secretsEnroll(ctx context.Context, token, cred, version string) 
 		enroll_token_hash = NULL, enroll_expires_at = NULL, version = $3, updated_at = now()
 		WHERE enroll_token_hash = $1 AND enroll_expires_at > now() AND mode = 'tunnel'
 		RETURNING `+secretsServerColumns, hashSecret(token), hashSecret(cred), version))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return srv, ErrNoSecretsServer
 	}
 	return srv, err
@@ -83,7 +83,7 @@ func (s *Store) secretsEnroll(ctx context.Context, token, cred, version string) 
 func (s *Store) secretsServerByCredential(ctx context.Context, cred string) (SecretsServer, error) {
 	srv, err := scanSecretsServer(s.db(ctx).QueryRow(ctx, `SELECT `+secretsServerColumns+` FROM secrets_servers
 		WHERE credential_hash = $1 AND mode = 'tunnel'`, hashSecret(cred)))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return srv, ErrNoSecretsServer
 	}
 	return srv, err
@@ -103,7 +103,7 @@ func (s *Store) secretsTunnelSeen(ctx context.Context, id string, since time.Tim
 	var one int
 	err := s.db(ctx).QueryRow(ctx, `UPDATE secrets_servers SET tunnel_seen_at = now()
 		WHERE id = $1 AND tunnel_connected_at = $2 AND credential_hash IS NOT NULL RETURNING 1`, id, since).Scan(&one)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return false, nil
 	}
 	return err == nil, err

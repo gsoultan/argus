@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/vault"
 )
@@ -57,14 +57,14 @@ var ErrNoSecretRequest = errors.New("no such request")
 const secretRequestColumns = `id::text, requester_email, secret_name, reason, minutes, state, decided_by, decided_at,
 	decision_note, expires_at, created_at`
 
-func scanSecretRequest(row pgx.Row) (SecretReadRequest, error) {
+func scanSecretRequest(row rowScanner) (SecretReadRequest, error) {
 	var q SecretReadRequest
 	err := row.Scan(&q.ID, &q.Requester, &q.Name, &q.Reason, &q.Minutes, &q.State, &q.DecidedBy, &q.DecidedAt,
 		&q.DecisionNote, &q.ExpiresAt, &q.CreatedAt)
 	return q, err
 }
 
-func collectSecretRequests(rows pgx.Rows, err error) ([]SecretReadRequest, error) {
+func collectSecretRequests(rows *caduceus.Rows, err error) ([]SecretReadRequest, error) {
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +92,7 @@ func (s *Store) SecretRequests(ctx context.Context, email string, decider bool) 
 // CreateSecretRequest asks. One pending request per person and secret.
 func (s *Store) CreateSecretRequest(ctx context.Context, email, name, reason string, minutes int) (SecretReadRequest, error) {
 	var out SecretReadRequest
-	err := pgx.BeginFunc(ctx, s.db(ctx), func(tx pgx.Tx) error {
+	err := caduceus.BeginFunc(ctx, s.db(ctx), func(tx *caduceus.Tx) error {
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('argus_secret_request:' || lower($1) || ':' || $2))`, email, name); err != nil {
 			return err
 		}
@@ -118,7 +118,7 @@ func (s *Store) SecretRequest(ctx context.Context, id string) (SecretReadRequest
 		return SecretReadRequest{}, ErrNoSecretRequest
 	}
 	q, err := scanSecretRequest(s.db(ctx).QueryRow(ctx, `SELECT `+secretRequestColumns+` FROM secret_read_requests WHERE id = $1`, id))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return q, ErrNoSecretRequest
 	}
 	return q, err
@@ -132,7 +132,7 @@ func (s *Store) DecideSecretRequest(ctx context.Context, id, state, by, note str
 			expires_at = CASE WHEN $2 = 'approved' THEN now() + make_interval(mins => minutes) END
 		WHERE id = $1 AND state = 'pending' AND ($5 OR $2 = 'cancelled' OR lower(requester_email) <> lower($3))
 		RETURNING `+secretRequestColumns, id, state, by, note, own))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return q, ErrNoSecretRequest
 	}
 	return q, err
