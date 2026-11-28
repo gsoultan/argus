@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { SummaryTiles } from '~/components/DatabaseShell'
 import {
   ActionIcon, Badge, Box, Button, Code, Group, Loader, Paper, ScrollArea, SegmentedControl, Stack, Table, Text, Tooltip,
 } from '@mantine/core'
@@ -192,12 +193,19 @@ function Summary({ loaded, level }: { loaded: Loaded; level: AdminPanelProps['le
   const c = report.connections
   const high = report.findings.filter((f) => f.severity === 'high').length
   const medium = report.findings.filter((f) => f.severity === 'medium').length
+  const low = report.findings.filter((f) => f.severity === 'low').length
   const p = facts.pooler
   const pooler = p === null ? (facts.viaPooler ? 'needs DBA to read' : 'not read below DBA')
     : !p ? '' : !p.found ? 'none on this server' : `${p.settings?.pool_mode ?? '?'} mode, port ${p.port}${p.liveError ? ' (file only)' : ''}`
   return (
     <Paper withBorder p="sm" radius="md">
-      <Group gap="lg" wrap="wrap">
+      <SummaryTiles narrow={false} tiles={[
+        { label: 'High', value: String(high), note: high ? 'fix first' : 'none', tone: high ? 'denied' : undefined },
+        { label: 'Medium', value: String(medium), note: medium ? 'worth a look' : 'none', tone: medium ? 'pending' : undefined },
+        { label: 'Low', value: String(low), note: low ? 'when there is time' : 'none' },
+        { label: 'Counted over', value: duration(report.countingS), note: facts.overview.statsReset ? 'since the reset' : 'since start' },
+      ]} />
+      <Group gap="lg" wrap="wrap" mt="sm">
         <Stat label="Findings" value={high || medium ? `${high} high, ${medium} medium` : 'none serious'}
           tone={high ? INK.denied : medium ? INK.pending : INK.verified} />
         <Stat label="Cache hit" value={report.cacheHit === null ? '—' : `${(report.cacheHit * 100).toFixed(2)}%`}

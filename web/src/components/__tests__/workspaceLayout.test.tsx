@@ -1,13 +1,13 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DatabaseWorkspace } from '~/components/DatabaseWorkspace'
+import { DatabaseWorkspace, railCountQueries, railFor, withBackupAge, withCounts } from '~/components/DatabaseWorkspace'
 import { renderWithProviders } from '~/test/render'
-import type { DBLevel, Database } from '~/types/domain'
+import type { DBLevel, Database, DatabaseBackup } from '~/types/domain'
 import { compactCount } from '~/components/DatabaseWorkspace'
 
 /**
- * The workspace's layout: one header, three tabs, and the administration
- * panels under Manage rather than under the object tree.
+ * The workspace's layout: one header, and one rail holding the editor, the
+ * diagram and every administration panel (plans/database-page-layout).
  */
 
 class FakeSocket {
@@ -56,44 +56,79 @@ describe('Workspace layout', () => {
   beforeEach(() => { localStorage.clear(); vi.stubGlobal('WebSocket', FakeSocket) })
   afterEach(() => { vi.unstubAllGlobals(); FakeSocket.last = null })
 
-  it('keeps the object tree to the schema and puts administration under Manage', async () => {
+  const rail = () => screen.getByRole('navigation', { name: 'Database' })
+
+  it('keeps the object tree to the schema and puts every panel on one rail', async () => {
     await open()
-    const tabs = screen.getByRole('tablist', { name: 'View' })
-    expect(within(tabs).getByRole('tab', { name: 'Query' })).toHaveAttribute('aria-selected', 'true')
+    // On the editor the rail is folded to icons, Query current.
+    expect(within(rail()).getByRole('button', { name: 'Query' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.queryByRole('tablist', { name: 'View' })).not.toBeInTheDocument()
     // The tree has the table, with its estimated rows, and no admin links.
     expect(await screen.findByLabelText('about 214,118 rows')).toHaveTextContent('≈214k')
     expect(screen.queryByText('Administration')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Trash/ })).not.toBeInTheDocument()
 
-    fireEvent.click(within(tabs).getByRole('tab', { name: 'Manage' }))
-    expect(within(tabs).getByRole('tab', { name: 'Manage' })).toHaveAttribute('aria-selected', 'true')
-    const nav = screen.getByLabelText('Manage')
-    // Opens on Activity, and each entry opens its panel without a back arrow.
-    expect(within(nav).getByRole('button', { name: /Activity & locks/ })).toHaveAttribute('aria-current', 'page')
-    fireEvent.click(within(nav).getByRole('button', { name: /Trash/ }))
-    expect(within(nav).getByRole('button', { name: /Trash/ })).toHaveAttribute('aria-current', 'page')
+    // A panel opens straight from the rail, which then opens wide.
+    fireEvent.click(within(rail()).getByRole('button', { name: 'Trash' }))
+    expect(within(rail()).getByRole('button', { name: /Trash/ })).toHaveAttribute('aria-current', 'page')
+    expect(within(rail()).getByText('Look after')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Back to the query editor' })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('about 214,118 rows')).not.toBeInTheDocument()
 
-    // Query goes back to the editor; Manage then reopens the panel last looked at.
-    fireEvent.click(within(tabs).getByRole('tab', { name: 'Query' }))
+    // Query goes back to the editor and its tree.
+    fireEvent.click(within(rail()).getByRole('button', { name: /Query/ }))
     expect(screen.getByLabelText('SQL')).toBeInTheDocument()
-    fireEvent.click(within(tabs).getByRole('tab', { name: 'Manage' }))
-    expect(within(screen.getByLabelText('Manage')).getByRole('button', { name: /Trash/ })).toHaveAttribute('aria-current', 'page')
+    expect(within(rail()).getByRole('button', { name: 'Query' })).toHaveAttribute('aria-current', 'page')
   })
 
-  it('opens on the panel a link names, under Manage', async () => {
+  it('lists every Postgres panel, Diagram included, in its section', async () => {
     await open('owner', db, 'backups')
-    expect(within(screen.getByRole('tablist', { name: 'View' })).getByRole('tab', { name: 'Manage' })).toHaveAttribute('aria-selected', 'true')
-    expect(within(screen.getByLabelText('Manage')).getByRole('button', { name: /Backups/ })).toHaveAttribute('aria-current', 'page')
+    const names = within(rail()).getAllByRole('button').map((b) => b.textContent).filter(Boolean)
+    expect(names).toEqual([
+      'Query', 'Diagram', 'Activity & locks', 'Performance', 'Backups', 'Data changes', 'Trash',
+      'Roles & access', 'Extensions', 'Replication', 'Network',
+    ])
+    // Below DBA the DBA section says so once, and each of its items carries a lock.
+    expect(within(rail()).getByText('Needs DBA')).toBeInTheDocument()
+    expect(within(rail()).getAllByLabelText('needs DBA access')).toHaveLength(4)
+  })
+
+  it('opens on the panel a link names', async () => {
+    await open('owner', db, 'backups')
+    expect(within(rail()).getByRole('button', { name: /Backups/ })).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('keeps the rail where the person pinned it', async () => {
+    await open()
+    // Folded on the editor; pinning it open survives a reload.
+    fireEvent.click(screen.getByRole('button', { name: 'Open the menu' }))
+    expect(within(rail()).getByText('Work')).toBeInTheDocument()
+    expect(localStorage.getItem('argus-db-rail')).toBe('open')
   })
 
   it('marks a production database across the top of the header', async () => {
     await open('read', { ...db, label: 'production' })
-    const header = screen.getByRole('tablist', { name: 'View' }).parentElement!
+    const header = screen.getByRole('banner')
     expect(header).toHaveAttribute('data-env', 'production')
     expect(header.style.boxShadow).toContain('rose')
     expect(within(header).getByText('orders')).toBeInTheDocument()
-    expect(within(header).getByText(/core-db-01 · Postgres 16.4/)).toBeInTheDocument()
+    expect(within(header).getByText('core-db-01')).toBeInTheDocument()
+    expect(within(header).getByText(/Postgres 16\.4/)).toBeInTheDocument()
+    // One strip: the approval rule, the level and the recording.
+    const strip = within(header).getByTestId('trust-strip')
+    expect(strip).toHaveTextContent(/Changes need approval/)
+    expect(strip).toHaveTextContent(/You can READ/)
+    expect(strip).toHaveTextContent(/Recorded/)
+  })
+})
+
+describe('MySQL workspace', () => {
+  beforeEach(() => { localStorage.clear(); vi.stubGlobal('WebSocket', FakeSocket) })
+  afterEach(() => { vi.unstubAllGlobals(); FakeSocket.last = null })
+
+  it('shows the Performance and Network panels it has on the rail', async () => {
+    await open('owner', { ...db, engine: 'mysql', port: 3306 }, 'network')
+    const names = within(screen.getByRole('navigation', { name: 'Database' })).getAllByRole('button').map((b) => b.textContent).filter(Boolean)
+    expect(names).toEqual(['Query', 'Performance', 'Network'])
   })
 })
 
@@ -101,7 +136,7 @@ describe('SQL Server workspace', () => {
   beforeEach(() => { localStorage.clear(); vi.stubGlobal('WebSocket', FakeSocket) })
   afterEach(() => { vi.unstubAllGlobals(); FakeSocket.last = null })
 
-  it('shows Query and Manage, opens dbo, and names the release', async () => {
+  it('lists its own panels, opens dbo, and names the release', async () => {
     const ms: Database = { ...db, engine: 'mssql', port: 1433, dbname: 'sales' }
     renderWithProviders(
       <DatabaseWorkspace database={ms} access={{ level: 'write' }} endpoint="/api/v1/postgres"
@@ -111,24 +146,23 @@ describe('SQL Server workspace', () => {
     const ws = FakeSocket.last!
     ws.push({ type: 'ready' })
     ws.answer({ id: 0, type: 'ready', level: 'write', role: 'ana@write', version: '16.0.4135.4' })
-    const tabs = screen.getByRole('tablist', { name: 'View' })
-    expect(within(tabs).getAllByRole('tab').map((t) => t.textContent)).toEqual(['Query', 'Manage'])
-    expect(screen.getByText(/core-db-01 · SQL Server 2022 \(16\.0\.4135\.4\)/)).toBeInTheDocument()
+    expect(screen.getByText(/SQL Server 2022 \(16\.0\.4135\.4\)/)).toBeInTheDocument()
     await waitFor(() => expect(ws.sent.some((r) => r.op === 'schema' && r.kind === 'schemas')).toBe(true))
     for (const r of ws.sent.filter((x) => x.op === 'schema' && x.kind === 'schemas')) ws.answer({ id: r.id, type: 'schema', objects: [{ name: 'dbo', kind: 'schema' }, { name: 'sales', kind: 'schema' }] })
     // dbo opens by itself, as public does on Postgres; other schemas wait for a click.
     await waitFor(() => expect(ws.sent.some((r) => r.op === 'schema' && r.kind === 'objects' && r.schema === 'dbo')).toBe(true))
     expect(ws.sent.some((r) => r.op === 'schema' && r.kind === 'objects' && r.schema === 'sales')).toBe(false)
 
-    // Manage has SQL Server's own panels, each at DBA only, and Backups.
-    fireEvent.click(within(tabs).getByRole('tab', { name: 'Manage' }))
-    const nav = screen.getByLabelText('Manage')
-    expect(within(nav).getAllByRole('button').map((b) => b.textContent)).toEqual([
-      'Activity & blockingDBA', 'PerformanceDBA', 'IntegrityDBA', 'Backups',
-      'Indexes & statisticsDBA', 'Agent jobsDBA', 'ReplicationDBA', 'Logins & accessDBA', 'SettingsDBA',
+    // SQL Server's own panels, no Diagram; each but Backups at DBA only.
+    const rail = () => screen.getByRole('navigation', { name: 'Database' })
+    fireEvent.click(within(rail()).getByRole('button', { name: 'Activity & blocking' }))
+    expect(within(rail()).getAllByRole('button').map((b) => b.textContent).filter(Boolean)).toEqual([
+      'Query', 'Activity & blocking', 'Performance', 'Integrity', 'Backups',
+      'Indexes & statistics', 'Agent jobs', 'Replication', 'Logins & access', 'Settings',
     ])
+    expect(within(rail()).getAllByLabelText('needs DBA access')).toHaveLength(8)
     expect(await screen.findByText('Activity & blocking needs DBA access')).toBeInTheDocument()
-    fireEvent.click(within(nav).getByRole('button', { name: /Logins & access/ }))
+    fireEvent.click(within(rail()).getByRole('button', { name: /Logins & access/ }))
     expect(await screen.findByText('Logins & access needs DBA access')).toBeInTheDocument()
     expect(ws.sent.some((r) => r.op === 'admin')).toBe(false)
   })
@@ -142,5 +176,49 @@ describe('compactCount', () => {
     expect(compactCount(999_400)).toBe('999k')
     expect(compactCount(999_800)).toBe('1M')
     expect(compactCount(1_200_000)).toBe('1.2M')
+  })
+})
+
+describe('withBackupAge', () => {
+  const now = Date.parse('2026-11-28T12:00:00Z')
+  const items = railFor('postgres')
+  const b = (state: string, at: string) => ({ state, startedAt: at, finishedAt: at } as unknown as DatabaseBackup)
+  it('shows the age of a recent backup beside Backups only', () => {
+    const out = withBackupAge(items, b('done', '2026-11-28T10:00:00Z'), now)
+    expect(out.find((i) => i.key === 'backups')?.count).toEqual({ text: '2h ago', tone: undefined })
+    expect(out.filter((i) => i.count)).toHaveLength(1)
+  })
+  it('flags a day-old backup and a failed one', () => {
+    expect(withBackupAge(items, b('done', '2026-11-26T12:00:00Z'), now).find((i) => i.key === 'backups')?.count?.tone).toBe('pending')
+    expect(withBackupAge(items, b('failed', '2026-11-28T11:00:00Z'), now).find((i) => i.key === 'backups')?.count).toEqual({ text: 'failed', tone: 'denied' })
+  })
+  it('leaves the rail alone with no backup', () => {
+    expect(withBackupAge(items, undefined, now)).toBe(items)
+  })
+})
+
+describe('rail counts', () => {
+  const read = (key: string, row: (string | null)[], level: DBLevel = 'dba') =>
+    railCountQueries('postgres', level).find((q) => q.key === key)?.read(row)
+  it('names connections waiting on a lock first, then idle transactions', () => {
+    expect(read('activity', ['1', '3'])).toEqual({ text: '1 waiting', tone: 'denied' })
+    expect(read('activity', ['0', '2'])).toEqual({ text: '2 idle in tx', tone: 'pending' })
+    expect(read('activity', ['0', '0'])).toBeUndefined()
+  })
+  it('counts replication only for a DBA, and flags a subscription that is off', () => {
+    expect(railCountQueries('postgres', 'write').map((q) => q.key)).toEqual(['activity'])
+    expect(read('replication', ['2', '4', '0', '1'])).toEqual({ text: '7' })
+    expect(read('replication', ['2', '4', '2', '1'])).toEqual({ text: '2 off', tone: 'denied' })
+  })
+  it('asks nothing of MySQL, and SQL Server only for a DBA', () => {
+    expect(railCountQueries('mysql', 'dba')).toEqual([])
+    expect(railCountQueries('mssql', 'read')).toEqual([])
+    expect(railCountQueries('mssql', 'dba').map((q) => q.key)).toEqual(['activity'])
+  })
+  it('puts a count on its item and keeps the backup age', () => {
+    const items = withBackupAge(railFor('postgres'), { state: 'done', startedAt: new Date().toISOString() } as unknown as DatabaseBackup)
+    const out = withCounts(items, { activity: { text: '1 waiting', tone: 'denied' }, backups: { text: 'x' } })
+    expect(out.find((i) => i.key === 'activity')?.count?.text).toBe('1 waiting')
+    expect(out.find((i) => i.key === 'backups')?.count?.text).toBe('0m ago')
   })
 })

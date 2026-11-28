@@ -1,3 +1,4 @@
+import { isRailCount } from '~/components/DatabaseWorkspace'
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DatabaseWorkspace } from '~/components/DatabaseWorkspace'
@@ -72,7 +73,8 @@ async function open(level: DBLevel = 'write') {
   return ws
 }
 
-const runs = (ws: FakeSocket) => ws.sent.filter((r) => r.op === 'run')
+// The rail's own counts are not the person's statements.
+const runs = (ws: FakeSocket) => ws.sent.filter((r) => r.op === 'run' && !isRailCount(String(r.sql)))
 
 /** Answers every run request the grid sends for itself: the table, its foreign keys. */
 function answerLookups(ws: FakeSocket, done: Set<unknown>) {

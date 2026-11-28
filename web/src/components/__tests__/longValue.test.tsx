@@ -1,3 +1,4 @@
+import { isRailCount } from '~/components/DatabaseWorkspace'
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DatabaseWorkspace } from '~/components/DatabaseWorkspace'
@@ -63,8 +64,8 @@ describe('A long value', () => {
 
     setEditor('SELECT id, rules FROM approval_rules')
     fireEvent.keyDown(screen.getByLabelText('SQL'), { key: 'Enter', ctrlKey: true })
-    await waitFor(() => expect(ws.sent.some((r) => r.op === 'run')).toBe(true))
-    const run = ws.sent.find((r) => r.op === 'run')!
+    await waitFor(() => expect(ws.sent.some((r) => r.op === 'run' && !isRailCount(String(r.sql)))).toBe(true))
+    const run = ws.sent.find((r) => r.op === 'run' && !isRailCount(String(r.sql)))!
     expect(run.whole).toBe(true)
     const id = run.id as number
 

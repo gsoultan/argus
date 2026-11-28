@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { screen, waitFor, fireEvent } from '@testing-library/react'
+import { screen, waitFor, fireEvent, within } from '@testing-library/react'
 import { renderWithProviders as ui } from '~/test/render'
 import { ExtensionsPanel, updateTarget } from '~/components/DatabaseExtensions'
 import { ReplicationPanel, fmtLag, subscriptionStatus, type PGSubscription } from '~/components/DatabaseReplication'
@@ -33,6 +33,13 @@ function fakeAdmin(answers: (op: AdminOp) => unknown): { admin: Admin; ops: Admi
 }
 
 const base = { collect, levels: {}, self: 'r_hakim', narrow: false, onBack: () => {} }
+
+
+// The subscription's menu: the ⋯ beside its main button.
+async function pickAction(name: string, item: string) {
+  fireEvent.click(screen.getByLabelText(`More for ${name}`))
+  fireEvent.click(await screen.findByRole('menuitem', { name: item }))
+}
 
 describe('Extensions panel', () => {
   it('is labelled, not hidden, below DBA and asks the agent for nothing', async () => {
@@ -93,14 +100,14 @@ describe('Replication panel', () => {
     ui(<ReplicationPanel {...base} admin={admin} level="dba" />)
     await waitFor(() => expect(screen.getByText('Subscriptions · 1')).toBeInTheDocument())
     fireEvent.click(screen.getByText('Subscriptions · 1'))
-    await waitFor(() => expect(screen.getByLabelText('Actions for orders_from_eu')).toBeInTheDocument())
-    fireEvent.change(screen.getByLabelText('Actions for orders_from_eu'), { target: { value: 'publications' } })
+    await waitFor(() => expect(screen.getByLabelText('More for orders_from_eu')).toBeInTheDocument())
+    await pickAction('orders_from_eu', 'Change publications…')
     const field = await screen.findByLabelText(/Publications on the publisher/)
     expect(field).toHaveValue('orders_pub')
     fireEvent.change(field, { target: { value: 'orders_pub, customers_pub' } })
     await waitFor(() => expect(ops.at(-1)).toMatchObject({ kind: 'subscription.publications', publications: ['orders_pub', 'customers_pub'], refresh: true, copyData: true, preview: true }))
     fireEvent.click(screen.getByText('Cancel'))
-    fireEvent.change(screen.getByLabelText('Actions for orders_from_eu'), { target: { value: 'options' } })
+    await pickAction('orders_from_eu', 'Options…')
     const button = await screen.findByRole('button', { name: 'Set options' })
     expect(button).toBeDisabled()
     fireEvent.click(screen.getByLabelText(/binary/))
@@ -122,13 +129,25 @@ describe('Replication panel', () => {
     expect(container.innerHTML).not.toMatch(/password=(?!\[redacted\])/)
   })
 
+  it('opens a subscription in a drawer with its connection, tables and actions, and no password', async () => {
+    const { admin } = fakeAdmin((op) => (op.kind === 'subscription.list' ? [sub] : []))
+    ui(<ReplicationPanel {...base} admin={admin} level="dba" />)
+    fireEvent.click(await screen.findByText('Subscriptions · 1'))
+    fireEvent.click(await screen.findByText('orders_from_eu'))
+    const drawer = await screen.findByRole('dialog')
+    expect(within(drawer).getByText('Connection')).toBeInTheDocument()
+    expect(within(drawer).getByText('set, never shown')).toBeInTheDocument()
+    expect(within(drawer).getByRole('button', { name: 'Change connection' })).toBeInTheDocument()
+    expect(drawer.innerHTML).not.toMatch(/password=(?!\[redacted\])/)
+  })
+
   it('requires typing the name before a drop, and sends the publisher-gone flag', async () => {
     const { admin, ops } = fakeAdmin((op) => (op.kind === 'subscription.list' ? [sub] : []))
     ui(<ReplicationPanel {...base} admin={admin} level="dba" />)
     await waitFor(() => expect(screen.getByText('Subscriptions · 1')).toBeInTheDocument())
     fireEvent.click(screen.getByText('Subscriptions · 1'))
-    await waitFor(() => expect(screen.getByLabelText('Actions for orders_from_eu')).toBeInTheDocument())
-    fireEvent.change(screen.getByLabelText('Actions for orders_from_eu'), { target: { value: 'drop' } })
+    await waitFor(() => expect(screen.getByLabelText('More for orders_from_eu')).toBeInTheDocument())
+    await pickAction('orders_from_eu', 'Drop…')
     const button = await screen.findByRole('button', { name: 'Drop subscription' })
     await waitFor(() => expect(screen.getByText('-- preview of subscription.drop')).toBeInTheDocument())
     expect(button).toBeDisabled()
@@ -195,7 +214,7 @@ describe('A subscription that turns itself off', () => {
     const { admin, ops } = fakeAdmin((op) => (op.kind === 'subscription.list' ? [stopped] : op.kind === 'subscription.why' ? why : []))
     ui(<ReplicationPanel {...base} admin={admin} level="dba" />)
     fireEvent.click(await screen.findByText('Subscriptions · 1'))
-    const enable = await screen.findByRole('button', { name: 'Enable' })
+    const enable = (await screen.findAllByRole('button', { name: 'Enable' }))[0]!
     fireEvent.click(enable)
     await waitFor(() => expect(screen.getByText(/You enabled it and it turned itself off again about \d+ s later/)).toBeInTheDocument(), { timeout: 5000 })
     expect(ops.some((o) => o.kind === 'subscription.enable' && o.name === 'athena_sub')).toBe(true)

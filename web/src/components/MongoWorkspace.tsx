@@ -7,7 +7,8 @@ import { IconGauge, IconLeaf, IconMenu2, IconNetwork, IconPlayerStop, IconPlus, 
 import { FS, SP } from '~/theme'
 import type { DBAccess, DBLevel, Database } from '~/types/domain'
 import { JsonView } from '~/components/JsonView'
-import { ConfirmByName, FatalBanner, StoreHeader } from '~/components/StoreChrome'
+import { ConfirmByName, FatalBanner } from '~/components/StoreChrome'
+import { DatabaseHeader, DatabaseRail, RailPicker, useRailFold, type RailItem } from '~/components/DatabaseShell'
 import { useStoreSession, type RedisKey, type StoreAnswer } from '~/components/useStoreSession'
 
 /*
@@ -195,12 +196,10 @@ export function MongoWorkspace({ database, access, getTicket, endpoint, onAskFor
           <IconRefresh size={14} />
         </ActionIcon>
       </Group>
-      {s.status === 'ready' && (level !== 'read' || canNetwork || canPerf) && (
+      {s.status === 'ready' && level !== 'read' && (
         <Group gap={6}>
-          {level !== 'read' && <Button size="compact-xs" variant="default" leftSection={<IconPlus size={12} />} onClick={() => setMaking('collection')}>Collection</Button>}
-          {level !== 'read' && <Button size="compact-xs" variant="default" leftSection={<IconPlus size={12} />} onClick={() => setMaking('index')} disabled={!colls.length}>Index</Button>}
-          {canNetwork && <Button size="compact-xs" variant="default" leftSection={<IconNetwork size={12} />} onClick={() => setNetwork(true)}>Network</Button>}
-          {canPerf && <Button size="compact-xs" variant="default" leftSection={<IconGauge size={12} />} onClick={() => setPerf(true)}>Performance</Button>}
+          <Button size="compact-xs" variant="default" leftSection={<IconPlus size={12} />} onClick={() => setMaking('collection')}>Collection</Button>
+          <Button size="compact-xs" variant="default" leftSection={<IconPlus size={12} />} onClick={() => setMaking('index')} disabled={!colls.length}>Index</Button>
         </Group>
       )}
       <Text size={FS.micro} c="dimmed">
@@ -227,19 +226,36 @@ export function MongoWorkspace({ database, access, getTicket, endpoint, onAskFor
 
   const prompt = `${database.hostname.split('.')[0]}:${database.dbname}>`
 
+  const railItems: RailItem[] = [
+    { key: 'collections', label: 'Collections', icon: IconLeaf, hint: 'The collections, their first documents, and the command line', group: 'work' },
+    ...(canPerf ? [{ key: 'performance', label: 'Performance', icon: IconGauge, hint: 'Slow operations, indexes and what to change', group: 'care' as const }] : []),
+    ...(canNetwork ? [{ key: 'network', label: 'Network', icon: IconNetwork, hint: 'Where it listens and which machines can connect', group: 'dba' as const }] : []),
+  ]
+  // Performance and Network open over the collections, as before.
+  const railKey = perf && canPerf ? 'performance' : network && canNetwork ? 'network' : 'collections'
+  const pick = (key: string) => {
+    setPerf(key === 'performance')
+    setNetwork(key === 'network')
+  }
+  const [railOpen, toggleRail] = useRailFold(true)
+  const detail = [s.ready?.version ? `MongoDB ${s.ready.version}` : '', s.ready?.user ? `as ${s.ready.user}` : ''].filter(Boolean).join(' · ')
+
   return (
-    <Box style={{ display: 'flex', height: narrow ? 'auto' : 'calc(100dvh - 120px)', minHeight: 480 }}>
+    <Box style={{ display: 'flex', flexDirection: 'column', height: narrow ? 'auto' : 'calc(100dvh - 120px)', minHeight: 480 }}>
+      <DatabaseHeader database={database} narrow={narrow} level={level} status={s.status} where={database.hostname} detail={detail || undefined}
+        canAsk={Boolean(access.approvable && onAskForAccess)} askLabel={`Ask for ${access.approvable}`} onAskForAccess={onAskForAccess}
+        left={narrow ? <ActionIcon variant="subtle" onClick={listDrawer.open} aria-label="Open the collections"><IconMenu2 size={18} /></ActionIcon> : undefined} />
+      {narrow && railItems.length > 1 && <RailPicker items={railItems} active={railKey} level={level} onPick={pick} />}
+      <Box style={{ display: 'flex', flex: 1, minHeight: 0 }}>
       {narrow ? (
         <Drawer opened={listOpen} onClose={listDrawer.close} size="85%" padding="xs" title="Collections">{browser}</Drawer>
       ) : (
-        <Box w={280} style={{ flexShrink: 0, borderRight: '1px solid var(--color-line)', overflow: 'hidden' }}>{browser}</Box>
+        <>
+          <DatabaseRail items={railItems} active={railKey} level={level} open={railOpen} onPick={pick} onToggle={toggleRail} />
+          <Box w={280} style={{ flexShrink: 0, borderRight: '1px solid var(--color-line)', overflow: 'hidden' }}>{browser}</Box>
+        </>
       )}
       <Box style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        <StoreHeader database={database} access={access} level={level} status={s.status} narrow={narrow}
-          onAskForAccess={onAskForAccess} icon={<IconLeaf size={16} color="var(--color-brand)" />}
-          title={`MongoDB · ${database.dbname}`}
-          detail={`${database.hostname}${s.ready?.version ? ` · MongoDB ${s.ready.version}` : ''}${s.ready?.user ? ` · as ${s.ready.user}` : ''}`}
-          left={narrow ? <ActionIcon variant="subtle" onClick={listDrawer.open} aria-label="Open the collections"><IconMenu2 size={18} /></ActionIcon> : undefined} />
         <FatalBanner fatal={s.fatal} />
 
         <Box style={{ flex: '1 1 50%', minHeight: narrow ? 220 : 0, overflow: 'auto', borderBottom: '1px solid var(--color-line)' }} p="md">
@@ -277,6 +293,7 @@ export function MongoWorkspace({ database, access, getTicket, endpoint, onAskFor
             )}
           </Group>
         </Box>
+      </Box>
       </Box>
       {making && (
         <Suspense fallback={null}>
