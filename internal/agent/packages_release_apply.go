@@ -77,6 +77,14 @@ func (a *PackageApplier) applyRelease(ctx context.Context) PackageRunStatus {
 		if err := a.answerGrub(ctx); err != nil {
 			return a.unchanged(err.Error())
 		}
+		// The upgraders want the release they leave fully up to date, which
+		// is more than the updates the console lists (phased ones, and those
+		// apt keeps back without a full upgrade).
+		if err := a.catchUp(ctx, info); err != nil {
+			a.lw.Flush()
+			a.writeReport(ctx, m)
+			return a.failErr(err, &RunOutcome{Changed: ChangedUnknown})
+		}
 	}
 	change := &ReleaseChange{Distro: info.Distro, From: info.Version, FromName: info.Current, To: info.Next,
 		ToName: info.NextName, Tool: info.Tool}
@@ -103,7 +111,7 @@ func (a *PackageApplier) applyRelease(ctx context.Context) PackageRunStatus {
 	a.lw.Flush()
 	if err != nil {
 		a.writeReport(ctx, m)
-		return a.failErr(err, &RunOutcome{Changed: ChangedUnknown})
+		return a.failErr(a.withCaughtUp(err, info), &RunOutcome{Changed: ChangedUnknown})
 	}
 	if info.Tool != releaseToolLeapp {
 		// The upgrade has rewritten os-release by now. A tool that exited 0
@@ -155,6 +163,25 @@ func (a *PackageApplier) unchanged(msg string, next ...string) PackageRunStatus 
 	return a.failWith(msg, RunOutcome{Changed: ChangedNo, Why: msg, Next: next})
 }
 
+// withCaughtUp says, on a release upgrade that stopped without changing
+// anything itself, that the updates installed for the current release
+// before it stay installed: the server did change, and is still on its
+// release.
+func (a *PackageApplier) withCaughtUp(err error, info *ReleaseInfo) error {
+	var oe *outcomeError
+	if a.caughtUp == 0 || !errors.As(err, &oe) || oe.outcome.Changed != ChangedNo {
+		return err
+	}
+	oe.outcome.Changed = ChangedYes
+	stay := "they stay"
+	if a.caughtUp == 1 {
+		stay = "it stays"
+	}
+	oe.msg = strings.TrimSuffix(oe.msg, ".") + fmt.Sprintf(". Before it, Argus installed %d update%s for %s, and "+
+		"%s installed; the server is still on %s", a.caughtUp, plural(a.caughtUp), info.Current, stay, info.Current)
+	return oe
+}
+
 func orUnknown(s string) string {
 	if s == "" {
 		return "an unknown release"
@@ -171,7 +198,11 @@ func orUnknown(s string) string {
 func (a *PackageApplier) aptPartWay(ctx context.Context, tool string, code int, out, term []byte, log string) error {
 	why := tail(out, 400)
 	failed := dpkgFailed(term)
-	changed := dpkgChangedSince(a.snapshot().StartedAt)
+	since := a.snapshot().StartedAt
+	if !a.releaseSince.IsZero() {
+		since = a.releaseSince
+	}
+	changed := dpkgChangedSince(since)
 	if changed == ChangedNo {
 		fmt.Fprintln(a.lw, "argus: "+tool+" stopped before dpkg changed any package; nothing was changed")
 		a.lw.Flush()
@@ -250,6 +281,12 @@ func (a *PackageApplier) upgradeUbuntu(ctx context.Context, info *ReleaseInfo) e
 	}
 	if code == 0 {
 		return nil
+	}
+	if bytes.Contains(b.Bytes(), []byte(distUpgradeNotUpToDate)) {
+		// It refuses before it writes or changes anything.
+		fmt.Fprintln(a.lw, "argus: do-release-upgrade says "+info.Current+" is not fully up to date; nothing was changed by it")
+		a.lw.Flush()
+		return a.notUpToDate(ctx, info)
 	}
 	var logged bytes.Buffer
 	mainLog.read(&logged)

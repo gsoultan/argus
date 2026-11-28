@@ -116,6 +116,12 @@ type PackageApplier struct {
 	mu sync.Mutex
 	st PackageRunStatus
 	lw *runLog
+	// caughtUp is how many updates for the current release a release
+	// upgrade installed before it called the upgrader, and releaseSince
+	// when the upgrade itself began: what it changed is read from dpkg's
+	// log from then on.
+	caughtUp     int
+	releaseSince time.Time
 }
 
 // RunPackagesApply is `argus-agent packages-apply --plan <path>`.

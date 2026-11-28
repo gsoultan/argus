@@ -806,6 +806,7 @@ function ConfirmRun({ assetId, name, mode, names, view: v, onClose }: {
 
 const RELEASE_STEPS: { key: string; label: string; detail: string }[] = [
   { key: 'preflight', label: 'Check the server is ready', detail: 'and that it still offers the release approved' },
+  { key: 'catchup', label: 'Install what the current release still has waiting', detail: 'apt full-upgrade, phased updates included, before the upgrader runs' },
   { key: 'upgrade', label: 'Upgrade every package', detail: 'changed configuration files are kept as they are' },
   { key: 'reboot', label: 'Reboot into the new release', detail: 'Argus confirms the server is on it once it is back' },
 ]

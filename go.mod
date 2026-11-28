@@ -33,7 +33,7 @@ require (
 	github.com/gsoultan/caduceus v0.1.2-0.20261128055014-f5f78376a4eb
 	github.com/gsoultan/gsmail v0.11.0
 	github.com/gsoultan/panmail-sdk v0.1.1
-	github.com/gsoultan/storm/v2 v2.0.0-20261127163046-69426aa56d75
+	github.com/gsoultan/storm/v2 v2.0.0-20261128060413-3a670af7df24
 	github.com/hashicorp/yamux v0.1.2
 	github.com/jezek/xgb v1.3.1
 	github.com/klauspost/compress v1.20.4

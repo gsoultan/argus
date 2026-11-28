@@ -59,10 +59,22 @@ the agent, so it goes on if the agent restarts or loses the control plane.
    stops with "… does not exist, so cannot grub-install to it!" and leaves
    `grub-pc` unconfigured. There, a disk Argus cannot tell does not stop the
    update; it is said in the run's log.
-2. **Snapshot.** It records which programs the agent uses on the server are
+2. **Bring the current release up to date.** Ubuntu and Debian only.
+   `do-release-upgrade` refuses to start while the release it leaves has
+   updates waiting ("Please install all available updates for your release
+   before upgrading."), and it counts more than the console's list does:
+   phased updates, and packages apt keeps back without a full upgrade. So the
+   helper first runs `apt-get full-upgrade` with
+   `APT::Get::Always-Include-Phased-Updates=true`, keeping changed
+   configuration files. It simulates it first, and if apt would remove any
+   package it stops without changing anything: that is for a person to
+   decide. Held packages stay held. Anything still waiting afterwards is
+   named in the run's log, with why: held, from a third-party source such as
+   apt.postgresql.org, or kept back.
+3. **Snapshot.** It records which programs the agent uses on the server are
    present, and the package each came from: `sshd` and its `sftp-server`,
    and the PostgreSQL, MySQL/MariaDB and MongoDB clients.
-3. **Upgrade.**
+4. **Upgrade.**
    - Ubuntu: `do-release-upgrade -f DistUpgradeViewNonInteractive`, with
      `RemoveObsoletes=no` in `/etc/update-manager/release-upgrades.d/argus.cfg`
      for the run, so nothing the server had is removed because the new release
@@ -81,13 +93,13 @@ the agent, so it goes on if the agent restarts or loses the control plane.
    Changed configuration files are kept (`--force-confold`, and
    `UCF_FORCE_CONFFOLD=1` for files ucf manages such as `sshd_config`), so the
    SSH settings that send logins through Argus survive.
-4. **Reboot.** Always. With leapp the upgrade itself happens in this reboot.
-5. **Confirm.** The agent that starts on the new boot reads `/etc/os-release`.
+5. **Reboot.** Always. With leapp the upgrade itself happens in this reboot.
+6. **Confirm.** The agent that starts on the new boot reads `/etc/os-release`.
    The run is done only if the server is on the release that was approved;
    otherwise it fails and names the log to read
    (`/var/log/dist-upgrade/main.log`, `/var/log/apt/term.log` or
    `/var/log/leapp/leapp-upgrade.log`). It then finishes anything the package
-   manager left, installs again any program from step 2 that the upgrade took
+   manager left, installs again any program from step 3 that the upgrade took
    away (from the same package, or the new release's equivalent such as
    `postgresql-client`), removes Argus's upgrade setting, and looks for the new
    release's updates. The run's message says what was put back, what is still
@@ -105,6 +117,16 @@ ERROR lines from `/var/log/dist-upgrade/main.log`, not its download messages.
 If the upgrader put the server back the way it was ("Restoring original
 system state", or it could not work out the upgrade at all, with the release
 unchanged), the run says nothing was changed and leaves the server alone.
+
+If `do-release-upgrade` still says the release is not up to date, the run
+says nothing was changed by the upgrade and names each package still
+waiting and why, with what to run: `sudo apt-mark unhold <package>` for a
+held one, `sudo apt install --only-upgrade <package>` for one from a
+third-party source (or remove it, or turn that source off until the upgrade
+is done), and then `sudo apt -o APT::Get::Always-Include-Phased-Updates=true
+full-upgrade` until `apt list --upgradable` lists nothing. If Argus installed
+updates for the current release before that, the run says so: the server
+changed, and is still on its release.
 
 A common reason on database servers: packages from a third-party source, such
 as PostgreSQL extensions from apt.postgresql.org, have no version for the new
