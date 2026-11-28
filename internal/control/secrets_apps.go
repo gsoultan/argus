@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/vault"
 )
@@ -50,7 +50,7 @@ var ErrNoSecretApp = errors.New("no such app token")
 
 const secretAppColumns = `id::text, name, token_tail, expires_at, revoked_at, revoked_by, created_by, created_at`
 
-func scanSecretApp(row pgx.Row) (SecretApp, error) {
+func scanSecretApp(row rowScanner) (SecretApp, error) {
 	var a SecretApp
 	err := row.Scan(&a.ID, &a.Name, &a.TokenTail, &a.ExpiresAt, &a.RevokedAt, &a.RevokedBy, &a.CreatedBy, &a.CreatedAt)
 	return a, err
@@ -82,7 +82,7 @@ func (s *Store) CreateSecretApp(ctx context.Context, name string, ttl time.Durat
 		return SecretApp{}, "", err
 	}
 	var out SecretApp
-	err = pgx.BeginFunc(ctx, s.db(ctx), func(tx pgx.Tx) error {
+	err = caduceus.BeginFunc(ctx, s.db(ctx), func(tx *caduceus.Tx) error {
 		var n int
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM secret_apps WHERE revoked_at IS NULL AND expires_at > now()`).Scan(&n); err != nil {
 			return err
@@ -109,7 +109,7 @@ func (s *Store) RevokeSecretApp(ctx context.Context, id, by string) (SecretApp, 
 	}
 	a, err := scanSecretApp(s.db(ctx).QueryRow(ctx, `UPDATE secret_apps SET revoked_at = now(), revoked_by = $2, updated_at = now()
 		WHERE id = $1 AND revoked_at IS NULL RETURNING `+secretAppColumns, id, strings.ToLower(by)))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return a, ErrNoSecretApp
 	}
 	return a, err

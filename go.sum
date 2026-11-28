@@ -120,8 +120,8 @@ github.com/gsoultan/gsmail v0.11.0 h1:q5UWTn4HHpdusv5lERwpiH8XwK7d/6BaWxC/ZoKSJh
 github.com/gsoultan/gsmail v0.11.0/go.mod h1:FXkwGTT1Qph1Qi7El+wwr7OXuC0/rW7+Jue3/ZIYeOk=
 github.com/gsoultan/panmail-sdk v0.1.1 h1:dpYmvHugluCkRxReKqiNv0K3jdBTQZamX465DoFv2Xo=
 github.com/gsoultan/panmail-sdk v0.1.1/go.mod h1:nyPtNdRsP3kg4Vlk+3LJ2r3fBzwj1cahRpHGlcNMEaQ=
-github.com/gsoultan/storm/v2 v2.0.0-20261127163046-69426aa56d75 h1:5myBhC9a5ySPE882GkbHQbr4krjB1kUDSGmEIBSAMo0=
-github.com/gsoultan/storm/v2 v2.0.0-20261127163046-69426aa56d75/go.mod h1:7G8fYwMUR/eJvwnkixy0M8xRT7WGNCWO3LPRX3HS6/E=
+github.com/gsoultan/storm/v2 v2.0.0-20261128060413-3a670af7df24 h1:lkt4eZnhVcv+uOf1hBHfMVTm2bAbwls2V4/tOg8iqr4=
+github.com/gsoultan/storm/v2 v2.0.0-20261128060413-3a670af7df24/go.mod h1:7G8fYwMUR/eJvwnkixy0M8xRT7WGNCWO3LPRX3HS6/E=
 github.com/hashicorp/yamux v0.1.2 h1:XtB8kyFOyHXYVFnwT5C3+Bdo8gArse7j2AQ0DA0Uey8=
 github.com/hashicorp/yamux v0.1.2/go.mod h1:C+zze2n6e/7wshOZep2A70/aQU6QBRWJO/G6FT1wIns=
 github.com/jezek/xgb v1.3.1 h1:NQCAEfQyzN+3RjWUSHBuVIxQcy2YfG3/mNvKfs/0rEg=
