@@ -4,6 +4,7 @@ import {
 } from '@mantine/core'
 import { IconArrowLeft, IconLock, IconRefresh } from '@tabler/icons-react'
 import { FS, INK, SP } from '~/theme'
+import { SummaryTiles } from '~/components/DatabaseShell'
 import type { DBLevel } from '~/types/domain'
 
 /*
@@ -262,13 +263,15 @@ export function ActivityPanel({ collect, level, narrow, onBack }: AdminPanelProp
             <ActionIcon variant="subtle" onClick={() => void refresh()} loading={busy} aria-label="Refresh"><IconRefresh size={16} /></ActionIcon>
           </Group>
         )} />
-      <Group gap="md" px="md" py={6} style={{ borderBottom: '1px solid var(--color-line)' }} wrap="wrap">
-        <Text size={FS.meta}><b>{rows.length}</b> connections</Text>
-        <Text size={FS.meta}><b>{active}</b> active</Text>
-        <Text size={FS.meta} c={idleTx ? 'amber' : undefined}><b>{idleTx}</b> idle in transaction</Text>
-        <Text size={FS.meta} c={blocked ? 'rose' : undefined}><b>{blocked}</b> waiting on a lock</Text>
-        {asOf && <Text size={FS.micro} c="dimmed" ml="auto">as of {asOf.toLocaleTimeString()}</Text>}
-      </Group>
+      <Box px="md" py="sm" style={{ borderBottom: '1px solid var(--color-line)' }}>
+        <SummaryTiles narrow={narrow} tiles={[
+          { label: 'Connections', value: String(rows.length), note: 'now' },
+          { label: 'Active', value: String(active), note: 'running a statement' },
+          { label: 'Idle in transaction', value: String(idleTx), note: idleTx ? 'holding locks open' : undefined, tone: idleTx ? 'pending' : undefined },
+          { label: 'Waiting on a lock', value: String(blocked), note: blocked ? 'see Blocked by' : undefined, tone: blocked ? 'denied' : undefined },
+        ]} />
+        {asOf && <Text size={FS.micro} c="dimmed" mt={6} ta="right">as of {asOf.toLocaleTimeString()}</Text>}
+      </Box>
       {data?.error ? <Refused error={data.error} /> : !data ? <Loader size={16} m="md" /> : (
         <ScrollArea style={{ flex: 1 }} type="auto">
           <Table verticalSpacing={4} fz={12} style={{ fontFamily: 'var(--font-mono)' }} striped highlightOnHover>

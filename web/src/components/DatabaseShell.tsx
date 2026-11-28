@@ -29,6 +29,14 @@ export interface RailItem {
   group: RailGroup
   /** Runs as the server's admin account: shown with a lock below DBA. */
   dba?: boolean
+  /** A short count or age beside the name, such as "2h ago". */
+  count?: { text: string; tone?: 'pending' | 'denied' }
+}
+
+const COUNT_INK = { pending: 'var(--mantine-color-amber-text)', denied: 'var(--mantine-color-rose-text)' }
+
+function RailCount({ c }: { c: NonNullable<RailItem['count']> }) {
+  return <Text size={FS.micro} fw={c.tone ? 600 : 400} c={c.tone ? undefined : 'dimmed'} style={{ color: c.tone ? COUNT_INK[c.tone] : undefined, whiteSpace: 'nowrap' }}>{c.text}</Text>
 }
 
 const GROUP_TITLE: Record<RailGroup, string> = { work: 'Work', care: 'Look after', dba: 'DBA' }
@@ -206,10 +214,11 @@ export function DatabaseRail({ items, active, level, open, onPick, onToggle, foo
               return (
                 <Tooltip key={i.key} label={lockedFor(i, level) ? `${i.label} · needs DBA access` : i.label} withArrow position="right">
                   <UnstyledButton onClick={() => onPick(i.key)} aria-label={i.label} aria-current={on ? 'page' : undefined}
-                    w={40} h={40} style={{ borderRadius: 10, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    w={40} h={40} style={{ position: 'relative', borderRadius: 10, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                       background: on ? 'var(--color-brand-wash)' : undefined, color: on ? 'var(--color-brand)' : 'var(--mantine-color-dimmed)',
                       opacity: lockedFor(i, level) ? 0.6 : 1 }}>
                     <Icon size={19} />
+                    {i.count?.tone && <Box aria-hidden style={{ position: 'absolute', top: 7, right: 7, width: 7, height: 7, borderRadius: 7, background: COUNT_INK[i.count.tone] }} />}
                   </UnstyledButton>
                 </Tooltip>
               )
@@ -248,6 +257,7 @@ export function DatabaseRail({ items, active, level, open, onPick, onToggle, foo
                       {on && <Box style={{ position: 'absolute', left: -10, top: 7, bottom: 7, width: 3, borderRadius: '0 3px 3px 0', background: 'var(--color-brand)' }} />}
                       <Icon size={16} color={on ? 'var(--color-brand)' : 'var(--mantine-color-dimmed)'} />
                       <Text size={FS.body} fw={on ? 600 : 400} style={{ flex: 1 }}>{i.label}</Text>
+                      {i.count && !locked && <RailCount c={i.count} />}
                       {locked && <IconLock size={12} color="var(--mantine-color-dimmed)" aria-label="needs DBA access" />}
                     </UnstyledButton>
                   </Tooltip>
@@ -306,6 +316,7 @@ export function RailPicker({ items, active, level, onPick, right }: {
                     background: on ? 'var(--color-brand-wash)' : undefined, color: on ? 'var(--color-brand-ink)' : undefined }}>
                   <Icon size={18} color={on ? 'var(--color-brand)' : 'var(--mantine-color-dimmed)'} />
                   <Text size="sm" fw={on ? 600 : 400} style={{ flex: 1 }}>{i.label}</Text>
+                  {i.count && !lockedFor(i, level) && <RailCount c={i.count} />}
                   {lockedFor(i, level) && <Badge size="xs" variant="light" color="slate" leftSection={<IconLock size={10} />}>DBA</Badge>}
                 </UnstyledButton>
               )
@@ -327,5 +338,48 @@ export function RailSettingsLink({ dbId }: { dbId: string }) {
         Who can connect
       </Link>
     </Group>
+  )
+}
+
+/* ── Summary tiles ──────────────────────────────────────────────────────── */
+
+export interface SummaryTile {
+  label: string
+  value: string
+  /** A few words after the number: "running", "1.2 GB", "daily". */
+  note?: string
+  /** Only when the number means something: verified, pending or denied. */
+  tone?: 'verified' | 'pending' | 'denied'
+}
+
+const TONE: Record<NonNullable<SummaryTile['tone']>, { ink: string; wash: string; edge: string }> = {
+  verified: { ink: 'var(--mantine-color-teal-text)', wash: 'transparent', edge: 'var(--color-line)' },
+  pending: { ink: 'var(--mantine-color-amber-text)', wash: 'transparent', edge: 'var(--mantine-color-amber-light-hover)' },
+  denied: { ink: 'var(--mantine-color-rose-text)', wash: 'var(--mantine-color-rose-light)', edge: 'var(--mantine-color-rose-light-hover)' },
+}
+
+/**
+ * Up to four numbers a panel already loads, under its title. A tile adds no
+ * query of its own: it only says again, larger, what the panel read.
+ */
+export function SummaryTiles({ tiles, narrow }: { tiles: SummaryTile[]; narrow: boolean }) {
+  return (
+    <Box data-testid="summary-tiles" style={{ display: 'grid', gap: narrow ? 8 : 12,
+      gridTemplateColumns: `repeat(${narrow ? Math.min(2, tiles.length) : tiles.length}, minmax(0, 1fr))` }}>
+      {tiles.map((t) => {
+        const tone = t.tone ? TONE[t.tone] : null
+        return (
+          <Box key={t.label} px={14} py={10}
+            style={{ borderRadius: 12, border: `1px solid ${tone?.edge ?? 'var(--color-line)'}`, background: tone?.wash && tone.wash !== 'transparent' ? tone.wash : 'var(--color-surface)',
+              boxShadow: 'var(--shadow-card)', minWidth: 0 }}>
+            <Text size={FS.micro} c="dimmed" fw={500} truncate>{t.label}</Text>
+            <Group gap={8} wrap="nowrap" align="baseline" mt={2}>
+              <Text fw={650} size="xl" style={{ letterSpacing: '-0.02em', color: tone?.ink, whiteSpace: 'nowrap' }}>{t.value}</Text>
+              {t.note && <Text size={FS.micro} c="dimmed" truncate>{t.note}</Text>}
+            </Group>
+          </Box>
+        )
+      })}
+    </Box>
   )
 }

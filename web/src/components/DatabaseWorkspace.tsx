@@ -1,6 +1,6 @@
 import { Suspense, createContext, lazy, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { meQuery } from '~/lib/queries'
+import { databasesQuery, meQuery } from '~/lib/queries'
 import {
   ActionIcon, Badge, Box, Button, CloseButton, Drawer, Group, Loader, Menu, ScrollArea, Stack, Tabs, Text,
   TextInput, Tooltip, UnstyledButton,
@@ -14,7 +14,7 @@ import {
 } from '@tabler/icons-react'
 import { DatabaseHeader, DatabaseRail, RailPicker, RailSettingsLink, useRailFold, type RailItem } from '~/components/DatabaseShell'
 import { FS, SP, INK } from '~/theme'
-import type { DBAccess, DBLevel, Database } from '~/types/domain'
+import type { DBAccess, DBLevel, Database, DatabaseBackup } from '~/types/domain'
 import { ResultsGrid } from '~/components/ResultsGrid'
 import type { SaveResult } from '~/components/RowEdits'
 import type { Stmt } from '~/lib/rowEdit'
@@ -1408,7 +1408,10 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
     </Group>
   )
 
-  const railItems = railFor(dialect)
+  // The list of databases already carries each one's newest backup, so the
+  // rail can show its age without asking the server anything new.
+  const { data: all } = useQuery({ ...databasesQuery(), staleTime: 60_000 })
+  const railItems = withBackupAge(railFor(dialect), all?.lastBackups?.[database.id])
   const railKey = view === 'diagram' ? 'diagram' : panel
   const onWork = railKey === 'query' || railKey === 'diagram'
   const [railOpen, toggleRail] = useRailFold(onWork)
@@ -1893,6 +1896,24 @@ const WORK_DIAGRAM: RailItem = { key: 'diagram', label: 'Diagram', icon: IconSch
  * only: the others read Postgres's own catalogs. They used to open from a
  * link alone, as MySQL had no Manage tab.
  */
+/** Puts the newest backup's age beside Backups; a failed or day-old one is flagged. */
+export function withBackupAge(items: RailItem[], b: DatabaseBackup | undefined, now = Date.now()): RailItem[] {
+  if (!b) return items
+  const at = Date.parse(b.finishedAt ?? b.startedAt)
+  const old = now - at > 26 * 3600_000
+  const count: RailItem['count'] = b.state === 'failed' || b.state === 'missed'
+    ? { text: b.state, tone: 'denied' }
+    : { text: ago(now - at), tone: old ? 'pending' : undefined }
+  return items.map((i) => (i.key === 'backups' ? { ...i, count } : i))
+}
+
+function ago(ms: number): string {
+  const m = Math.max(0, Math.round(ms / 60_000))
+  if (m < 60) return `${m}m ago`
+  const h = Math.round(m / 60)
+  return h < 48 ? `${h}h ago` : `${Math.round(h / 24)}d ago`
+}
+
 export function railFor(dialect: Dialect): RailItem[] {
   const manage = dialect === 'mssql'
     ? MSSQL_MANAGE

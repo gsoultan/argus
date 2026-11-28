@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { SummaryTiles, type SummaryTile } from '~/components/DatabaseShell'
 import {
   ActionIcon, Alert, Anchor, Badge, Box, Button, Code, Group, Loader, Menu, Modal, NumberInput, Progress, Radio,
   ScrollArea, SegmentedControl, Stack, Switch, Table, Text, TextInput, Textarea, Tooltip,
@@ -138,6 +139,7 @@ export function BackupsPanel({ database, level, narrow, onBack, admin }: {
           {data?.restores.filter((r) => r.state === 'running' || r.state === 'pending').map((r) => (
             <RestoreCard key={r.id} r={r} database={database} dba={dba} />
           ))}
+          {data && <BackupTiles view={data} narrow={narrow} ms={ms} />}
           {data && <ScheduleLine s={data.schedule} database={database} admin={admin} storage={data.storage} />}
           {data && data.restores.some((r) => r.state === 'done' && r.renamedTo && !r.keptDropped) && (
             <KeptCopies restores={data.restores} database={database} dba={dba} />
@@ -328,6 +330,28 @@ function TestingCard({ t, database, dba, onOpen }: { t: BackupTest; database: Da
 }
 
 /** The newest backup proven to restore, and how long that took. */
+function BackupTiles({ view, narrow, ms }: { view: BackupsView; narrow: boolean; ms: boolean }) {
+  const last = view.backups.find((b) => b.state === 'done')
+  const failed = view.backups.find((b) => b.state !== 'running' && b.state !== 'deleted')?.state === 'failed'
+  const kept = view.backups.filter((b) => b.state === 'done').length
+  const s = view.schedule
+  const lastTest = view.tests.find((t) => t.state !== 'running')
+  const tiles: SummaryTile[] = [
+    { label: 'Last backup', value: last ? relTime(last.finishedAt ?? last.startedAt) : 'none yet',
+      note: failed ? 'the newest run failed' : last ? bytes(last.bytes) : undefined,
+      tone: failed ? 'denied' : last ? undefined : 'pending' },
+    { label: 'Next', value: s.enabled && s.nextRunAt ? relTime(s.nextRunAt) : 'not scheduled',
+      note: s.enabled ? s.every : 'turn on a schedule', tone: s.enabled ? undefined : 'pending' },
+    { label: 'Kept', value: String(kept), note: `last ${s.keepLast}${s.keepDays ? `, ${s.keepDays} days` : ''}` },
+  ]
+  if (!ms) tiles.push({
+    label: 'Test restore', value: lastTest ? TEST_WORD[lastTest.state] : 'never',
+    note: lastTest ? relTime(lastTest.startedAt) : s.testEvery === 'off' ? 'tests are off' : undefined,
+    tone: lastTest?.state === 'failed' ? 'denied' : lastTest?.state === 'passed' ? 'verified' : 'pending',
+  })
+  return <SummaryTiles narrow={narrow} tiles={tiles} />
+}
+
 function LastGoodCard({ view, onOpen }: { view: BackupsView; onOpen: (id: string) => void }) {
   const g = view.lastGood
   const lastTest = view.tests.find((t) => t.state !== 'running')

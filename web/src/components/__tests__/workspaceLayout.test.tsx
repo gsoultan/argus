@@ -1,8 +1,8 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DatabaseWorkspace } from '~/components/DatabaseWorkspace'
+import { DatabaseWorkspace, railFor, withBackupAge } from '~/components/DatabaseWorkspace'
 import { renderWithProviders } from '~/test/render'
-import type { DBLevel, Database } from '~/types/domain'
+import type { DBLevel, Database, DatabaseBackup } from '~/types/domain'
 import { compactCount } from '~/components/DatabaseWorkspace'
 
 /**
@@ -176,5 +176,23 @@ describe('compactCount', () => {
     expect(compactCount(999_400)).toBe('999k')
     expect(compactCount(999_800)).toBe('1M')
     expect(compactCount(1_200_000)).toBe('1.2M')
+  })
+})
+
+describe('withBackupAge', () => {
+  const now = Date.parse('2026-11-28T12:00:00Z')
+  const items = railFor('postgres')
+  const b = (state: string, at: string) => ({ state, startedAt: at, finishedAt: at } as unknown as DatabaseBackup)
+  it('shows the age of a recent backup beside Backups only', () => {
+    const out = withBackupAge(items, b('done', '2026-11-28T10:00:00Z'), now)
+    expect(out.find((i) => i.key === 'backups')?.count).toEqual({ text: '2h ago', tone: undefined })
+    expect(out.filter((i) => i.count)).toHaveLength(1)
+  })
+  it('flags a day-old backup and a failed one', () => {
+    expect(withBackupAge(items, b('done', '2026-11-26T12:00:00Z'), now).find((i) => i.key === 'backups')?.count?.tone).toBe('pending')
+    expect(withBackupAge(items, b('failed', '2026-11-28T11:00:00Z'), now).find((i) => i.key === 'backups')?.count).toEqual({ text: 'failed', tone: 'denied' })
+  })
+  it('leaves the rail alone with no backup', () => {
+    expect(withBackupAge(items, undefined, now)).toBe(items)
   })
 })
