@@ -1293,7 +1293,7 @@ func TestApplyReleaseRecordsSteps(t *testing.T) {
 	for _, s := range st.Steps {
 		got = append(got, s.Step)
 	}
-	if strings.Join(got, ",") != "refresh,preflight,upgrade,reboot" {
+	if strings.Join(got, ",") != "refresh,preflight,catchup,upgrade,reboot" {
 		t.Fatalf("steps = %v (run %+v)", got, st)
 	}
 }
