@@ -1,9 +1,10 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import {
-  ActionIcon, Badge, Box, Button, Checkbox, Code, Group, Loader, NumberInput, PasswordInput, ScrollArea, Select,
-  Switch, Table, Tabs, Text, Textarea, TextInput, Tooltip,
+  ActionIcon, Anchor, Badge, Box, Button, Checkbox, Code, Drawer, Group, Loader, Menu, NumberInput, PasswordInput, Popover, ScrollArea,
+  SegmentedControl, Select, Stack, Switch, Table, Text, Textarea, TextInput, Tooltip,
 } from '@mantine/core'
-import { IconRefresh } from '@tabler/icons-react'
+import { IconDots, IconRefresh } from '@tabler/icons-react'
+import { SummaryTiles } from '~/components/DatabaseShell'
 import { FS, INK } from '~/theme'
 import { notifyOk, notifyWarn } from '~/lib/notify'
 import { explain, needsWhy, whenLogged, type PGSubscriptionWhy, type WhyAction } from '~/lib/pgSubscriptionWhy'
@@ -214,6 +215,18 @@ export function ReplicationPanel({ admin, level, narrow, onBack, onAskForAccess,
     if (a === 'refresh') setForm({ mode: 'refresh-subscription', sub: s })
     if (a === 'options') setForm({ mode: 'subscription-options', sub: s })
   }
+  const subAction = (s: PGSubscription, v: SubAction) => {
+    const errs = (s.applyErrors ?? 0) + (s.syncErrors ?? 0)
+    if (v === 'enable') void enable(s.name)
+    if (v === 'why') { setPicked('s:' + s.name); void loadWhy(s.name, errs) }
+    if (v === 'disable') void act({ kind: 'subscription.disable', name: s.name }, `${s.name} disabled`)
+    if (v === 'refresh') setForm({ mode: 'refresh-subscription', sub: s })
+    if (v === 'connection') setForm({ mode: 'subscription-connection', sub: s })
+    if (v === 'publications') setForm({ mode: 'subscription-publications', sub: s })
+    if (v === 'options') setForm({ mode: 'subscription-options', sub: s })
+    if (v === 'drop') setForm({ mode: 'drop-subscription', sub: s })
+  }
+  const pickedSub = picked?.startsWith('s:') && !form ? subs?.find((x) => 's:' + x.name === picked) : undefined
   const streaming = database?.engine === 'postgres'
   const newButton = tab === 'publications'
     ? <Button size="xs" onClick={() => setForm({ mode: 'new-publication' })}>New publication</Button>
@@ -237,14 +250,16 @@ export function ReplicationPanel({ admin, level, narrow, onBack, onAskForAccess,
           onDone={() => { const f = form; closeForm(); if (f.mode === 'skip-subscription') void watch(f.sub.name) }} />
       ) : (
         <>
-          <Tabs value={tab} onChange={setTab} px="md">
-            <Tabs.List>
-              <Tabs.Tab value="publications" fz={FS.meta}>Publications{pubs ? ` · ${pubs.length}` : ''}</Tabs.Tab>
-              <Tabs.Tab value="subscriptions" fz={FS.meta}>Subscriptions{subs ? ` · ${subs.length}` : ''}</Tabs.Tab>
-              {streaming && <Tabs.Tab value="streaming" fz={FS.meta}>Streaming replicas</Tabs.Tab>}
-              {asOf && <Text size={FS.micro} c="dimmed" ml="auto" style={{ alignSelf: 'center' }}>as of {asOf.toLocaleTimeString()}</Text>}
-            </Tabs.List>
-          </Tabs>
+          {pubs && subs && <ReplicationTiles pubs={pubs} subs={subs} narrow={narrow} />}
+          <Group px="md" py="xs" gap="sm" wrap="wrap">
+            <SegmentedControl size="xs" value={tab ?? 'publications'} onChange={setTab} fullWidth={narrow} aria-label="Replication views"
+              data={[
+                { value: 'publications', label: `Publications${pubs ? ` · ${pubs.length}` : ''}` },
+                { value: 'subscriptions', label: `Subscriptions${subs ? ` · ${subs.length}` : ''}` },
+                ...(streaming ? [{ value: 'streaming', label: 'Streaming replicas' }] : []),
+              ]} />
+            {asOf && <Text size={FS.micro} c="dimmed" ml="auto">as of {asOf.toLocaleTimeString()}</Text>}
+          </Group>
           {tab === 'streaming' && streaming && database ? (
             <ScrollArea style={{ flex: 1 }} type="auto"><StreamingReplicas database={database} narrow={narrow} /></ScrollArea>
           ) : <>
@@ -279,9 +294,9 @@ export function ReplicationPanel({ admin, level, narrow, onBack, onAskForAccess,
                     </Table.Tbody>
                   </Table>
                   {pubs.length === 0 && <Text size={FS.meta} c="dimmed" p="md">This database publishes nothing yet.</Text>}
-                  <Text size={FS.micro} c="dimmed" p="md">
+                  <WhereFrom>
                     Every publication on this server is listed, whoever made it; one set up outside Argus can be changed here the same way, and the change is recorded. Which tables an all-tables publication covers cannot be changed, only what it publishes. Publishing all tables needs superuser, which the helper has.
-                  </Text>
+                  </WhereFrom>
                 </>
               )}
               {tab === 'subscriptions' && (
@@ -298,7 +313,7 @@ export function ReplicationPanel({ admin, level, narrow, onBack, onAskForAccess,
                         const errs = (s.applyErrors ?? 0) + (s.syncErrors ?? 0)
                         return (
                           <Fragment key={s.name}>
-                          <Table.Tr>
+                          <Table.Tr onClick={() => setPicked('s:' + s.name)} style={{ cursor: 'pointer' }}>
                             <Table.Td>
                               <Text size={FS.meta} ff="monospace" fw={600}>{s.name}</Text>
                               <Text size={FS.micro} c="dimmed">{s.slot ? `slot ${s.slot}` : 'no slot'}{s.setUpBy ? ` · ${s.setUpBy}` : ` · ${s.owner} · not through Argus`}</Text>
@@ -324,34 +339,19 @@ export function ReplicationPanel({ admin, level, narrow, onBack, onAskForAccess,
                             {!narrow && (
                               <Table.Td>
                                 {s.applyErrors === null || s.applyErrors === undefined ? <Text size={FS.micro} c="dimmed">—</Text>
-                                  : errs ? <Text size={FS.meta} c="rose">{s.applyErrors} apply · {s.syncErrors} sync</Text>
+                                  : errs ? (
+                                    <Tooltip label={`${s.applyErrors} while applying · ${s.syncErrors} while copying tables`} withArrow>
+                                      <Badge size="sm" variant="light" color="rose" radius="sm" style={{ cursor: 'pointer' }}
+                                        onClick={(e) => { e.stopPropagation(); setPicked('s:' + s.name); if (needsWhy(s)) void loadWhy(s.name, errs) }}>
+                                        {errs} error{errs === 1 ? '' : 's'}
+                                      </Badge>
+                                    </Tooltip>
+                                  )
                                     : <Text size={FS.micro} c="dimmed">none</Text>}
                               </Table.Td>
                             )}
                             <Table.Td ta="right">
-                              <select defaultValue="" aria-label={`Actions for ${s.name}`}
-                                onChange={(e) => {
-                                  const v = e.currentTarget.value
-                                  e.currentTarget.value = ''
-                                  if (v === 'enable') void enable(s.name)
-                                  if (v === 'why') void loadWhy(s.name, errs)
-                                  if (v === 'disable') void act({ kind: 'subscription.disable', name: s.name }, `${s.name} disabled`)
-                                  if (v === 'refresh') setForm({ mode: 'refresh-subscription', sub: s })
-                                  if (v === 'connection') setForm({ mode: 'subscription-connection', sub: s })
-                                  if (v === 'publications') setForm({ mode: 'subscription-publications', sub: s })
-                                  if (v === 'options') setForm({ mode: 'subscription-options', sub: s })
-                                  if (v === 'drop') setForm({ mode: 'drop-subscription', sub: s })
-                                }}
-                                style={{ fontSize: 12, padding: '2px 6px', borderRadius: 6, border: '1px solid var(--color-line)', background: 'var(--color-surface)', color: 'inherit', maxWidth: 160 }}>
-                                <option value="" disabled>Actions…</option>
-                                {s.enabled ? <option value="disable">Disable</option> : <option value="enable">Enable</option>}
-                                {needsWhy(s) && <option value="why">Why did it stop?</option>}
-                                <option value="refresh" disabled={!s.enabled}>Refresh publication</option>
-                                <option value="connection">Change connection…</option>
-                                <option value="publications">Change publications…</option>
-                                <option value="options">Options…</option>
-                                <option value="drop">Drop…</option>
-                              </select>
+                              <SubscriptionActions s={s} onPick={(v) => subAction(s, v)} />
                             </Table.Td>
                           </Table.Tr>
                           {showWhy && (
@@ -375,10 +375,10 @@ export function ReplicationPanel({ admin, level, narrow, onBack, onAskForAccess,
                     </Table.Tbody>
                   </Table>
                   {subs.length === 0 && <Text size={FS.meta} c="dimmed" p="md">This database subscribes to nothing yet.</Text>}
-                  <Text size={FS.micro} c="dimmed" p="md">
+                  <WhereFrom>
                     Every subscription of this database is listed, whoever made it. Status is the server’s: pg_stat_subscription and the state of each table. Lag is now minus the last applied transaction’s commit time. Error counts come from pg_stat_subscription_stats (Postgres 15 and later). When one stops, Argus reads the reason from the server’s own log and shows it under the subscription.
                     The publisher’s password is never shown: the list strips it before anything leaves the server.
-                  </Text>
+                  </WhereFrom>
                 </>
               )}
             </ScrollArea>
@@ -386,7 +386,133 @@ export function ReplicationPanel({ admin, level, narrow, onBack, onAskForAccess,
           </>}
         </>
       )}
+      <Drawer opened={!!pickedSub} onClose={() => setPicked(null)} position={narrow ? 'bottom' : 'right'} size={narrow ? '85%' : 460}
+        title={pickedSub ? <Text ff="monospace" fw={650}>{pickedSub.name}</Text> : null}>
+        {pickedSub && (
+          <SubscriptionDetail s={pickedSub} why={whys[pickedSub.name]} bouncedAfter={bounced[pickedSub.name]} watching={watching === pickedSub.name}
+            canOpenSql={!!onOpenSql} onWhyAction={(why, a, sql) => { setPicked(null); whyAction(pickedSub, why, a, sql) }}
+            onPick={(v) => { if (v !== 'why') setPicked(null); subAction(pickedSub, v) }} />
+        )}
+      </Drawer>
     </PanelFrame>
+  )
+}
+
+type SubAction = 'enable' | 'disable' | 'why' | 'refresh' | 'connection' | 'publications' | 'options' | 'drop'
+
+/** The next step as a button, and the rest in a menu. */
+function SubscriptionActions({ s, onPick, full }: { s: PGSubscription; onPick: (v: SubAction) => void; full?: boolean }) {
+  return (
+    <Group gap={4} justify="flex-end" wrap="nowrap" onClick={(e) => e.stopPropagation()}>
+      {s.enabled
+        ? <Button size="compact-xs" variant="default" onClick={() => onPick('disable')}>Disable</Button>
+        : <Button size="compact-xs" onClick={() => onPick('enable')}>Enable</Button>}
+      {full && <Button size="compact-xs" variant="default" onClick={() => onPick('connection')}>Change connection</Button>}
+      <Menu position="bottom-end" withinPortal shadow="md">
+        <Menu.Target>
+          <ActionIcon variant="subtle" color="slate" size="sm" aria-label={`More for ${s.name}`}><IconDots size={15} /></ActionIcon>
+        </Menu.Target>
+        <Menu.Dropdown>
+          {needsWhy(s) && !full && <Menu.Item onClick={() => onPick('why')}>Why did it stop?</Menu.Item>}
+          <Menu.Item disabled={!s.enabled} onClick={() => onPick('refresh')}>Refresh publication</Menu.Item>
+          {!full && <Menu.Item onClick={() => onPick('connection')}>Change connection…</Menu.Item>}
+          <Menu.Item onClick={() => onPick('publications')}>Change publications…</Menu.Item>
+          <Menu.Item onClick={() => onPick('options')}>Options…</Menu.Item>
+          <Menu.Divider />
+          <Menu.Item color="rose" onClick={() => onPick('drop')}>Drop…</Menu.Item>
+        </Menu.Dropdown>
+      </Menu>
+    </Group>
+  )
+}
+
+function ReplicationTiles({ pubs, subs, narrow }: { pubs: PGPublication[]; subs: PGSubscription[]; narrow: boolean }) {
+  const off = subs.filter((s) => !s.enabled).length
+  const errs = subs.reduce((n, s) => n + (s.applyErrors ?? 0) + (s.syncErrors ?? 0), 0)
+  const lags = subs.filter((s) => s.enabled && s.applyLagS !== null && s.applyLagS !== undefined).map((s) => s.applyLagS as number)
+  const lag = lags.length ? Math.max(...lags) : null
+  return (
+    <Box px="md" pt="sm">
+      <SummaryTiles narrow={narrow} tiles={[
+        { label: 'Publications', value: String(pubs.length) },
+        { label: 'Subscriptions', value: String(subs.length), note: subs.length ? `${subs.length - off} running` : undefined },
+        { label: 'Stopped', value: String(off), note: off ? (errs ? `${errs} errors so far` : 'disabled') : 'none', tone: off ? 'denied' : undefined },
+        { label: 'Most behind', value: lag === null ? '—' : fmtLag(lag), note: lag === null ? 'nothing running' : 'apply lag', tone: lag !== null && lag > 300 ? 'pending' : undefined },
+      ]} />
+    </Box>
+  )
+}
+
+/** The small print behind a table, one click away. */
+function WhereFrom({ children }: { children: React.ReactNode }) {
+  return (
+    <Box p="md">
+      <Popover width={420} position="top-start" withArrow shadow="md">
+        <Popover.Target>
+          <Anchor component="button" type="button" size={FS.micro} c="dimmed" td="underline">Where these numbers come from</Anchor>
+        </Popover.Target>
+        <Popover.Dropdown><Text size={FS.micro}>{children}</Text></Popover.Dropdown>
+      </Popover>
+    </Box>
+  )
+}
+
+function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <Group gap="sm" wrap="nowrap" align="flex-start">
+      <Text size={FS.micro} c="dimmed" w={110} style={{ flexShrink: 0 }}>{label}</Text>
+      <Box style={{ minWidth: 0, flex: 1 }}>{children}</Box>
+    </Group>
+  )
+}
+
+/** One subscription: why it stopped first, then how it connects, its tables, and what you can do. */
+function SubscriptionDetail({ s, why, bouncedAfter, watching, canOpenSql, onWhyAction, onPick }: {
+  s: PGSubscription
+  why?: WhyState
+  bouncedAfter?: number
+  watching: boolean
+  canOpenSql: boolean
+  onWhyAction: (why: PGSubscriptionWhy, a: WhyAction, sql?: { text: string; name: string }) => void
+  onPick: (v: SubAction) => void
+}) {
+  const st = why?.why?.turnedOff && !s.enabled ? { label: 'turned itself off', color: 'rose' } : subscriptionStatus(s)
+  const total = s.tablesReady + s.tablesSyncing + s.tablesWaiting
+  const H = ({ children }: { children: React.ReactNode }) => <Text size={FS.micro} c="dimmed" tt="uppercase" fw={650} mt="xs" style={{ letterSpacing: '.07em' }}>{children}</Text>
+  return (
+    <Stack gap="sm">
+      <Group gap="xs"><Badge size="sm" variant="light" color={st.color} radius="sm">{st.label}</Badge>
+        {s.enabled && <Text size={FS.meta} c="dimmed">lag {fmtLag(s.applyLagS)}</Text>}</Group>
+      {(needsWhy(s) || bouncedAfter) && (
+        <>
+          <H>Why it stopped</H>
+          <WhyCard sub={s} state={why} bouncedAfter={bouncedAfter} watching={watching} canOpenSql={canOpenSql} onAction={onWhyAction} />
+        </>
+      )}
+      <H>Connection</H>
+      <DetailRow label="Publisher"><Text size={FS.meta} ff="monospace">{s.publisher || '—'}</Text></DetailRow>
+      <DetailRow label="Password"><Text size={FS.meta}>{s.conninfo.includes('password=[redacted]') ? 'set, never shown' : 'none in the connection'}</Text></DetailRow>
+      <DetailRow label="Slot"><Text size={FS.meta} ff="monospace">{s.slot || 'no slot'}</Text></DetailRow>
+      <DetailRow label="Publications"><Text size={FS.meta} ff="monospace">{s.publications.join(', ')}</Text></DetailRow>
+      <DetailRow label="Set up by"><Text size={FS.meta}>{s.setUpBy ?? `${s.owner}, not through Argus`}</Text></DetailRow>
+      {s.lastMessageAt && <DetailRow label="Last message"><Text size={FS.meta}>{new Date(s.lastMessageAt).toLocaleString()}</Text></DetailRow>}
+      {(s.syncCommit || s.streaming || s.binary || s.disableOnError) && (
+        <DetailRow label="Options"><Text size={FS.meta} ff="monospace">
+          {[s.syncCommit && `synchronous_commit=${s.syncCommit}`, s.streaming && `streaming=${s.streaming}`, s.binary && `binary=${s.binary}`, s.disableOnError && `disable_on_error=${s.disableOnError}`].filter(Boolean).join(' · ')}
+        </Text></DetailRow>
+      )}
+      <H>Tables</H>
+      <Text size={FS.meta}><b>{s.tablesReady}</b> of {total} ready{s.tablesSyncing ? <> · <b style={{ color: INK.pending }}>{s.tablesSyncing}</b> copying</> : null}{s.tablesWaiting ? <> · {s.tablesWaiting} waiting</> : null}</Text>
+      <Box h={4} style={{ borderRadius: 4, background: 'var(--color-line)', overflow: 'hidden' }}>
+        <Box h={4} w={`${total ? (s.tablesReady / total) * 100 : 0}%`} style={{ background: 'var(--color-verified)' }} />
+      </Box>
+      {s.applyErrors !== null && s.applyErrors !== undefined && (
+        <DetailRow label="Errors so far"><Text size={FS.meta} c={(s.applyErrors ?? 0) + (s.syncErrors ?? 0) ? 'rose' : 'dimmed'}>{s.applyErrors} while applying · {s.syncErrors} while copying tables</Text></DetailRow>
+      )}
+      <Box pt="sm" style={{ borderTop: '1px solid var(--color-line)' }}>
+        <SubscriptionActions s={s} onPick={onPick} full />
+      </Box>
+    </Stack>
   )
 }
 

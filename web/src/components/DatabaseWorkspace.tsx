@@ -275,7 +275,7 @@ export function DatabaseWorkspace({ database, access, getTicket, endpoint, onAsk
   // Statements the administration panels run: collected whole, by request
   // id, without touching the editor's result.
   const collectors = useRef(new Map<number, Collected>())
-  const [panel, setPanel] = useState<Panel>((dialect === 'mssql' && MSSQL_MANAGE.some((m) => m.key === initialPanel)) || (initialPanel === 'network' && dialect !== 'mssql') || (!notPg && (initialPanel === 'changes' || initialPanel === 'trash' || initialPanel === 'backups' || initialPanel === 'performance')) || (dialect === 'mysql' && initialPanel === 'performance') ? initialPanel as Panel : 'query')
+  const [panel, setPanel] = useState<Panel>((dialect === 'mssql' && MSSQL_MANAGE.some((m) => m.key === initialPanel)) || (initialPanel === 'network' && dialect !== 'mssql') || (!notPg && MANAGE.some((m) => m.key === initialPanel && (!m.only || m.only === 'postgres'))) || (dialect === 'mysql' && initialPanel === 'performance') ? initialPanel as Panel : 'query')
   const [view, setView] = useState<'query' | 'diagram'>('query')
 
   // Tabs: each its own editor text, row limit, result and plan. Text is
