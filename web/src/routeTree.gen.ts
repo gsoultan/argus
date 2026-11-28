@@ -20,6 +20,7 @@ import { Route as MineRouteImport } from './routes/mine'
 import { Route as NetworkDevicesRouteImport } from './routes/network-devices'
 import { Route as NetworksRouteImport } from './routes/networks'
 import { Route as RequestsRouteImport } from './routes/requests'
+import { Route as SecretsRouteImport } from './routes/secrets'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as TeamsRouteImport } from './routes/teams'
@@ -101,6 +102,11 @@ const NetworksRoute = NetworksRouteImport.update({
 const RequestsRoute = RequestsRouteImport.update({
   id: '/requests',
   path: '/requests',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SecretsRoute = SecretsRouteImport.update({
+  id: '/secrets',
+  path: '/secrets',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsRoute = SettingsRouteImport.update({
@@ -253,6 +259,7 @@ export interface FileRoutesByFullPath {
   '/network-devices': typeof NetworkDevicesRoute
   '/networks': typeof NetworksRoute
   '/requests': typeof RequestsRoute
+  '/secrets': typeof SecretsRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/teams': typeof TeamsRoute
@@ -293,6 +300,7 @@ export interface FileRoutesByTo {
   '/network-devices': typeof NetworkDevicesRoute
   '/networks': typeof NetworksRoute
   '/requests': typeof RequestsRoute
+  '/secrets': typeof SecretsRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/teams': typeof TeamsRoute
@@ -334,6 +342,7 @@ export interface FileRoutesById {
   '/network-devices': typeof NetworkDevicesRoute
   '/networks': typeof NetworksRoute
   '/requests': typeof RequestsRoute
+  '/secrets': typeof SecretsRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/teams': typeof TeamsRoute
@@ -376,6 +385,7 @@ export interface FileRouteTypes {
     | '/network-devices'
     | '/networks'
     | '/requests'
+    | '/secrets'
     | '/settings'
     | '/setup'
     | '/teams'
@@ -416,6 +426,7 @@ export interface FileRouteTypes {
     | '/network-devices'
     | '/networks'
     | '/requests'
+    | '/secrets'
     | '/settings'
     | '/setup'
     | '/teams'
@@ -456,6 +467,7 @@ export interface FileRouteTypes {
     | '/network-devices'
     | '/networks'
     | '/requests'
+    | '/secrets'
     | '/settings'
     | '/setup'
     | '/teams'
@@ -497,6 +509,7 @@ export interface RootRouteChildren {
   NetworkDevicesRoute: typeof NetworkDevicesRoute
   NetworksRoute: typeof NetworksRoute
   RequestsRoute: typeof RequestsRoute
+  SecretsRoute: typeof SecretsRoute
   SettingsRoute: typeof SettingsRoute
   SetupRoute: typeof SetupRoute
   TeamsRoute: typeof TeamsRoute
@@ -603,6 +616,13 @@ declare module '@tanstack/react-router' {
       path: '/requests'
       fullPath: '/requests'
       preLoaderRoute: typeof RequestsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/secrets': {
+      id: '/secrets'
+      path: '/secrets'
+      fullPath: '/secrets'
+      preLoaderRoute: typeof SecretsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings': {
@@ -809,6 +829,7 @@ const rootRouteChildren: RootRouteChildren = {
   NetworkDevicesRoute: NetworkDevicesRoute,
   NetworksRoute: NetworksRoute,
   RequestsRoute: RequestsRoute,
+  SecretsRoute: SecretsRoute,
   SettingsRoute: SettingsRoute,
   SetupRoute: SetupRoute,
   TeamsRoute: TeamsRoute,

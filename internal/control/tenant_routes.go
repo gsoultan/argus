@@ -1,14 +1,18 @@
 package control
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/mail"
 	"strings"
 	"sync"
 
 	"github.com/gsoultan/argus/internal/auth"
+	"github.com/gsoultan/argus/internal/vault"
 )
 
 // Which organization a request is about, decided once, before any handler.
@@ -82,7 +86,18 @@ func claimedTenant(r *http.Request) (id, slug string, ok bool) {
 	if tok == "" {
 		tok = r.URL.Query().Get("ticket")
 	}
-	if strings.HasPrefix(tok, agentCredentialPrefix) || strings.HasPrefix(tok, enrollTokenPrefix) {
+	if tok == "" {
+		// A read relayed to a tunnel secrets server carries the agent's
+		// credential or the app's token the way argus-secret takes it.
+		if scheme, cred, _ := strings.Cut(r.Header.Get("Authorization"), " "); scheme == "Agent" || scheme == "App" {
+			tok = cred
+		}
+	}
+	if tok == "" && r.Method == http.MethodPost && r.URL.Path == vault.EnrollPath {
+		// argus-secret enroll: the token is in the body.
+		tok = peekEnrollToken(r)
+	}
+	if hasSecretPrefix(tok) {
 		id, ok = secretTenant(tok)
 		return id, "", ok
 	}
@@ -126,7 +141,7 @@ func (a *API) scopeSecret(ctx context.Context, secret string) (context.Context, 
 // looks like; the secret part has no '.' in it, so the two cannot be confused.
 func secretTenant(secret string) (string, bool) {
 	rest := secret
-	for _, p := range []string{agentCredentialPrefix, enrollTokenPrefix} {
+	for _, p := range secretPrefixes {
 		if strings.HasPrefix(secret, p) {
 			rest = secret[len(p):]
 			break
@@ -140,6 +155,35 @@ func secretTenant(secret string) (string, bool) {
 		return "", false
 	}
 	return id, true
+}
+
+// secretPrefixes are the secrets minted with an organization prefix.
+var secretPrefixes = []string{agentCredentialPrefix, enrollTokenPrefix,
+	vault.EnrollTokenPrefix, vault.ServerCredPrefix, vault.AppTokenPrefix}
+
+func hasSecretPrefix(tok string) bool {
+	for _, p := range secretPrefixes {
+		if strings.HasPrefix(tok, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// peekEnrollToken reads the token from an enrolment's body and puts the
+// body back for the handler.
+func peekEnrollToken(r *http.Request) string {
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 4096))
+	_ = r.Body.Close()
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	if err != nil {
+		return ""
+	}
+	var in struct {
+		Token string `json:"token"`
+	}
+	_ = json.Unmarshal(raw, &in)
+	return in.Token
 }
 
 // secretPrefixFor is the routing prefix a secret minted in ctx's organization

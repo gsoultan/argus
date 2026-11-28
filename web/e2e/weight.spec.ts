@@ -168,8 +168,15 @@ const BUDGET_KB = {
    * 326.6 kB with firewall changes and policies (323.6 before): the two
    * policy routes and their guards in the route map. The policy pages, the
    * line editor and the change review are route chunks.
+   * 327.7 kB with Secrets (327.0 before, same build): the Connect entry and
+   * its icon, and the route and its search rule in the route map. The page
+   * is argus-secret's own bundle and Settings › Secrets servers is in the
+   * settings chunk. The console lends that bundle named exports only: lent
+   * whole, React, the JSX runtime, TanStack Query and the page module cost
+   * 3.4 kB here, because a namespace keeps every export and wraps every
+   * chunk that imports React.
    */
-  overview: 327.5,
+  overview: 328.5,
   /**
    * A deep link to a recording. 340.8 kB when this was set — the extra is
    * xterm.js and the replay player, which no other route pays for. This is the page most
@@ -235,8 +242,9 @@ const BUDGET_KB = {
    * 424.5 kB with Networks, the same shared weight as the overview.
    * 425.8 kB with server firewalls, the same shared weight as the overview.
    * 428.7 kB with firewall policies, the same shared weight as the overview.
+   * 430.0 kB with Secrets (429.4 before), the same shared weight as the overview.
    */
-  sessionDetail: 429.5,
+  sessionDetail: 430.5,
 }
 
 /**

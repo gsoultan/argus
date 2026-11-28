@@ -48,6 +48,7 @@ require (
 	github.com/twmb/franz-go v1.20.5
 	github.com/twmb/franz-go/pkg/kadm v1.17.1
 	github.com/twmb/franz-go/pkg/kmsg v1.12.0
+	go.etcd.io/bbolt v1.4.3
 	go.mongodb.org/mongo-driver/v2 v2.4.4
 	go.uber.org/goleak v1.3.0
 	golang.org/x/crypto v0.58.0

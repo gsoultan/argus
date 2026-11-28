@@ -130,6 +130,9 @@ export default defineConfig({
             replacement: new URL('./src/app.monolith.css', import.meta.url).pathname,
           }]
         : []),
+      // A section's screens reach the console through this (src/mf); in
+      // development the console imports them from source.
+      { find: '@argus/shell', replacement: new URL('./src/mf/shared/shell.ts', import.meta.url).pathname },
       { find: '~', replacement: new URL('./src', import.meta.url).pathname },
     ],
   },

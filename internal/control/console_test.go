@@ -48,6 +48,11 @@ func TestConsoleRoutesUnderAssetsAreTheApp(t *testing.T) {
 	if w := consoleGet(t, h, "/assets/index-gone.js"); w.Code != http.StatusNotFound {
 		t.Errorf("a missing built asset was answered with %d", w.Code)
 	}
+	// A section's screens that are not installed are a 404 the console can
+	// name, not index.html imported as a module.
+	if w := consoleGet(t, h, "/mf/secrets/1/index.js"); w.Code != http.StatusNotFound || strings.Contains(w.Body.String(), "console") {
+		t.Errorf("missing secrets screens were answered with %d %q", w.Code, w.Body.String())
+	}
 }
 
 // An API client asking for a route that does not exist must get an API

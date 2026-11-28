@@ -1450,6 +1450,90 @@ func _assertSchemaMigrationShape(m m0.SchemaMigration) {
 	}
 }
 
+// _assertSecretAppShape fails to compile if m0.SecretApp gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertSecretAppShape(m m0.SecretApp) {
+	type shape m0.SecretApp
+	_ = shape{
+		m.Model,
+		m.Name,
+		m.TokenHash,
+		m.TokenTail,
+		m.ExpiresAt,
+		m.RevokedAt,
+		m.RevokedBy,
+		m.CreatedBy,
+	}
+}
+
+// _assertSecretReadRequestShape fails to compile if m0.SecretReadRequest gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertSecretReadRequestShape(m m0.SecretReadRequest) {
+	type shape m0.SecretReadRequest
+	_ = shape{
+		m.ID,
+		m.RequesterEmail,
+		m.SecretName,
+		m.Reason,
+		m.Minutes,
+		m.State,
+		m.DecidedBy,
+		m.DecidedAt,
+		m.DecisionNote,
+		m.ExpiresAt,
+		m.CreatedAt,
+	}
+}
+
+// _assertSecretRuleShape fails to compile if m0.SecretRule gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertSecretRuleShape(m m0.SecretRule) {
+	type shape m0.SecretRule
+	_ = shape{
+		m.Model,
+		m.Path,
+		m.Subjects,
+		m.Can,
+		m.NeedsApproval,
+		m.Note,
+		m.CreatedBy,
+	}
+}
+
+// _assertSecretsServerShape fails to compile if m0.SecretsServer gains, loses, renames or
+// reorders a field. Regenerate: `storm generate`.
+func _assertSecretsServerShape(m m0.SecretsServer) {
+	type shape m0.SecretsServer
+	_ = shape{
+		m.Model,
+		m.Name,
+		m.Mode,
+		m.URL,
+		m.CredentialHash,
+		m.EnrollTokenHash,
+		m.EnrollExpiresAt,
+		m.TunnelReplica,
+		m.TunnelConnectedAt,
+		m.TunnelSeenAt,
+		m.TlsPin,
+		m.Folders,
+		m.SealKey,
+		m.Version,
+		m.SecretCount,
+		m.RulesSerial,
+		m.RulesHash,
+		m.RulesPushedAt,
+		m.LogSeq,
+		m.LogHead,
+		m.LogGap,
+		m.LogGapAt,
+		m.LastContactAt,
+		m.LastError,
+		m.LastErrorAt,
+		m.CreatedBy,
+	}
+}
+
 // _assertServerLoginShape fails to compile if m0.ServerLogin gains, loses, renames or
 // reorders a field. Regenerate: `storm generate`.
 func _assertServerLoginShape(m m0.ServerLogin) {

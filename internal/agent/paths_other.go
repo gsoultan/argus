@@ -6,6 +6,9 @@ package agent
 // StateDirectory create the first two; the package creates the rest.
 const (
 	socketPath = "/run/argus/collector.sock"
+	// SecretsSocketPath is where a process that is not root asks the agent
+	// for a secret (internal/agent/secretclient); "" where there is none.
+	SecretsSocketPath = "/run/argus/secrets.sock"
 
 	// DefaultStateDir holds the enrollment, posture, heartbeat and spool.
 	DefaultStateDir = "/var/lib/argus"

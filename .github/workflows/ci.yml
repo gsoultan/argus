@@ -100,6 +100,12 @@ jobs:
         # package results.
         run: go test -count=1 -run 'TestAgentLinksNoControlPlaneCode|TestSharedPackagesStayNeutral|TestControlPlaneShipsNoAgentCode' -v ./cmd/argus-agent/
 
+      - name: Check argus-secret links neither control-plane nor agent code
+        # argus-secret holds the only key that opens the organization's
+        # secrets. cmd/argus-secret/layering_test.go keeps its import graph to
+        # internal/vault, internal/secretwire and a few neutral packages.
+        run: go test -count=1 -run 'TestSecretServerLinksNeitherControlNorAgent' -v ./cmd/argus-secret/
+
       - name: Confirm the X11 screen sharing tests actually ran
         # A skipped test passes: these read a real X screen through MIT-SHM
         # and DAMAGE and play keys through XTEST, and must not quietly stop.
@@ -1009,6 +1015,26 @@ jobs:
       - run: bunx vite build
         env:
           VITE_CONTROL_URL: ""
+      # The secrets screens, built on their own the way a release builds
+      # them, beside the console under dist/mf/secrets/<contract>/.
+      - run: bunx vite build -c vite.mf.config.ts
+      - name: Confirm the secrets screens carry no second React or Mantine
+        run: |
+          f=dist/mf/secrets/1/index.js
+          test -s "$f"
+          if grep -q "^import " "$f"; then echo "$f imports a module the console does not lend it"; exit 1; fi
+          if grep -q "react-dom\|__SECRET_INTERNALS\|mantine-provider" "$f"; then echo "$f bundles its own copy of React or Mantine"; exit 1; fi
+          # A weight budget: 45 KB and 11 KB compressed when it was set. It
+          # loads on every visit to Secrets, and the borrowing above is what
+          # keeps it small; a budget broken is a dependency that came along.
+          # 2026-11-27: 72 KB and 19.6 KB compressed with post-quantum sealing
+          # (ML-KEM-768 from @noble/post-quantum, SHA3 from @noble/hashes;
+          # X25519, HMAC and AES-GCM stay WebCrypto's), raised to 96 KB / 24 KB.
+          raw=$(wc -c < "$f"); gz=$(gzip -9c "$f" | wc -c)
+          echo "secrets screens: $raw bytes, $gz compressed"
+          if [ "$raw" -gt 98304 ] || [ "$gz" -gt 24576 ]; then
+            echo "::error::$f is $raw bytes ($gz compressed), over its budget of 96 KB (24 KB compressed)"; exit 1
+          fi
       - name: Confirm the service worker still denies the auth path
         # The rule that broke SSO for every returning visitor. It is one regex
         # in vite.config.ts and nothing else would notice it going missing.

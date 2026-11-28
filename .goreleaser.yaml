@@ -35,7 +35,7 @@ before:
     # control plane about to update to it reads them to say whether going
     # back would be clean. See internal/control/migration_manifest.go.
     - sh -c "mkdir -p dist-extra && go run ./cmd/argus-control migrations -json > dist-extra/argus-control_{{ .Version }}_migrations.json"
-    - sh -c "cd web && bun install --frozen-lockfile && VITE_CONTROL_URL=/ bunx vite build --outDir dist-release --emptyOutDir --logLevel warn"
+    - sh -c "cd web && bun install --frozen-lockfile && VITE_CONTROL_URL=/ bunx vite build --outDir dist-release --emptyOutDir --logLevel warn && MF_OUT=dist-release bunx vite build -c vite.mf.config.ts --logLevel warn"
 
 builds:
   - &control
@@ -92,6 +92,17 @@ builds:
       - -X main.version={{.Version}}
     mod_timestamp: "{{ .CommitTimestamp }}"
 
+  # The secrets server. Linux only: it runs as a service beside, or apart
+  # from, the control plane.
+  - <<: *verify
+    id: argus-secret
+    main: ./cmd/argus-secret
+    binary: argus-secret
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.ShortCommit}}
+
   # macOS: the control plane, the verifier and the agent. Separate build ids
   # from Linux so each system's archive carries only what means something there.
   - <<: *control
@@ -117,7 +128,7 @@ builds:
 
 archives:
   - id: default
-    ids: [argus-control, argus-agent, argus-verify]
+    ids: [argus-control, argus-agent, argus-verify, argus-secret]
     formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
@@ -221,6 +232,34 @@ nfpms:
     license: Proprietary
     formats: [deb, rpm, apk]
     bindir: /usr/bin
+
+  # ── Secrets server ─────────────────────────────────────────────────────────
+  # Its own package and its own account: the host that runs it holds the only
+  # key that opens the organization's secrets.
+  - id: argus-secret
+    package_name: argus-secret
+    ids: [argus-secret]
+    vendor: Argus
+    homepage: https://github.com/gsoultan/argus
+    maintainer: Argus Maintainers <noreply@example.com>
+    description: |
+      Argus secrets server.
+      Keeps an organization's secrets encrypted under keys that never leave
+      it, answers reads sealed to the caller, and keeps a hash-chained log of
+      every read that argus-control collects.
+    license: Proprietary
+    formats: [deb, rpm, apk]
+    bindir: /usr/bin
+    contents:
+      - src: packaging/systemd/argus-secret.service
+        dst: /lib/systemd/system/argus-secret.service
+      - src: packaging/config/secret.example.yaml
+        dst: /etc/argus-secret/secret.yaml
+        type: config|noreplace
+        file_info: {mode: 0640}
+    scripts:
+      postinstall: packaging/scripts/secret-postinstall.sh
+      preremove: packaging/scripts/secret-preremove.sh
 
   # ── Control plane ──────────────────────────────────────────────────────────
   - id: argus-control

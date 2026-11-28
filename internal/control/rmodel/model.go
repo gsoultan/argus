@@ -1502,6 +1502,10 @@ func All() []any {
 		&WebsiteAlertSetting{},
 		&TelegramBot{},
 		&TelegramRoute{},
+		&SecretsServer{},
+		&SecretRule{},
+		&SecretApp{},
+		&SecretReadRequest{},
 		&RecordingStorage{},
 		&RecordingPolicy{},
 		&CloudflareAccount{},
@@ -3361,4 +3365,138 @@ func (m *RecordingPolicy) Schema(t *storm.Table) {
 	t.CheckNamed("recording_policies_keep_days_check", "(keep_days >= '-1'::integer) AND (keep_days <= 3650)")
 	t.CheckNamed("recording_policies_singleton_check", "singleton")
 	t.Index(&m.Singleton).Unique().Named("recording_policies_singleton")
+}
+
+// SecretsServer is table secrets_servers: an argus-secret server and how
+// far its read log is collected (control/secrets_servers.go).
+type SecretsServer struct {
+	storm.Model
+
+	Name              string
+	Mode              string
+	URL               string
+	CredentialHash    *string
+	EnrollTokenHash   *string
+	EnrollExpiresAt   *time.Time
+	TunnelReplica     *string
+	TunnelConnectedAt *time.Time
+	TunnelSeenAt      *time.Time
+	TlsPin            string
+	Folders           []string
+	SealKey           string
+	Version           string
+	SecretCount       int32
+	RulesSerial       int64
+	RulesHash         string
+	RulesPushedAt     *time.Time
+	LogSeq            int64
+	LogHead           string
+	LogGap            string
+	LogGapAt          *time.Time
+	LastContactAt     *time.Time
+	LastError         string
+	LastErrorAt       *time.Time
+	CreatedBy         string
+}
+
+func (m *SecretsServer) Schema(t *storm.Table) {
+	t.Col(&m.Mode).Default("'direct'::text")
+	t.Col(&m.TlsPin).Default("''::text")
+	t.Col(&m.Folders).Default("'{}'::text[]")
+	t.Col(&m.SealKey).Default("''::text")
+	t.Col(&m.Version).Default("''::text")
+	t.Col(&m.SecretCount).Default("0")
+	t.Col(&m.RulesSerial).Default("0")
+	t.Col(&m.RulesHash).Default("''::text")
+	t.Col(&m.LogSeq).Default("0")
+	t.Col(&m.LogHead).Default("''::text")
+	t.Col(&m.LogGap).Default("''::text")
+	t.Col(&m.LastError).Default("''::text")
+	t.UniqueNamed("secrets_servers_credential_hash_key", &m.CredentialHash)
+	t.UniqueNamed("secrets_servers_enroll_token_hash_key", &m.EnrollTokenHash)
+	t.CheckNamed("secrets_servers_check", "(length(url) <= 300) AND (((mode = 'direct'::text) AND (url ~~ 'https://%'::text)) OR ((mode = 'tunnel'::text) AND (url = ''::text)))")
+	t.CheckNamed("secrets_servers_credential_hash_check", "length(credential_hash) = 64")
+	t.CheckNamed("secrets_servers_enroll_token_hash_check", "length(enroll_token_hash) = 64")
+	t.CheckNamed("secrets_servers_folders_check", "cardinality(folders) <= 100")
+	t.CheckNamed("secrets_servers_mode_check", "mode = ANY (ARRAY['direct'::text, 'tunnel'::text])")
+	t.CheckNamed("secrets_servers_name_check", "(length(name) >= 1) AND (length(name) <= 80)")
+	t.CheckNamed("secrets_servers_tls_pin_check", "length(tls_pin) <= 80")
+	t.CheckNamed("secrets_servers_tunnel_replica_check", "length(tunnel_replica) <= 255")
+	t.Index(storm.Lower(&m.Name)).Unique().Named("secrets_servers_name_key")
+}
+
+// SecretRule is table secret_rules: who may do what with which secrets,
+// pushed to every argus-secret server (control/secrets_servers.go).
+type SecretRule struct {
+	storm.Model
+
+	Path          string
+	Subjects      storm.JSON
+	Can           []string
+	NeedsApproval bool
+	Note          string
+	CreatedBy     string
+}
+
+func (m *SecretRule) Schema(t *storm.Table) {
+	t.Col(&m.Path).Default("''::text")
+	t.Col(&m.NeedsApproval).Default("false")
+	t.Col(&m.Note).Default("''::text")
+	t.CheckNamed("secret_rules_can_check", "(cardinality(can) >= 1) AND (cardinality(can) <= 5)")
+	t.CheckNamed("secret_rules_note_check", "length(note) <= 500")
+	t.CheckNamed("secret_rules_path_check", "length(path) <= 256")
+	t.CheckNamed("secret_rules_subjects_check", "jsonb_typeof(subjects) = 'array'::text")
+}
+
+// SecretApp is table secret_apps: an app token for a caller outside Argus,
+// kept as its SHA-256 (control/secrets_apps.go).
+type SecretApp struct {
+	storm.Model
+
+	Name      string
+	TokenHash string
+	TokenTail string
+	ExpiresAt time.Time
+	RevokedAt *time.Time
+	RevokedBy string
+	CreatedBy string
+}
+
+func (m *SecretApp) Schema(t *storm.Table) {
+	t.Col(&m.TokenTail).Default("''::text")
+	t.Col(&m.RevokedBy).Default("''::text")
+	t.UniqueNamed("secret_apps_token_hash_key", &m.TokenHash)
+	t.CheckNamed("secret_apps_name_check", "(length(name) >= 1) AND (length(name) <= 80)")
+	t.CheckNamed("secret_apps_token_hash_check", "length(token_hash) = 64")
+}
+
+// SecretReadRequest is table secret_read_requests: an ask to read a secret
+// whose rule needs an approval (control/secrets_requests.go).
+type SecretReadRequest struct {
+	ID             [16]byte
+	RequesterEmail string
+	SecretName     string
+	Reason         string
+	Minutes        int32
+	State          string
+	DecidedBy      string
+	DecidedAt      *time.Time
+	DecisionNote   string
+	ExpiresAt      *time.Time
+	CreatedAt      time.Time
+}
+
+func (m *SecretReadRequest) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.ID)
+	t.Col(&m.ID).Default("gen_random_uuid()")
+	t.Col(&m.State).Default("'pending'::text")
+	t.Col(&m.DecidedBy).Default("''::text")
+	t.Col(&m.DecisionNote).Default("''::text")
+	t.Col(&m.CreatedAt).Default("now()")
+	t.CheckNamed("secret_read_requests_decision_note_check", "length(decision_note) <= 500")
+	t.CheckNamed("secret_read_requests_minutes_check", "(minutes >= 5) AND (minutes <= 480)")
+	t.CheckNamed("secret_read_requests_reason_check", "(length(reason) >= 1) AND (length(reason) <= 500)")
+	t.CheckNamed("secret_read_requests_secret_name_check", "(length(secret_name) >= 1) AND (length(secret_name) <= 255)")
+	t.CheckNamed("secret_read_requests_state_check", "state = ANY (ARRAY['pending'::text, 'approved'::text, 'denied'::text, 'cancelled'::text])")
+	t.Index(storm.Lower(&m.RequesterEmail), &m.SecretName).Named("secret_read_requests_requester_idx")
 }

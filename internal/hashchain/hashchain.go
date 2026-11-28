@@ -25,6 +25,19 @@ import (
 // Genesis is the chain head before anything has been written.
 const Genesis = "0000000000000000000000000000000000000000000000000000000000000000"
 
+// Next returns the link that follows head once line is appended: the same
+// SHA-256(head || line), as lowercase hex, that a Chain computes for Emit.
+//
+// For a log kept somewhere other than a single file, such as argus-secret's read
+// log, which stores each record with its link in a database and must carry the
+// head across restarts. One definition of a link, so the two cannot drift.
+func Next(head string, line []byte) string {
+	sum := sha256.New()
+	sum.Write([]byte(head))
+	sum.Write(line)
+	return hex.EncodeToString(sum.Sum(nil))
+}
+
 // Chain appends lines to a writer while maintaining the hash chain.
 //
 // Safe for concurrent use: a proxied session writes from more than one

@@ -193,6 +193,8 @@ func main() {
 		os.Exit(runUninstall(os.Args[2:]))
 	case "enroll", "enrol":
 		os.Exit(runEnroll(os.Args[2:]))
+	case "secret":
+		os.Exit(runSecret(os.Args[2:]))
 	case "enroll-local":
 		// Run as root by argus-control-host.service on argus-control's own
 		// server, with the token argus-control left for it.
@@ -218,6 +220,7 @@ func usage() {
   argus-agent install   print the sshd_config required to enable recording
   argus-agent service   install|uninstall|start|stop the Windows service
   argus-agent uninstall take the agent off this host, keeping its recordings
+  argus-agent secret    get|run|file: read from the organization's argus-secret servers
 
 `)
 }
@@ -271,6 +274,7 @@ func runDaemon(args []string) int {
 	defer cancel()
 
 	var clientTLS *tls.Config
+	var enrolled *agent.Enrollment
 
 	// An enrolled agent reports with its own credential. Flags still win, so
 	// a deployment configured the old way keeps working through an upgrade.
@@ -281,6 +285,7 @@ func runDaemon(args []string) int {
 			return 1
 		}
 		if enr != nil {
+			enrolled = enr
 			*controlURL, *controlToken = enr.ControlURL, enr.Credential
 			if clientTLS, err = enr.TLS(); err != nil {
 				log.Error("enrollment TLS configuration failed", "error", err)
@@ -320,6 +325,8 @@ func runDaemon(args []string) int {
 		log.Warn("control plane URL is plaintext http://",
 			"detail", "captured session records cross this link in the clear")
 	}
+	// Local processes that are not root read secrets through the agent.
+	go serveSecretsSocket(ctx, enrolled, *stateDir, log)
 	if rep.Enabled() {
 		rep.Drain(ctx)
 		rep.StartDrainLoop(ctx, 30*time.Second)

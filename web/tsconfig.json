@@ -21,7 +21,7 @@
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
-    "paths": { "~/*": ["./src/*"] }
+    "paths": { "~/*": ["./src/*"], "@argus/shell": ["./src/mf/shared/shell.ts"] }
   },
   // Application code only.
   //

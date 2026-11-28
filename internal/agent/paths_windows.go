@@ -5,6 +5,9 @@ package agent
 // (see ProtectStateDir) before it writes anything there.
 const (
 	socketPath = `C:\ProgramData\Argus\collector.sock`
+	// SecretsSocketPath is where a process that is not root asks the agent
+	// for a secret (internal/agent/secretclient); "" where there is none.
+	SecretsSocketPath = ""
 
 	// DefaultStateDir holds the enrollment, posture, heartbeat and spool.
 	DefaultStateDir = `C:\ProgramData\Argus`
