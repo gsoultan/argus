@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/storage"
 )
@@ -92,7 +92,7 @@ type RecordingPolicy struct {
 const orgStorageCols = `id::text, state, provider, endpoint, bucket, region, use_ssl, access_key,
 	secret_sealed, archive_class, updated_at`
 
-func scanOrgStorage(row pgx.Row) (orgStorageRow, error) {
+func scanOrgStorage(row rowScanner) (orgStorageRow, error) {
 	var r orgStorageRow
 	err := row.Scan(&r.ID, &r.State, &r.Provider, &r.Endpoint, &r.Bucket, &r.Region, &r.UseSSL,
 		&r.AccessKey, &r.Sealed, &r.ArchiveClass, &r.UpdatedAt)
@@ -123,11 +123,11 @@ func (s *Store) RecordingStorages(ctx context.Context) ([]orgStorageRow, error) 
 // none when next is nil. An active destination it replaces is retired, not
 // deleted, unless next is the same place with a new key or archive class.
 func (s *Store) SetRecordingStorage(ctx context.Context, next *orgStorageRow, by string) error {
-	return pgx.BeginFunc(ctx, s.db(ctx), func(tx pgx.Tx) error {
+	return caduceus.BeginFunc(ctx, s.db(ctx), func(tx *caduceus.Tx) error {
 		cur, err := scanOrgStorage(tx.QueryRow(ctx, `SELECT `+orgStorageCols+`
 			FROM recording_storages WHERE state = 'active' FOR UPDATE`))
 		has := err == nil
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		if err != nil && !errors.Is(err, caduceus.ErrNoRows) {
 			return err
 		}
 		if has && next != nil && cur.sameDestination(*next) {
@@ -174,7 +174,7 @@ func (s *Store) RecordingPolicyOf(ctx context.Context) (RecordingPolicy, error) 
 	var p RecordingPolicy
 	err := s.db(ctx).QueryRow(ctx, `SELECT keep_days, archive_days FROM recording_policies`).
 		Scan(&p.KeepDays, &p.ArchiveDays)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return RecordingPolicy{}, nil
 	}
 	return p, err

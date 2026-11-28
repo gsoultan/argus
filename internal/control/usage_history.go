@@ -9,8 +9,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -41,7 +40,7 @@ const (
 )
 
 type execer interface {
-	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Exec(ctx context.Context, sql string, args ...any) (caduceus.CommandTag, error)
 }
 
 // recordUsageHistory folds one usage sample into its bucket.
@@ -337,7 +336,7 @@ func (s *Store) MetricsFor(ctx context.Context, id, rng string, now time.Time) (
 		        ORDER BY g.last_seen_at DESC NULLS LAST
 		        LIMIT 1) ag ON TRUE
 		 WHERE a.id::text = $1 AND a.archived_at IS NULL`, id).Scan(&host, &cpus)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return out, ErrAssetNotFound
 	}
 	if err != nil {

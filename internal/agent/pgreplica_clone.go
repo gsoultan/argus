@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -60,8 +60,8 @@ type pgLocal struct {
 	Checkpointer int `json:"checkpointer"`
 }
 
-func pgReplicaLocal(ctx context.Context, conn *pgconn.PgConn) PGAdminResult {
-	version := conn.ParameterStatus("server_version")
+func pgReplicaLocal(ctx context.Context, conn *caduceus.Conn) PGAdminResult {
+	version := conn.Wire().ParameterStatus("server_version")
 	v, err := row(ctx, conn, `SELECT current_setting('data_directory'), current_setting('server_version_num'), pg_is_in_recovery(),
 		coalesce((SELECT string_agg(datname, ',' ORDER BY datname) FROM pg_database WHERE NOT datistemplate AND datname <> 'postgres'), ''),
 		(SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace

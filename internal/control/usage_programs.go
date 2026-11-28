@@ -9,7 +9,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -147,7 +147,7 @@ func (s *Store) ProgramsFor(ctx context.Context, id string, from, to, now time.T
 		        ORDER BY g.last_seen_at DESC NULLS LAST
 		        LIMIT 1) ag ON TRUE
 		 WHERE a.id::text = $1 AND a.archived_at IS NULL`, id).Scan(&host)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return out, ErrAssetNotFound
 	}
 	if err != nil || host == nil {
@@ -170,7 +170,7 @@ func (s *Store) ProgramsFor(ctx context.Context, id string, from, to, now time.T
 	if err != nil {
 		return out, err
 	}
-	all, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (ProgramUse, error) {
+	all, err := caduceus.CollectRows(rows, func(r caduceus.CollectableRow) (ProgramUse, error) {
 		var p ProgramUse
 		err := r.Scan(&p.Name, &p.CPU, &p.Memory, &p.ReadBps, &p.WriteBps, &p.Hidden, &p.Count, &p.Periods)
 		return p, err

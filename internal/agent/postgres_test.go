@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/gsoultan/caduceus/wire"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -35,7 +35,7 @@ func pgTest(t *testing.T) (dsn string, host string, port int, dbname string) {
 	if dsn == "" {
 		t.Skip("ARGUS_TEST_PG_SUPER_DSN is not set")
 	}
-	cfg, err := pgconn.ParseConfig(dsn)
+	cfg, err := wire.ParseConfig(dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,13 +188,13 @@ func (h *pgHarness) do(req tunnel.PGRequest) (cols []tunnel.PGColumn, rows [][]*
 
 func superExec(t *testing.T, dsn string, stmts ...string) {
 	t.Helper()
-	conn, err := pgconn.Connect(context.Background(), dsn)
+	conn, err := pgConnect(context.Background(), dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close(context.Background())
 	for _, s := range stmts {
-		if _, err := conn.Exec(context.Background(), s).ReadAll(); err != nil {
+		if _, err := pgExec(context.Background(), conn, s); err != nil {
 			t.Fatalf("%s: %v", s, err)
 		}
 	}
@@ -202,17 +202,17 @@ func superExec(t *testing.T, dsn string, stmts ...string) {
 
 func superQuery(t *testing.T, dsn, sql string) [][]string {
 	t.Helper()
-	conn, err := pgconn.Connect(context.Background(), dsn)
+	conn, err := pgConnect(context.Background(), dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close(context.Background())
-	res, err := conn.Exec(context.Background(), sql).ReadAll()
+	res, err := pgExec(context.Background(), conn, sql)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var out [][]string
-	for _, r := range res {
+	for _, r := range []*pgResult{res} {
 		for _, row := range r.Rows {
 			var cells []string
 			for _, c := range row {

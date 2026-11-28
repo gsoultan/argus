@@ -18,7 +18,7 @@ import (
 
 	"github.com/gsoultan/argus/internal/apk"
 	"github.com/gsoultan/argus/internal/tunnel"
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -259,7 +259,7 @@ func (a *API) postSoftwareFile(w http.ResponseWriter, r *http.Request) {
 	if existing, err := a.store.softwareFileBySHA(r.Context(), sum); err == nil {
 		writeJSON(w, http.StatusOK, existing)
 		return
-	} else if !errors.Is(err, pgx.ErrNoRows) {
+	} else if !errors.Is(err, caduceus.ErrNoRows) {
 		a.fail(w, "software file", err)
 		return
 	}
@@ -309,7 +309,7 @@ func (a *API) deleteSoftwareFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f, err := a.store.softwareFile(r.Context(), r.PathValue("id"))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "no such file in the library")
 		return
 	}
@@ -410,7 +410,7 @@ func (a *API) postAndroidAppRun(w http.ResponseWriter, r *http.Request) {
 	case "install":
 		n.Mode = AppInstall
 		file, err = a.store.softwareFile(r.Context(), in.FileID)
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, caduceus.ErrNoRows) {
 			writeErr(w, http.StatusNotFound, "no such file in the library")
 			return
 		}
@@ -642,7 +642,7 @@ type softwareFileRow struct {
 	archived bool
 }
 
-func scanSoftwareFile(row pgx.Row) (softwareFileRow, error) {
+func scanSoftwareFile(row rowScanner) (softwareFileRow, error) {
 	var (
 		f    softwareFileRow
 		meta []byte
@@ -692,7 +692,7 @@ func (s *Store) softwareFiles(ctx context.Context, platform string) ([]SoftwareF
 func (s *Store) softwareFile(ctx context.Context, id string) (SoftwareFile, error) {
 	f, err := s.softwareFileAny(ctx, id)
 	if err == nil && f.archived {
-		return SoftwareFile{}, pgx.ErrNoRows
+		return SoftwareFile{}, caduceus.ErrNoRows
 	}
 	return f.SoftwareFile, err
 }
@@ -700,7 +700,7 @@ func (s *Store) softwareFile(ctx context.Context, id string) (SoftwareFile, erro
 // softwareFileAny is a library file, removed or not.
 func (s *Store) softwareFileAny(ctx context.Context, id string) (softwareFileRow, error) {
 	if !rePreviewID.MatchString(id) {
-		return softwareFileRow{}, pgx.ErrNoRows
+		return softwareFileRow{}, caduceus.ErrNoRows
 	}
 	return scanSoftwareFile(s.db(ctx).QueryRow(ctx, `SELECT `+softwareFileCols+` FROM software_files
 		WHERE id = $1::uuid`, id))

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 // People shared across organizations.
@@ -146,7 +146,7 @@ func homeIDOf(ctx context.Context, a *Account) string {
 // recordMembership writes one row of the platform index inside a tenant's
 // transaction. The qualified name reaches the registry whatever the
 // connection's search_path.
-func recordMembership(ctx context.Context, tx pgx.Tx, email, tenantID, homeID string) error {
+func recordMembership(ctx context.Context, tx *caduceus.Tx, email, tenantID, homeID string) error {
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO argus_platform.memberships (email, tenant_id, home_tenant)
 		VALUES ($1, $2, $3)
@@ -323,7 +323,7 @@ func (s *Store) AddSharedMember(ctx context.Context, in SharedMember) (*Account,
 		    OR users.disabled_at IS NOT NULL
 		RETURNING id::text, coalesce((SELECT own FROM before), false)`,
 		email, displayName, in.Role, home.ID).Scan(&id, &wasOwnHome)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, nil, ErrAccountExists
 	}
 	if err != nil {

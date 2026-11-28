@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/gsoultan/caduceus/wire"
 )
 
 // PGAdminMain is `argus-agent pg-admin`: one request on stdin, one result on
@@ -43,7 +43,7 @@ func pgAdminDial(ctx context.Context, req PGAdminRequest) PGAdminResult {
 	if user == "" {
 		user = "postgres"
 	}
-	cfg, err := pgconn.ParseConfig("")
+	cfg, err := wire.ParseConfig("")
 	if err != nil {
 		return PGAdminResult{Error: err.Error()}
 	}
@@ -52,7 +52,7 @@ func pgAdminDial(ctx context.Context, req PGAdminRequest) PGAdminResult {
 	cfg.RuntimeParams = map[string]string{"application_name": "argus-admin"}
 	// A socket on this server answers at once or not at all.
 	cfg.ConnectTimeout = 10 * time.Second
-	conn, err := pgconn.ConnectConfig(ctx, cfg)
+	conn, err := pgConnectConfig(ctx, cfg)
 	if err != nil {
 		return PGAdminResult{Error: fmt.Sprintf("could not sign in to Postgres as %s over %s (port %s): %v",
 			user, req.Socket, strconv.Itoa(req.Port), err)}
@@ -65,7 +65,7 @@ func pgAdminDial(ctx context.Context, req PGAdminRequest) PGAdminResult {
 // helper. For tests, and for a server whose Postgres has no peer login.
 func DSNAdmin(dsn func(database string) string) func(context.Context, PGAdminRequest) PGAdminResult {
 	return func(ctx context.Context, req PGAdminRequest) PGAdminResult {
-		conn, err := pgconn.Connect(ctx, dsn(req.Database))
+		conn, err := pgConnect(ctx, dsn(req.Database))
 		if err != nil {
 			return PGAdminResult{Error: err.Error()}
 		}

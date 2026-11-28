@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -505,7 +505,7 @@ func (d Database) agent() string {
 	return d.Hostname
 }
 
-func scanDatabase(row pgx.Row) (Database, error) {
+func scanDatabase(row rowScanner) (Database, error) {
 	var d Database
 	var policy []byte
 	if err := row.Scan(&d.ID, &d.AssetID, &d.Hostname, &d.Engine, &d.Host, &d.Port, &d.PoolerHost, &d.PoolerPort, &d.ConfigPath, &d.Name,
@@ -545,7 +545,7 @@ func (s *Store) CreateDatabase(ctx context.Context, d Database, actor string) (D
 		RETURNING id::text`,
 		d.AssetID, d.Engine, d.Host, d.Port, d.Name, d.AdminUser, d.Label, policy, actor,
 		d.PoolerHost, d.PoolerPort, d.ConfigPath).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		// The conflict was with an entry of another engine on that port.
 		return d, ErrInvalidDatabase{fmt.Sprintf("port %d on this server already has an entry named %s "+
 			"of another engine", d.Port, d.Name)}
@@ -608,7 +608,7 @@ func (s *Store) Database(ctx context.Context, id string) (Database, error) {
 	d, err := scanDatabase(s.db(ctx).QueryRow(ctx, `SELECT `+databaseCols+`
 		FROM databases d JOIN assets a ON a.id = d.asset_id WHERE d.id = $2::uuid`,
 		tunnelFreshFor.String(), id))
-	if errors.Is(err, pgx.ErrNoRows) || (err != nil && strings.Contains(err.Error(), "invalid input syntax for type uuid")) {
+	if errors.Is(err, caduceus.ErrNoRows) || (err != nil && strings.Contains(err.Error(), "invalid input syntax for type uuid")) {
 		return d, ErrDatabaseNotFound
 	}
 	return d, err
@@ -713,7 +713,7 @@ func (s *Store) DatabaseAccess(ctx context.Context, email, dbID string) (DBAcces
 		if err == nil && tunnel.LevelRank(level) > tunnel.LevelRank(acc.Level) &&
 			tunnel.LevelRank(level) <= tunnel.LevelRank(acc.Approvable) {
 			acc.Level, acc.GrantExpires = level, &expires
-		} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		} else if err != nil && !errors.Is(err, caduceus.ErrNoRows) {
 			return acc, err
 		}
 	}

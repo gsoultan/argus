@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/gsoultan/caduceus/wire"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -289,7 +289,7 @@ func ensurePooler(l pgLocator, b pgBouncerSeen, c tunnel.GrantCreate, verifier s
 // PgBouncer reads its files again a moment after a reload, so a pooled
 // check tries a few times.
 var pgSignIn = func(ctx context.Context, port int, user, pw, database string, tries int) error {
-	cfg, err := pgconn.ParseConfig("host=127.0.0.1 sslmode=prefer connect_timeout=5")
+	cfg, err := wire.ParseConfig("host=127.0.0.1 sslmode=prefer connect_timeout=5")
 	if err != nil {
 		return err
 	}
@@ -303,7 +303,7 @@ var pgSignIn = func(ctx context.Context, port int, user, pw, database string, tr
 				return ctx.Err()
 			}
 		}
-		conn, err := pgconn.ConnectConfig(ctx, cfg)
+		conn, err := pgConnectConfig(ctx, cfg)
 		if err == nil {
 			_ = conn.Close(context.WithoutCancel(ctx))
 			return nil
@@ -314,7 +314,7 @@ var pgSignIn = func(ctx context.Context, port int, user, pw, database string, tr
 }
 
 func signInText(err error) string {
-	var pe *pgconn.PgError
+	var pe *wire.Error
 	if errors.As(err, &pe) {
 		return pe.Message
 	}

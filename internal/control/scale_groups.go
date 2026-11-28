@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/control/cloud"
 )
@@ -119,7 +119,7 @@ const scaleGroupCols = `g.id::text, g.account_id::text, a.name, g.region, g.name
 	g.last_remove_at, g.checked_at, g.created_by, g.created_at, g.aws_track, g.aws_group, g.aws_template, g.aws_note,
 	g.aws_tried_at`
 
-func scanScaleGroup(row pgx.Row) (ScaleGroup, error) {
+func scanScaleGroup(row rowScanner) (ScaleGroup, error) {
 	var g ScaleGroup
 	var tpl, rules, track []byte
 	var lo, hi, addW, remW int32
@@ -128,7 +128,7 @@ func scanScaleGroup(row pgx.Row) (ScaleGroup, error) {
 		&g.AutoBy, &g.AutoAt, &g.State, &g.PausedReason, &g.Note, &g.EnrollBase, &g.FailedStarts, &g.LastAddAt,
 		&g.LastRemoveAt, &g.CheckedAt, &g.CreatedBy, &g.CreatedAt, &track, &g.AWSGroup, &g.AWSTemplate, &g.AWSNote,
 		&g.AWSTriedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return g, ErrScaleGroupNotFound
 	}
 	if err != nil {
@@ -313,7 +313,7 @@ func (s *Store) ScaleKeyGroup(ctx context.Context, token string) (string, error)
 	var gid *string
 	err := s.db(ctx).QueryRow(ctx, `SELECT scale_group_id::text FROM agent_enrollment_tokens
 		WHERE token_hash = $1 AND expires_at > now()`, hashSecret(token)).Scan(&gid)
-	if errors.Is(err, pgx.ErrNoRows) || gid == nil {
+	if errors.Is(err, caduceus.ErrNoRows) || gid == nil {
 		return "", nil
 	}
 	return *gid, err
@@ -392,7 +392,7 @@ func (s *Store) OpenScaleChange(ctx context.Context, accountID, groupID string) 
 	var id string
 	err := s.db(ctx).QueryRow(ctx, `SELECT id::text FROM cloud_changes WHERE account_id::text = $1 AND resource_id = $2
 		AND state IN ('awaiting_approval', 'applying') LIMIT 1`, accountID, groupID).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

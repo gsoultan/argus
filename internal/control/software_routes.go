@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -312,7 +312,7 @@ func (a *API) postSoftwareRun(w http.ResponseWriter, r *http.Request) {
 	}
 	pv, err := a.store.softwarePreview(r.Context(), in.PreviewID)
 	switch {
-	case errors.Is(err, pgx.ErrNoRows):
+	case errors.Is(err, caduceus.ErrNoRows):
 		writeErr(w, http.StatusNotFound, "no such preview")
 		return
 	case err != nil:

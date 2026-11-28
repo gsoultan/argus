@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -239,7 +239,7 @@ func (s *Store) ApplicationsFor(ctx context.Context, id string) (ServerApplicati
 		        ORDER BY g.last_seen_at DESC NULLS LAST
 		        LIMIT 1) ag ON TRUE
 		 WHERE a.id::text = $1 AND a.archived_at IS NULL`, id).Scan(&raw)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return ServerApplications{}, ErrAssetNotFound
 	}
 	if err != nil {

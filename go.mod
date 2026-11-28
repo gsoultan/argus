@@ -30,11 +30,11 @@ require (
 	github.com/golang-sql/sqlexp v0.1.0
 	github.com/google/uuid v1.6.0
 	github.com/gosnmp/gosnmp v1.43.2
+	github.com/gsoultan/caduceus v0.1.2-0.20261128055014-f5f78376a4eb
 	github.com/gsoultan/gsmail v0.11.0
 	github.com/gsoultan/panmail-sdk v0.1.1
-	github.com/gsoultan/storm v1.4.0
+	github.com/gsoultan/storm/v2 v2.0.0-20261127163046-69426aa56d75
 	github.com/hashicorp/yamux v0.1.2
-	github.com/jackc/pgx/v5 v5.11.0
 	github.com/jezek/xgb v1.3.1
 	github.com/klauspost/compress v1.20.4
 	github.com/microsoft/go-mssqldb v1.12.0
@@ -80,9 +80,6 @@ require (
 	github.com/golang-sql/civil v0.0.0-20220223132316-b832511892a9 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
-	github.com/jackc/pgpassfile v1.0.0 // indirect
-	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
 	github.com/klauspost/crc32 v1.3.0 // indirect
 	github.com/minio/crc64nvme v1.1.1 // indirect
@@ -91,6 +88,7 @@ require (
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
+	github.com/rogpeppe/go-internal v1.16.0 // indirect
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect
@@ -106,5 +104,6 @@ require (
 	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
 	golang.org/x/tools v0.52.0 // indirect
+	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/ini.v1 v1.67.3 // indirect
 )

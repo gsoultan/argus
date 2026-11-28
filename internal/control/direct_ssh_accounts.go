@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"regexp"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -134,7 +134,7 @@ func (s *Store) SetAssetDirectSSHAccount(ctx context.Context, id, account, mode 
 		SELECT (SELECT count(*) FROM jsonb_object_keys(direct_ssh_accounts)), direct_ssh_accounts ? $2
 		  FROM assets WHERE id::text = $1 AND archived_at IS NULL FOR UPDATE`,
 		id, account).Scan(&named, &has)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, ErrAssetNotFound
 	}
 	if err != nil {

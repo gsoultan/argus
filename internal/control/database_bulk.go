@@ -8,8 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -117,9 +116,9 @@ type DatabaseRule struct {
 
 // querier is what the planner needs from a pool or a transaction.
 type querier interface {
-	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (*caduceus.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) *caduceus.Row
+	Exec(ctx context.Context, sql string, args ...any) (caduceus.CommandTag, error)
 }
 
 // who is one team or one person.
@@ -215,7 +214,7 @@ func loadBulk(ctx context.Context, q querier, dbIDs, teamIDs, people []string, l
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	dbs, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (bulkDB, error) {
+	dbs, err := caduceus.CollectRows(rows, func(r caduceus.CollectableRow) (bulkDB, error) {
 		var d bulkDB
 		err := r.Scan(&d.id, &d.name, &d.engine, &d.hostname, &d.label, &d.assetID)
 		return d, err
@@ -233,7 +232,7 @@ func loadBulk(ctx context.Context, q querier, dbIDs, teamIDs, people []string, l
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		teams, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (who, error) {
+		teams, err := caduceus.CollectRows(rows, func(r caduceus.CollectableRow) (who, error) {
 			var w who
 			err := r.Scan(&w.teamID, &w.teamName)
 			return w, err
@@ -359,7 +358,7 @@ func (s *Store) ApplyBulkAccess(ctx context.Context, in BulkAccessInput, actor s
 	}
 	var lines []BulkAccessLine
 	var rules []DatabaseRule
-	err := pgx.BeginFunc(ctx, s.db(ctx), func(tx pgx.Tx) error {
+	err := caduceus.BeginFunc(ctx, s.db(ctx), func(tx *caduceus.Tx) error {
 		dbs, whos, have, err := loadBulk(ctx, tx, in.DatabaseIDs, in.Teams, in.People, true)
 		if err != nil {
 			return err
@@ -466,7 +465,7 @@ func (s *Store) RemoveBulkAccess(ctx context.Context, in BulkRemoveInput) ([]Bul
 		return nil, ErrInvalidDatabase{"too many at once"}
 	}
 	var lines []BulkAccessLine
-	err := pgx.BeginFunc(ctx, s.db(ctx), func(tx pgx.Tx) error {
+	err := caduceus.BeginFunc(ctx, s.db(ctx), func(tx *caduceus.Tx) error {
 		dbs, whos, have, err := loadBulk(ctx, tx, in.DatabaseIDs, in.Teams, in.People, true)
 		if err != nil {
 			return err
@@ -524,7 +523,7 @@ func (s *Store) AssetDatabaseAccess(ctx context.Context, assetID string) ([]DBAs
 		}
 		return nil, err
 	}
-	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (DBAssignment, error) {
+	return caduceus.CollectRows(rows, func(r caduceus.CollectableRow) (DBAssignment, error) {
 		var g DBAssignment
 		err := r.Scan(&g.ID, &g.DatabaseID, &g.TeamID, &g.TeamName, &g.UserEmail, &g.Level,
 			&g.NeedsApproval, &g.GrantedBy, &g.GrantedAt, &g.RuleID)
@@ -547,7 +546,7 @@ func (s *Store) DatabaseRules(ctx context.Context, assetID string) ([]DatabaseRu
 		}
 		return nil, err
 	}
-	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (DatabaseRule, error) {
+	return caduceus.CollectRows(rows, func(r caduceus.CollectableRow) (DatabaseRule, error) {
 		var x DatabaseRule
 		err := r.Scan(&x.ID, &x.AssetID, &x.Hostname, &x.TeamID, &x.TeamName, &x.UserEmail, &x.Kind, &x.Level, &x.Approval,
 			&x.CreatedBy, &x.CreatedAt, &x.Gave)
@@ -578,14 +577,14 @@ func setRule(ctx context.Context, q querier, r DatabaseRule, actor string) (Data
 func (s *Store) RemoveDatabaseRule(ctx context.Context, assetID, ruleID string, takeAway bool) (DatabaseRule, []BulkAccessLine, error) {
 	var rule DatabaseRule
 	var lines []BulkAccessLine
-	err := pgx.BeginFunc(ctx, s.db(ctx), func(tx pgx.Tx) error {
+	err := caduceus.BeginFunc(ctx, s.db(ctx), func(tx *caduceus.Tx) error {
 		err := tx.QueryRow(ctx, `
 			SELECT r.id::text, r.asset_id::text, a.hostname, r.team_id::text, coalesce(t.name, ''), r.user_email, r.kind,
 			       r.level, r.approval
 			FROM database_access_rules r JOIN assets a ON a.id = r.asset_id LEFT JOIN teams t ON t.id = r.team_id
 			WHERE r.id = $1::uuid AND r.asset_id = $2::uuid FOR UPDATE OF r`, ruleID, assetID).
 			Scan(&rule.ID, &rule.AssetID, &rule.Hostname, &rule.TeamID, &rule.TeamName, &rule.UserEmail, &rule.Kind, &rule.Level, &rule.Approval)
-		if errors.Is(err, pgx.ErrNoRows) || (err != nil && strings.Contains(err.Error(), "invalid input syntax for type uuid")) {
+		if errors.Is(err, caduceus.ErrNoRows) || (err != nil && strings.Contains(err.Error(), "invalid input syntax for type uuid")) {
 			return ErrDatabaseNotFound
 		}
 		if err != nil {
@@ -599,7 +598,7 @@ func (s *Store) RemoveDatabaseRule(ctx context.Context, assetID, ruleID string, 
 			if err != nil {
 				return err
 			}
-			lines, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (BulkAccessLine, error) {
+			lines, err = caduceus.CollectRows(rows, func(r caduceus.CollectableRow) (BulkAccessLine, error) {
 				l := BulkAccessLine{TeamID: rule.TeamID, TeamName: rule.TeamName, UserEmail: rule.UserEmail, Change: "removed"}
 				err := r.Scan(&l.DatabaseID, &l.DatabaseName, &l.Engine, &l.Hostname, &l.Label, &l.Before, &l.BeforeApproval)
 				return l, err
@@ -622,11 +621,11 @@ func (s *Store) RemoveDatabaseRule(ctx context.Context, assetID, ruleID string, 
 // a rule of its kind names there. It never lowers anyone.
 func (s *Store) ApplyDatabaseRules(ctx context.Context, dbID, actor string) ([]BulkAccessLine, error) {
 	var lines []BulkAccessLine
-	err := pgx.BeginFunc(ctx, s.db(ctx), func(tx pgx.Tx) error {
+	err := caduceus.BeginFunc(ctx, s.db(ctx), func(tx *caduceus.Tx) error {
 		var assetID, engine string
 		if err := tx.QueryRow(ctx, `SELECT asset_id::text, engine FROM databases WHERE id = $1::uuid`, dbID).
 			Scan(&assetID, &engine); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
+			if errors.Is(err, caduceus.ErrNoRows) {
 				return ErrDatabaseNotFound
 			}
 			return err
@@ -642,7 +641,7 @@ func (s *Store) ApplyDatabaseRules(ctx context.Context, dbID, actor string) ([]B
 			return err
 		}
 		type rr struct{ id, team, email, level, approval string }
-		rules, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (rr, error) {
+		rules, err := caduceus.CollectRows(rows, func(r caduceus.CollectableRow) (rr, error) {
 			var x rr
 			err := r.Scan(&x.id, &x.team, &x.email, &x.level, &x.approval)
 			return x, err

@@ -5,7 +5,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/gsoultan/caduceus/wire"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -16,7 +16,7 @@ pgNotices keeps what Postgres said beside a statement that did not fail.
 Postgres reports some outcomes only as a NoticeResponse. The one that matters
 most: a GRANT on objects the session's role neither owns nor holds a grant
 option on ends with the command tag "GRANT" and a WARNING (01007) that "no
-privileges were granted". pgconn drops notices unless OnNotice is set, so the
+privileges were granted". the driver drops notices unless OnNotice is set, so the
 console used to show that GRANT as a success while nothing changed.
 
 The callback runs on the goroutine reading the connection, which is the
@@ -31,8 +31,8 @@ type pgNotices struct {
 	dropped int
 }
 
-// add is pgconn's OnNotice.
-func (n *pgNotices) add(_ *pgconn.PgConn, pn *pgconn.Notice) {
+// add is wire.Config.OnNotice.
+func (n *pgNotices) add(pn *wire.Error) {
 	if pn == nil {
 		return
 	}

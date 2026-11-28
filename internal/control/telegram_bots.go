@@ -32,7 +32,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/notify"
 )
@@ -152,7 +152,7 @@ func (a *API) openTelegramToken(ctx context.Context, sealed []byte) (string, err
 const telegramBotColumns = `id::text, name, username, token_tail, chats, is_default, last_ok_at, last_error,
 	last_error_at, created_by, created_at, updated_at`
 
-func scanTelegramBot(row pgx.Row) (TelegramBot, error) {
+func scanTelegramBot(row rowScanner) (TelegramBot, error) {
 	var b TelegramBot
 	var chats []byte
 	err := row.Scan(&b.ID, &b.Name, &b.Username, &b.TokenTail, &chats, &b.Default, &b.LastOKAt, &b.LastError,
@@ -198,7 +198,7 @@ func (s *Store) TelegramBot(ctx context.Context, id string) (TelegramBot, []byte
 	err := s.db(ctx).QueryRow(ctx, `SELECT `+telegramBotColumns+`, token_sealed FROM telegram_bots WHERE id = $1`, id).
 		Scan(&b.ID, &b.Name, &b.Username, &b.TokenTail, &chats, &b.Default, &b.LastOKAt, &b.LastError,
 			&b.LastErrorAt, &b.CreatedBy, &b.CreatedAt, &b.UpdatedAt, &sealed)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return b, nil, ErrNoTelegramBot
 	}
 	if err != nil {
@@ -216,7 +216,7 @@ func (s *Store) TelegramBot(ctx context.Context, id string) (TelegramBot, []byte
 func (s *Store) DefaultTelegramBotID(ctx context.Context) (string, error) {
 	var id string
 	err := s.db(ctx).QueryRow(ctx, `SELECT id::text FROM telegram_bots WHERE is_default`).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return "", nil
 	}
 	return id, err
@@ -236,7 +236,7 @@ func (s *Store) HasTelegramBots(ctx context.Context) bool {
 func (s *Store) SaveTelegramBot(ctx context.Context, id string, in TelegramBotInput, username, tail string, sealed []byte, by string) (TelegramBot, error) {
 	chats, _ := json.Marshal(in.Chats)
 	var newID string
-	err := pgx.BeginFunc(ctx, s.db(ctx), func(tx pgx.Tx) error {
+	err := caduceus.BeginFunc(ctx, s.db(ctx), func(tx *caduceus.Tx) error {
 		if in.Default {
 			if _, err := tx.Exec(ctx, `UPDATE telegram_bots SET is_default = false WHERE is_default AND id::text <> $1`, id); err != nil {
 				return err
@@ -285,7 +285,7 @@ func (s *Store) DeleteTelegramBot(ctx context.Context, id, moveTo string) error 
 	if !validUUID(id) {
 		return ErrNoTelegramBot
 	}
-	return pgx.BeginFunc(ctx, s.db(ctx), func(tx pgx.Tx) error {
+	return caduceus.BeginFunc(ctx, s.db(ctx), func(tx *caduceus.Tx) error {
 		tag, err := tx.Exec(ctx, `DELETE FROM telegram_bots WHERE id = $1`, id)
 		if err != nil {
 			return err

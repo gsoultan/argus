@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 // ErrTeamNotFound is a team id that names nothing.
@@ -359,7 +359,7 @@ func (s *Store) RemoveTeamAssignment(ctx context.Context, assetID, teamID string
 // insertTeamAssignments writes a team assignment per team inside a caller's
 // transaction, for approving a server and giving it out in one step.
 func insertTeamAssignments(
-	ctx context.Context, tx pgx.Tx, assetID string, teamIDs, principals []string,
+	ctx context.Context, tx *caduceus.Tx, assetID string, teamIDs, principals []string,
 	personal bool, actor string,
 ) error {
 	for _, id := range teamIDs {

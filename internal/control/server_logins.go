@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -74,7 +74,7 @@ func (s *Store) ServerLogins(ctx context.Context, assetID string) ([]ServerLogin
 	err := s.db(ctx).QueryRow(ctx,
 		`SELECT agent_personal_accounts FROM assets WHERE id::text = $1 AND archived_at IS NULL`,
 		assetID).Scan(&states)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, ErrAssetNotFound
 	}
 	if err != nil {
@@ -154,7 +154,7 @@ func (s *Store) CreateServerLogin(ctx context.Context, assetID, name, actor stri
 	err = tx.QueryRow(ctx, `
 		SELECT hostname, principals FROM assets
 		 WHERE id::text = $1 AND archived_at IS NULL FOR UPDATE`, assetID).Scan(&host, &principals)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return "", false, ErrAssetNotFound
 	}
 	if err != nil {
@@ -165,7 +165,7 @@ func (s *Store) CreateServerLogin(ctx context.Context, assetID, name, actor stri
 	err = tx.QueryRow(ctx, `SELECT state FROM server_logins WHERE asset_id::text = $1 AND name = $2`,
 		assetID, name).Scan(&before)
 	switch {
-	case errors.Is(err, pgx.ErrNoRows):
+	case errors.Is(err, caduceus.ErrNoRows):
 		// An account the server lists but Argus did not make is someone
 		// else's. Making it here would mean adopting it.
 		if slices.Contains(principals, name) {
@@ -219,7 +219,7 @@ func (s *Store) RemoveServerLogin(ctx context.Context, assetID, name, actor stri
 	err = tx.QueryRow(ctx, `
 		SELECT hostname FROM assets WHERE id::text = $1 AND archived_at IS NULL FOR UPDATE`,
 		assetID).Scan(&host)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return "", ErrAssetNotFound
 	}
 	if err != nil {
@@ -228,7 +228,7 @@ func (s *Store) RemoveServerLogin(ctx context.Context, assetID, name, actor stri
 	var state string
 	err = tx.QueryRow(ctx, `SELECT state FROM server_logins WHERE asset_id::text = $1 AND name = $2 FOR UPDATE`,
 		assetID, name).Scan(&state)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return "", ErrServerLoginNotFound
 	}
 	if err != nil {

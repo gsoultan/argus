@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/gsoultan/caduceus/wire"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -57,7 +57,7 @@ func newBackupService(t *testing.T, dsn, dir string) (TunnelService, ed25519.Pub
 	t.Helper()
 	key, _ := tunnel.GrantKeyFromSecret(testSecret)
 	pub := key.Public().(ed25519.PublicKey)
-	cfg, _ := pgconn.ParseConfig(dsn)
+	cfg, _ := wire.ParseConfig(dsn)
 	svc := Backup(BackupConfig{
 		Verifier: &tunnel.GrantVerifier{Host: "db-01"},
 		Dir:      dir,
@@ -138,24 +138,24 @@ func backupGrant(job string, host string, port int, dbname string) tunnel.Grant 
 
 func mustExec(t *testing.T, dsn, sql string) {
 	t.Helper()
-	conn, err := pgconn.Connect(context.Background(), dsn)
+	conn, err := pgConnect(context.Background(), dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close(context.Background())
-	if err := conn.Exec(context.Background(), sql).Close(); err != nil {
+	if err := pgRun(context.Background(), conn, sql); err != nil {
 		t.Fatalf("%s: %v", sql, err)
 	}
 }
 
 func queryOne(t *testing.T, dsn, sql string) string {
 	t.Helper()
-	conn, err := pgconn.Connect(context.Background(), dsn)
+	conn, err := pgConnect(context.Background(), dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close(context.Background())
-	res := conn.ExecParams(context.Background(), sql, nil, nil, nil, nil).Read()
+	res := pgRead(context.Background(), conn, sql, nil)
 	if res.Err != nil {
 		t.Fatalf("%s: %v", sql, res.Err)
 	}
@@ -166,7 +166,7 @@ func queryOne(t *testing.T, dsn, sql string) string {
 }
 
 func withDB(dsn, db string) string {
-	cfg, _ := pgconn.ParseConfig(dsn)
+	cfg, _ := wire.ParseConfig(dsn)
 	return fmt.Sprintf("postgres://%s@/%s?host=%s&port=%d", cfg.User, db, cfg.Host, cfg.Port)
 }
 

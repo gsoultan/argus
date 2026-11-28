@@ -12,7 +12,7 @@ package rmodel
 import (
 	"time"
 
-	"github.com/gsoultan/storm"
+	"github.com/gsoultan/storm/v2"
 )
 
 // AccessRequest is table access_requests.
@@ -122,6 +122,7 @@ type Agent struct {
 }
 
 func (m *Agent) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Hostname)
 	t.Col(&m.Version).Default("''::text")
 	t.Col(&m.LastSeenAt).Default("now()")
 	t.Col(&m.ActiveSessions).Default("0")
@@ -341,6 +342,7 @@ type AssetAssignment struct {
 }
 
 func (m *AssetAssignment) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Asset, &m.UserEmail)
 	t.Col(&m.Asset).ConstraintName("asset_assignments_asset_id_fkey")
 	t.Col(&m.Asset).OnDelete(storm.Cascade)
 	t.Col(&m.Principals).Default("'{}'::text[]")
@@ -397,6 +399,7 @@ type AssetTeamAssignment struct {
 }
 
 func (m *AssetTeamAssignment) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Asset, &m.Team)
 	t.Col(&m.Asset).ConstraintName("asset_team_assignments_asset_id_fkey")
 	t.Col(&m.Asset).OnDelete(storm.Cascade)
 	t.Col(&m.Team).ConstraintName("asset_team_assignments_team_id_fkey")
@@ -430,6 +433,7 @@ type AuditEvent struct {
 }
 
 func (m *AuditEvent) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Seq)
 	t.Col(&m.Seq).Serial()
 	t.Col(&m.ID).Default("gen_random_uuid()")
 	t.Col(&m.At).Default("now()")
@@ -629,6 +633,7 @@ type HostKeyPin struct {
 }
 
 func (m *HostKeyPin) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Host)
 	t.Col(&m.KeyType).Default("''::text")
 	t.Col(&m.PinnedAt).Default("now()")
 	t.Col(&m.PinnedBy).Default("''::text")
@@ -643,6 +648,7 @@ type RecoveryCode struct {
 }
 
 func (m *RecoveryCode) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.User, &m.CodeHash)
 	t.Col(&m.User).ConstraintName("recovery_codes_user_id_fkey")
 	t.Col(&m.User).OnDelete(storm.Cascade)
 	t.Col(&m.CreatedAt).Default("now()")
@@ -675,6 +681,7 @@ type RevokedSession struct {
 }
 
 func (m *RevokedSession) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Sid)
 	t.Index(&m.ExpiresAt).Named("revoked_sessions_expires_at")
 }
 
@@ -814,6 +821,7 @@ type SchemaMigration struct {
 }
 
 func (m *SchemaMigration) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Name)
 	t.Col(&m.AppliedAt).Default("now()")
 }
 
@@ -858,6 +866,7 @@ type TeamMember struct {
 }
 
 func (m *TeamMember) Schema(t *storm.Table) {
+	t.PrimaryKey(&m.Team, &m.UserEmail)
 	t.Col(&m.Team).ConstraintName("team_members_team_id_fkey")
 	t.Col(&m.Team).OnDelete(storm.Cascade)
 	t.Col(&m.AddedBy).Default("''::text")
@@ -1408,6 +1417,8 @@ type User struct {
 }
 
 func (m *User) Schema(t *storm.Table) {
+	t.Col(&m.TotpSecret).Comment("Authenticator secret: sealed:v1:<base64 nonce+ciphertext>, AES-256-GCM under a key derived from signing_secret; an unprefixed value is from before sealing")
+	t.Col(&m.TotpPendingSecret).Comment("Unconfirmed authenticator secret, stored as totp_secret is")
 	t.Col(&m.ID).Default("gen_random_uuid()")
 	t.Col(&m.Role).Default("'operator'::text")
 	t.Col(&m.MfaEnrolled).Default("false")

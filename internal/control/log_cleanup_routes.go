@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /* ── On a heartbeat ──────────────────────────────────────────────────────── */
@@ -27,7 +27,7 @@ func (a *API) heartbeatLogs(ctx context.Context, host string, b *LogBeat) *LogOr
 	}
 	assetID, assetHost, tags, err := a.store.assetForAgent(ctx, host)
 	if err != nil {
-		if !errors.Is(err, pgx.ErrNoRows) {
+		if !errors.Is(err, caduceus.ErrNoRows) {
 			a.log.Error("heartbeat: cannot find the server for log cleanup", "hostname", host, "error", err)
 		}
 		return nil

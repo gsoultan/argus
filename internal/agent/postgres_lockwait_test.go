@@ -8,8 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
-
 	"github.com/gsoultan/argus/internal/tunnel"
 )
 
@@ -19,19 +17,19 @@ import (
 func TestOpeningBehindAHeldLockSaysSo(t *testing.T) {
 	dsn, _, _, dbname := pgTest(t)
 	ctx := context.Background()
-	holder, err := pgconn.Connect(ctx, dsn)
+	holder, err := pgConnect(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer holder.Close(ctx)
-	if _, err := holder.Exec(ctx, `DROP TABLE IF EXISTS lockwait_held;
-		CREATE TABLE lockwait_held (id int)`).ReadAll(); err != nil {
+	if _, err := pgExec(ctx, holder, `DROP TABLE IF EXISTS lockwait_held;
+		CREATE TABLE lockwait_held (id int)`); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_, _ = holder.Exec(context.Background(), "ROLLBACK; DROP TABLE IF EXISTS lockwait_held").ReadAll()
+		_, _ = pgExec(context.Background(), holder, "ROLLBACK; DROP TABLE IF EXISTS lockwait_held")
 	})
-	if _, err := holder.Exec(ctx, "BEGIN; LOCK TABLE lockwait_held IN ACCESS EXCLUSIVE MODE").ReadAll(); err != nil {
+	if _, err := pgExec(ctx, holder, "BEGIN; LOCK TABLE lockwait_held IN ACCESS EXCLUSIVE MODE"); err != nil {
 		t.Fatal(err)
 	}
 

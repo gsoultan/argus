@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -67,7 +67,7 @@ func (s *Store) SavedQueries(ctx context.Context, dbID, email string) ([]SavedQu
 	if err != nil {
 		return nil, fmt.Errorf("saved queries: %w", err)
 	}
-	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (SavedQuery, error) {
+	return caduceus.CollectRows(rows, func(r caduceus.CollectableRow) (SavedQuery, error) {
 		var q SavedQuery
 		err := r.Scan(&q.ID, &q.Owner, &q.Name, &q.SQL, &q.Shared, &q.CreatedAt, &q.UpdatedAt)
 		q.Mine = q.Owner == email
@@ -106,7 +106,7 @@ func (s *Store) UpdateSavedQuery(ctx context.Context, dbID, email string, q Save
 	err := s.db(ctx).QueryRow(ctx, `UPDATE saved_queries SET name = $4, sql = $5, shared = $6, updated_at = now()
 		WHERE id = $1::uuid AND database_id = $2::uuid AND owner = $3 RETURNING created_at, updated_at`,
 		q.ID, dbID, email, q.Name, q.SQL, q.Shared).Scan(&q.CreatedAt, &q.UpdatedAt)
-	if errors.Is(err, pgx.ErrNoRows) || isBadUUID(err) {
+	if errors.Is(err, caduceus.ErrNoRows) || isBadUUID(err) {
 		return q, errSavedNotFound
 	}
 	if err != nil {
@@ -122,7 +122,7 @@ func (s *Store) SavedQuery(ctx context.Context, dbID, id string) (SavedQuery, er
 	err := s.db(ctx).QueryRow(ctx, `SELECT id::text, owner, name, sql, shared, created_at, updated_at
 		FROM saved_queries WHERE id = $1::uuid AND database_id = $2::uuid`, id, dbID).
 		Scan(&q.ID, &q.Owner, &q.Name, &q.SQL, &q.Shared, &q.CreatedAt, &q.UpdatedAt)
-	if errors.Is(err, pgx.ErrNoRows) || isBadUUID(err) {
+	if errors.Is(err, caduceus.ErrNoRows) || isBadUUID(err) {
 		return q, errSavedNotFound
 	}
 	return q, err

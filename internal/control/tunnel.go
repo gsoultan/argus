@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 	"github.com/quic-go/quic-go"
 
 	"github.com/gsoultan/argus/internal/tunnel"
@@ -485,7 +485,7 @@ func (s *Store) tunnelConnected(ctx context.Context, credID, transport, replica 
 		   AND (tunnel_replica IS DISTINCT FROM $3 OR tunnel_connected_at IS NULL
 		        OR tunnel_connected_at < $4)
 		RETURNING first_connected_at = $4`, credID, transport, replica, since).Scan(&first)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return false, nil
 	}
 	return first, err
@@ -500,7 +500,7 @@ func (s *Store) tunnelSeen(ctx context.Context, credID string, since time.Time,
 		UPDATE agent_credentials SET tunnel_seen_at = now(), tunnel_rtt_us = $3
 		 WHERE id::text = $1 AND tunnel_connected_at = $2 AND revoked_at IS NULL
 		RETURNING 1`, credID, since, min(rtt.Microseconds(), 1<<31-1)).Scan(&one)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return false, nil
 	}
 	return err == nil, err

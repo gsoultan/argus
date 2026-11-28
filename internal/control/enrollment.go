@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -207,7 +207,7 @@ func (s *Store) EnrollChecked(ctx context.Context, token, hostname, replaces str
 		   AND (scale_group_id IS NULL OR $3)
 		RETURNING id::text, created_by, control_host`, hashSecret(token), hostname, keyChecked).
 		Scan(&out.TokenID, &out.TokenCreatedBy, &out.ControlHost)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		// Asked on this transaction's own connection. Taking a second one from
 		// the pool while holding this one deadlocks as soon as enough agents
 		// enroll at once to fill the pool -- each waiting for a connection the
@@ -224,7 +224,7 @@ func (s *Store) EnrollChecked(ctx context.Context, token, hostname, replaces str
 			 WHERE secret_hash = $1 AND lower(hostname) = lower($2)
 			   AND control_host AND revoked_at IS NULL
 			RETURNING id::text`, hashSecret(replaces), hostname, out.TokenCreatedBy).Scan(&out.ReplacedID)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		if err != nil && !errors.Is(err, caduceus.ErrNoRows) {
 			return Enrollment{}, fmt.Errorf("replace the helper's credential: %w", err)
 		}
 	}
@@ -251,7 +251,7 @@ func (s *Store) EnrollChecked(ctx context.Context, token, hostname, replaces str
 }
 
 // whyEnrollRefused names the reason a token was not accepted.
-func whyEnrollRefused(ctx context.Context, tx pgx.Tx, token, hostname string) error {
+func whyEnrollRefused(ctx context.Context, tx *caduceus.Tx, token, hostname string) error {
 	var (
 		bound   string
 		expired bool
@@ -262,7 +262,7 @@ func whyEnrollRefused(ctx context.Context, tx pgx.Tx, token, hostname string) er
 		  FROM agent_enrollment_tokens WHERE token_hash = $1`, hashSecret(token)).
 		Scan(&bound, &expired, &used)
 	switch {
-	case errors.Is(err, pgx.ErrNoRows):
+	case errors.Is(err, caduceus.ErrNoRows):
 		return ErrEnrollTokenInvalid
 	case err != nil:
 		return err
@@ -323,7 +323,7 @@ func (s *Store) RevokeAgentCredential(ctx context.Context, id, by string) (strin
 		UPDATE agent_credentials SET revoked_at = now(), revoked_by = $2
 		 WHERE id::text = $1 AND revoked_at IS NULL
 		RETURNING hostname`, id, by).Scan(&hostname)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return "", ErrAgentCredentialNotFound
 	}
 	if err != nil {

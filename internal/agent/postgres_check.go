@@ -8,7 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -44,7 +44,7 @@ WHERE s.n_tup_ins + s.n_tup_upd + s.n_tup_del > 0
 ORDER BY 1 LIMIT 200`
 
 func (s *pgSession) xactTouched(ctx context.Context) (map[string]tunnel.PGCheckTable, error) {
-	res := s.conn.ExecParams(ctx, xactTouchedSQL, nil, nil, nil, nil).Read()
+	res := pgRead(ctx, s.conn, xactTouchedSQL, nil)
 	if res.Err != nil {
 		return nil, res.Err
 	}
@@ -121,7 +121,7 @@ func (s *pgSession) check(ctx context.Context, req tunnel.PGRequest) error {
 		}
 	}
 	var (
-		tag     pgconn.CommandTag
+		tag     caduceus.CommandTag
 		touched map[string]tunnel.PGCheckTable
 		before  map[string]tunnel.PGCheckTable
 		preview *tunnel.PGPreview
@@ -138,12 +138,12 @@ func (s *pgSession) check(ctx context.Context, req tunnel.PGRequest) error {
 		if attempt == 0 && previewSQL != "" {
 			ran = previewSQL
 		}
-		if _, err = s.conn.Exec(sctx, open).ReadAll(); err != nil {
+		if _, err = pgExec(sctx, s.conn, open); err != nil {
 			return s.statementFailed(ctx, req.ID, err, 0, time.Since(start).Milliseconds())
 		}
 		before, err = s.xactTouched(sctx)
 		if err == nil {
-			rr := s.conn.ExecParams(sctx, ran, args, nil, nil, []int16{0})
+			rr := pgQuery(sctx, s.conn, ran, args)
 			if req.Preview {
 				preview = &tunnel.PGPreview{Change: class.Verb, Columns: []string{}, Rows: [][]*string{}}
 			}
@@ -169,7 +169,7 @@ func (s *pgSession) check(ctx context.Context, req tunnel.PGRequest) error {
 		}
 		// Always undone, whatever happened, before anything else is said.
 		if !s.conn.IsClosed() {
-			if _, uerr := s.conn.Exec(cleanup, undo).ReadAll(); uerr != nil && err == nil {
+			if _, uerr := pgExec(cleanup, s.conn, undo); uerr != nil && err == nil {
 				err = uerr
 			}
 		}

@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/control/cloud"
 )
@@ -77,7 +77,7 @@ const cloudAccountCols = `a.id::text, a.provider, a.name, a.account_id, a.role_a
 		WHERE r.account_id = a.id AND r.gone_at IS NULL GROUP BY kind) c), '{}'::jsonb),
 	a.manage_missing, a.manage_checked_at, a.identity`
 
-func scanCloudAccount(row pgx.Row) (CloudAccount, error) {
+func scanCloudAccount(row rowScanner) (CloudAccount, error) {
 	var c CloudAccount
 	var errs, counts []byte
 	if err := row.Scan(&c.ID, &c.Provider, &c.Name, &c.AccountID, &c.RoleARN, &c.ManageRoleARN, &c.Access, &c.Environment,
@@ -120,7 +120,7 @@ func (s *Store) CloudAccounts(ctx context.Context) ([]CloudAccount, error) {
 func (s *Store) CloudAccount(ctx context.Context, id string) (CloudAccount, error) {
 	c, err := scanCloudAccount(s.db(ctx).QueryRow(ctx, `SELECT `+cloudAccountCols+` FROM cloud_accounts a
 		WHERE a.id::text = $1 AND a.archived_at IS NULL`, id))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return CloudAccount{}, ErrCloudAccountNotFound
 	}
 	return c, err
@@ -131,7 +131,7 @@ func (s *Store) CloudAccount(ctx context.Context, id string) (CloudAccount, erro
 func (s *Store) CloudAccountByAccountID(ctx context.Context, provider, accountID string) (CloudAccount, error) {
 	c, err := scanCloudAccount(s.db(ctx).QueryRow(ctx, `SELECT `+cloudAccountCols+` FROM cloud_accounts a
 		WHERE a.provider = $1 AND a.account_id = $2 AND a.archived_at IS NULL`, provider, accountID))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return CloudAccount{}, ErrCloudAccountNotFound
 	}
 	return c, err
@@ -235,7 +235,7 @@ func (s *Store) SaveCloudSnapshot(ctx context.Context, accountID string, snap cl
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	batch := &pgx.Batch{}
+	batch := &caduceus.Batch{}
 	for _, r := range snap.Resources {
 		data, err := json.Marshal(r)
 		if err != nil {
@@ -254,7 +254,7 @@ func (s *Store) SaveCloudSnapshot(ctx context.Context, accountID string, snap cl
 	batch.Queue(`UPDATE cloud_resources SET gone_at = $4
 		WHERE account_id = $1::uuid AND region = $2 AND kind = ANY($3) AND gone_at IS NULL AND seen_at < $4`,
 		accountID, snap.Region, kinds, snap.ReadAt)
-	if err := tx.SendBatch(ctx, batch).Close(); err != nil {
+	if err := batch.Run(ctx, tx); err != nil {
 		return fmt.Errorf("save %s inventory: %w", snap.Region, err)
 	}
 	return tx.Commit(ctx)

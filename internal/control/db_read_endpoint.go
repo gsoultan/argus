@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/control/cloud"
 )
@@ -85,7 +85,7 @@ func (s *Store) readEndpoint(ctx context.Context, databaseID string) (ReadEndpoi
 		FROM database_read_endpoints e JOIN cloud_accounts a ON a.id = e.account_id
 		WHERE e.database_id = $1::uuid`, databaseID).Scan(&e.DatabaseID, &e.AccountID, &e.AccountName, &e.Region,
 		&e.TargetGroup, &e.TargetName, &e.IncludePrimary, &e.PrimaryInstance, &e.Note, &e.SetBy, &e.SetAt)
-	if errors.Is(err, pgx.ErrNoRows) || notUUID(err) {
+	if errors.Is(err, caduceus.ErrNoRows) || notUUID(err) {
 		return e, ErrNoReadEndpoint
 	}
 	return e, err
@@ -130,7 +130,7 @@ func (s *Store) readEndpointDatabases(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return pgx.CollectRows(rows, pgx.RowTo[string])
+	return caduceus.CollectRows(rows, caduceus.RowTo[string])
 }
 
 /* ── Routes ──────────────────────────────────────────────────────────────── */

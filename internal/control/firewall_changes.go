@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/tunnel"
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -148,7 +148,7 @@ const fwChangeCols = `id::text, asset_id::text, hostname, asset_hostname, kind, 
 	preview, state, rollout_id::text, wave, requested_by, requested_at, decided_by, decided_at, kept_by, kept_at,
 	sent_at, ended_at, updated_at, message, ran`
 
-func scanFWChange(row pgx.Row) (FirewallChange, error) {
+func scanFWChange(row rowScanner) (FirewallChange, error) {
 	var c FirewallChange
 	var delta, before, spec, preview, ran []byte
 	err := row.Scan(&c.ID, &c.AssetID, &c.Hostname, &c.AssetHostname, &c.Kind, &c.Summary, &c.Reason, &delta,
@@ -186,7 +186,7 @@ func scanFWChange(row pgx.Row) (FirewallChange, error) {
 	return c, nil
 }
 
-func scanFWChanges(rows pgx.Rows) ([]FirewallChange, error) {
+func scanFWChanges(rows *caduceus.Rows) ([]FirewallChange, error) {
 	defer rows.Close()
 	out := []FirewallChange{}
 	for rows.Next() {
@@ -208,7 +208,7 @@ func (s *Store) fwServerFor(ctx context.Context, assetID string) (fwServerState,
 	err := s.db(ctx).QueryRow(ctx, `
 		SELECT own_lines, policies, default_out, managers, synced_at FROM firewall_servers WHERE asset_id::text = $1`,
 		assetID).Scan(&own, &pols, &st.DefaultOut, &managers, &synced)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return fwServerState{Own: []FWLine{}, Policies: map[string]int{}}, []string{}, nil, nil
 	}
 	if err != nil {
@@ -294,7 +294,7 @@ func (s *Store) FWChangeByID(ctx context.Context, id string) (FirewallChange, er
 		return FirewallChange{}, ErrFWChangeNotFound
 	}
 	c, err := scanFWChange(s.db(ctx).QueryRow(ctx, `SELECT `+fwChangeCols+` FROM firewall_changes WHERE id::text = $1`, id))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return c, ErrFWChangeNotFound
 	}
 	return c, err
@@ -332,7 +332,7 @@ func (s *Store) DecideFWChange(ctx context.Context, id, by string, approve, own 
 		       message = CASE WHEN $2 = 'denied' THEN 'denied by ' || $3 ELSE message END
 		 WHERE id::text = $1 AND state = 'awaiting_approval'
 		RETURNING `+fwChangeCols, id, next, by))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return c, fmt.Errorf("%w: someone decided this change already", ErrRunState)
 	}
 	return c, err
@@ -345,7 +345,7 @@ func (s *Store) CancelFWChange(ctx context.Context, id, by string) (FirewallChan
 		       message = 'taken back by ' || $2
 		 WHERE id::text = $1 AND state IN ('awaiting_approval', 'queued')
 		RETURNING `+fwChangeCols, id, by))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		if c, err := s.FWChangeByID(ctx, id); err != nil {
 			return c, err
 		}
@@ -360,7 +360,7 @@ func (s *Store) KeepFWChange(ctx context.Context, id, by string) (FirewallChange
 		UPDATE firewall_changes SET kept_by = $2, kept_at = now(), updated_at = updated_at
 		 WHERE id::text = $1 AND state = 'waiting_keep' AND kept_at IS NULL
 		RETURNING `+fwChangeCols, id, by))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		if c, err := s.FWChangeByID(ctx, id); err != nil {
 			return c, err
 		}
@@ -374,7 +374,7 @@ func (s *Store) fwChangeInFlight(ctx context.Context, host string) (*FirewallCha
 	c, err := scanFWChange(s.db(ctx).QueryRow(ctx, `SELECT `+fwChangeCols+` FROM firewall_changes
 		 WHERE lower(hostname) = lower($1) AND state IN ('sent', 'trial', 'waiting_keep')
 		 ORDER BY sent_at LIMIT 1`, host))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -393,7 +393,7 @@ func (s *Store) fwChangeNext(ctx context.Context, host string) (*FirewallChange,
 		        AND NOT EXISTS (SELECT 1 FROM firewall_changes e WHERE e.rollout_id = c.rollout_id AND e.wave < c.wave
 		            AND e.state IN ('awaiting_approval', 'queued', 'sent', 'trial', 'waiting_keep'))))
 		 ORDER BY c.requested_at LIMIT 1`, host))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -424,7 +424,7 @@ func (s *Store) failFWChange(ctx context.Context, id, msg string) (*FirewallChan
 		UPDATE firewall_changes SET state = 'failed', message = $2, ended_at = now(), updated_at = now()
 		 WHERE id::text = $1 AND state IN ('queued', 'sent')
 		RETURNING `+fwChangeCols, id, clip(msg, 1000)))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, nil
 	}
 	return &c, err
@@ -444,7 +444,7 @@ func (s *Store) recordFWRun(ctx context.Context, host string, run tunnel.Firewal
 	defer func() { _ = tx.Rollback(ctx) }()
 	c, err := scanFWChange(tx.QueryRow(ctx, `SELECT `+fwChangeCols+` FROM firewall_changes
 		 WHERE id::text = $1 AND lower(hostname) = lower($2) FOR UPDATE`, run.ID, host))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -498,7 +498,7 @@ func (s *Store) recordFWRun(ctx context.Context, host string, run tunnel.Firewal
 }
 
 // commitFWChange makes an applied change what the server holds.
-func commitFWChange(ctx context.Context, tx pgx.Tx, c FirewallChange, now time.Time) error {
+func commitFWChange(ctx context.Context, tx *caduceus.Tx, c FirewallChange, now time.Time) error {
 	if c.before == nil {
 		return nil
 	}
@@ -590,7 +590,7 @@ func (s *Store) fwBeatFor(ctx context.Context, host string) (*tunnel.FirewallBea
 	var raw []byte
 	err := s.db(ctx).QueryRow(ctx, `SELECT firewall_beat FROM agents WHERE lower(hostname) = lower($1)
 		 ORDER BY last_seen_at DESC LIMIT 1`, host).Scan(&raw)
-	if errors.Is(err, pgx.ErrNoRows) || len(raw) == 0 || string(raw) == "null" {
+	if errors.Is(err, caduceus.ErrNoRows) || len(raw) == 0 || string(raw) == "null" {
 		return nil, nil
 	}
 	if err != nil {

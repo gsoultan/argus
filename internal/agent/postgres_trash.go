@@ -8,7 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/gsoultan/caduceus"
+	"github.com/gsoultan/caduceus/wire"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -443,10 +444,8 @@ REVOKE ALL ON ALL FUNCTIONS IN SCHEMA argus_trash_fn FROM PUBLIC;
 // pgEnsureTrash sets the trash up in the database the helper is connected
 // to, when it is not there at this version, lets Argus people call its
 // functions, and removes what has expired.
-func pgEnsureTrash(ctx context.Context, conn *pgconn.PgConn) error {
-	res := conn.ExecParams(ctx,
-		`SELECT coalesce(obj_description(oid, 'pg_namespace'), '') FROM pg_namespace WHERE nspname = $1`,
-		[][]byte{[]byte(trashSchema)}, nil, nil, nil).Read()
+func pgEnsureTrash(ctx context.Context, conn *caduceus.Conn) error {
+	res := pgRead(ctx, conn, `SELECT coalesce(obj_description(oid, 'pg_namespace'), '') FROM pg_namespace WHERE nspname = $1`, [][]byte{[]byte(trashSchema)})
 	if res.Err != nil {
 		return res.Err
 	}
@@ -462,12 +461,12 @@ func pgEnsureTrash(ctx context.Context, conn *pgconn.PgConn) error {
 		}
 		script := "BEGIN;\n" + trashSQL + grants +
 			"COMMENT ON SCHEMA argus_trash IS " + quoteLiteral(trashVersion) + ";\nCOMMIT;"
-		if _, err := conn.Exec(ctx, script).ReadAll(); err != nil {
-			_, _ = conn.Exec(context.WithoutCancel(ctx), "ROLLBACK").ReadAll()
+		if _, err := pgExec(ctx, conn, script); err != nil {
+			_, _ = pgExec(context.WithoutCancel(ctx), conn, "ROLLBACK")
 			return err
 		}
 	}
-	_, err := conn.Exec(ctx, "SELECT argus_trash_fn.purge()").ReadAll()
+	_, err := pgExec(ctx, conn, "SELECT argus_trash_fn.purge()")
 	return err
 }
 
@@ -572,7 +571,7 @@ func (s *pgSession) runTrashed(ctx context.Context, req tunnel.PGRequest, sql, r
 	start := time.Now()
 	wrapped := false
 	if s.pooled && s.conn.TxStatus() == 'I' {
-		if _, err := s.conn.Exec(sctx, s.prelude).ReadAll(); err != nil {
+		if _, err := pgExec(sctx, s.conn, s.prelude); err != nil {
 			return s.statementFailed(ctx, req.ID, err, 0, time.Since(start).Milliseconds())
 		}
 		wrapped = true
@@ -581,7 +580,7 @@ func (s *pgSession) runTrashed(ctx context.Context, req tunnel.PGRequest, sql, r
 	if cerr != nil {
 		return s.statementFailed(ctx, req.ID, cerr, 0, time.Since(start).Milliseconds())
 	}
-	res := s.conn.ExecParams(sctx, ran, args, nil, nil, nil).Read()
+	res := pgRead(sctx, s.conn, ran, args)
 	err := res.Err
 	if capKind != "" {
 		err = s.capClose(sctx, capKind, trashedRows(res.Rows), req.RowCap, err)
@@ -589,16 +588,16 @@ func (s *pgSession) runTrashed(ctx context.Context, req tunnel.PGRequest, sql, r
 	if wrapped && !s.conn.IsClosed() {
 		switch s.conn.TxStatus() {
 		case 'T':
-			if _, cerr := s.conn.Exec(context.WithoutCancel(sctx), "COMMIT").ReadAll(); cerr != nil && err == nil {
+			if _, cerr := pgExec(context.WithoutCancel(sctx), s.conn, "COMMIT"); cerr != nil && err == nil {
 				err = cerr
 			}
 		case 'E':
-			_, _ = s.conn.Exec(context.WithoutCancel(sctx), "ROLLBACK").ReadAll()
+			_, _ = pgExec(context.WithoutCancel(sctx), s.conn, "ROLLBACK")
 		}
 	}
 	elapsed := time.Since(start).Milliseconds()
 	if err != nil {
-		var pgErr *pgconn.PgError
+		var pgErr *wire.Error
 		if errors.As(err, &pgErr) && pgErr.Position > 0 {
 			// A position in the DELETE as typed, which the rewrite starts with
 			// after its first line; anything else has no place in what was typed.

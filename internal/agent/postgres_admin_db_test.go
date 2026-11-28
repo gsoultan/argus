@@ -11,8 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgconn"
-
 	"github.com/gsoultan/argus/internal/tunnel"
 )
 
@@ -305,11 +303,11 @@ func TestPostgresAdminOps(t *testing.T) {
 func superTry(t *testing.T, dsn string, stmts ...string) {
 	t.Helper()
 	for _, s := range stmts {
-		conn, err := pgconn.Connect(context.Background(), dsn)
+		conn, err := pgConnect(context.Background(), dsn)
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, _ = conn.Exec(context.Background(), s).ReadAll()
+		_, _ = pgExec(context.Background(), conn, s)
 		_ = conn.Close(context.Background())
 	}
 }

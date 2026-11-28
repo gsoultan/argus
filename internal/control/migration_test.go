@@ -8,8 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -54,7 +53,7 @@ func scratchDB(t *testing.T, name string) string {
 	// scratch database survived the run. Sixty-nine of them accumulated before
 	// CREATE DATABASE started blocking long enough to time tests out.
 	onAdmin := func(sql string, args ...any) error {
-		conn, err := pgx.Connect(ctx, admin)
+		conn, err := caduceus.Connect(ctx, admin, caduceus.Options{})
 		if err != nil {
 			return err
 		}
@@ -99,7 +98,7 @@ func openAt(t *testing.T, dsn string, n int) *Store {
 	if n > len(names) {
 		n = len(names)
 	}
-	pool, err := pgxpool.New(ctx, dsn)
+	pool, err := caduceus.NewPool(ctx, dsn)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/gsoultan/caduceus/wire"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -130,7 +130,7 @@ func TestPGRemoteDiscoverThroughPgBouncer(t *testing.T) {
 	if dsn == "" {
 		t.Skip("ARGUS_TEST_DATABASE_URL is not set")
 	}
-	pc, err := pgconn.ParseConfig(dsn)
+	pc, err := wire.ParseConfig(dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestPGRemoteDiscoverThroughPgBouncer(t *testing.T) {
 // the password in userlist.txt, opened as the person's role on that server.
 func TestPostgresSessionBehindPgBouncer(t *testing.T) {
 	dsn, _, _, dbname := pgTest(t)
-	pc, err := pgconn.ParseConfig(dsn)
+	pc, err := wire.ParseConfig(dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +276,7 @@ func TestPGRemoteLogins(t *testing.T) {
 // yet the databases behind PgBouncer are listed with it.
 func TestPGRemoteDiscoverWithAppAccount(t *testing.T) {
 	dsn, _, _, dbname := pgTest(t)
-	pc, err := pgconn.ParseConfig(dsn)
+	pc, err := wire.ParseConfig(dsn)
 	if err != nil {
 		t.Fatal(err)
 	}

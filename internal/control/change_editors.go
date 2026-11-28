@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/gsoultan/argus/internal/tunnel"
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -152,7 +152,7 @@ func (s *Store) requestDatabase(ctx context.Context, id string) (principal, dbID
 	var db *string
 	err = s.db(ctx).QueryRow(ctx,
 		`SELECT principal, database_id::text FROM access_requests WHERE id = $1::uuid`, id).Scan(&principal, &db)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return "", "", ErrRequestNotFound
 	}
 	if err != nil {
@@ -322,7 +322,7 @@ func (a *API) alertEditorsWaiting(ctx context.Context, db Database, req AccessRe
 func (s *Store) UserRole(ctx context.Context, email string) (string, error) {
 	var role string
 	err := s.db(ctx).QueryRow(ctx, `SELECT role FROM users WHERE lower(email) = lower($1)`, email).Scan(&role)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return "", nil
 	}
 	return role, err

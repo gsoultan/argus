@@ -9,7 +9,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -164,7 +164,7 @@ func (s *Store) AssetOutageLoginsOff(ctx context.Context, id string) (bool, erro
 	var off bool
 	err := s.db(ctx).QueryRow(ctx, `SELECT outage_logins_off FROM assets
 		WHERE id::text = $1 AND archived_at IS NULL`, id).Scan(&off)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return false, ErrAssetNotFound
 	}
 	return off, err
@@ -179,7 +179,7 @@ func (s *Store) SetAssetOutageLoginsOff(ctx context.Context, id string, off bool
 		  FROM assets o
 		 WHERE n.id = o.id AND n.id::text = $1 AND n.archived_at IS NULL
 		RETURNING o.outage_logins_off`, id, off).Scan(&before)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return false, ErrAssetNotFound
 	}
 	return before != off, err

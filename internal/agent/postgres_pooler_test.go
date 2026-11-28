@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/tunnel"
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/gsoultan/caduceus/wire"
 )
 
 /*
@@ -35,7 +35,7 @@ func startPgBouncer(t *testing.T, dsn string) int {
 	if err != nil {
 		t.Skip("pgbouncer is not installed")
 	}
-	cfg, _ := pgconn.ParseConfig(dsn)
+	cfg, _ := wire.ParseConfig(dsn)
 	host := cfg.Host
 	if strings.HasPrefix(host, "/") {
 		host = "127.0.0.1"

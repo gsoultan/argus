@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/auth"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/gsoultan/caduceus"
 )
 
 // The setup page is only meaningful against an empty users table, which the
@@ -207,7 +207,7 @@ func TestCreateFirstAccountIsSerialised(t *testing.T) {
 	// Open the pool's connections first. Otherwise each contender spends a
 	// few milliseconds dialling, the first is committed before the second has
 	// begun, and the test passes with or without the lock.
-	var conns []*pgxpool.Conn
+	var conns []*caduceus.PoolConn
 	for range h.store.pool.Config().MaxConns {
 		c, err := h.store.pool.Acquire(t.Context())
 		if err != nil {

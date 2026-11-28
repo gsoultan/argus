@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -18,8 +19,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgconn/ctxwatch"
+	"github.com/gsoultan/caduceus"
+	"github.com/gsoultan/caduceus/wire"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -209,7 +210,7 @@ type pgSession struct {
 	poolDB string
 	log    *slog.Logger
 
-	conn    *pgconn.PgConn
+	conn    *caduceus.Conn
 	types   map[uint32]string
 	version string
 	// pooled is set when the connection goes through PgBouncer. Nothing may
@@ -336,7 +337,7 @@ func ms(n int, def time.Duration) time.Duration {
 // connect signs in as the person's role. Through PgBouncer when the database
 // has one, then straight to Postgres: where the database says, then the other
 // local way in.
-func (s *pgSession) connect(ctx context.Context, password string) (*pgconn.PgConn, error) {
+func (s *pgSession) connect(ctx context.Context, password string) (*caduceus.Conn, error) {
 	settings := map[string]string{
 		"statement_timeout":                   strconv.FormatInt(ms(s.db.StatementTimeoutMS, defaultStmtTimeout).Milliseconds(), 10),
 		"idle_in_transaction_session_timeout": strconv.FormatInt(ms(s.db.IdleTxTimeoutMS, defaultIdleTxTimeout).Milliseconds(), 10),
@@ -366,7 +367,7 @@ func (s *pgSession) connect(ctx context.Context, password string) (*pgconn.PgCon
 	}
 	var lastErr error
 	for _, w := range ways {
-		cfg, err := pgconn.ParseConfig("sslmode=prefer")
+		cfg, err := wire.ParseConfig("sslmode=disable")
 		if err != nil {
 			return nil, err
 		}
@@ -388,23 +389,18 @@ func (s *pgSession) connect(ctx context.Context, password string) (*pgconn.PgCon
 				cfg.RuntimeParams["default_transaction_read_only"] = "on"
 			}
 		}
-		cfg.Fallbacks = nil
-		if strings.HasPrefix(w.host, "/") {
-			cfg.TLSConfig = nil
-		} else if cfg.TLSConfig != nil {
+		if !strings.HasPrefix(w.host, "/") {
 			// Localhost: TLS when the server offers it, plain when it does
 			// not; no certificate to check on a loopback connection.
-			cfg.TLSConfig.InsecureSkipVerify = true
-			cfg.Fallbacks = []*pgconn.FallbackConfig{{Host: w.host, Port: uint16(w.port)}}
+			cfg.TLSConfig, cfg.TLSFallback = &tls.Config{InsecureSkipVerify: true}, true
 		}
 		cfg.ConnectTimeout = 10 * time.Second
 		cfg.OnNotice = s.notices.add
 		// A cancelled statement sends Postgres a cancel request and keeps
-		// the connection; the default would close it.
-		cfg.BuildContextWatcherHandler = func(c *pgconn.PgConn) ctxwatch.Handler {
-			return &pgconn.CancelRequestContextWatcherHandler{Conn: c, DeadlineDelay: 10 * time.Second}
-		}
-		conn, err := pgconn.ConnectConfig(ctx, cfg)
+		// the connection, reading Postgres's answer for up to 10s; the
+		// default would close it.
+		cfg.CancelDelay = 10 * time.Second
+		conn, err := pgConnectConfig(ctx, cfg)
 		if err != nil {
 			lastErr = err
 			if w.pooled {
@@ -434,14 +430,14 @@ func (s *pgSession) connect(ctx context.Context, password string) (*pgconn.PgCon
 			}
 			s.prelude = b.String()
 			// Prove the role and the pooler agree before saying ready.
-			if _, err := conn.Exec(ctx, s.prelude+"; COMMIT").ReadAll(); err != nil {
+			if _, err := pgExec(ctx, conn, s.prelude+"; COMMIT"); err != nil {
 				_ = conn.Close(ctx)
 				return nil, err
 			}
 			return conn, nil
 		}
 		if role != "" {
-			if _, err := conn.Exec(ctx, "SET ROLE "+role).ReadAll(); err != nil {
+			if _, err := pgExec(ctx, conn, "SET ROLE "+role); err != nil {
 				_ = conn.Close(ctx)
 				return nil, err
 			}
@@ -456,8 +452,8 @@ func (s *pgSession) connect(ctx context.Context, password string) (*pgconn.PgCon
 // loadTypes reads type names once, so a result's columns can be named
 // without a round trip while its rows are arriving.
 func (s *pgSession) loadTypes(ctx context.Context) error {
-	res := s.conn.ExecParams(ctx, `SELECT oid::text, format_type(oid, NULL) FROM pg_type
-		WHERE typtype <> 'c' OR typrelid = 0 LIMIT 20000`, nil, nil, nil, nil).Read()
+	res := pgRead(ctx, s.conn, `SELECT oid::text, format_type(oid, NULL) FROM pg_type
+		WHERE typtype <> 'c' OR typrelid = 0 LIMIT 20000`, nil)
 	if res.Err != nil {
 		return res.Err
 	}
@@ -690,7 +686,7 @@ func (s *pgSession) read(ctx context.Context, st tunnel.Stream, reqs chan<- tunn
 				go func() {
 					cctx, c := context.WithTimeout(ctx, 5*time.Second)
 					defer c()
-					_ = s.conn.CancelRequest(cctx)
+					_ = s.conn.Wire().CancelRequest(cctx)
 				}()
 			}
 			continue
@@ -784,7 +780,7 @@ func (s *pgSession) run(ctx context.Context, req tunnel.PGRequest) error {
 	// makes belongs to anyone (an index belongs to its table's owner).
 	wrapped := false
 	if s.pooled && s.conn.TxStatus() == 'I' && !tunnel.PGOutsideTransaction(sql) {
-		if _, err := s.conn.Exec(sctx, s.prelude).ReadAll(); err != nil {
+		if _, err := pgExec(sctx, s.conn, s.prelude); err != nil {
 			return s.statementFailed(ctx, req.ID, err, 0, time.Since(start).Milliseconds())
 		}
 		wrapped = true
@@ -803,7 +799,7 @@ func (s *pgSession) run(ctx context.Context, req tunnel.PGRequest) error {
 	if cerr != nil {
 		return s.statementFailed(ctx, req.ID, cerr, 0, time.Since(start).Milliseconds())
 	}
-	rr := s.conn.ExecParams(sctx, sql, args, nil, nil, []int16{0})
+	rr := pgQuery(sctx, s.conn, sql, args)
 	h := sha256.New()
 	enc := tunnel.NewRowEncoder(req.ID)
 	var (
@@ -877,11 +873,11 @@ func (s *pgSession) run(ctx context.Context, req tunnel.PGRequest) error {
 		// itself ended the transaction (a COMMIT typed inside our BEGIN).
 		switch s.conn.TxStatus() {
 		case 'T':
-			if _, cerr := s.conn.Exec(context.WithoutCancel(sctx), "COMMIT").ReadAll(); cerr != nil && err == nil {
+			if _, cerr := pgExec(context.WithoutCancel(sctx), s.conn, "COMMIT"); cerr != nil && err == nil {
 				err = cerr
 			}
 		case 'E':
-			_, _ = s.conn.Exec(context.WithoutCancel(sctx), "ROLLBACK").ReadAll()
+			_, _ = pgExec(context.WithoutCancel(sctx), s.conn, "ROLLBACK")
 		}
 	}
 	elapsed := time.Since(start).Milliseconds()
@@ -894,7 +890,7 @@ func (s *pgSession) run(ctx context.Context, req tunnel.PGRequest) error {
 			return err
 		}
 	}
-	var pgErr *pgconn.PgError
+	var pgErr *wire.Error
 	if err != nil && truncated && errors.As(err, &pgErr) && pgErr.Code == "57014" {
 		err = nil // the cancel we sent for the row limit
 	}
@@ -916,7 +912,7 @@ func (s *pgSession) run(ctx context.Context, req tunnel.PGRequest) error {
 // error is passed on as it is; a lost connection ends the session.
 func (s *pgSession) statementFailed(ctx context.Context, id uint32, err error, rows, elapsed int64) error {
 	a := tunnel.PGAnswer{ID: id, Type: "error", Error: err.Error(), MS: elapsed, Notices: s.notices.take()}
-	var pgErr *pgconn.PgError
+	var pgErr *wire.Error
 	if errors.As(err, &pgErr) {
 		a.Error, a.Code, a.Position, a.Detail, a.Hint =
 			pgErr.Message, pgErr.Code, int(pgErr.Position), pgErr.Detail, pgErr.Hint
@@ -942,7 +938,7 @@ func (s *pgSession) statementFailed(ctx context.Context, id uint32, err error, r
 // levels. Owner reaches what Argus and an application's own role made, never
 // what a superuser made; a DBA session is handed what a superuser owns as it
 // opens, so at DBA this is one of the few things left with its owner.
-func ownerHint(level string, e *pgconn.PgError) string {
+func ownerHint(level string, e *wire.Error) string {
 	if e.Code != "42501" || !strings.HasPrefix(e.Message, "must be owner of ") {
 		return ""
 	}
@@ -974,14 +970,14 @@ func beginSQL(sql string) bool {
 
 // rowsOf is how many rows a statement touched: what it returned for a query,
 // what the tag says for a write.
-func rowsOf(tag pgconn.CommandTag, returned int64) int64 {
+func rowsOf(tag caduceus.CommandTag, returned int64) int64 {
 	if tag.Select() || returned > 0 {
 		return returned
 	}
 	return tag.RowsAffected()
 }
 
-func (s *pgSession) sendCols(id uint32, fds []pgconn.FieldDescription) error {
+func (s *pgSession) sendCols(id uint32, fds []wire.Field) error {
 	cols := make([]tunnel.PGColumn, len(fds))
 	for i, fd := range fds {
 		t, ok := s.types[fd.DataTypeOID]
@@ -1091,7 +1087,7 @@ func (s *pgSession) schema(ctx context.Context, req tunnel.PGRequest) error {
 	}
 	qctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	res := s.conn.ExecParams(qctx, sql, args, nil, nil, nil).Read()
+	res := pgRead(qctx, s.conn, sql, args)
 	if res.Err != nil {
 		if s.conn.IsClosed() {
 			return errors.New("the connection to Postgres ended")

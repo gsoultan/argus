@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /* ── On a heartbeat ──────────────────────────────────────────────────────── */
@@ -26,7 +26,7 @@ func (a *API) heartbeatDisks(ctx context.Context, host string, b *DiskBeat) *Dis
 	}
 	_, assetHost, tags, err := a.store.assetForAgent(ctx, host)
 	if err != nil {
-		if !errors.Is(err, pgx.ErrNoRows) {
+		if !errors.Is(err, caduceus.ErrNoRows) {
 			a.log.Error("heartbeat: cannot find the server for its disks", "hostname", host, "error", err)
 		}
 		return nil

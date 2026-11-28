@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -164,7 +164,7 @@ func (s *Store) MarkControlHostAsset(ctx context.Context, hostname string) (Asse
 		a, err := s.AssetByID(ctx, id)
 		return a, false, err
 	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	if !errors.Is(err, caduceus.ErrNoRows) {
 		return Asset{}, false, err
 	}
 	// No principals: who may open a terminal here, and as which account, is

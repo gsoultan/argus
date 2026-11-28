@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -153,7 +153,7 @@ const pgAdminLockWait = "10s"
 
 // RunPGAdmin performs req on conn, which is signed in as a superuser to
 // req.Database. It is what the helper runs.
-func RunPGAdmin(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAdminResult {
+func RunPGAdmin(ctx context.Context, conn *caduceus.Conn, req PGAdminRequest) PGAdminResult {
 	switch req.Op {
 	case "prepare-replace", "rollback-replace", "drop-database", "list-databases":
 		return pgReplaceOp(ctx, conn, req)
@@ -202,14 +202,14 @@ func RunPGAdmin(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PG
 	return PGAdminResult{Error: "unknown operation " + req.Op}
 }
 
-func pgOpen(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAdminResult {
+func pgOpen(ctx context.Context, conn *caduceus.Conn, req PGAdminRequest) PGAdminResult {
 	if !scramPattern.MatchString(req.Verifier) {
 		return PGAdminResult{Error: "the session password is not a SCRAM verifier"}
 	}
 	if req.ValidUntil.IsZero() {
 		return PGAdminResult{Error: "a session password must expire"}
 	}
-	version := conn.ParameterStatus("server_version")
+	version := conn.Wire().ParameterStatus("server_version")
 
 	// The level roles and their grants, every time: a table made since the
 	// last session is covered by the next one without anyone re-granting.
@@ -234,9 +234,7 @@ func pgOpen(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAdmi
 
 	// The person's role.
 	role := pgx(req.Role)
-	res := conn.ExecParams(ctx,
-		`SELECT coalesce(shobj_description(oid, 'pg_authid'), '') FROM pg_roles WHERE rolname = $1`,
-		[][]byte{[]byte(req.Role)}, nil, nil, nil).Read()
+	res := pgRead(ctx, conn, `SELECT coalesce(shobj_description(oid, 'pg_authid'), '') FROM pg_roles WHERE rolname = $1`, [][]byte{[]byte(req.Role)})
 	if res.Err != nil {
 		return PGAdminResult{Error: res.Err.Error(), Version: version}
 	}
@@ -274,10 +272,8 @@ func pgOpen(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAdmi
 	return PGAdminResult{OK: true, Version: version, Adopted: adopted}
 }
 
-func pgClose(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAdminResult {
-	res := conn.ExecParams(ctx,
-		`SELECT coalesce(shobj_description(oid, 'pg_authid'), '') FROM pg_roles WHERE rolname = $1`,
-		[][]byte{[]byte(req.Role)}, nil, nil, nil).Read()
+func pgClose(ctx context.Context, conn *caduceus.Conn, req PGAdminRequest) PGAdminResult {
+	res := pgRead(ctx, conn, `SELECT coalesce(shobj_description(oid, 'pg_authid'), '') FROM pg_roles WHERE rolname = $1`, [][]byte{[]byte(req.Role)})
 	if res.Err != nil {
 		return PGAdminResult{Error: res.Err.Error()}
 	}
@@ -296,9 +292,8 @@ func pgClose(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAdm
 		return PGAdminResult{Error: err.Error()}
 	}
 	// Anything still connected as the role through Argus ends with it.
-	_ = conn.ExecParams(ctx, `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-		WHERE usename = $1 AND application_name LIKE 'argus:%' AND pid <> pg_backend_pid()`,
-		[][]byte{[]byte(req.Role)}, nil, nil, nil).Read()
+	_ = pgRead(ctx, conn, `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+		WHERE usename = $1 AND application_name LIKE 'argus:%' AND pid <> pg_backend_pid()`, [][]byte{[]byte(req.Role)})
 	return PGAdminResult{OK: true}
 }
 
@@ -334,7 +329,7 @@ ownership, and it is why this is the DBA level only.
 It runs on every DBA open, so what a superuser made since is covered by the
 next session. The statements are returned so the session records them.
 */
-func pgAdoptSuperuserObjects(ctx context.Context, conn *pgconn.PgConn, dbaRole string) ([]string, error) {
+func pgAdoptSuperuserObjects(ctx context.Context, conn *caduceus.Conn, dbaRole string) ([]string, error) {
 	const sql = `WITH su AS (SELECT oid FROM pg_roles WHERE rolsuper),
 ns AS (SELECT oid, nspname FROM pg_namespace
        WHERE nspname NOT LIKE 'pg\_%' AND nspname <> 'information_schema' AND nspname <> 'argus_auth'
@@ -365,7 +360,7 @@ SELECT 3, format('ALTER %s %s OWNER TO %I', CASE t.typtype WHEN 'd' THEN 'DOMAIN
  WHERE t.typowner IN (SELECT oid FROM su) AND t.typtype IN ('d', 'e', 'r')
    AND NOT EXISTS (SELECT 1 FROM ext WHERE classid = 'pg_type'::regclass AND objid = t.oid)
 ORDER BY 1, 2`
-	res := conn.ExecParams(ctx, sql, [][]byte{[]byte(dbaRole)}, nil, nil, nil).Read()
+	res := pgRead(ctx, conn, sql, [][]byte{[]byte(dbaRole)})
 	if res.Err != nil {
 		return nil, res.Err
 	}
@@ -379,7 +374,7 @@ ORDER BY 1, 2`
 	// All or none: a DBA sees every one handed over, or the open fails
 	// and says which.
 	if err := execAll(ctx, conn, append(append([]string{"BEGIN"}, stmts...), "COMMIT")...); err != nil {
-		_, _ = conn.Exec(context.WithoutCancel(ctx), "ROLLBACK").ReadAll()
+		_, _ = pgExec(context.WithoutCancel(ctx), conn, "ROLLBACK")
 		return nil, err
 	}
 	return stmts, nil
@@ -388,13 +383,13 @@ ORDER BY 1, 2`
 // pgEnsurePoolerAuth creates the lookup PgBouncer authenticates Argus roles
 // with; see tunnel.PoolerAuthSetupSQL. It lives in the connected database,
 // which is where PgBouncer runs auth_query unless auth_dbname says otherwise.
-func pgEnsurePoolerAuth(ctx context.Context, conn *pgconn.PgConn) error {
+func pgEnsurePoolerAuth(ctx context.Context, conn *caduceus.Conn) error {
 	return execAll(ctx, conn, tunnel.PoolerAuthSetupSQL()...)
 }
 
 // pgEnsureLevels creates the level roles up to level and grants each what it
 // may do in every schema of the database it can see.
-func pgEnsureLevels(ctx context.Context, conn *pgconn.PgConn, database, level string) error {
+func pgEnsureLevels(ctx context.Context, conn *caduceus.Conn, database, level string) error {
 	names := map[string]string{}
 	for _, l := range levelsUpTo(level) {
 		names[l] = levelRole(l, database)
@@ -529,9 +524,9 @@ func revokeIfExists(group, member string) string {
 		"REVOKE %s FROM %s; END IF; END $r$", quoteLiteral(group), quoteLiteral(member), pgx(group), pgx(member))
 }
 
-func execAll(ctx context.Context, conn *pgconn.PgConn, stmts ...string) error {
+func execAll(ctx context.Context, conn *caduceus.Conn, stmts ...string) error {
 	for _, s := range stmts {
-		if _, err := conn.Exec(ctx, s).ReadAll(); err != nil {
+		if _, err := pgExec(ctx, conn, s); err != nil {
 			return fmt.Errorf("%s: %w", firstWords(s), err)
 		}
 	}
@@ -624,11 +619,10 @@ it made, and only drops a database whose name carries its own marker.
 // drop-database can refuse anything else.
 const replaceMarker = tunnel.KeptMarker
 
-func pgReplaceOp(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAdminResult {
-	version := conn.ParameterStatus("server_version")
+func pgReplaceOp(ctx context.Context, conn *caduceus.Conn, req PGAdminRequest) PGAdminResult {
+	version := conn.Wire().ParameterStatus("server_version")
 	if req.Op == "list-databases" {
-		res := conn.ExecParams(ctx, `SELECT datname FROM pg_database WHERE NOT datistemplate ORDER BY 1`,
-			nil, nil, nil, nil).Read()
+		res := pgRead(ctx, conn, `SELECT datname FROM pg_database WHERE NOT datistemplate ORDER BY 1`, nil)
 		if res.Err != nil {
 			return PGAdminResult{Error: res.Err.Error(), Version: version}
 		}
@@ -645,15 +639,14 @@ func pgReplaceOp(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) P
 		return PGAdminResult{Error: "not a name Argus will rename to: " + req.RenameTo}
 	}
 	exists := func(name string) (bool, error) {
-		res := conn.ExecParams(ctx, `SELECT 1 FROM pg_database WHERE datname = $1`,
-			[][]byte{[]byte(name)}, nil, nil, nil).Read()
+		res := pgRead(ctx, conn, `SELECT 1 FROM pg_database WHERE datname = $1`, [][]byte{[]byte(name)})
 		return len(res.Rows) > 0, res.Err
 	}
 	terminate := func(name string) error {
 		// Nobody may reconnect while the restore runs: the level roles lose
 		// CONNECT until the next session re-grants it, and every backend goes.
-		res := conn.ExecParams(ctx, `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-			WHERE datname = $1 AND pid <> pg_backend_pid()`, [][]byte{[]byte(name)}, nil, nil, nil).Read()
+		res := pgRead(ctx, conn, `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+			WHERE datname = $1 AND pid <> pg_backend_pid()`, [][]byte{[]byte(name)})
 		return res.Err
 	}
 	switch req.Op {
@@ -713,13 +706,12 @@ func pgReplaceOp(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) P
 // databases that refuse connections are left out; so is nothing else, since
 // an admin may well want the maintenance database. It reads the catalog and
 // changes nothing.
-func pgDiscover(ctx context.Context, conn *pgconn.PgConn) PGAdminResult {
-	version := conn.ParameterStatus("server_version")
-	res := conn.ExecParams(ctx, `SELECT datname, pg_get_userbyid(datdba),
+func pgDiscover(ctx context.Context, conn *caduceus.Conn) PGAdminResult {
+	version := conn.Wire().ParameterStatus("server_version")
+	res := pgRead(ctx, conn, `SELECT datname, pg_get_userbyid(datdba),
 			CASE WHEN has_database_privilege(oid, 'CONNECT') THEN pg_database_size(oid) ELSE 0 END
 		FROM pg_database WHERE NOT datistemplate AND datallowconn
-		  AND datname NOT LIKE 'argus\_test\_%' ORDER BY 1 LIMIT $1`,
-		[][]byte{[]byte(strconv.Itoa(tunnel.MaxDiscovered + 1))}, nil, nil, nil).Read()
+		  AND datname NOT LIKE 'argus\_test\_%' ORDER BY 1 LIMIT $1`, [][]byte{[]byte(strconv.Itoa(tunnel.MaxDiscovered + 1))})
 	if res.Err != nil {
 		return PGAdminResult{Error: res.Err.Error(), Version: version}
 	}

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/control"
 	"github.com/gsoultan/argus/internal/tunnel"
@@ -31,7 +31,7 @@ func rekeyDB(t *testing.T) string {
 	admin := dsn[:i+1] + "postgres" + dsn[i+j:]
 	name := fmt.Sprintf("argus_rekey_%d", time.Now().UnixNano())
 	exec := func(sql string) {
-		conn, err := pgx.Connect(context.Background(), admin)
+		conn, err := caduceus.Connect(context.Background(), admin, caduceus.Options{})
 		if err != nil {
 			t.Skipf("no maintenance database: %v", err)
 		}

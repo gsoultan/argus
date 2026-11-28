@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/control/cloud"
 )
@@ -304,7 +304,7 @@ func (s *Store) DeleteCloudFindingKeep(ctx context.Context, accountID, findingID
 		RETURNING account_id::text, finding_id, reason, kept_by, kept_at`, accountID, findingID).
 		Scan(&k.AccountID, &k.FindingID, &k.Reason, &k.KeptBy, &k.KeptAt)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, caduceus.ErrNoRows) {
 			return k, ErrCloudFindingKeepNotFound
 		}
 		return k, err

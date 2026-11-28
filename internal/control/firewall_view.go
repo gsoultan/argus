@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/tunnel"
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -95,7 +95,7 @@ func (s *Store) FirewallFor(ctx context.Context, id string) (ServerFirewall, err
 		        LIMIT 1) ag ON TRUE
 		 WHERE a.id::text = $1 AND a.archived_at IS NULL`, id).
 		Scan(&row.assetID, &row.hostname, &row.firewall, &row.applications)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return ServerFirewall{}, ErrAssetNotFound
 	}
 	if err != nil {

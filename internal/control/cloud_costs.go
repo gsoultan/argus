@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/control/cloud"
 )
@@ -117,11 +117,11 @@ var ErrCloudBudgetNotFound = errors.New("no such budget")
 const cloudBudgetCols = `id::text, COALESCE(account_id::text, ''), name, amount::float8, thresholds, forecast, created_by, created_at,
 	alerted_month, alerted`
 
-func scanCloudBudget(row pgx.Row) (CloudBudget, error) {
+func scanCloudBudget(row rowScanner) (CloudBudget, error) {
 	var b CloudBudget
 	var th, al []int32
 	err := row.Scan(&b.ID, &b.AccountID, &b.Name, &b.Amount, &th, &b.Forecast, &b.CreatedBy, &b.CreatedAt, &b.AlertedMonth, &al)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return CloudBudget{}, ErrCloudBudgetNotFound
 	}
 	b.Thresholds, b.Alerted = ints(th), ints(al)
@@ -185,7 +185,7 @@ func (s *Store) SaveCloudBudget(ctx context.Context, b CloudBudget) (CloudBudget
 			WHERE id::text = $1 RETURNING id::text`,
 			b.ID, b.AccountID, b.Name, b.Amount, int32s(b.Thresholds), b.Forecast).Scan(&id)
 	}
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return CloudBudget{}, ErrCloudBudgetNotFound
 	}
 	if err != nil {

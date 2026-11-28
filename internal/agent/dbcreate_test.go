@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/gsoultan/caduceus/wire"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -173,14 +173,14 @@ func TestPostgresCreateDatabaseHelper(t *testing.T) {
 
 	run := func(op, database string, c tunnel.GrantCreate) PGAdminResult {
 		t.Helper()
-		cfg, err := pgconn.ParseConfig(dsn)
+		cfg, err := wire.ParseConfig(dsn)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if database != "" {
 			cfg.Database = database
 		}
-		conn, err := pgconn.ConnectConfig(context.Background(), cfg)
+		conn, err := pgConnectConfig(context.Background(), cfg)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -205,15 +205,15 @@ func TestPostgresCreateDatabaseHelper(t *testing.T) {
 	if !p.OK {
 		t.Fatalf("%+v", p)
 	}
-	cfg, _ := pgconn.ParseConfig(dsn)
+	cfg, _ := wire.ParseConfig(dsn)
 	cfg.Database = name
-	conn, err := pgconn.ConnectConfig(context.Background(), cfg)
+	conn, err := pgConnectConfig(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := conn.Exec(context.Background(), `SELECT extname FROM pg_extension WHERE extname = 'pgcrypto'`).ReadAll()
+	res, err := pgExec(context.Background(), conn, `SELECT extname FROM pg_extension WHERE extname = 'pgcrypto'`)
 	conn.Close(context.Background())
-	if err != nil || len(res[0].Rows) != 1 {
+	if err != nil || len(res.Rows) != 1 {
 		t.Fatalf("pgcrypto not enabled: %v %v", err, res)
 	}
 

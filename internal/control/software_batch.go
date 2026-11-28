@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -136,7 +136,7 @@ func (a *API) postSoftwareBatch(w http.ResponseWriter, r *http.Request) {
 	case "file":
 		var err error
 		file, err = a.store.softwareFile(ctx, in.FileID)
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, caduceus.ErrNoRows) {
 			writeErr(w, http.StatusNotFound, "no such file in the library")
 			return
 		}

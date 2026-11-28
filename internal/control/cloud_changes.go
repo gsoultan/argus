@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/control/cloud"
 )
@@ -59,13 +59,13 @@ const cloudChangeCols = `c.id::text, c.account_id::text, a.name, c.region, c.act
 	c.resource_id, c.resource_name, c.spec, c.plan, c.plan_hash, c.summary, c.reason, c.state,
 	c.requested_by, c.requested_at, c.decided_by, c.decided_at, c.applied_at, c.request_id, c.result, c.error`
 
-func scanCloudChange(row pgx.Row) (CloudChange, error) {
+func scanCloudChange(row rowScanner) (CloudChange, error) {
 	var c CloudChange
 	var spec, plan, result []byte
 	err := row.Scan(&c.ID, &c.AccountID, &c.AccountName, &c.Region, &c.Action, &c.Level, &c.Environment,
 		&c.ResourceID, &c.ResourceName, &spec, &plan, &c.PlanHash, &c.Summary, &c.Reason, &c.State,
 		&c.RequestedBy, &c.RequestedAt, &c.DecidedBy, &c.DecidedAt, &c.AppliedAt, &c.RequestID, &result, &c.Error)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return CloudChange{}, ErrCloudChangeNotFound
 	}
 	c.Spec, c.Plan, c.Result = spec, plan, result
@@ -215,7 +215,7 @@ func (s *Store) CloudResourceOf(ctx context.Context, accountID, region string, k
 	err := s.db(ctx).QueryRow(ctx, `SELECT data FROM cloud_resources
 		WHERE account_id::text = $1 AND region = $2 AND kind = $3 AND provider_id = $4 AND gone_at IS NULL`,
 		accountID, region, string(kind), id).Scan(&data)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return cloud.Resource{}, errors.New("Argus has not seen " + string(kind) + " " + id + " in " + region + "; read the account again")
 	}
 	if err != nil {

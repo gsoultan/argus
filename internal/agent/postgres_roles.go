@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/tunnel"
 )
@@ -146,7 +146,7 @@ func rolePassword(op *tunnel.PGAdminOp) (*tunnel.PGAdminOp, string, error) {
 }
 
 // pgRoleOp runs a role or privilege operation on conn, a superuser's.
-func pgRoleOp(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAdminResult {
+func pgRoleOp(ctx context.Context, conn *caduceus.Conn, req PGAdminRequest) PGAdminResult {
 	op := req.Admin
 	if op.RoleSpec != nil && op.RoleSpec.Password != "" && !op.Preview {
 		if op.RoleSpec.Password != passwordMarker || !scramPattern.MatchString(req.Verifier) {
@@ -183,21 +183,21 @@ func pgRoleOp(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAd
 			return PGAdminResult{Error: msg, SQL: joined}
 		}
 		built := adminSQL{run: run, redacted: text}
-		if _, err := conn.Exec(ctx, "BEGIN").ReadAll(); err != nil {
+		if _, err := pgExec(ctx, conn, "BEGIN"); err != nil {
 			return pgAdminFailed(err, built)
 		}
 		tag := ""
 		for _, s := range run {
-			t, err := conn.Exec(ctx, s).ReadAll()
+			t, err := pgExec(ctx, conn, s)
 			if err != nil {
-				_, _ = conn.Exec(context.WithoutCancel(ctx), "ROLLBACK").ReadAll()
+				_, _ = pgExec(context.WithoutCancel(ctx), conn, "ROLLBACK")
 				return pgAdminFailed(err, built)
 			}
-			if len(t) > 0 && !strings.HasPrefix(s, "COMMENT") {
-				tag = t[len(t)-1].CommandTag.String()
+			if !strings.HasPrefix(s, "COMMENT") {
+				tag = t.Tag.String()
 			}
 		}
-		if _, err := conn.Exec(ctx, "COMMIT").ReadAll(); err != nil {
+		if _, err := pgExec(ctx, conn, "COMMIT"); err != nil {
 			return pgAdminFailed(err, built)
 		}
 		data = PGAdminDone{SQL: joined, Tag: tag}
@@ -214,7 +214,7 @@ func pgRoleOp(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAd
 
 // roleRefusal says why op may not run, with the database in hand: a role
 // Argus manages, or taking the helper's own account away from it.
-func roleRefusal(ctx context.Context, conn *pgconn.PgConn, op *tunnel.PGAdminOp) (string, error) {
+func roleRefusal(ctx context.Context, conn *caduceus.Conn, op *tunnel.PGAdminOp) (string, error) {
 	// Each role the operation changes, and whether a level role may stand
 	// there (a level is given to an application role through membership).
 	type named struct {
@@ -255,8 +255,8 @@ func roleRefusal(ctx context.Context, conn *pgconn.PgConn, op *tunnel.PGAdminOp)
 	for _, n := range names {
 		list = append(list, n.name)
 	}
-	res := conn.ExecParams(ctx, `SELECT r.rolname, coalesce(shobj_description(r.oid, 'pg_authid'), ''), r.rolname = current_user
-FROM pg_roles r WHERE r.rolname = ANY($1::text[])`, [][]byte{[]byte(pgTextArray(list))}, nil, nil, nil).Read()
+	res := pgRead(ctx, conn, `SELECT r.rolname, coalesce(shobj_description(r.oid, 'pg_authid'), ''), r.rolname = current_user
+FROM pg_roles r WHERE r.rolname = ANY($1::text[])`, [][]byte{[]byte(pgTextArray(list))})
 	if res.Err != nil {
 		return "", res.Err
 	}
@@ -326,7 +326,7 @@ func splitList(b []byte) []string {
 	return strings.Split(string(b), ",")
 }
 
-func listRoles(ctx context.Context, conn *pgconn.PgConn) ([]PGRole, error) {
+func listRoles(ctx context.Context, conn *caduceus.Conn) ([]PGRole, error) {
 	const sql = `SELECT a.rolname, a.rolsuper, a.rolcanlogin, a.rolinherit, a.rolcreaterole, a.rolcreatedb,
   a.rolreplication, a.rolbypassrls, a.rolconnlimit,
   coalesce(to_char(a.rolvaliduntil AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') || ' UTC', ''),
@@ -342,7 +342,7 @@ FROM pg_authid a
 WHERE a.rolname NOT LIKE 'pg\_%'
 ORDER BY a.rolsuper DESC, a.rolname
 LIMIT 5000`
-	res := conn.ExecParams(ctx, sql, nil, nil, nil, nil).Read()
+	res := pgRead(ctx, conn, sql, nil)
 	if res.Err != nil {
 		return nil, res.Err
 	}
@@ -369,9 +369,8 @@ const userSchemas = `n.nspname NOT IN ('pg_catalog', 'information_schema') AND n
 
 var relKinds = map[string]string{"r": "table", "v": "view", "m": "matview", "p": "partitioned", "f": "foreign", "S": "sequence"}
 
-func rolePrivileges(ctx context.Context, conn *pgconn.PgConn, role string) (*PGRolePrivileges, error) {
-	res := conn.ExecParams(ctx, `SELECT oid::text, rolsuper FROM pg_roles WHERE rolname = $1`,
-		[][]byte{[]byte(role)}, nil, nil, nil).Read()
+func rolePrivileges(ctx context.Context, conn *caduceus.Conn, role string) (*PGRolePrivileges, error) {
+	res := pgRead(ctx, conn, `SELECT oid::text, rolsuper FROM pg_roles WHERE rolname = $1`, [][]byte{[]byte(role)})
 	if res.Err != nil {
 		return nil, res.Err
 	}
@@ -382,7 +381,7 @@ func rolePrivileges(ctx context.Context, conn *pgconn.PgConn, role string) (*PGR
 	out := &PGRolePrivileges{Role: role, Superuser: string(res.Rows[0][1]) == "t",
 		Schemas: []PGPrivRow{}, Tables: []PGPrivRow{}, Sequences: []PGPrivRow{}, Functions: []PGPrivRow{}, Defaults: []PGDefaultPriv{}}
 	query := func(sql string) ([][][]byte, error) {
-		r := conn.ExecParams(ctx, sql, [][]byte{oid}, nil, nil, nil).Read()
+		r := pgRead(ctx, conn, sql, [][]byte{oid})
 		return r.Rows, r.Err
 	}
 	// effective lists, in order, the privileges has_<fn>_privilege grants.
@@ -496,10 +495,9 @@ GROUP BY 1, 2, 3 ORDER BY 2, 1, 3`)
 	return out, nil
 }
 
-func grantObjects(ctx context.Context, conn *pgconn.PgConn, schema string) (*PGGrantObjects, error) {
+func grantObjects(ctx context.Context, conn *caduceus.Conn, schema string) (*PGGrantObjects, error) {
 	out := &PGGrantObjects{Schemas: []PGGrantObject{}}
-	res := conn.ExecParams(ctx, `SELECT n.nspname, pg_get_userbyid(n.nspowner) FROM pg_namespace n WHERE `+userSchemas+` ORDER BY 1 LIMIT 5000`,
-		nil, nil, nil, nil).Read()
+	res := pgRead(ctx, conn, `SELECT n.nspname, pg_get_userbyid(n.nspowner) FROM pg_namespace n WHERE `+userSchemas+` ORDER BY 1 LIMIT 5000`, nil)
 	if res.Err != nil {
 		return nil, res.Err
 	}
@@ -515,10 +513,9 @@ func grantObjects(ctx context.Context, conn *pgconn.PgConn, schema string) (*PGG
 			owners[s.Owner] = true
 		}
 	}
-	res = conn.ExecParams(ctx, `SELECT c.relname, c.relkind::text, pg_get_userbyid(c.relowner)
+	res = pgRead(ctx, conn, `SELECT c.relname, c.relkind::text, pg_get_userbyid(c.relowner)
 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE n.nspname = $1 AND c.relkind IN ('r','v','m','p','f','S') ORDER BY 1 LIMIT `+strconv.Itoa(maxListed+1),
-		[][]byte{[]byte(schema)}, nil, nil, nil).Read()
+WHERE n.nspname = $1 AND c.relkind IN ('r','v','m','p','f','S') ORDER BY 1 LIMIT `+strconv.Itoa(maxListed+1), [][]byte{[]byte(schema)})
 	if res.Err != nil {
 		return nil, res.Err
 	}
@@ -534,10 +531,9 @@ WHERE n.nspname = $1 AND c.relkind IN ('r','v','m','p','f','S') ORDER BY 1 LIMIT
 			out.Tables = append(out.Tables, o)
 		}
 	}
-	res = conn.ExecParams(ctx, `SELECT quote_ident(p.proname) || '(' || oidvectortypes(p.proargtypes) || ')', p.prokind::text, pg_get_userbyid(p.proowner)
+	res = pgRead(ctx, conn, `SELECT quote_ident(p.proname) || '(' || oidvectortypes(p.proargtypes) || ')', p.prokind::text, pg_get_userbyid(p.proowner)
 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-WHERE n.nspname = $1 ORDER BY 1 LIMIT `+strconv.Itoa(maxListed),
-		[][]byte{[]byte(schema)}, nil, nil, nil).Read()
+WHERE n.nspname = $1 ORDER BY 1 LIMIT `+strconv.Itoa(maxListed), [][]byte{[]byte(schema)})
 	if res.Err != nil {
 		return nil, res.Err
 	}

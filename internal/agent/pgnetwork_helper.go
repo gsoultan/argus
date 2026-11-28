@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/gsoultan/argus/internal/tunnel"
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/gsoultan/caduceus"
 )
 
 /*
@@ -158,8 +158,8 @@ func rewriteHBA(text string, add []string) string {
 	return strings.Join(keep, "\n") + "\n"
 }
 
-func showText(ctx context.Context, conn *pgconn.PgConn, sql string) (string, error) {
-	r := conn.ExecParams(ctx, sql, nil, nil, nil, nil).Read()
+func showText(ctx context.Context, conn *caduceus.Conn, sql string) (string, error) {
+	r := pgRead(ctx, conn, sql, nil)
 	if r.Err != nil {
 		return "", r.Err
 	}
@@ -169,7 +169,7 @@ func showText(ctx context.Context, conn *pgconn.PgConn, sql string) (string, err
 	return string(r.Rows[0][0]), nil
 }
 
-func pgHBAState(ctx context.Context, conn *pgconn.PgConn) (PGHBAState, error) {
+func pgHBAState(ctx context.Context, conn *caduceus.Conn) (PGHBAState, error) {
 	var st PGHBAState
 	var err error
 	q := func(sql string) string {
@@ -210,7 +210,7 @@ func pgHBAState(ctx context.Context, conn *pgconn.PgConn) (PGHBAState, error) {
 }
 
 // pgNetworkHelper answers network and network.set in the helper.
-func pgNetworkHelper(ctx context.Context, conn *pgconn.PgConn, req PGAdminRequest) PGAdminResult {
+func pgNetworkHelper(ctx context.Context, conn *caduceus.Conn, req PGAdminRequest) PGAdminResult {
 	op := req.Admin
 	if op.Kind == tunnel.AdminNetworkSet {
 		if err := tunnel.ValidatePGNetwork(op); err != nil {
@@ -232,7 +232,7 @@ func pgNetworkHelper(ctx context.Context, conn *pgconn.PgConn, req PGAdminReques
 }
 
 // pgNetworkSet writes pg_hba.conf and listen_addresses, and reloads.
-func pgNetworkSet(ctx context.Context, conn *pgconn.PgConn, op tunnel.PGAdminOp) error {
+func pgNetworkSet(ctx context.Context, conn *caduceus.Conn, op tunnel.PGAdminOp) error {
 	st, err := pgHBAState(ctx, conn)
 	if err != nil {
 		return err
@@ -266,7 +266,7 @@ func pgNetworkSet(ctx context.Context, conn *pgconn.PgConn, op tunnel.PGAdminOp)
 		}
 		// pg_hba_file_rules reads the file as it is on disk: a line Postgres
 		// would not load puts the old file back before anything reloads.
-		r := conn.ExecParams(ctx, "SELECT line_number::text || ': ' || error FROM pg_hba_file_rules WHERE error IS NOT NULL", nil, nil, nil, nil).Read()
+		r := pgRead(ctx, conn, "SELECT line_number::text || ': ' || error FROM pg_hba_file_rules WHERE error IS NOT NULL", nil)
 		if r.Err != nil || len(r.Rows) > 0 {
 			_ = write(string(old))
 			if r.Err != nil {
@@ -279,13 +279,13 @@ func pgNetworkSet(ctx context.Context, conn *pgconn.PgConn, op tunnel.PGAdminOp)
 			return fmt.Errorf("Postgres would not load %s (%s); it was put back as it was", st.HBAFile, strings.Join(errs, "; "))
 		}
 	}
-	if _, err := conn.Exec(ctx, "ALTER SYSTEM SET listen_addresses = "+quoteLiteral(tunnel.PGListenFor(op))).ReadAll(); err != nil {
+	if _, err := pgExec(ctx, conn, "ALTER SYSTEM SET listen_addresses = "+quoteLiteral(tunnel.PGListenFor(op))); err != nil {
 		if next != string(old) {
 			_ = write(string(old))
 		}
 		return err
 	}
-	if _, err := conn.Exec(ctx, "SELECT pg_reload_conf()").ReadAll(); err != nil {
+	if _, err := pgExec(ctx, conn, "SELECT pg_reload_conf()"); err != nil {
 		return err
 	}
 	// The reload is a signal; pending_restart is right once it is read.

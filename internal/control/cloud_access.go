@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/gsoultan/caduceus"
 
 	"github.com/gsoultan/argus/internal/control/cloud"
 )
@@ -57,11 +57,11 @@ const cloudAccessCols = `g.id::text, g.account_id::text, a.name, a.account_id, g
 	CASE WHEN g.state = 'active' AND g.ends_at <= now() THEN 'expired' ELSE g.state END,
 	g.requested_by, g.requested_at, g.decided_by, g.decided_at, g.starts_at, g.ends_at, g.ended_by, g.sessions, g.last_session_at`
 
-func scanCloudAccess(row pgx.Row) (CloudAccess, error) {
+func scanCloudAccess(row rowScanner) (CloudAccess, error) {
 	var g CloudAccess
 	err := row.Scan(&g.ID, &g.AccountID, &g.AccountName, &g.CloudAccount, &g.Level, &g.Environment, &g.Minutes, &g.Reason, &g.State,
 		&g.RequestedBy, &g.RequestedAt, &g.DecidedBy, &g.DecidedAt, &g.StartsAt, &g.EndsAt, &g.EndedBy, &g.Sessions, &g.LastSessionAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, caduceus.ErrNoRows) {
 		return CloudAccess{}, ErrCloudAccessNotFound
 	}
 	return g, err
@@ -71,7 +71,7 @@ func scanCloudAccess(row pgx.Row) (CloudAccess, error) {
 // needs nobody else.
 func (s *Store) CreateCloudAccess(ctx context.Context, g CloudAccess) (CloudAccess, error) {
 	var id string
-	err := pgx.BeginFunc(ctx, s.db(ctx), func(tx pgx.Tx) error {
+	err := caduceus.BeginFunc(ctx, s.db(ctx), func(tx *caduceus.Tx) error {
 		// One open grant per person, account and level; the lock keeps two
 		// requests at once from both getting through.
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('cloud_access:' || $1 || $2))`, g.AccountID, g.RequestedBy); err != nil {
