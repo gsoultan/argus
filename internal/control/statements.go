@@ -360,6 +360,9 @@ func (a *API) statementGate(ctx context.Context, email string, db Database, leve
 	if req.Op == "admin" && req.Admin != nil && tunnel.MSSQLAdminKind(req.Admin.Kind) {
 		return a.mssqlAdminGate(ctx, email, db, req)
 	}
+	if req.Op == "admin" && req.Admin != nil && req.Admin.Kind == tunnel.AdminSubscriptionSkip {
+		return a.pgSkipGate(ctx, email, db, req)
+	}
 	if req.Op != "run" || !db.WritesNeedApproval() || level == "" || level == tunnel.LevelRead {
 		return nil
 	}
@@ -490,6 +493,39 @@ func (a *API) pgRoleGate(ctx context.Context, email string, db Database, req *tu
 			return &tunnel.PGAnswer{ID: req.ID, Type: "error", Code: tunnel.GuardNeedsApproval, Error: why.why}
 		}
 		a.log.Error("checking a role change approval failed", "database", db.Name, "email", email, "error", err)
+		return &tunnel.PGAnswer{ID: req.ID, Type: "error", Code: tunnel.GuardNeedsApproval, Error: "could not check the approval; try again"}
+	}
+	return nil
+}
+
+// pgSkipGate decides whether skipping a subscription's failed transaction may
+// pass. The skip throws away everything that publisher transaction changed,
+// for good, so on a database whose changes wait it waits for approval of its
+// own text, as a role change does. The relay audits it from the agent's
+// recording line (db.admin), as every admin change.
+func (a *API) pgSkipGate(ctx context.Context, email string, db Database, req *tunnel.PGRequest) *tunnel.PGAnswer {
+	op := req.Admin
+	if op.Preview {
+		return nil
+	}
+	text, err := tunnel.PGSubscriptionSkipText(op)
+	if err != nil {
+		return &tunnel.PGAnswer{ID: req.ID, Type: "error", Error: err.Error()}
+	}
+	if !db.WritesNeedApproval() {
+		req.Approval = ""
+		return nil
+	}
+	if req.Approval == "" {
+		return &tunnel.PGAnswer{ID: req.ID, Type: "error", Code: tunnel.GuardNeedsApproval,
+			Error: db.Name + approvalWhy(db) + ": skipping a transaction runs once someone else approves it", Approve: text}
+	}
+	if _, err := a.store.UseStatementApproval(ctx, req.Approval, email, db.ID, text, nil); err != nil {
+		var why errNoApproval
+		if errors.As(err, &why) {
+			return &tunnel.PGAnswer{ID: req.ID, Type: "error", Code: tunnel.GuardNeedsApproval, Error: why.why}
+		}
+		a.log.Error("checking a subscription skip approval failed", "database", db.Name, "email", email, "error", err)
 		return &tunnel.PGAnswer{ID: req.ID, Type: "error", Code: tunnel.GuardNeedsApproval, Error: "could not check the approval; try again"}
 	}
 	return nil

@@ -221,8 +221,15 @@ func buildAdminSQL(op *tunnel.PGAdminOp, actor string) (adminSQL, error) {
 		return "COMMENT ON " + kind + " " + name + " IS " + quoteLiteral(adminMarker+actor)
 	}
 	switch op.Kind {
-	case tunnel.AdminExtensionList, tunnel.AdminPublicationList, tunnel.AdminSubscriptionList:
+	case tunnel.AdminExtensionList, tunnel.AdminPublicationList, tunnel.AdminSubscriptionList, tunnel.AdminSubscriptionWhy:
 		return adminSQL{}, nil
+
+	case tunnel.AdminSubscriptionSkip:
+		stmts, err := tunnel.PGSubscriptionSkipSQL(op.Name, op.LSN)
+		if err != nil {
+			return adminSQL{}, err
+		}
+		return adminSQL{run: stmts, redacted: stmts}, nil
 
 	case tunnel.AdminExtensionCreate:
 		n, err := quoteIdent(op.Name)
@@ -645,6 +652,8 @@ func pgAdminOp(ctx context.Context, conn *caduceus.Conn, req PGAdminRequest) PGA
 		data, err = listPublications(ctx, conn)
 	case tunnel.AdminSubscriptionList:
 		data, err = listSubscriptions(ctx, conn)
+	case tunnel.AdminSubscriptionWhy:
+		data, err = subscriptionWhy(ctx, conn, op.Name)
 	case tunnel.AdminExtensionCreate:
 		// A clear refusal for a name the server does not have, rather than
 		// Postgres's "could not open extension control file".

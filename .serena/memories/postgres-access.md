@@ -225,6 +225,22 @@ binary, disable_on_error)`). The subscription list carries binary/streaming
 (PG14+) and disable_on_error (PG15+) as on/off strings, "" before; the
 options form only sends what changed and hides what the server lacks.
 
+### Why a subscription stopped (2026-11)
+
+Postgres keeps only error *counts*; the message, table and LSN are in the
+server log. `subscription.why` (read, not recorded; `postgres_subscription_why.go`)
+has the helper (OS postgres) read the last 8 MB of the log: `pg_current_logfile`
+jsonlog > csvlog > stderr plus the previous rotated file, else Debian's
+`/var/log/postgresql/postgresql-<ver>-<cluster>.log`; otherwise `logNote` says
+why not. Entries count as the subscription's by name, by origin `pg_<oid>` in
+CONTEXT, or by the pid that logged "…for subscription X has started" (freed on
+"(PID n) exited"). It returns facts only (table, change, xid, LSN, key);
+`web/src/lib/pgSubscriptionWhy.ts` turns them into a cause and one fix. The
+page loads it once per error count for each stopped row, and after Enable
+re-reads the list for 12 s to say whether it stayed on.
+`subscription.skip` = `SKIP (lsn)` + `ENABLE`, built in `tunnel.PGSubscriptionSkipSQL`
+so the relay's `pgSkipGate` asks approval for the same text where changes wait.
+
 ## Finding databases, query tabs, saved queries, plans, diagram
 
 - **Listing what a server has.** The agent's `dbdiscover` tunnel service
